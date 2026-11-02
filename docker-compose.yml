@@ -42,6 +42,8 @@ services:
       REGISTER_ENABLED: "first-user"
       # Optional: enable the /openapi/agent-gateway for the Python agent.
       AGENT_GATEWAY_ENABLED: "false"
+      LOCAL_AGENTS_MODE: companion
+      LOCAL_AGENTS_DATA_DIR: /app/.local-agents
       SQUABBLE_UPDATE_MODE: ${SQUABBLE_UPDATE_MODE:-docker}
       SQUABBLE_UPDATE_BACKUP_DIR: /app/.backups
       # AGENT_GATEWAY_TOKEN: "dev-agent-token-change-me"
@@ -51,6 +53,7 @@ services:
       - "127.0.0.1:${HOST_APP_PORT:-3000}:3000"
     volumes:
       - settings-secrets:/app/.secrets
+      - local-agents-data:/app/.local-agents
       - update-backups:/app/.backups
     depends_on:
       db:
@@ -80,4 +83,5 @@ services:
 volumes:
   dpa-data:
   settings-secrets:
+  local-agents-data:
   update-backups:

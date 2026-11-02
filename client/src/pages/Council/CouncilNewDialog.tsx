@@ -46,7 +46,7 @@ export default function CouncilNewDialog({ open, onOpenChange, profiles, loading
     const profile = profiles.find((item: BuilderProfile) => item.id === initialProfileId);
     if (!profile) return;
     if (profile.config.council?.members.length) setTeam({ enabled: true, webResearch: false,
-      members: profile.config.council.members.map((member) => ({ ...member, researchFocus: member.researchFocus?.filter((focus) => focus !== 'web' || member.executionMode === 'a2a') })) });
+      members: profile.config.council.members.map((member) => ({ ...member, researchFocus: member.researchFocus?.filter((focus) => focus !== 'web' || member.executionMode === 'local') })) });
     initializedProfile.current = true;
   }, [profiles, initialProfileId]);
   useEffect(() => {
@@ -91,7 +91,7 @@ export default function CouncilNewDialog({ open, onOpenChange, profiles, loading
                   setProfileId(event.target.value);
                   const profile = profiles.find((item: BuilderProfile) => item.id === event.target.value);
                   if (profile?.config.council?.members.length) changeTeam({ ...team, members: profile.config.council.members.map((member) => ({
-                    ...member, researchFocus: member.researchFocus?.filter((focus) => focus !== 'web' || team.webResearch || member.executionMode === 'a2a'),
+                    ...member, researchFocus: member.researchFocus?.filter((focus) => focus !== 'web' || team.webResearch || member.executionMode === 'local'),
                   })) });
                 }} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <option value="">{t('council.members.standalone')}</option>

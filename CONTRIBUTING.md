@@ -17,11 +17,12 @@ requests:
 |---|---|
 | `client/` | React SPA (pages, components, hooks, api wrappers) |
 | `server/` | NestJS backend (modules, first-party auth, platform layer in `server/common/platform/`) |
+| `server/local-agents/` | Native Codex/Claude detection, login and research execution |
 | `shared/` | Types shared by front-end and backend |
 | `agent/` | Optional Python agent CLI |
 | `docs/`, `README*` | Documentation |
 | `scripts/db/` | Base schema, opt-in fictional demo seed and migrations |
-| `desktop/` | Electron launcher, private PostgreSQL lifecycle and desktop checks |
+| `desktop/` | Electron launcher, private PostgreSQL lifecycle, local-agent companion and desktop checks |
 | `Dockerfile`, `docker-compose*.yml`, `.github/` | Clean local web stack, opt-in demo and installer CI |
 
 The project was originally developed on the Miaoda (aPaaS) cloud; that
@@ -53,16 +54,18 @@ disable a check or push directly to `main` to get around a failure.
 ## ✅ Before you open a PR
 
 ```bash
-npm ci               # install the versions in package-lock.json
-npm run lint         # eslint + typecheck + stylelint
-npm run test:server  # offline server tests
-npm run test:client  # client behavior tests
-npm run test:desktop # desktop lifecycle tests (Windows/macOS)
-npm run test:a2a     # optional local agent bridge tests
+npm ci                     # install the versions in package-lock.json
+npm run lint               # eslint + typecheck + stylelint
+npm run test:server        # offline server tests
+npm run test:client        # client behavior tests
+npm run test:desktop       # desktop lifecycle and companion tests (Windows/macOS)
+npm run test:local-agents  # native runtime, pairing and durable task tests
 ```
 
 These checks must pass for application changes. For documentation changes,
 check local links, rendered Markdown and commands against the current scripts.
+Native-agent tests use fixture executables and disposable task directories;
+verification must not start paid research or use personal provider sessions.
 For Python agent changes also run:
 
 ```bash

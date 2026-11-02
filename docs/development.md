@@ -44,6 +44,7 @@ GitHub is the source of truth; no Miaoda account is needed to run it.
    REGISTER_ENABLED=true
    SERVER_HOST=127.0.0.1
    SERVER_PORT=3000
+   LOCAL_AGENTS_MODE=native
    ```
 
    Replace every placeholder. To generate each secret independently, run
@@ -60,7 +61,7 @@ Logs are under `logs/`; inspect them if startup fails. The individual
 `dev:server` and `dev:client` commands do not use that supervisor; provide the
 required environment variables in their shell when running them separately.
 
-The app applies additive migrations `03` through `14` on startup. They do not
+The app applies additive migrations `03` through `15` on startup. They do not
 create the base schema. Neither Docker configuration publishes PostgreSQL on
 the host, so a source development server cannot reach it at `localhost:5432`
 without an explicit local port mapping.
@@ -72,11 +73,11 @@ npm run lint          # eslint + stylelint + full typecheck (also runs in CI)
 npm run test:server   # Nest service/rule tests; database suites need the variables below
 npm run test:client   # client state and component behavior
 npm run test:desktop  # bundled database, lifecycle and loopback security checks
-npm run test:a2a      # optional local agent bridge tests
+npm run test:local-agents # native CLI fixtures and companion ownership/lease checks
 npm run type:check    # typecheck only
 ```
 
-Database integration suites use `BUDGET_TEST_DATABASE_URL`, `COUNCIL_TEST_DATABASE_URL`, and `AUTH_TEST_DATABASE_URL`. Set them to a **disposable test database** initialized with `01_schema.sql` and additive migrations `03`–`14`; do not point them at personal or production data. Without these variables, database cases are explicitly skipped. CI provisions PostgreSQL and runs them, including concurrent reservations, user isolation, first-account registration, discussion revisions, and atomic paper execution.
+Database integration suites use `BUDGET_TEST_DATABASE_URL`, `COUNCIL_TEST_DATABASE_URL`, and `AUTH_TEST_DATABASE_URL`. Set them to a **disposable test database** initialized with `01_schema.sql` and additive migrations `03`–`15`; do not point them at personal or production data. Without these variables, database cases are explicitly skipped. CI provisions PostgreSQL and runs them, including concurrent reservations, user isolation, first-account registration, discussion revisions, and atomic paper execution.
 
 Agent service:
 
@@ -93,6 +94,26 @@ tests; and a Docker image build.
 The separate desktop workflow builds Windows x64, macOS x64, and macOS arm64
 installers. It runs the desktop tests and verifies a fresh packaged app can
 start its own database and API before publishing version-tagged installers.
+
+## Native research agents
+
+Use [Settings to connect Codex or Claude Code](local-agents.md). Desktop starts the
+backend with `LOCAL_AGENTS_MODE=native` and a private `LOCAL_AGENTS_DATA_DIR` under its
+application data directory. Source development can use native mode with the loopback
+host shown above. Docker uses `LOCAL_AGENTS_MODE=companion` and persists state in the
+`local-agents-data` volume at `/app/.local-agents`.
+
+The desktop handles `squabble://pair` links only after validating a literal loopback
+origin and showing a native confirmation dialog. It polls the paired app outbound;
+native tasks run asynchronously so progress and cancellation do not block heartbeats.
+Task IDs are journaled before launch and are never replayed after a helper restart.
+The native runner lives in `server/local-agents/native.ts`; Electron loads the built
+CommonJS module from `dist/server/local-agents/native.js` at runtime. Build both the
+backend and desktop before exercising the helper.
+
+Tests use fixture executables and disposable pairing stores, without paid model
+calls. `npm run test:desktop` covers pairing validation, private persistence,
+redirect rejection, cancellation and duplicate delivery as well as database lifecycle.
 
 ## Python Agent (`agent/`)
 

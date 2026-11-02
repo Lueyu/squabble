@@ -52,8 +52,8 @@ export function validateCouncilSettings(
       || members.some((member) => !member.id.trim() || member.id.length > 32 || !member.name.trim() || member.name.length > 40
         || !['researcher', 'challenger', 'manager'].includes(member.role)
         || !['fast', 'slow'].includes(member.model) || member.instructions.length > 1000
-        || (member.executionMode !== undefined && !['model', 'a2a'].includes(member.executionMode))
-        || (member.executionMode === 'a2a' && !/^[a-zA-Z0-9_-]{1,64}$/.test(member.agentId ?? ''))
+        || (member.executionMode !== undefined && !['model', 'local'].includes(member.executionMode))
+        || (member.executionMode === 'local' && !/^[a-zA-Z0-9_-]{1,64}$/.test(member.agentId ?? ''))
         || (member.roleTitle?.length ?? 0) > 60 || (member.personality?.length ?? 0) > 240
         || (member.connectionId && !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(member.connectionId))
         || (member.avatar && !COUNCIL_AVATARS.includes(member.avatar))
@@ -61,7 +61,7 @@ export function validateCouncilSettings(
         || (member.researchFocus && (member.researchFocus.length > 5
           || new Set(member.researchFocus).size !== member.researchFocus.length
           || member.researchFocus.some((focus) => !COUNCIL_RESEARCH_KINDS.includes(focus)
-            || (focus === 'web' && member.executionMode !== 'a2a' && !council.webResearch)))))) return 'teamInvalid';
+            || (focus === 'web' && member.executionMode !== 'local' && !council.webResearch)))))) return 'teamInvalid';
   }
   if (cadence && (!Number.isInteger(cadence.reviewEveryTradingDays)
     || cadence.reviewEveryTradingDays < 1 || cadence.reviewEveryTradingDays > 60

@@ -74,6 +74,13 @@ npm run dev
 | **持仓导入** | CSV 自动列映射（5 券商预设）。截图 OCR 识别（用你自己的 AI key）。 |
 | **通知推送** | Webhook、Bark、Server酱、邮件、Telegram。每笔成交和风控事件即推。 |
 
+## 连接本地研究 Agent
+
+打开 **设置 → 本地研究 Agent**，即可使用电脑上已安装的 Codex 或 Claude Code。
+在官方终端完成登录后，点击 **连接**。Docker 用户在同一台电脑打开吵股桌面版，
+从网页设置发起配对，再在桌面弹窗中确认本地地址。研究期间保持桌面应用开启。
+[安装与使用说明](docs/local-agents.md)。
+
 ## 接入你的 AI 助手
 
 吵股内置 MCP 服务器。把模拟盘交给 Claude 或 ChatGPT：
@@ -93,6 +100,7 @@ npm run dev
 | 主题 | 链接 |
 |---|---|
 | 本地部署与排错 | [docs/self-hosting.zh-CN.md](docs/self-hosting.zh-CN.md) |
+| Codex 与 Claude Code 研究 | [docs/local-agents.md](docs/local-agents.md) |
 | 服务器部署（HTTPS） | [docs/public-deployment.zh-CN.md](docs/public-deployment.zh-CN.md) |
 | 持仓导入 | [docs/zh-CN/import.md](docs/zh-CN/import.md) |
 | 架构 | [docs/architecture.md](docs/architecture.md) |

@@ -21,9 +21,8 @@ import type {
   PaperSide,
 } from '@shared/api.interface';
 import { normalizeBuilderConfig, validateManualFill } from './agent-builder.rules';
-import { LocalAgentsService } from '../a2a/local-agents.service';
+import { LocalAgentsService } from '../local-agents/local-agents.service';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
-import { agentErrorMessage } from '../council/council.a2a';
 
 @Injectable()
 export class AgentBuilderService {
@@ -104,15 +103,12 @@ export class AgentBuilderService {
   async assertCanActivate(userId: string, config: BuilderConfig): Promise<void> {
     if (config.council?.enabled) {
       const members = config.council.members;
-      for (const member of members.filter((item) => item.executionMode === 'a2a')) {
+      for (const member of members.filter((item) => item.executionMode === 'local')) {
         if (!this.localAgents || !member.agentId) throw new BadRequestException('Local agent unavailable');
         await this.localAgents.validate(userId, member.agentId);
-        if ((await this.budgets?.getSettings(userId))?.enabled !== false) {
-          throw new BadRequestException(agentErrorMessage('A2A_BUDGET_UNSUPPORTED', config.language));
-        }
       }
-      await this.llm.validateConnectionIds(userId, members.flatMap((member) => member.executionMode !== 'a2a' && member.connectionId ? [member.connectionId] : []));
-      const configured = await Promise.all(members.map((member) => member.executionMode === 'a2a' ? true : this.llm.isConfigured(userId, member.connectionId)));
+      await this.llm.validateConnectionIds(userId, members.flatMap((member) => member.executionMode !== 'local' && member.connectionId ? [member.connectionId] : []));
+      const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId)));
       if (configured.some((value) => !value)) throw new BadRequestException('Configure a model connection for every council member');
     } else if (config.customPrompt && !(await this.llm.isConfigured(userId))) {
       throw new BadRequestException('Configure a model for the council, or select basic rules mode');

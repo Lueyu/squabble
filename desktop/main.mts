@@ -1,6 +1,8 @@
 import { appendFileSync, createWriteStream } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { hostname } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, Menu, session, shell, utilityProcess } from 'electron';
 import type { MenuItemConstructorOptions, UtilityProcess } from 'electron';
 import {
@@ -14,14 +16,96 @@ import {
 import type { DesktopDatabase } from './runtime.mjs';
 import { checkForUpdate, isNewerVersion } from './update-check.mjs';
 import { isAutomaticUpdateSupported } from './auto-update.mjs';
+import { LocalAgentCompanion, parsePairingLink } from './companion.mjs';
+import type { NativeRuntime } from './companion.mjs';
 
 let window: BrowserWindow | null = null;
 let backend: UtilityProcess | null = null;
 let database: DesktopDatabase | null = null;
 let backendLog: ReturnType<typeof createWriteStream> | null = null;
 let quitting = false;
+let stoppingServices: Promise<void> | null = null;
 let quitAllowed = false;
 let checkingForUpdate = false;
+let companion: LocalAgentCompanion | null = null;
+const pendingPairLinks: string[] = [];
+let handlingPairLink = false;
+
+function queuePairingLink(link: string): void {
+  if (!parsePairingLink(link) || pendingPairLinks.includes(link) || pendingPairLinks.length >= 3) return;
+  pendingPairLinks.push(link);
+  if (app.isReady()) void handlePendingPairings();
+}
+
+async function handlePendingPairings(): Promise<void> {
+  if (!companion || handlingPairLink || quitting) return;
+  handlingPairLink = true;
+  const chinese = app.getLocale().toLowerCase().startsWith('zh');
+  try {
+    while (pendingPairLinks.length && !quitting) {
+      const link = pendingPairLinks.shift();
+      if (!link) continue;
+      try {
+        const paired = await companion.pair(link, async (origin) => {
+          const choice = await dialog.showMessageBox({ type: 'question', title: 'Squabble',
+            message: chinese ? '允许此本地应用使用你的研究 Agent？' : 'Allow this local app to use your research agents?',
+            detail: chinese ? `${origin}\n\n连接后，此应用可以使用你的 CLI 登录账号运行 Codex 和 Claude Code 研究任务，可能消耗套餐用量或产生费用。请确认这正是你刚刚在设置中打开的地址。`
+              : `${origin}\n\nThis app can run Codex and Claude Code research tasks using your CLI sign-in, which may consume your plan or incur charges. Confirm this is the address you just opened in Settings.`,
+            buttons: chinese ? ['连接', '取消'] : ['Connect', 'Cancel'], defaultId: 1, cancelId: 1,
+          });
+          return choice.response === 0;
+        });
+        if (paired) await dialog.showMessageBox({ type: 'info', title: 'Squabble',
+          message: chinese ? '桌面助手已配对' : 'Desktop companion paired',
+          detail: chinese ? '返回网页设置，登录并连接 Codex 或 Claude Code。使用期间请保持桌面应用开启。'
+            : 'Return to web Settings to sign in and connect Codex or Claude Code. Keep the desktop app open while using them.',
+        });
+      } catch {
+        await dialog.showMessageBox({ type: 'warning', title: 'Squabble',
+          message: chinese ? '无法配对桌面助手' : 'Could not pair the desktop companion',
+          detail: chinese ? '确认本地应用正在运行，然后在网页设置中创建新的配对请求。'
+            : 'Make sure the local app is running, then create a new pairing request in web Settings.',
+        });
+      }
+    }
+  } finally { handlingPairLink = false; }
+}
+
+async function showCompanionStatus(): Promise<void> {
+  const chinese = app.getLocale().toLowerCase().startsWith('zh');
+  const status = companion?.status;
+  const states = chinese
+    ? { unpaired: '尚未配对', connecting: '正在连接', connected: '已连接', offline: '暂时离线，正在重连' }
+    : { unpaired: 'Not paired', connecting: 'Connecting', connected: 'Connected', offline: 'Offline; reconnecting' };
+  const providerStates = chinese
+    ? { not_installed: '未安装', login_required: '需要登录', ready: '已就绪', error: '检测失败' }
+    : { not_installed: 'Not installed', login_required: 'Sign-in required', ready: 'Ready', error: 'Detection failed' };
+  const details = status ? [
+    states[status.state], status.origin ?? '',
+    ...status.agents.map((agent) => `${agent.name}: ${providerStates[agent.state]}`),
+    chinese ? `正在运行的任务：${status.activeTasks}` : `Running tasks: ${status.activeTasks}`,
+    chinese ? '在 Docker 网页的设置中配对或断开助手。使用期间请保持此应用开启。'
+      : 'Pair or disconnect the companion in Docker web Settings. Keep this app open while using it.',
+  ] : [chinese ? '桌面助手不可用，请重启应用后重试。' : 'The desktop companion is unavailable. Restart the app to retry.'];
+  await dialog.showMessageBox({ type: 'info', title: 'Squabble',
+    message: chinese ? '本地研究 Agent 助手' : 'Local research agent companion', detail: details.filter(Boolean).join('\n\n') });
+}
+
+async function startCompanion(dataRoot: string): Promise<void> {
+  try {
+    const runtime = createRequire(import.meta.url)(join(app.getAppPath(), 'dist', 'server', 'local-agents', 'native.js')) as NativeRuntime;
+    companion = new LocalAgentCompanion({ dataDir: join(dataRoot, 'local-agent-companion'), name: hostname(), native: runtime });
+    await companion.restore();
+    companion.start();
+    void handlePendingPairings();
+  } catch {
+    companion = null;
+    // Pairing storage and CLI diagnostics can contain credentials. Never show raw errors.
+    await dialog.showMessageBox({ type: 'warning', title: 'Squabble',
+      message: app.getLocale().toLowerCase().startsWith('zh') ? '桌面助手无法启动，请重启应用后重试。'
+        : 'The desktop companion could not start. Restart the app to retry.' });
+  }
+}
 
 async function showWindowsUpdateCheck(chinese: boolean, silent: boolean): Promise<void> {
   // Eager loading electron-updater stalls packaged startup before the app is ready.
@@ -105,6 +189,7 @@ function installApplicationMenu(): void {
     { role: 'viewMenu' },
     { role: 'windowMenu' },
     { label: chinese ? '帮助' : 'Help', submenu: [
+      { label: chinese ? '本地 Agent 助手…' : 'Local Agent Companion…', click: () => { void showCompanionStatus(); } },
       { label: chinese ? '检查更新…' : 'Check for Updates…', click: () => { void showUpdateCheck(); } },
     ] },
   ];
@@ -133,14 +218,18 @@ async function stopBackend(): Promise<void> {
 }
 
 async function stopServices(): Promise<void> {
-  if (quitting) return;
+  if (stoppingServices) return stoppingServices;
   quitting = true;
-  await stopBackend();
-  if (database) {
-    const current = database;
-    database = null;
-    await current.stop();
-  }
+  stoppingServices = (async () => {
+    await companion?.stop();
+    await stopBackend();
+    if (database) {
+      const current = database;
+      database = null;
+      await current.stop();
+    }
+  })();
+  return stoppingServices;
 }
 
 function externalLink(value: string, ownOrigin: string): void {
@@ -159,6 +248,7 @@ async function startDesktop(): Promise<void> {
   const override = process.env.SQUABBLE_DESKTOP_DATA_DIR;
   if (override && !isAbsolute(override)) throw new Error('Desktop data directory must be absolute');
   const dataRoot = override ?? app.getPath('userData');
+  if (process.env.SQUABBLE_DESKTOP_SMOKE !== '1') await startCompanion(dataRoot);
   const paths = desktopPaths(app.getAppPath(), dataRoot);
   const secrets = await loadOrCreateSecrets(paths.secretsFile);
   markSmokeStage('before-database');
@@ -168,6 +258,7 @@ async function startDesktop(): Promise<void> {
   const origin = `http://127.0.0.1:${port}`;
   const environment = nestEnvironment(paths, secrets, database.connectionUrl, port);
 
+  markSmokeStage('before-backend-fork');
   backendLog = createWriteStream(join(paths.logsDir, 'backend.log'), { flags: 'a', mode: 0o600 });
   backendLog.on('error', () => undefined);
   backend = utilityProcess.fork(paths.serverEntry, [], {
@@ -175,9 +266,12 @@ async function startDesktop(): Promise<void> {
     env: environment,
     stdio: 'pipe',
   });
+  markSmokeStage('after-backend-fork');
+  backend.on('spawn', () => markSmokeStage('backend-spawned'));
   backend.stdout?.pipe(backendLog, { end: false });
   backend.stderr?.pipe(backendLog, { end: false });
   backend.on('exit', () => {
+    markSmokeStage('backend-exited');
     if (!quitting) {
       dialog.showErrorBox('Squabble stopped', 'The local server exited. See the log in your Squabble data folder.');
       app.quit();
@@ -242,6 +336,7 @@ async function startDesktop(): Promise<void> {
 
 markSmokeStage('module-loaded');
 app.setName('Squabble');
+app.on('open-url', (event, url) => { event.preventDefault(); queuePairingLink(url); });
 
 markSmokeStage('before-single-instance-lock');
 const singleInstance = app.requestSingleInstanceLock();
@@ -249,7 +344,9 @@ markSmokeStage(`single-instance-lock-${singleInstance ? 'acquired' : 'denied'}`)
 if (!singleInstance) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  for (const argument of process.argv) queuePairingLink(argument);
+  app.on('second-instance', (_event, argv) => {
+    for (const argument of argv) queuePairingLink(argument);
     if (window?.isMinimized()) window.restore();
     window?.focus();
   });
@@ -265,6 +362,12 @@ if (!singleInstance) {
   markSmokeStage('before-when-ready');
   void app.whenReady().then(() => {
     markSmokeStage('after-when-ready');
+    if (process.env.SQUABBLE_DESKTOP_SMOKE !== '1') {
+      if (app.isPackaged) app.setAsDefaultProtocolClient('squabble');
+      else if (process.defaultApp && process.argv[1]) {
+        app.setAsDefaultProtocolClient('squabble', process.execPath, [resolve(process.argv[1])]);
+      }
+    }
     installApplicationMenu();
     return startDesktop();
   }).catch(async (error: unknown) => {

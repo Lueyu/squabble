@@ -15,24 +15,22 @@
     "build:desktop": "tsc --project desktop/tsconfig.json",
     "desktop:dev": "npm run build && electron .",
     "desktop:smoke": "npm run build && tsx desktop/smoke.mts",
-    "desktop:dist": "npm run build && electron-builder --config electron-builder.yml --publish never",
+    "desktop:dist": "npm run build && node scripts/prepare-desktop-runtime.cjs && electron-builder --config electron-builder.yml --publish never",
     "start": "cross-env NODE_ENV=production node dist/server/main.js",
     "eslint": "eslint . --quiet",
     "stylelint": "stylelint client/src/**/*.css --quiet",
     "type:check": "concurrently -n \"server,client\" -c \"blue,green\" \"npm run type:check:server\" \"npm run type:check:client\"",
     "type:check:client": "tsc --noEmit --project tsconfig.app.json",
     "type:check:server": "tsc --noEmit --project tsconfig.node.json",
-    "test:server": "tsx --tsconfig tsconfig.node.json --test --test-concurrency=1 server/modules/auth/*.spec.ts server/modules/fx/*.spec.ts server/modules/multi-agent/*.cjs server/modules/dashboard/*.spec.ts server/modules/paper-trading/*.spec.ts server/modules/paper-trading/*.spec.cjs server/modules/transactions/*.spec.cjs server/modules/settings/*.spec.ts server/modules/system-update/*.spec.ts server/modules/council/*.spec.ts server/modules/a2a/*.spec.ts scripts/ensure-settings-key.spec.cjs scripts/ensure-jwt-secret.spec.cjs",
+    "test:server": "tsx --tsconfig tsconfig.node.json --test --test-concurrency=1 server/modules/auth/*.spec.ts server/modules/fx/*.spec.ts server/modules/multi-agent/*.cjs server/modules/dashboard/*.spec.ts server/modules/paper-trading/*.spec.ts server/modules/paper-trading/*.spec.cjs server/modules/transactions/*.spec.cjs server/modules/settings/*.spec.ts server/modules/system-update/*.spec.ts server/modules/council/*.spec.ts server/modules/local-agents/*.spec.ts scripts/ensure-settings-key.spec.cjs scripts/ensure-jwt-secret.spec.cjs",
     "test:desktop": "tsx --test desktop/*.spec.ts",
     "test:client": "node --test client/src/hooks/*.test.cjs client/src/components/MultiAgent/*.test.cjs client/src/utils/*.test.cjs",
     "lint": "node ./scripts/lint.js",
     "precommit": "node scripts/hooks/run-precommit.js",
     "prepare": "node scripts/setup-git-hooks.js",
-    "test:a2a": "tsx --test agent-bridge/*.spec.ts",
-    "agent:bridge": "tsx agent-bridge/main.ts"
+    "test:local-agents": "tsx --tsconfig tsconfig.node.json --test server/local-agents/*.spec.ts server/modules/local-agents/*.spec.ts"
   },
   "dependencies": {
-    "@a2a-js/sdk": "^1.3.0",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/cache-manager": "^3.1.3",
     "@nestjs/common": "^10.4.20",
@@ -65,7 +63,8 @@
     "react-i18next": "^17.1.9",
     "reflect-metadata": "^0.1.14",
     "rxjs": "^7.8.2",
-    "tslib": "^2.8.1"
+    "tslib": "^2.8.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -155,8 +154,7 @@
     "typescript-eslint": "^8.44.0",
     "uuid": "11.0.5",
     "vaul": "^1.1.2",
-    "vite": "^8",
-    "zod": "^4.3.6"
+    "vite": "^8"
   },
   "overrides": {
     "dayjs": "^1.11.15",

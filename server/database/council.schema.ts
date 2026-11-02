@@ -55,7 +55,7 @@ export const councilReports = pgTable('council_reports', {
   candidate: jsonb('candidate').$type<CouncilCandidate | null>(),
   paperOrderId: uuid('paper_order_id'),
   tokensUsed: integer('tokens_used').notNull().default(0),
-  engine: varchar('engine', { length: 10 }).$type<'basic' | 'llm' | 'a2a' | 'mixed'>().notNull(),
+  engine: varchar('engine', { length: 10 }).$type<'basic' | 'llm' | 'local' | 'a2a' | 'mixed'>().notNull(),
   researchStance: varchar('research_stance', { length: 10 }).$type<'positive' | 'balanced' | 'cautious' | null>(),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (table) => [uniqueIndex('council_reports_version_idx').on(table.sessionId, table.version),

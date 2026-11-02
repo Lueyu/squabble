@@ -74,6 +74,14 @@ npm run dev
 | **Portfolio import** | CSV with auto column mapping (5 broker presets). Screenshot OCR via your own AI key. |
 | **Notifications** | Webhook, Bark, ServerChan, SMTP, Telegram. Every fill and risk event, pushed to you. |
 
+## Connect native research agents
+
+Open **Settings → Local research agents** to use Codex or Claude Code already
+installed on your computer. Sign in through the provider's terminal, then click
+**Connect**. For Docker, open Squabble desktop on the same computer and pair it
+from web Settings; confirm the local address in the desktop dialog. Keep the app
+open while researching. [Setup and usage details](docs/local-agents.md).
+
 ## Connect your AI assistant
 
 Squabble has a built-in MCP server. Give Claude or ChatGPT access to your paper account:
@@ -93,6 +101,7 @@ Self-hosted. Zero telemetry. The only outbound requests are the ones you make wi
 | Topic | Link |
 |---|---|
 | Local setup and troubleshooting | [docs/self-hosting.md](docs/self-hosting.md) |
+| Codex and Claude Code research | [docs/local-agents.md](docs/local-agents.md) |
 | Server deployment (HTTPS) | [docs/public-deployment.md](docs/public-deployment.md) |
 | Import your portfolio | [docs/import.md](docs/import.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) |

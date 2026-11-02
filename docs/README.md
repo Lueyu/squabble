@@ -14,11 +14,11 @@ Python agent or a model key to start using Squabble.
 For using the product / 功能使用：
 
 - [Investment council](investment-council.md) / [投委会与研究室](investment-council.zh-CN.md): customizable 2–6 member teams, model connections, discussion, reports and budgets.
-- [Local agent teams / 本地 Agent 团队](local-agents.md): connect Codex or another A2A 1.0 agent, grant account access, and delegate research from the chat room.
+- [Local agent teams / 本地 Agent 团队](local-agents.md): detect, sign in and connect Codex or Claude Code; pair the desktop helper for local Docker. / 自动检测、登录和连接 Codex 或 Claude Code；本机 Docker 通过桌面助手配对使用。
 - [Research data and tools / 研究数据与工具](research-data.md): Finnhub, SEC financial fallback, optional web search and source boundaries.
 - [Import a portfolio / 持仓导入](import.md): CSV mapping, Robinhood exports and optional screenshot extraction.
 - [Appearance / 外观](appearance.md): four themes, light/dark mode and browser preferences.
-- Provider setup, connection tests and the research budget are in **Settings**. / API 配置、连接测试和研究预算均在应用「**设置**」页内。
+- Model API setup, local agent connections and the research budget are in **Settings**. Local agents use their provider's billing; the model API budget can stay enabled. / 模型 API 配置、本地 Agent 连接和研究预算均在「**设置**」页内。本地 Agent 按供应商规则计费，无需关闭模型 API 研究预算。
 
 For contributors / 参与开发：
 

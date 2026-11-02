@@ -68,7 +68,6 @@ export default function CouncilConversation({ session, actions, profileChanged }
   };
 
   return <>
-    <CouncilResearchProgress session={session} />
     <div className="relative flex min-h-0 flex-1 flex-col bg-muted/25">
       <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions" aria-label={t('council.conversation')}
         className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 py-5 sm:px-6"
@@ -89,7 +88,8 @@ export default function CouncilConversation({ session, actions, profileChanged }
         {session.messages.map((message: CouncilMessage) => <CouncilChatMessage key={message.id} message={message} session={session} onQuestion={(question: string) => {
           setContent((current) => current ? `${current}\n${question}`.slice(0, 2000) : question.slice(0, 2000)); inputRef.current?.focus();
         }} />)}
-        {session.status === 'running' && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
+        <CouncilResearchProgress session={session} />
+        {session.status === 'running' && !session.progress && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card"><Loader2 className="size-4 animate-spin text-primary" /></span>
           {t('council.runningHint')}
         </div>}

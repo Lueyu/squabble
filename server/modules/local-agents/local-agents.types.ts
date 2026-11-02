@@ -1,11 +1,3 @@
-export interface LocalAgentEntry {
-  id: string;
-  name: string;
-  cardUrl: string;
-  token?: string;
-  owners: string[];
-}
-
 export interface LocalAgentTaskRef { taskId: string; contextId: string }
 export interface LocalAgentExecution {
   agentId: string;
@@ -26,7 +18,6 @@ export interface LocalAgentResult {
   data?: unknown;
   usageTokens: number | null;
 }
-
 export class LocalAgentError extends Error {
   constructor(readonly code: string, readonly taskId?: string, readonly contextId?: string) {
     super(code);

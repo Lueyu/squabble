@@ -46,7 +46,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
   };
 
   return <div className="space-y-4">
-    {models.localAgents.some(agent => agent.available) && value.members.some(member => member.executionMode !== 'a2a')
+    {models.localAgents.some(agent => agent.available) && value.members.some(member => member.executionMode !== 'local')
       && <Button type="button" variant="secondary" size="sm" className="h-auto min-h-9 whitespace-normal"
         onClick={() => onChange({ ...value, members: assignLocalAgents(value.members, models.localAgents) })}>
         <Bot className="size-4" />{t('council.localAgents.useForTeam')}
@@ -101,15 +101,15 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
     </div> : <Button type="button" variant="outline" className="w-full border-dashed" disabled={value.members.length >= 6} onClick={() => setAdding(true)}>
       <Plus className="size-4" />{t(value.members.length >= 6 ? 'council.members.full' : 'council.members.add')}
     </Button>}
-    {value.members.some(member => member.executionMode === 'a2a') && <div className="rounded-xl bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
+    {value.members.some(member => member.executionMode === 'local') && <div className="rounded-xl bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
       <p>{t('council.localAgents.toolsHint')}</p>
       <p className="mt-2">{t('council.localAgents.budgetHint')}{' '}
         <Link to="/settings#research-budget" className="text-primary hover:underline">{t('council.budget.open')}</Link></p>
     </div>}
-    {value.members.some(member => member.executionMode !== 'a2a') && <div className="rounded-xl bg-muted/40 p-3">
+    {value.members.some(member => member.executionMode !== 'local') && <div className="rounded-xl bg-muted/40 p-3">
       <div className="flex items-center justify-between gap-3"><Label htmlFor={webId} className="text-sm">{t('council.members.webResearch')}</Label>
         <Switch id={webId} checked={Boolean(value.webResearch)} onCheckedChange={(enabled: boolean) => onChange({ ...value, webResearch: enabled,
-          members: enabled ? value.members : value.members.map((member: CouncilMember) => member.executionMode === 'a2a' ? member
+          members: enabled ? value.members : value.members.map((member: CouncilMember) => member.executionMode === 'local' ? member
             : ({ ...member, researchFocus: member.researchFocus?.filter((focus) => focus !== 'web') })) })} /></div>
       <p className="mt-2 text-xs leading-5 text-muted-foreground">{t('council.members.webResearchHint')}</p>
     </div>}
