@@ -46,12 +46,12 @@ export default function CouncilChatMessage({ message, session, onQuestion }: {
             <span className="mt-1 line-clamp-2 block break-words">{councilMessageDisplayContent(replyTo)}</span></span>
         </button>}
         <p className="whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]">{councilMessageDisplayContent(message)}</p>
-        {!isUser && Boolean(message.reasoningSummary?.length) && <details className="mt-3 border-t border-border/70 pt-2.5 text-xs">
-          <summary className="cursor-pointer font-medium text-muted-foreground">{t('council.chat.basis')}</summary>
+        {!isUser && Boolean(message.reasoningSummary?.length) && <div className="mt-3 border-t border-border/70 pt-2.5 text-xs">
+          <p className="font-medium text-muted-foreground">{t('council.chat.basis')}</p>
           <ul className="mt-2 list-disc space-y-1.5 pl-4 leading-6 text-muted-foreground">
             {message.reasoningSummary?.map((point: string, index: number) => <li className="break-words" key={index}>{point}</li>)}
           </ul>
-        </details>}
+        </div>}
         {!isUser && cited.length > 0 && <details className="mt-3 text-xs">
           <summary className="cursor-pointer text-muted-foreground"><span className="inline-flex items-center gap-1"><FileText className="size-3" />
             {t('council.chat.sources', { count: cited.length })}</span></summary>
