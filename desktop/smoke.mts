@@ -70,7 +70,8 @@ try {
   assert.equal(localAgents.status, 200);
   const localStatus = await localAgents.json() as { mode: string; items: { provider: string }[] };
   assert.equal(localStatus.mode, 'native', 'desktop exposes direct native execution');
-  assert.deepEqual(localStatus.items.map((item) => item.provider).sort(), ['claude', 'codex']);
+  assert.deepEqual(localStatus.items.map((item) => item.provider).sort(),
+    ['antigravity', 'claude', 'codex', 'doubao', 'gemini', 'kimi', 'opencode']);
   const denied = await fetch(`${origin}/api/health`, { headers: { Origin: 'https://wrong.example' } });
   assert.equal(denied.status, 403);
   process.stdout.write('Desktop smoke: database, API, two registrations, native agent catalog/auth, and origin guard passed.\n');
