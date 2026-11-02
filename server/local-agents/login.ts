@@ -9,6 +9,10 @@ import { resolveTerminal, type NativeLaunch, type NativeResolverOptions } from '
 function loginArgs(provider: LocalAgentProvider): string[] {
   if (provider === 'codex') return ['login'];
   if (provider === 'claude') return ['auth', 'login'];
+  if (provider === 'gemini' || provider === 'antigravity') return [];
+  if (provider === 'opencode') return ['auth', 'login'];
+  if (provider === 'kimi') return ['login'];
+  if (provider === 'doubao') return ['headless', 'login'];
   throw new Error('NATIVE_AGENT_UNSUPPORTED');
 }
 function posixQuote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
@@ -35,7 +39,8 @@ export async function launchNativeLogin(provider: LocalAgentProvider, launch: Na
   } else if (platform === 'darwin') {
     executable = '/usr/bin/osascript';
     // Terminal may already be running with an old PATH. Forward only nonsecret identity paths.
-    const paths: string[] = ['PATH', 'HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR']
+    const paths: string[] = ['PATH', 'HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GEMINI_CLI_HOME',
+      'KIMI_CODE_HOME', 'DOUBAO_CLI_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME']
       .filter((key) => env[key] !== undefined).map((key) => `${key}=${posixQuote(env[key] ?? '')}`);
     const command: string = `env ${paths.join(' ')} ${buildLoginCommand(provider, launch, platform)}`;
     args = ['-e', `tell application "Terminal" to do script ${JSON.stringify(command)}`, '-e', 'tell application "Terminal" to activate'];

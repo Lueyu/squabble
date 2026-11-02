@@ -1,6 +1,8 @@
 /** Native runtimes are selected from a fixed catalog; clients never supply executable paths. */
-export const LOCAL_AGENT_PROVIDERS = ['codex', 'claude'] as const;
+export const LOCAL_AGENT_PROVIDERS = ['codex', 'claude', 'gemini', 'antigravity', 'opencode', 'kimi', 'doubao'] as const;
 export type LocalAgentProvider = typeof LOCAL_AGENT_PROVIDERS[number];
+export interface NativeAgentConfiguration { model?: string; reasoningEffort?: string }
+export interface NativeAgentModel { id: string; name: string; reasoningEfforts?: string[] }
 export type NativeAgentState = 'not_installed' | 'login_required' | 'ready' | 'error';
 export interface NativeAgentStatus {
   provider: LocalAgentProvider;
@@ -9,6 +11,9 @@ export interface NativeAgentStatus {
   version?: string;
   loginCommand: string;
   installUrl: string;
+  models?: NativeAgentModel[];
+  reasoningEfforts?: string[];
+  configurationHelp?: string;
 }
 export interface LocalAgentConnection extends NativeAgentStatus {
   id: string;
@@ -28,6 +33,7 @@ export interface CompanionCommand {
   kind: 'run' | 'login';
   provider: LocalAgentProvider;
   prompt?: string;
+  agentSettings?: NativeAgentConfiguration;
 }
 export interface CompanionUpdate {
   id: string;
@@ -35,6 +41,7 @@ export interface CompanionUpdate {
   progress?: string;
   text?: string;
   usageTokens?: number | null;
+  error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED' | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN';
 }
 export interface CompanionPoll {
   agents: NativeAgentStatus[];

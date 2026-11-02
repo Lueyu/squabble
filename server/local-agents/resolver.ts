@@ -12,7 +12,13 @@ export interface NativeResolverOptions {
   fallbackDirectories?: string[];
 }
 
-const PACKAGES: Record<LocalAgentProvider, string> = { codex: '@openai/codex', claude: '@anthropic-ai/claude-code' };
+const PACKAGES: Partial<Record<LocalAgentProvider, string>> = {
+  codex: '@openai/codex', claude: '@anthropic-ai/claude-code', gemini: '@google/gemini-cli',
+  opencode: 'opencode-ai', kimi: '@moonshot-ai/kimi-code', doubao: 'doubao-cli',
+};
+const BIN_NAMES: Record<LocalAgentProvider, string> = {
+  codex: 'codex', claude: 'claude', gemini: 'gemini', antigravity: 'agy', opencode: 'opencode', kimi: 'kimi', doubao: 'doubao',
+};
 
 function isFile(path: string, executable: boolean): boolean {
   try {
@@ -43,11 +49,12 @@ function fallbackDirs(options: NativeResolverOptions): string[] {
   const env: NodeJS.ProcessEnv = options.env ?? process.env;
   const home: string = options.home ?? homedir();
   const platform: NodeJS.Platform = options.platform ?? process.platform;
-  const common: string[] = [join(home, '.local', 'bin'), join(home, '.claude', 'bin'), join(home, '.volta', 'bin')];
+  const common: string[] = [join(home, '.local', 'bin'), join(home, '.claude', 'bin'), join(home, '.volta', 'bin'),
+    join(home, '.opencode', 'bin'), join(home, '.antigravity', 'bin'), join(home, '.kimi-code', 'bin'), join(home, '.bun', 'bin')];
   if (platform === 'win32') {
     if (env.APPDATA) common.push(join(env.APPDATA, 'npm'));
     if (env.LOCALAPPDATA) {
-      common.push(join(env.LOCALAPPDATA, 'npm'));
+      common.push(join(env.LOCALAPPDATA, 'npm'), join(env.LOCALAPPDATA, 'agy', 'bin'));
       // The official desktop app also exposes a versioned native CLI here.
       const versions: string[] = directories(join(env.LOCALAPPDATA, 'OpenAI', 'Codex', 'bin'));
       versions.sort((a, b) => {
@@ -87,7 +94,9 @@ function resolveNode(options: NativeResolverOptions): string | null {
 
 /** Resolve only the package's declared bin; never execute arbitrary .cmd/.ps1 wrapper text. */
 function npmEntry(provider: LocalAgentProvider, binDir: string, options: NativeResolverOptions): NativeLaunch | null {
-  for (const packageRoot of [join(binDir, 'node_modules', PACKAGES[provider]), join(binDir, '..', 'lib', 'node_modules', PACKAGES[provider])]) {
+  const packageName: string | undefined = PACKAGES[provider];
+  if (!packageName) return null;
+  for (const packageRoot of [join(binDir, 'node_modules', packageName), join(binDir, '..', 'lib', 'node_modules', packageName)]) {
     try {
       const manifest: { name?: string; bin?: string | Record<string, string> } = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
       if (manifest.name !== PACKAGES[provider]) continue;
@@ -97,7 +106,7 @@ function npmEntry(provider: LocalAgentProvider, binDir: string, options: NativeR
       const within: string = relative(resolve(packageRoot), script);
       if (within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within) || !isFile(script, false)) continue;
       if (/\.exe$/i.test(script)) return { executable: script, prefixArgs: [] };
-      if (/\.(?:c|m)?js$/i.test(script)) {
+      if (/\.(?:c|m)?js$/i.test(script) || hasNodeShebang(script)) {
         const node: string | null = resolveNode(options);
         if (node) return { executable: node, prefixArgs: [script] };
       }
@@ -107,11 +116,12 @@ function npmEntry(provider: LocalAgentProvider, binDir: string, options: NativeR
 }
 
 export function resolveNativeCommand(provider: LocalAgentProvider, options: NativeResolverOptions = {}): NativeLaunch | null {
-  if (!Object.hasOwn(PACKAGES, provider)) throw new Error('NATIVE_AGENT_UNSUPPORTED');
+  if (!Object.hasOwn(BIN_NAMES, provider)) throw new Error('NATIVE_AGENT_UNSUPPORTED');
+  const bin: string = BIN_NAMES[provider];
   const windows: boolean = (options.platform ?? process.platform) === 'win32';
   const search: string[] = [...new Set([...pathDirs(options), ...fallbackDirs(options)])];
   for (const directory of search) {
-    const executable: string = resolve(directory, windows ? `${provider}.exe` : provider);
+    const executable: string = resolve(directory, windows ? `${bin}.exe` : bin);
     if (isFile(executable, !windows)) {
       if (!windows) {
         try { realpathSync(executable); } catch { continue; }
@@ -125,7 +135,7 @@ export function resolveNativeCommand(provider: LocalAgentProvider, options: Nati
       }
       return { executable, prefixArgs: [] };
     }
-    if (windows && [`.cmd`, `.ps1`, ''].some((extension) => existsSync(join(directory, provider + extension)))) {
+    if (windows && [`.cmd`, `.ps1`, ''].some((extension) => existsSync(join(directory, bin + extension)))) {
       const resolved: NativeLaunch | null = npmEntry(provider, directory, options);
       if (resolved) return resolved;
     }

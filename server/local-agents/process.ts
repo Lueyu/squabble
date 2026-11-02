@@ -13,6 +13,10 @@ export interface NativeProcessOptions {
   onLine?: (line: string) => void;
 }
 export interface NativeProcessResult { code: number; stdout: string; stderr: string }
+/** Internal output is retained only to recover an accepted remote task; never use it in UI errors. */
+export class NativeProcessFailure extends Error {
+  constructor(message: string, readonly result: NativeProcessResult) { super(message); }
+}
 
 /** Terminate only this invocation's process tree. Never kill by executable name. */
 function terminate(child: ChildProcessWithoutNullStreams, force = false): void {
@@ -55,7 +59,7 @@ export function executeNativeProcess(launch: NativeLaunch, args: string[], optio
       if (!failure) clearTimeout(killTimer);
       options.signal?.removeEventListener('abort', cancel);
       child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy();
-      if (failure) reject(failure);
+      if (failure) reject(new NativeProcessFailure(failure.message, { code, stdout, stderr }));
       else resolve({ code, stdout, stderr });
     };
     const stop = (code: string): void => {

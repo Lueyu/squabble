@@ -1,3 +1,4 @@
+import type { NativeAgentConfiguration } from './local-agents.interface';
 /** Public contracts for bounded, user-owned investment research. */
 export interface LlmBudgetSettings {
   enabled: boolean;
@@ -41,6 +42,7 @@ export interface CouncilMember {
   /** Native CLI members reuse a connected local account; model members use application API settings. */
   executionMode?: 'model' | 'local';
   agentId?: string;
+  agentSettings?: NativeAgentConfiguration;
   id: string;
   role: CouncilRole;
   name: string;

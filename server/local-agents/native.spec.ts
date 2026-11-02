@@ -8,6 +8,7 @@ import { nativeChildEnv } from './environment';
 import { resolveNativeCommand } from './resolver';
 import { buildLoginCommand } from './login';
 import { NativeEventCollector } from './events';
+import { LOCAL_AGENT_PROVIDERS } from '../../shared/local-agents.interface';
 
 const fixtureBody = `
 const fs = require('node:fs');
@@ -114,17 +115,17 @@ test('Claude preserves subscription login and restricts actual tools, preferring
 test('discovery returns readiness without executing research or exposing credentials', async () => {
   await fixture(async ({root,runtime}) => {
     const agents = await runtime.detectNativeAgents();
-    assert.deepEqual(agents.map((agent) => agent.state), ['ready','ready']);
-    assert.ok(agents.every((agent) => agent.version === 'fixture-cli 1.2.3'));
+    assert.deepEqual(agents.map((agent) => agent.state), ['ready','ready', ...Array(5).fill('not_installed')]);
+    assert.ok(agents.slice(0, 2).every((agent) => agent.version === 'fixture-cli 1.2.3'));
     await assert.rejects(readFile(join(root,'capture.json')));
     await writeFile(join(root,'auth-state'), 'not logged in');
-    assert.deepEqual((await runtime.detectNativeAgents()).map((agent) => agent.state), ['login_required','login_required']);
+    assert.deepEqual((await runtime.detectNativeAgents()).slice(0, 2).map((agent) => agent.state), ['login_required','login_required']);
   });
 });
 
 test('absent native tools are not installed and cannot execute', async () => {
   const runtime = createNativeRuntime({env:{PATH:''},home:join(tmpdir(),'squabble-nonexistent-home'),fallbackDirectories:[]});
-  assert.deepEqual((await runtime.detectNativeAgents()).map((agent) => agent.state),['not_installed','not_installed']);
+  assert.deepEqual((await runtime.detectNativeAgents()).map((agent) => agent.state),LOCAL_AGENT_PROVIDERS.map(()=>'not_installed'));
   await assert.rejects(runtime.runNativeAgent('codex','hello',{root:tmpdir(),signal:new AbortController().signal,onProgress:()=>undefined}),/NATIVE_AGENT_NOT_INSTALLED/);
   await assert.rejects(runtime.openNativeLogin('codex'),/NATIVE_AGENT_NOT_INSTALLED/);
 });
@@ -132,7 +133,7 @@ test('absent native tools are not installed and cannot execute', async () => {
 test('authentication timeouts are bounded and reported as errors, not absent installations', async () => {
   await fixture(async ({root,runtime}) => {
     await writeFile(join(root,'auth-state'),'hang');
-    assert.deepEqual((await runtime.detectNativeAgents()).map((agent) => agent.state),['error','error']);
+    assert.deepEqual((await runtime.detectNativeAgents()).slice(0, 2).map((agent) => agent.state),['error','error']);
   }, {authTimeoutMs:150});
 });
 
@@ -224,7 +225,7 @@ test('already cancelled, oversized and empty prompts never start a provider proc
 test('Claude readiness accepts the native pretty-printed auth status JSON', async () => {
   await fixture(async ({root,runtime}) => {
     await writeFile(join(root,'auth-state'),'pretty');
-    assert.deepEqual((await runtime.detectNativeAgents()).map((agent) => agent.state),['ready','ready']);
+    assert.deepEqual((await runtime.detectNativeAgents()).slice(0, 2).map((agent) => agent.state),['ready','ready']);
   });
 });
 
@@ -274,4 +275,29 @@ test('login reports a missing native terminal instead of claiming login started'
       fallbackDirectories:[join(root,'bin')],nodeExecutable:process.execPath});
     await assert.rejects(runtime.openNativeLogin('codex'),/NATIVE_LOGIN_TERMINAL_UNAVAILABLE/);
   });
+});
+
+test('Antigravity official Windows install is found when desktop PATH predates installation',async()=>{
+  const root: string = await mkdtemp(join(tmpdir(),'squabble-agy-resolve-'));
+  try {
+    const bin: string = join(root,'local','agy','bin');
+    await mkdir(bin,{recursive:true}); await writeFile(join(bin,'agy.exe'),'fixture');
+    assert.equal(resolveNativeCommand('antigravity',{platform:'win32',env:{PATH:'',LOCALAPPDATA:join(root,'local')},home:root})?.executable,join(bin,'agy.exe'));
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+test('new npm CLI providers resolve declared bins without evaluating Windows wrapper contents',async()=>{
+  const root: string = await mkdtemp(join(tmpdir(),'squabble-seven-resolve-'));
+  try {
+    const packages = {gemini:'@google/gemini-cli',opencode:'opencode-ai',kimi:'@moonshot-ai/kimi-code',doubao:'doubao-cli'};
+    for(const provider of ['gemini','opencode','kimi','doubao'] as const) {
+      const packageRoot: string = join(root,'node_modules',packages[provider]);
+      await mkdir(join(packageRoot,'bin'),{recursive:true});
+      await writeFile(join(packageRoot,'package.json'),JSON.stringify({name:packages[provider],bin:{[provider]:'bin/entry'}}));
+      await writeFile(join(packageRoot,'bin','entry'),'#!/usr/bin/env node\n');
+      await writeFile(join(root,provider+'.cmd'),'@echo should never run');
+      assert.deepEqual(resolveNativeCommand(provider,{platform:'win32',env:{PATH:root},home:root,fallbackDirectories:[],nodeExecutable:process.execPath}),
+        {executable:process.execPath,prefixArgs:[join(packageRoot,'bin','entry')]});
+    }
+  } finally { await rm(root,{recursive:true,force:true}); }
 });

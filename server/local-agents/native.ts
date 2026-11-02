@@ -1,72 +1,73 @@
 import { homedir } from 'node:os';
-import type { LocalAgentProvider, NativeAgentStatus } from '../../shared/local-agents.interface';
+import { LOCAL_AGENT_PROVIDERS, type LocalAgentProvider, type NativeAgentConfiguration, type NativeAgentStatus } from '../../shared/local-agents.interface';
+import { providerCatalog } from '../../shared/local-agent-catalog';
 import { nativeChildEnv } from './environment';
 import { NativeEventCollector } from './events';
 import { launchNativeLogin } from './login';
 import { executeNativeProcess, type NativeProcessResult } from './process';
 import { resolveNativeCommand, type NativeLaunch, type NativeResolverOptions } from './resolver';
 import { createNativeWorkspace } from './workspace';
+import { authenticationState, configuredModels, defaultCapabilities, geminiMetadata, kimiCredentialEnv, kimiMetadata, parseModels, supportsAntigravity } from './metadata';
+import { normalizedConfiguration, researchInvocation, type NativeProbe } from './research';
+import { runDoubao } from './doubao';
 
-export interface NativeRunOptions { root: string; signal: AbortSignal; onProgress: (text: string) => void }
+export interface NativeRunOptions {
+  root: string; signal: AbortSignal; onProgress: (text: string) => void; agentSettings?: NativeAgentConfiguration;
+}
 export interface NativeRuntimeOptions extends NativeResolverOptions {
-  authTimeoutMs?: number;
-  runTimeoutMs?: number;
-  maxOutputBytes?: number;
-}
-const CATALOG: Record<LocalAgentProvider, Pick<NativeAgentStatus, 'name' | 'loginCommand' | 'installUrl'>> = {
-  codex: { name: 'Codex', loginCommand: 'codex login', installUrl: 'https://developers.openai.com/codex/cli/' },
-  claude: { name: 'Claude Code', loginCommand: 'claude auth login', installUrl: 'https://code.claude.com/docs/en/setup' },
-};
-
-function authState(provider: LocalAgentProvider, result: NativeProcessResult): NativeAgentStatus['state'] {
-  if (provider === 'codex') {
-    if (result.code === 0) return 'ready';
-    return /not logged in|not authenticated|login required/i.test(`${result.stdout}\n${result.stderr}`) ? 'login_required' : 'error';
-  }
-  for (const line of [result.stdout.trim(), ...result.stdout.split(/\r?\n/).reverse()]) {
-    try {
-      const status: { loggedIn?: boolean } = JSON.parse(line);
-      if (status.loggedIn === true && result.code === 0) return 'ready';
-      if (status.loggedIn === false && (result.code === 0 || result.code === 1)) return 'login_required';
-    } catch { /* Native CLI warnings can precede the JSON status. */ }
-  }
-  return 'error';
-}
-
-function researchArgs(provider: LocalAgentProvider): string[] {
-  if (provider === 'codex') return ['--search', '--ask-for-approval', 'never', 'exec', '--json', '--sandbox', 'read-only',
-    '--ephemeral', '--skip-git-repo-check', '-'];
-  return ['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence',
-    '--tools', 'WebSearch,WebFetch,Read,Glob,Grep', '--allowedTools', 'WebSearch,WebFetch,Read,Glob,Grep',
-    '--permission-mode', 'dontAsk', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-    '--disable-slash-commands', '--settings', '{"disableAllHooks":true}'];
+  authTimeoutMs?: number; runTimeoutMs?: number; maxOutputBytes?: number;
+  /** Internal dependency seam for offline subprocess fixtures, never accepted over HTTP. */
+  commandResolver?: (provider: LocalAgentProvider, options: NativeResolverOptions) => NativeLaunch | null;
 }
 
 /** Dependency-free runtime shared by the API process and the paired local companion. */
 export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
-  const env = (): NodeJS.ProcessEnv => nativeChildEnv(options.env ?? process.env);
+  const env = (provider?: LocalAgentProvider, model?: string): NodeJS.ProcessEnv => ({ ...nativeChildEnv(options.env ?? process.env),
+    ...(provider === 'kimi' ? kimiCredentialEnv(options, model) : {}) });
+  const resolveCommand = (provider: LocalAgentProvider): NativeLaunch | null => (options.commandResolver ?? resolveNativeCommand)(provider, options);
   const command = (provider: LocalAgentProvider): NativeLaunch => {
-    const launch: NativeLaunch | null = resolveNativeCommand(provider, options);
+    if (!LOCAL_AGENT_PROVIDERS.includes(provider)) throw new Error('NATIVE_AGENT_UNSUPPORTED');
+    const launch: NativeLaunch | null = resolveCommand(provider);
     if (!launch) throw new Error('NATIVE_AGENT_NOT_INSTALLED');
     return launch;
   };
+  const probeFor = (launch: NativeLaunch, provider: LocalAgentProvider, model?: string): NativeProbe => (args: string[]): Promise<NativeProcessResult> => executeNativeProcess(launch, args, {
+    cwd: options.home ?? homedir(), env: env(provider, model), timeoutMs: options.authTimeoutMs ?? 8000, maxOutputBytes: 1024 * 1024,
+  });
   return {
     async detectNativeAgents(): Promise<NativeAgentStatus[]> {
-      return Promise.all((['codex', 'claude'] as const).map(async (provider): Promise<NativeAgentStatus> => {
-        const status: NativeAgentStatus = { provider, ...CATALOG[provider], state: 'not_installed' };
-        const launch: NativeLaunch | null = resolveNativeCommand(provider, options);
+      return Promise.all(LOCAL_AGENT_PROVIDERS.map(async (provider: LocalAgentProvider): Promise<NativeAgentStatus> => {
+        const status: NativeAgentStatus = { ...providerCatalog[provider], ...defaultCapabilities(provider), state: 'not_installed' };
+        const launch: NativeLaunch | null = resolveCommand(provider);
         if (!launch) return status;
-        const probe = (args: string[]) => executeNativeProcess(launch, args, {
-          cwd: options.home ?? homedir(), env: env(), timeoutMs: options.authTimeoutMs ?? 8000, maxOutputBytes: 64 * 1024,
-        });
-        const [version, auth] = await Promise.allSettled([
-          probe(['--version']), probe(provider === 'codex' ? ['login', 'status'] : ['auth', 'status']),
-        ]);
-        if (version.status === 'fulfilled' && version.value.code === 0) {
-          const line: string = version.value.stdout.trim().split(/\r?\n/)[0] ?? '';
-          if (line.length <= 120 && /\d+\.\d+/.test(line) && !/[\u0000-\u001f]/.test(line)) status.version = line;
-        }
-        status.state = auth.status === 'fulfilled' ? authState(provider, auth.value) : 'error';
+        const probe: NativeProbe = probeFor(launch, provider);
+        try {
+          const version = await probe(['--version']);
+          if (version.code !== 0) { status.state = 'error'; return status; }
+          const line: string = version.stdout.trim().split(/\r?\n/)[0] ?? '';
+          if (line.length <= 120 && /\d+\.\d+/u.test(line) && !/[\u0000-\u001f]/u.test(line)) status.version = line;
+          if (provider === 'gemini') Object.assign(status, geminiMetadata(options));
+          else if (provider === 'kimi') {
+            const doctor = await probe(['doctor', 'config']);
+            const metadata = kimiMetadata(options);
+            status.models = metadata.models; status.state = doctor.code === 0 ? metadata.state : 'error';
+          } else if (provider === 'antigravity') {
+            if (!supportsAntigravity(version.stdout)) { status.state = 'error'; return status; }
+            const auth = await probe(['-p', '/usage', '--output-format', 'json']);
+            const models = await probe(['--output-format', 'json', 'models']);
+            status.models = parseModels(provider, models.stdout);
+            status.state = auth.code === 0 && models.code === 0 && status.models.length > 0 ? 'ready' : authenticationState(provider, auth);
+          } else {
+            const auth = await probe(provider === 'codex' ? ['login', 'status'] : provider === 'doubao' ? ['headless', 'status', '--json']
+              : provider === 'opencode' ? ['auth', 'list'] : ['auth', 'status']);
+            status.state = authenticationState(provider, auth);
+            if (provider === 'codex' || provider === 'claude') status.models = configuredModels(provider, options);
+            if (status.state === 'ready' && (provider === 'doubao' || provider === 'opencode')) {
+              const models = await probe(provider === 'doubao' ? ['headless', 'models', '--json'] : ['models', '--verbose']);
+              if (models.code === 0) status.models = parseModels(provider, models.stdout);
+            }
+          }
+        } catch { status.state = 'error'; }
         return status;
       }));
     },
@@ -76,16 +77,18 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
     async runNativeAgent(provider: LocalAgentProvider, prompt: string, run: NativeRunOptions): Promise<{ text: string; usageTokens: number | null }> {
       if (run.signal.aborted) throw new Error('NATIVE_AGENT_CANCELLED');
       if (!prompt.trim() || Buffer.byteLength(prompt, 'utf8') > 256 * 1024) throw new Error('NATIVE_AGENT_INVALID_PROMPT');
+      const settings: NativeAgentConfiguration = normalizedConfiguration(run.agentSettings);
       const launch: NativeLaunch = command(provider);
-      const collector: NativeEventCollector = new NativeEventCollector(provider, run.onProgress);
       const workspace = await createNativeWorkspace(run.root);
       try {
-        const result: NativeProcessResult = await executeNativeProcess(launch, researchArgs(provider), {
-          cwd: workspace.cwd, env: env(), input: prompt, signal: run.signal,
-          timeoutMs: options.runTimeoutMs ?? 10 * 60 * 1000, maxOutputBytes: options.maxOutputBytes ?? 4 * 1024 * 1024,
-          onLine: (line: string) => collector.read(line),
-        });
+        const invocation = await researchInvocation(provider, prompt, settings, workspace.cwd, env(provider, settings.model), options, probeFor(launch, provider, settings.model));
+        const processOptions = { cwd: workspace.cwd, env: invocation.env, input: invocation.input, signal: run.signal,
+          timeoutMs: options.runTimeoutMs ?? 10 * 60 * 1000, maxOutputBytes: options.maxOutputBytes ?? 4 * 1024 * 1024 };
+        if (provider === 'doubao') return await runDoubao(launch, invocation.args, processOptions, run.root, run.onProgress);
+        const collector: NativeEventCollector = new NativeEventCollector(provider, run.onProgress);
+        const result = await executeNativeProcess(launch, invocation.args, { ...processOptions, onLine: (line: string) => collector.read(line) });
         if (result.code !== 0) throw new Error('NATIVE_AGENT_FAILED');
+        collector.completeProcess();
         return collector.result();
       } finally { await workspace.dispose(); }
     },

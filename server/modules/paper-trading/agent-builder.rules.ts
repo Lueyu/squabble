@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/api.interface';
 import type { CouncilConfig } from '../../../shared/council.interface';
 import { normalizeCadence } from './trading-cadence';
+import { parseNativeAgentConfiguration } from '../local-agents/local-agents.requests';
 
 export function normalizeCouncil(input?: CouncilConfig): CouncilConfig {
   if (input === undefined) return { enabled: false, members: [
@@ -35,6 +36,8 @@ export function normalizeCouncil(input?: CouncilConfig): CouncilConfig {
     if (executionMode !== undefined && !['model', 'local'].includes(executionMode)) throw new Error('Invalid member execution mode');
     if (executionMode === 'local' && (typeof member.agentId !== 'string'
       || !/^[a-zA-Z0-9_-]{1,64}$/.test(member.agentId))) throw new Error('Select a registered local agent');
+    const agentSettings = parseNativeAgentConfiguration(member.agentSettings);
+    if (agentSettings && executionMode !== 'local') throw new Error('Native agent settings require local execution');
     if (member.connectionId !== undefined && (typeof member.connectionId !== 'string'
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(member.connectionId))) {
       throw new Error('Invalid model connection identifier');
@@ -46,6 +49,7 @@ export function normalizeCouncil(input?: CouncilConfig): CouncilConfig {
     ids.add(member.id);
     return { id: member.id, role: member.role, name: member.name.trim(), instructions: member.instructions.trim(), model: member.model,
       ...(executionMode === 'local' ? { executionMode: 'local' as const, agentId: member.agentId } : {}),
+      ...(agentSettings ? { agentSettings } : {}),
       ...(member.connectionId === undefined ? {} : { connectionId: member.connectionId }),
       ...(member.avatar === undefined ? {} : { avatar: member.avatar }),
       ...(member.roleTitle === undefined ? {} : { roleTitle: optionalText(member.roleTitle, 60) }),

@@ -4,7 +4,9 @@ import { join } from 'node:path';
 
 // This package has an independent rootDir. Keep this narrow wire contract in sync
 // with shared/local-agents.interface.ts without pulling backend sources into Electron.
-export type NativeProvider = 'codex' | 'claude';
+const NATIVE_PROVIDERS = ['codex', 'claude', 'gemini', 'antigravity', 'opencode', 'kimi', 'doubao'] as const;
+export type NativeProvider = typeof NATIVE_PROVIDERS[number];
+interface NativeAgentConfiguration { model?: string; reasoningEffort?: string }
 export interface NativeAgentStatus {
   provider: NativeProvider;
   name: string;
@@ -12,21 +14,26 @@ export interface NativeAgentStatus {
   version?: string;
   loginCommand: string;
   installUrl: string;
+  models?: Array<{ id: string; name: string; reasoningEfforts?: string[] }>;
+  reasoningEfforts?: string[];
+  configurationHelp?: string;
 }
 export interface NativeRuntime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
   openNativeLogin(provider: NativeProvider): Promise<void>;
   runNativeAgent(provider: NativeProvider, prompt: string, options: {
     root: string; signal: AbortSignal; onProgress: (text: string) => void;
+    agentSettings?: NativeAgentConfiguration;
   }): Promise<{ text: string; usageTokens: number | null }>;
 }
-interface Command { id: string; kind: 'run' | 'login'; provider: NativeProvider; prompt?: string }
+interface Command { id: string; kind: 'run' | 'login'; provider: NativeProvider; prompt?: string; agentSettings?: NativeAgentConfiguration }
 interface Update {
   id: string;
   state: 'running' | 'completed' | 'failed' | 'cancelled';
   progress?: string;
   text?: string;
   usageTokens?: number | null;
+  error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED' | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN';
 }
 interface Pairing {
   origin: string; token: string; deviceId: string; processedTaskIds: string[];
@@ -99,10 +106,33 @@ function pollResponse(value: unknown): value is { commands: Command[]; cancelTas
   return value.cancelTaskIds.every((id: unknown) => typeof id === 'string' && TASK_ID.test(id))
     && value.commands.every((command: unknown) => object(command)
       && typeof command.id === 'string' && TASK_ID.test(command.id)
-      && (command.provider === 'codex' || command.provider === 'claude')
-      && ((command.kind === 'login' && command.prompt === undefined)
+      && NATIVE_PROVIDERS.some((provider) => provider === command.provider)
+      && validConfiguration(command.agentSettings)
+      && ((command.kind === 'login' && command.prompt === undefined && command.agentSettings === undefined)
         || (command.kind === 'run' && typeof command.prompt === 'string'
           && command.prompt.length > 0 && command.prompt.length <= MAX_TEXT)));
+}
+
+function validConfiguration(value: unknown): value is NativeAgentConfiguration | undefined {
+  if (value === undefined) return true;
+  if (!object(value) || Object.keys(value).some((key) => key !== 'model' && key !== 'reasoningEffort')) return false;
+  return [['model', 160], ['reasoningEffort', 32]].every(([key, limit]) => {
+    const text = value[key];
+    return text === undefined || typeof text === 'string' && text.trim().length > 0
+      && text.length <= Number(limit) && !/[\u0000-\u001f\u007f]/u.test(text);
+  });
+}
+
+function nativeFailureCode(error: unknown): Update['error'] {
+  const codes: Record<string, NonNullable<Update['error']>> = {
+    NATIVE_AGENT_LOGIN_REQUIRED: 'LOCAL_LOGIN_REQUIRED',
+    NATIVE_AGENT_INVALID_CONFIGURATION: 'LOCAL_INVALID_CONFIGURATION',
+    NATIVE_AGENT_CONFIGURATION_UNSUPPORTED: 'LOCAL_CONFIGURATION_UNSUPPORTED',
+    NATIVE_AGENT_VERSION_UNSUPPORTED: 'LOCAL_VERSION_UNSUPPORTED',
+    NATIVE_AGENT_CANCEL_UNCONFIRMED: 'LOCAL_DISPATCH_UNCERTAIN',
+    NATIVE_AGENT_UPSTREAM_PENDING: 'LOCAL_DISPATCH_UNCERTAIN',
+  };
+  return error instanceof Error ? codes[error.message] : undefined;
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -382,6 +412,7 @@ export class LocalAgentCompanion {
       }
       const result = await this.options.native.runNativeAgent(command.provider, command.prompt ?? '', {
         root: join(this.options.dataDir, 'tasks', command.id), signal: controller.signal,
+        agentSettings: command.agentSettings,
         onProgress: (progress) => {
           if (!controller.signal.aborted) update({ id: command.id, state: 'running', progress: progress.slice(0, 500) });
         },
@@ -390,9 +421,11 @@ export class LocalAgentCompanion {
       if (Buffer.byteLength(result.text, 'utf8') > MAX_TEXT) throw new Error('Native result too large');
       update({ id: command.id, state: 'completed', text: result.text,
         usageTokens: Number.isSafeInteger(result.usageTokens) && Number(result.usageTokens) >= 0 ? result.usageTokens : null });
-    } catch {
-      update({ id: command.id, state: controller.signal.aborted ? 'cancelled' : 'failed',
-        progress: controller.signal.aborted ? 'Task interrupted.' : 'Native agent failed. Check its installation and sign-in, then start a new task.' });
+    } catch (error) {
+      const code = nativeFailureCode(error);
+      const cancelled = controller.signal.aborted && code !== 'LOCAL_DISPATCH_UNCERTAIN';
+      update({ id: command.id, state: cancelled ? 'cancelled' : 'failed', ...(code && !cancelled ? { error: code } : {}),
+        progress: cancelled ? 'Task interrupted.' : 'Native agent failed. Check its installation and sign-in before starting another task.' });
     }
   }
 

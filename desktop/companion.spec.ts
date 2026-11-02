@@ -149,6 +149,56 @@ test('poll persists task IDs before launch, deduplicates delivery and preserves 
   } finally { await f.helper.stop(); await f.temporary.remove(); }
 });
 
+test('companion carries settings for all seven providers and refuses malformed overrides', async () => {
+  const calls: unknown[][] = [];
+  const f = await fixture({ runNativeAgent: async (...args: unknown[]) => {
+    calls.push(args); return { text: 'complete', usageTokens: null };
+  } });
+  try {
+    const providers = ['codex', 'claude', 'gemini', 'antigravity', 'opencode', 'kimi', 'doubao'];
+    const agentSettings = { model: 'fixture/model', reasoningEffort: 'high' };
+    f.response({ commands: providers.map((provider) => ({ id: `configured-${provider}`, kind: 'run', provider,
+      prompt: 'Research', agentSettings })), cancelTaskIds: [] });
+    await f.helper.pollOnce(); await settle();
+    assert.deepEqual(calls.map((call) => call[0]), providers);
+    assert.ok(calls.every((call) => JSON.stringify((call[2] as { agentSettings: unknown }).agentSettings) === JSON.stringify(agentSettings)));
+    for (const invalid of [{ model: 7 }, { model: 'x'.repeat(161) }, { reasoningEffort: 'high\n' }, { executable: 'other' }]) {
+      f.response({ commands: [{ id: 'invalid-settings', kind: 'run', provider: 'codex', prompt: 'Research', agentSettings: invalid }], cancelTaskIds: [] });
+      await f.helper.pollOnce(); await settle();
+      assert.equal(calls.length, 7);
+      assert.equal(f.helper.status.state, 'offline');
+    }
+  } finally { await f.helper.stop(); await f.temporary.remove(); }
+});
+
+test('unconfirmed upstream cancellation remains failed with an actionable code', async () => {
+  const f = await fixture({ runNativeAgent: async (...args: unknown[]) => {
+    const { signal } = args[2] as { signal: AbortSignal };
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+    throw new Error('NATIVE_AGENT_CANCEL_UNCONFIRMED');
+  } });
+  try {
+    f.response({ commands: [{ id: 'uncertain', kind: 'run', provider: 'doubao', prompt: 'Research' }], cancelTaskIds: [] });
+    await f.helper.pollOnce();
+    f.response({ commands: [], cancelTaskIds: ['uncertain'] });
+    await f.helper.pollOnce(); await settle(); await f.helper.pollOnce();
+    assert.deepEqual(f.sent.at(-1)?.updates.map((update) => ({ id: update.id, state: update.state,
+      error: (update as { error?: string }).error })),
+    [{ id: 'uncertain', state: 'failed', error: 'LOCAL_DISPATCH_UNCERTAIN' }]);
+  } finally { await f.helper.stop(); await f.temporary.remove(); }
+});
+
+test('native login requirements are returned as an actionable companion error', async () => {
+  const f = await fixture({ runNativeAgent: async () => { throw new Error('NATIVE_AGENT_LOGIN_REQUIRED'); } });
+  try {
+    f.response({ commands: [{ id: 'login-needed', kind: 'run', provider: 'antigravity', prompt: 'Research' }], cancelTaskIds: [] });
+    await f.helper.pollOnce(); await settle();
+    f.response({ commands: [], cancelTaskIds: [] });
+    await f.helper.pollOnce();
+    assert.equal((f.sent.at(-1)?.updates[0] as { error?: string }).error, 'LOCAL_LOGIN_REQUIRED');
+  } finally { await f.helper.stop(); await f.temporary.remove(); }
+});
+
 test('cancellation and provider concurrency do not block companion heartbeat', async () => {
   const signals: AbortSignal[] = [];
   const f = await fixture({ runNativeAgent: async (...args: unknown[]) => {

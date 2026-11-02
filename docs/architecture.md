@@ -19,7 +19,7 @@ flowchart LR
     Backend --> Quotes[Public quote and FX providers]
     Backend -->|Optional company metrics and news| Finnhub[Finnhub]
     Backend -->|Configured AI requests| Model[OpenAI-compatible model provider]
-    Backend -->|Desktop native execution| Native[Codex or Claude Code]
+    Backend -->|Desktop native execution| Native[a supported native research agent]
     Helper[Squabble desktop helper] -->|Outbound polling to paired local app| Backend
     Helper -->|Local Docker research| Native
     Native --> AgentProvider[Agent's configured provider]

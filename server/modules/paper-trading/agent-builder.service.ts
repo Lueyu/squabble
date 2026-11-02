@@ -22,6 +22,7 @@ import type {
 } from '@shared/api.interface';
 import { normalizeBuilderConfig, validateManualFill } from './agent-builder.rules';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
+import { LocalAgentError } from '../local-agents/local-agents.types';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 
 @Injectable()
@@ -105,7 +106,11 @@ export class AgentBuilderService {
       const members = config.council.members;
       for (const member of members.filter((item) => item.executionMode === 'local')) {
         if (!this.localAgents || !member.agentId) throw new BadRequestException('Local agent unavailable');
-        await this.localAgents.validate(userId, member.agentId);
+        try { await this.localAgents.validate(userId, member.agentId, member.agentSettings); }
+        catch (error) {
+          if (error instanceof LocalAgentError) throw new BadRequestException(error.code);
+          throw error;
+        }
       }
       await this.llm.validateConnectionIds(userId, members.flatMap((member) => member.executionMode !== 'local' && member.connectionId ? [member.connectionId] : []));
       const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId)));

@@ -9,6 +9,7 @@ import { connectLocalAgent, createLocalAgentPairing, disconnectLocalAgent, disco
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
 
 const QUERY_KEY = ['settings', 'local-agents'];
 const STATUS_KEY = [...QUERY_KEY, 'status'];
@@ -52,19 +53,19 @@ export default function LocalAgentsPanel() {
       setNotice(request.kind === 'login' ? 'loginOpened' : request.kind === 'connect' ? 'connectedNotice' : 'disconnectedNotice');
       await refresh();
     },
-    onError: () => setFailure('actionFailed'),
+    onError: (error: unknown) => setFailure(errorMessage(error, key('actionFailed'))),
   });
   const pair = useMutation({
     retry: false, mutationFn: createLocalAgentPairing,
     onSuccess: async (result: LocalAgentPairing) => {
       setPairing(result); setNow(Date.now()); setNotice(''); await refresh();
     },
-    onError: () => setFailure('pairFailed'),
+    onError: () => setFailure(key('pairFailed')),
   });
   const unpair = useMutation({
     retry: false, mutationFn: disconnectLocalCompanion,
     onSuccess: async () => { setPairing(null); setNotice('companionRemoved'); await refresh(); },
-    onError: () => setFailure('actionFailed'),
+    onError: (error: unknown) => setFailure(errorMessage(error, key('actionFailed'))),
   });
   const run = (id: string, kind: AgentAction['kind']) => {
     setFailure(''); setNotice(''); return action.mutate({ id, kind });
@@ -85,7 +86,7 @@ export default function LocalAgentsPanel() {
     <CardContent className="space-y-4">
       {status.isPending && <p role="status" className="text-sm text-muted-foreground">{t('council.loading')}</p>}
       {status.isError && <p role="alert" className="text-sm text-destructive">{key('loadFailed')}</p>}
-      {failure && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{key(failure)}</p>}
+      {failure && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{failure}</p>}
       {notice && <p role="status" className="rounded-lg bg-muted/40 p-3 text-sm leading-6">{key(notice)}</p>}
       {status.data?.mode === 'companion' && <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -116,6 +117,7 @@ export default function LocalAgentsPanel() {
           const state = offline ? 'offline' : agent.busy ? 'busy'
             : agent.state === 'ready' && agent.connected ? 'connected' : agent.state;
           const pending = action.isPending && action.variables?.id === agent.id;
+          const agentHelp = t(`council.localAgents.providerHelp.${agent.provider}`, { defaultValue: agent.configurationHelp ?? '' });
           return <article key={agent.id} aria-label={agent.name} className="flex min-w-0 flex-col rounded-xl border border-border p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0"><h3 className="flex items-center gap-2 break-words font-semibold">
@@ -126,6 +128,7 @@ export default function LocalAgentsPanel() {
               <Badge variant={state === 'connected' ? 'secondary' : state === 'error' ? 'destructive' : 'outline'}>{key(`states.${state}`)}</Badge>
             </div>
             <p className="mt-3 flex-1 text-xs leading-5 text-muted-foreground">{key(`stateHints.${state}`)}</p>
+            {agentHelp && <p className="mt-2 break-words text-xs leading-5 text-muted-foreground">{agentHelp}</p>}
             <div className="mt-4 flex flex-wrap gap-2">
               {!offline && agent.state === 'not_installed' && <Button asChild size="sm" variant="outline">
                 <a href={agent.installUrl} target="_blank" rel="noreferrer" aria-label={`${key('install')} · ${agent.name}`}>
