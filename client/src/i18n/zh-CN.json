@@ -272,7 +272,7 @@
   },
   "common": {
     "cancel": "取消", "confirm": "确认", "save": "保存", "delete": "删除",
-    "edit": "编辑", "close": "关闭", "loading": "加载中…", "saving": "保存中…",
+    "edit": "编辑", "close": "关闭", "loading": "加载中…", "saving": "保存中…", "loadMore": "加载更多",
     "success": "操作成功", "failed": "操作失败", "notFound": "404",
     "notFoundText": "牛牛和熊熊找遍了每个角落，也没找到这个页面——它们为此又吵了一架。",
     "goHome": "回首页", "currency": "币种", "retry": "重试",

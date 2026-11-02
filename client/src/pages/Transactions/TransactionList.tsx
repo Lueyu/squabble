@@ -12,7 +12,7 @@ import type { Transaction } from '@shared/api.interface';
 import {
   formatPrice,
   formatShares,
-  formatCurrency,
+  formatCurrencyWithCurrency,
   formatDate,
   plClass,
   cn,
@@ -60,25 +60,6 @@ export default function TransactionList({
   onDelete,
 }: TransactionListProps) {
   const { t } = useTranslation();
-  const buyTotal = transactions
-    .filter((tx) => tx.txType === 'Buy')
-    .reduce(
-      (sum, tx) =>
-        sum +
-        parseFloat(tx.shares) * parseFloat(tx.price) +
-        parseFloat(tx.fees || '0'),
-      0
-    );
-  const sellTotal = transactions
-    .filter((tx) => tx.txType === 'Sell')
-    .reduce(
-      (sum, tx) =>
-        sum +
-        parseFloat(tx.shares) * parseFloat(tx.price) -
-        parseFloat(tx.fees || '0'),
-      0
-    );
-
   if (loading) {
     return (
       <Card className="md:hidden">
@@ -163,7 +144,7 @@ export default function TransactionList({
                     <span className="text-muted-foreground">
                       {tx.txType === 'Buy' ? '-' : '+'}
                     </span>
-                    {formatCurrency(amount)}
+                    {formatCurrencyWithCurrency(amount, tx.currency || 'USD')}
                   </div>
                   <Button
                     variant="ghost"
@@ -192,7 +173,7 @@ export default function TransactionList({
                 <div>
                   <div className="text-xs text-muted-foreground">{t('tx.fees')}</div>
                   <div className="font-mono-nums">
-                    {formatCurrency(tx.fees || '0')}
+                    {formatCurrencyWithCurrency(tx.fees || '0', tx.currency || 'USD')}
                   </div>
                 </div>
               </div>

@@ -295,7 +295,7 @@
   },
   "common": {
     "cancel": "Cancel", "confirm": "Confirm", "save": "Save", "delete": "Delete",
-    "edit": "Edit", "close": "Close", "loading": "Loading…", "saving": "Saving…",
+    "edit": "Edit", "close": "Close", "loading": "Loading…", "saving": "Saving…", "loadMore": "Load more",
     "success": "Success", "failed": "Failed", "notFound": "404",
     "notFoundText": "The bull and bear searched every corner but couldn't find this page — they argued about it.",
     "goHome": "Go Home", "currency": "Currency", "retry": "Retry",

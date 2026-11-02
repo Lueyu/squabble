@@ -64,13 +64,36 @@ const PUBLIC_AUTH_PATHS = [
   '/api/auth/recover',
 ];
 
+let refreshPromise: Promise<{ accessToken: string; refreshToken: string }> | null = null;
+
+function refreshSession(refreshToken: string) {
+  if (!refreshPromise) {
+    refreshPromise = http.post('/api/auth/refresh', { refreshToken })
+      .then((response) => response.data as { accessToken: string; refreshToken: string })
+      .finally(() => { refreshPromise = null; });
+  }
+  return refreshPromise;
+}
+
 http.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error?.response?.status;
     const url: string = error?.config?.url ?? '';
     const isPublicAuth = PUBLIC_AUTH_PATHS.some((p) => url.includes(p));
     if (status === 401 && !isPublicAuth) {
+      const retryConfig = error?.config;
+      const refreshToken = tokenStore.getRefreshToken();
+      if (refreshToken && retryConfig && !retryConfig._sessionRetried) {
+        retryConfig._sessionRetried = true;
+        try {
+          const fresh = await refreshSession(refreshToken);
+          tokenStore.save(fresh.accessToken, fresh.refreshToken);
+          return http(retryConfig);
+        } catch {
+          // Invalid or revoked refresh token: clear the session below.
+        }
+      }
       // Session expired or token invalid (e.g. after a server rebuild or
       // database reset): drop the stale session and send the user to the
       // login page. /api/auth/me IS covered here so a stale token can

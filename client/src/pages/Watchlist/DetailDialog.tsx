@@ -7,7 +7,7 @@
  * swaps in the shared `WatchForm`; save PATCHes the item. A secondary confirm
  * dialog handles deletion.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -129,6 +129,13 @@ function DetailDialog({
   const [formData, setFormData] = useState<WatchFormData>(toFormData(item));
   const [submitting, setSubmitting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setFormData(toFormData(item));
+    setEditMode(false);
+    setConfirmDelete(false);
+  }, [open, item?.id]);
 
   // Reset state when dialog opens with a new item.
   const handleOpenChange = (o: boolean) => {

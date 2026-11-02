@@ -99,6 +99,7 @@
     "tradeCount": "交易笔数",
     "totalBuys": "买入总额",
     "totalSells": "卖出总额",
+    "loadedSubtotal": "当前已加载记录的小计",
     "emptyTx": "暂无交易记录",
     "emptyTxHint": "点击「添加交易」记录第一笔交易",
     "emptyRealized": "暂无已实现盈亏",

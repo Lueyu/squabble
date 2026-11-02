@@ -95,6 +95,7 @@ export default function TransactionsPage() {
   const [closed, setClosed] = useState<ClosedPosition[]>([]);
   const [realizedPl, setRealizedPl] = useState<RealizedPlSummary | null>(null);
   const [txLoading, setTxLoading] = useState(true);
+  const [hasMoreTransactions, setHasMoreTransactions] = useState(false);
   const [closedLoading, setClosedLoading] = useState(true);
   const [realizedPlLoading, setRealizedPlLoading] = useState(true);
   const [txError, setTxError] = useState<string | null>(null);
@@ -113,18 +114,21 @@ export default function TransactionsPage() {
   };
 
   /** Load transactions, optionally filtered by ticker, sorted by date desc. */
-  const loadTransactions = async () => {
+  const loadTransactions = async (append = false) => {
     setTxLoading(true);
     setTxError(null);
     try {
-      const params = tickerFilter.trim()
-        ? { ticker: tickerFilter.trim().toUpperCase() }
-        : undefined;
+      const params = {
+        ticker: tickerFilter.trim().toUpperCase() || undefined,
+        limit: 100,
+        offset: append ? transactions.length : 0,
+      };
       const data = await fetchTransactions(params);
-      const list = (data as Transaction[]).slice().sort((a, b) =>
+      const list = (append ? [...transactions, ...data] : data as Transaction[]).slice().sort((a, b) =>
         b.txDate.localeCompare(a.txDate)
       );
       setTransactions(list);
+      setHasMoreTransactions(data.length === 100);
     } catch (err) {
       setTxError(t('tx.loadTxFailed'));
       toast.error(t('tx.loadTxFailed'));
@@ -225,28 +229,18 @@ export default function TransactionsPage() {
   };
 
   /**
-   * Aggregate buy/sell totals across the filtered transactions. Fees are added
-   * to buys (cost) and subtracted from sells (proceeds).
+   * Keep native-currency subtotals separate. Fees are included in each trade.
    */
   const txStats = useMemo(() => {
-    const buyTotal = transactions
-      .filter((tx) => tx.txType === 'Buy')
-      .reduce(
-        (sum, tx) =>
-          sum +
-          parseFloat(tx.shares) * parseFloat(tx.price) +
-          parseFloat(tx.fees || '0'),
-        0
-      );
-    const sellTotal = transactions
-      .filter((tx) => tx.txType === 'Sell')
-      .reduce(
-        (sum, tx) =>
-          sum +
-          parseFloat(tx.shares) * parseFloat(tx.price) -
-          parseFloat(tx.fees || '0'),
-        0
-      );
+    const buyTotal: Record<string, number> = {};
+    const sellTotal: Record<string, number> = {};
+    for (const tx of transactions) {
+      const currency = tx.currency || 'USD';
+      const gross = parseFloat(tx.shares) * parseFloat(tx.price);
+      const fees = parseFloat(tx.fees || '0');
+      if (tx.txType === 'Buy') buyTotal[currency] = (buyTotal[currency] || 0) + gross + fees;
+      if (tx.txType === 'Sell') sellTotal[currency] = (sellTotal[currency] || 0) + gross - fees;
+    }
     return { buyTotal, sellTotal, count: transactions.length };
   }, [transactions]);
 
@@ -332,7 +326,9 @@ export default function TransactionsPage() {
                   {t('ui.tx.totalBuys')}
                 </div>
                 <div className="font-mono-nums text-xl font-semibold mt-1 text-foreground">
-                  {txLoading ? '—' : formatCurrency(txStats.buyTotal)}
+                  {txLoading ? '—' : Object.entries(txStats.buyTotal).map(([currency, value]) => (
+                    <div key={currency}>{formatCurrencyWithCurrency(value, currency)}</div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -343,11 +339,14 @@ export default function TransactionsPage() {
                   {t('ui.tx.totalSells')}
                 </div>
                 <div className="font-mono-nums text-xl font-semibold mt-1 text-foreground">
-                  {txLoading ? '—' : formatCurrency(txStats.sellTotal)}
+                  {txLoading ? '—' : Object.entries(txStats.sellTotal).map(([currency, value]) => (
+                    <div key={currency}>{formatCurrencyWithCurrency(value, currency)}</div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
           </div>
+          {hasMoreTransactions && <p className="mb-4 text-xs text-muted-foreground">{t('ui.tx.loadedSubtotal')}</p>}
 
           {/* Desktop Table */}
           <Card className="hidden md:block">
@@ -451,7 +450,7 @@ export default function TransactionsPage() {
                             {isDeposit || isWithdrawal || isOpening ? '—' : formatPrice(tx.price)}
                           </TableCell>
                           <TableCell className="text-right font-mono-nums text-muted-foreground">
-                            {formatCurrency(tx.fees || '0')}
+                            {formatCurrencyWithCurrency(tx.fees || '0', tx.currency || 'USD')}
                           </TableCell>
                           <TableCell
                              className={cn(
@@ -466,7 +465,7 @@ export default function TransactionsPage() {
                                 <span className="text-muted-foreground">
                                   {isOutflow ? '-' : '+'}
                                 </span>
-                                {formatCurrency(Math.abs(amount))}
+                                {formatCurrencyWithCurrency(Math.abs(amount), tx.currency || 'USD')}
                               </>
                             )}
                           </TableCell>
@@ -500,6 +499,13 @@ export default function TransactionsPage() {
             onAdd={() => setAddTxOpen(true)}
             onDelete={(id) => setDeleteTarget(id)}
           />
+          {hasMoreTransactions && !txLoading && (
+            <div className="mt-4 flex justify-center">
+              <Button variant="outline" onClick={() => loadTransactions(true)}>
+                {t('common.loadMore')}
+              </Button>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="realized" className="mt-0">
@@ -601,11 +607,6 @@ function RealizedPlContent({
   onAddClosed: () => void;
 }) {
   const { t } = useTranslation();
-  const totalPl = Object.values(summary.totalByCurrency).reduce(
-    (acc, v) => acc + parseFloat(v || '0'),
-    0
-  );
-  const isPositive = totalPl >= 0;
   const currencies = Object.entries(summary.totalByCurrency).filter(
     ([, v]) => parseFloat(v || '0') !== 0
   );
@@ -623,26 +624,18 @@ function RealizedPlContent({
       </div>
 
       {/* Total summary card */}
-      <Card
-        className={cn(
-          'overflow-hidden border-0',
-          isPositive
-            ? 'bg-gradient-to-br from-success/15 via-success/5 to-transparent'
-            : 'bg-gradient-to-br from-destructive/15 via-destructive/5 to-transparent'
-        )}
-      >
+      <Card className="overflow-hidden border-0 bg-muted/40">
         <CardContent className="p-6 md:p-8">
           <div className="text-sm font-medium text-muted-foreground">
             {t('tx.realizedPl')}
           </div>
-          <div
-            className={cn(
-              'mt-2 font-mono-nums text-4xl md:text-5xl font-bold tracking-tight',
-              isPositive ? 'text-success' : 'text-destructive'
-            )}
-          >
-            {isPositive ? '+' : ''}
-            {formatCurrency(totalPl)}
+          <div className="mt-2 font-mono-nums text-3xl md:text-4xl font-bold tracking-tight space-y-1">
+            {currencies.map(([currency, value]) => (
+              <div key={currency} className={plClass(value)}>
+                {parseFloat(value) >= 0 ? '+' : ''}{formatCurrencyWithCurrency(value, currency)}
+              </div>
+            ))}
+            {currencies.length === 0 && '—'}
           </div>
           <div className="mt-3 flex items-center gap-3 text-sm text-muted-foreground">
             <span className="flex items-center gap-1">
@@ -661,39 +654,6 @@ function RealizedPlContent({
           </div>
         </CardContent>
       </Card>
-
-      {/* Per-currency breakdown */}
-      {currencies.length > 1 && (
-        <Card>
-          <CardContent className="p-4 space-y-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              {t('ui.tx.byCurrency')}
-            </div>
-            {currencies.map(([currency, value]) => {
-              const num = parseFloat(value);
-              return (
-                <div
-                  key={currency}
-                  className="flex items-center justify-between py-1.5 border-b last:border-b-0 border-border/50"
-                >
-                  <span className="text-sm text-muted-foreground font-mono">
-                    {currency}
-                  </span>
-                  <span
-                    className={cn(
-                      'font-mono-nums font-semibold',
-                      plClass(value)
-                    )}
-                  >
-                    {num >= 0 ? '+' : ''}
-                    {formatCurrencyWithCurrency(value, currency)}
-                  </span>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
 
       {/* Desktop table */}
       <Card className="hidden md:block">

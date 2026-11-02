@@ -111,6 +111,7 @@ export default function JournalPage() {
 
   /** Step the selected date back by one day. */
   const handlePrevDay = () => {
+    if (editing) return;
     const d = new Date(currentDate);
     d.setDate(d.getDate() - 1);
     setCurrentDate(d);
@@ -118,6 +119,7 @@ export default function JournalPage() {
 
   /** Step the selected date forward by one day. */
   const handleNextDay = () => {
+    if (editing) return;
     const d = new Date(currentDate);
     d.setDate(d.getDate() + 1);
     setCurrentDate(d);
@@ -125,11 +127,13 @@ export default function JournalPage() {
 
   /** Set the selected date directly from the date picker. */
   const handleDateChange = (d: Date) => {
+    if (editing) return;
     setCurrentDate(d);
   };
 
   /** Navigate to a date chosen from the history sidebar. */
   const handleSelectHistory = (date: string) => {
+    if (editing) return;
     const d = toDate(date);
     if (d) setCurrentDate(d);
   };
