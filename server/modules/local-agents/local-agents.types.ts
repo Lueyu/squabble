@@ -1,8 +1,11 @@
+import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
+
 export interface LocalAgentTaskRef { taskId: string; contextId: string }
 export interface LocalAgentExecution {
   agentId: string;
   messageId: string;
   prompt: string;
+  agentSettings?: NativeAgentConfiguration;
   remoteTaskId?: string;
   contextId?: string;
   resumeInput?: boolean;
@@ -23,4 +26,18 @@ export class LocalAgentError extends Error {
     super(code);
     this.name = 'LocalAgentError';
   }
+}
+
+/** Publish only known runtime failures; CLI diagnostics can contain private data. */
+export function nativeFailureCode(error: unknown): string {
+  if (error instanceof LocalAgentError) return error.code;
+  const codes: Record<string, string> = {
+    NATIVE_AGENT_LOGIN_REQUIRED: 'LOCAL_LOGIN_REQUIRED',
+    NATIVE_AGENT_INVALID_CONFIGURATION: 'LOCAL_INVALID_CONFIGURATION',
+    NATIVE_AGENT_CONFIGURATION_UNSUPPORTED: 'LOCAL_CONFIGURATION_UNSUPPORTED',
+    NATIVE_AGENT_VERSION_UNSUPPORTED: 'LOCAL_VERSION_UNSUPPORTED',
+    NATIVE_AGENT_CANCEL_UNCONFIRMED: 'LOCAL_DISPATCH_UNCERTAIN',
+    NATIVE_AGENT_UPSTREAM_PENDING: 'LOCAL_DISPATCH_UNCERTAIN',
+  };
+  return error instanceof Error ? codes[error.message] ?? 'LOCAL_TASK_FAILED' : 'LOCAL_TASK_FAILED';
 }

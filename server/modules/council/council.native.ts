@@ -48,6 +48,10 @@ export function agentContribution(result: { data?: unknown; text: string }, evid
 
 export function agentErrorMessage(code: string, language: string): string {
   const messages: Record<string, [string, string]> = {
+    LOCAL_LOGIN_REQUIRED: ['本地 Agent 需要重新登录。请在设置中完成登录后新建讨论。', 'The local agent requires sign-in. Sign in from Settings and start a new discussion.'],
+    LOCAL_INVALID_CONFIGURATION: ['本地 Agent 的模型或思考深度配置无效。请检查成员配置后新建讨论。', 'The local agent model or reasoning setting is invalid. Check the member configuration and start a new discussion.'],
+    LOCAL_CONFIGURATION_UNSUPPORTED: ['当前本地 Agent 不支持所选模型或思考深度配置。请更新桌面助手或调整成员配置后新建讨论。', 'The local agent does not support the selected model or reasoning setting. Update the desktop companion or adjust the member configuration and start a new discussion.'],
+    LOCAL_VERSION_UNSUPPORTED: ['本地 Agent 版本不支持所需的执行能力。请升级 Agent 后新建讨论。', 'The local agent version does not support the required execution features. Update the agent and start a new discussion.'],
     LOCAL_INTERRUPTED: ['本地 Agent 的执行已中断，系统未自动重试。请检查连接，确认后新建讨论。', 'The native task was interrupted and was not retried. Check the connection before starting a new discussion.'],
     LOCAL_BUSY: ['本地 Agent 正在处理另一项任务，完成后点击继续。', 'The local agent is busy. Resume after its current task finishes.'],
     LOCAL_INPUT_REQUIRED: ['Agent 正在等待补充信息。请在聊天中回复后点击继续。', 'The agent needs input. Reply in chat, then resume.'],

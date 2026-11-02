@@ -97,7 +97,7 @@ start its own database and API before publishing version-tagged installers.
 
 ## Native research agents
 
-Use [Settings to connect Codex or Claude Code](local-agents.md). Desktop starts the
+Use [Settings to connect a supported research agent](local-agents.md). Desktop starts the
 backend with `LOCAL_AGENTS_MODE=native` and a private `LOCAL_AGENTS_DATA_DIR` under its
 application data directory. Source development can use native mode with the loopback
 host shown above. Docker uses `LOCAL_AGENTS_MODE=companion` and persists state in the

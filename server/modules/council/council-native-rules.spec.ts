@@ -5,6 +5,10 @@ import { agentContribution } from './council.native';
 import { normalizeBuilderConfig, normalizeCouncil } from '../paper-trading/agent-builder.rules';
 import { AgentBuilderService } from '../paper-trading/agent-builder.service';
 import type { CouncilMember } from '../../../shared/council.interface';
+import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
+import { BadRequestException } from '@nestjs/common';
+import { CouncilService } from './council.service';
+import { LocalAgentError } from '../local-agents/local-agents.types';
 
 const members: CouncilMember[] = [
   { id: 'researcher', name: 'Researcher', role: 'researcher', instructions: '', model: 'fast', executionMode: 'local', agentId: 'local-research' },
@@ -20,6 +24,50 @@ test('council normalization preserves native routing and rejects endpoint or she
   assert.equal(normalized.members[0].agentId, 'local-research');
   for (const id of ['', 'http://127.0.0.1:9000', '../agent', 'agent;command', 'x'.repeat(65)]) {
     assert.throws(() => normalizeCouncil({ enabled: true, members: [{ ...members[0], agentId: id }, members[1]] }), /registered local agent/);
+  }
+});
+
+test('council profiles preserve each native member configuration and reject invalid overrides', () => {
+  const agentSettings = { model: 'fixture/model', reasoningEffort: 'high' };
+  const configured = { ...members[0], agentSettings };
+  const normalized = normalizeCouncil({ enabled: true, members: [configured, members[1]] });
+  assert.deepEqual(normalized.members[0].agentSettings, agentSettings);
+  assert.notEqual(normalized.members[0].agentSettings, agentSettings, 'snapshot must not alias editable input');
+  assert.equal(normalized.members[1].agentSettings, undefined);
+  for (const invalid of [null, [], { model: 42 }, { model: '' }, { model: 'x'.repeat(161) },
+    { reasoningEffort: 'x'.repeat(33) }, { reasoningEffort: 'high\n' }, { command: 'other' }]) {
+    assert.throws(() => normalizeCouncil({ enabled: true,
+      members: [{ ...configured, agentSettings: invalid as NativeAgentConfiguration }, members[1]] }), /LOCAL_INVALID_CONFIGURATION/);
+  }
+  assert.throws(() => normalizeCouncil({ enabled: true,
+    members: [{ ...configured, executionMode: 'model' }, members[1]] }), /Native agent settings require local execution/);
+});
+
+test('builder activation validates each members native model settings against its connected runtime', async () => {
+  const configured = config();
+  const agentSettings = { model: 'fixture/model', reasoningEffort: 'high' };
+  configured.council!.members[0].agentSettings = agentSettings;
+  const validated: Array<NativeAgentConfiguration | undefined> = [];
+  const service = new AgentBuilderService(null as never, {
+    validateConnectionIds: async () => undefined,
+  } as never, {
+    validate: async (_owner: string, _id: string, settings?: NativeAgentConfiguration) => { validated.push(settings); },
+  } as never, { getSettings: async () => ({ enabled: true }) } as never);
+  await service.assertCanActivate('alice', configured);
+  assert.deepEqual(validated, [agentSettings, undefined]);
+});
+
+test('native configuration preflight errors remain actionable HTTP errors for research and activation', async () => {
+  const llm = { validateConnectionIds: async () => undefined };
+  for (const code of ['LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED']) {
+    const agents = { validate: async () => { throw new LocalAgentError(code); } };
+    const builder = new AgentBuilderService(null as never, llm as never, agents as never);
+    const council = new CouncilService(null as never, llm as never, null as never, null as never,
+      null as never, agents as never);
+    const publicError = (error: unknown) => error instanceof BadRequestException
+      && error.getStatus() === 400 && error.message === code;
+    await assert.rejects(builder.assertCanActivate('alice', config()), publicError);
+    await assert.rejects(council.createSession('alice', { ticker: 'AAPL', members }), publicError);
   }
 });
 

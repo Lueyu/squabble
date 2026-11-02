@@ -440,7 +440,11 @@ export class CouncilService implements OnModuleInit {
     await this.llm.validateConnectionIds(userId, members.flatMap((member) => member.executionMode !== 'local' && member.connectionId ? [member.connectionId] : []));
     for (const member of members.filter((item) => item.executionMode === 'local')) {
       if (!this.localAgents || !member.agentId) throw new BadRequestException('Local agent service unavailable');
-      await this.localAgents.validate(userId, member.agentId);
+      try { await this.localAgents.validate(userId, member.agentId, member.agentSettings); }
+      catch (error) {
+        if (error instanceof LocalAgentError) throw new BadRequestException(error.code);
+        throw error;
+      }
     }
   }
 
@@ -464,6 +468,7 @@ export class CouncilService implements OnModuleInit {
     if (!saved || resumeInput) await this.db.update(councilSessions).set({ checkpoint: { ...current.checkpoint!, remote } })
       .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     const result = await this.localAgents.execute(userId, { agentId: member.agentId, messageId: remote.messageId,
+      agentSettings: member.agentSettings,
       remoteTaskId: remote.taskId, contextId: remote.contextId, resumeInput,
       prompt: agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
         candidate: row.candidate, messages: messages.filter((message) => message.role !== 'system'), evidence: row.evidenceSnapshot }),

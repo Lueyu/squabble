@@ -17,7 +17,7 @@ requests:
 |---|---|
 | `client/` | React SPA (pages, components, hooks, api wrappers) |
 | `server/` | NestJS backend (modules, first-party auth, platform layer in `server/common/platform/`) |
-| `server/local-agents/` | Native Codex/Claude detection, login and research execution |
+| `server/local-agents/` | Native research agent detection, login, model configuration and execution |
 | `shared/` | Types shared by front-end and backend |
 | `agent/` | Optional Python agent CLI |
 | `docs/`, `README*` | Documentation |

@@ -1,13 +1,15 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CompanionPoll, CompanionPollResult, LocalAgentProvider, NativeAgentStatus } from '../../../shared/local-agents.interface';
+import type { CompanionPoll, CompanionPollResult, LocalAgentProvider, NativeAgentConfiguration, NativeAgentStatus } from '../../../shared/local-agents.interface';
 import { LocalAgentError } from './local-agents.types';
+import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from './local-agents.requests';
 
 export interface AgentTask {
   id: string; owner: string; agentId: string; provider: LocalAgentProvider;
   deviceId?: string; kind: 'run' | 'login'; messageId: string; prompt: string;
-  state: 'staged' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  agentSettings?: NativeAgentConfiguration;
+  state: 'staged' | 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
   createdAt: number; updatedAt: number; progress?: string; text?: string;
   usageTokens?: number | null; error?: string;
 }
@@ -21,7 +23,20 @@ interface State {
   devices: AgentDevice[];
   tasks: Record<string, AgentTask>;
 }
-const active = (task: AgentTask) => ['staged', 'queued', 'running'].includes(task.state);
+const active = (task: AgentTask) => ['staged', 'queued', 'running', 'cancelling'].includes(task.state);
+const requestCancellation = (task: AgentTask): void => {
+  if (!active(task)) return;
+  const dispatched = task.state === 'running' || task.state === 'cancelling';
+  task.state = dispatched ? 'cancelling' : 'cancelled';
+  task.error = dispatched ? 'LOCAL_PAUSED' : 'LOCAL_CANCELLED';
+  task.updatedAt = Date.now();
+};
+const recordLateUncertainty = (task: AgentTask, change: { state?: string; error?: string }): boolean => {
+  if (task.state !== 'failed' || task.error !== 'LOCAL_INTERRUPTED'
+    || change.state !== 'failed' || change.error !== 'LOCAL_DISPATCH_UNCERTAIN') return false;
+  task.error = 'LOCAL_DISPATCH_UNCERTAIN'; task.updatedAt = Date.now();
+  return true;
+};
 const fail = (code: string): never => { throw new LocalAgentError(code); };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const ownedTask = (state: State, owner: string, id: string): AgentTask => {
@@ -123,7 +138,9 @@ export class LocalAgentStore {
   private revokeIn(state: State, owner: string): void {
     state.devices = state.devices.filter((device) => device.owner !== owner);
     for (const task of Object.values(state.tasks)) if (task.owner === owner && task.deviceId && active(task)) {
-      task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED'; task.updatedAt = Date.now();
+      const dispatched = task.state === 'running' || task.state === 'cancelling';
+      task.state = dispatched ? 'failed' : 'cancelled';
+      task.error = dispatched ? 'LOCAL_DISPATCH_UNCERTAIN' : 'LOCAL_CANCELLED'; task.updatedAt = Date.now();
     }
   }
   revoke(owner: string): Promise<void> { return this.access(true, (state) => this.revokeIn(state, owner)); }
@@ -171,7 +188,7 @@ export class LocalAgentStore {
   }
   private cancelProvider(state: State, owner: string, agentId: string): void {
     for (const task of Object.values(state.tasks)) if (task.owner === owner && task.agentId === agentId && active(task)) {
-      task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED'; task.updatedAt = Date.now();
+      requestCancellation(task);
     }
   }
   findMessage(owner: string, messageId: string): Promise<AgentTask | undefined> {
@@ -180,7 +197,9 @@ export class LocalAgentStore {
   task(owner: string, id: string): Promise<AgentTask> { return this.access(false, (state) => ownedTask(state, owner, id)); }
   busy(owner: string, agentId: string): Promise<boolean> { return this.access(false, (state) => Object.values(state.tasks).some((task) => task.owner === owner && task.agentId === agentId && active(task))); }
 
-  stage(owner: string, agentId: string, provider: LocalAgentProvider, messageId: string, prompt: string, kind: 'run' | 'login' = 'run'): Promise<AgentTask> {
+  stage(owner: string, agentId: string, provider: LocalAgentProvider, messageId: string, prompt: string,
+    kind: 'run' | 'login' = 'run', inputSettings?: NativeAgentConfiguration): Promise<AgentTask> {
+    const agentSettings = parseNativeAgentConfiguration(inputSettings);
     return this.access(true, (state) => {
       const existing = Object.values(state.tasks).find((task) => task.owner === owner && task.messageId === messageId);
       if (existing) return existing;
@@ -188,9 +207,12 @@ export class LocalAgentStore {
       const device = agentId.startsWith('companion-') ? state.devices.find((item) => item.owner === owner) : undefined;
       if (agentId.startsWith('companion-')) {
         if (!device || Date.now() - device.lastSeen > 15_000) fail('LOCAL_COMPANION_OFFLINE');
+        if (!device!.agents.some((agent) => agent.provider === provider)) fail('LOCAL_VERSION_UNSUPPORTED');
         if (kind === 'run' && !device!.providers.includes(provider)) fail('LOCAL_AGENT_NOT_FOUND');
+        validateNativeAgentConfiguration(agentSettings, device?.agents.find((agent) => agent.provider === provider));
       } else if (state.nativeOwner !== owner || (kind === 'run' && !state.nativeProviders.includes(provider))) fail('LOCAL_AGENT_NOT_FOUND');
       const task: AgentTask = { id: randomUUID(), owner, agentId, provider, deviceId: device?.id, kind, messageId, prompt,
+        ...(agentSettings ? { agentSettings } : {}),
         state: 'staged', createdAt: Date.now(), updatedAt: Date.now() };
       state.tasks[task.id] = task;
       return task;
@@ -207,9 +229,22 @@ export class LocalAgentStore {
     });
   }
   update(owner: string, id: string, change: Partial<Pick<AgentTask, 'state' | 'progress' | 'text' | 'usageTokens' | 'error'>>): Promise<void> {
-    return this.access(true, (state) => { const task = ownedTask(state, owner, id); if (active(task)) Object.assign(task, change, { updatedAt: Date.now() }); });
+    return this.access(true, (state) => {
+      const task = ownedTask(state, owner, id);
+      if (recordLateUncertainty(task, change)) return;
+      if (!active(task)) return;
+      if (task.state === 'cancelling' && change.state === 'completed') {
+        Object.assign(task, { state: 'cancelled', error: 'LOCAL_CANCELLED', updatedAt: Date.now() });
+      } else Object.assign(task, change, { updatedAt: Date.now() });
+    });
   }
-  cancel(owner: string, id: string): Promise<void> { return this.update(owner, id, { state: 'cancelled', error: 'LOCAL_CANCELLED' }); }
+  cancel(owner: string, id: string): Promise<AgentTask['state']> {
+    return this.access(true, (state) => {
+      const task = ownedTask(state, owner, id);
+      requestCancellation(task);
+      return task.state;
+    });
+  }
 
   poll(token: string, request: CompanionPoll): Promise<CompanionPollResult> {
     return this.access(true, (state) => {
@@ -219,21 +254,26 @@ export class LocalAgentStore {
       const now = Date.now();
       // A lost lease is never revived by a late result or poll.
       for (const task of Object.values(state.tasks)) if (task.deviceId === device.id && active(task)
-        && (now - task.createdAt > 600_000 || (task.state === 'running' && now - device.lastSeen > 30_000))) {
+        && (now - task.createdAt > 600_000 || (['running', 'cancelling'].includes(task.state) && now - device.lastSeen > 30_000))) {
         task.state = 'failed'; task.error = 'LOCAL_INTERRUPTED'; task.updatedAt = now;
       }
       device.lastSeen = now; device.agents = request.agents;
       for (const update of request.updates) {
         const task = state.tasks[update.id];
-        if (!task || task.deviceId !== device.id || task.owner !== device.owner || task.state !== 'running') continue;
-        if (update.state === 'completed' && task.kind === 'run' && !update.text?.trim()) {
+        if (!task || task.deviceId !== device.id || task.owner !== device.owner) continue;
+        if (recordLateUncertainty(task, update)) continue;
+        if (!['running', 'cancelling'].includes(task.state)) continue;
+        if (task.state === 'cancelling' && update.state === 'running') continue;
+        if (task.state === 'cancelling' && update.state === 'completed') {
+          task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED';
+        } else if (update.state === 'completed' && task.kind === 'run' && !update.text?.trim()) {
           task.state = 'failed'; task.error = 'LOCAL_INVALID_RESULT';
         } else {
           task.state = update.state;
           if (update.progress !== undefined) task.progress = update.progress.slice(0, 500);
           if (update.text !== undefined) task.text = update.text;
           if (update.usageTokens !== undefined) task.usageTokens = update.usageTokens;
-          if (update.state === 'failed') task.error = 'LOCAL_TASK_FAILED';
+          if (update.state === 'failed') task.error = update.error ?? 'LOCAL_TASK_FAILED';
           if (update.state === 'cancelled') task.error = 'LOCAL_CANCELLED';
         }
         task.updatedAt = now;
@@ -243,10 +283,20 @@ export class LocalAgentStore {
       for (const task of Object.values(state.tasks)) if (task.deviceId === device.id) {
         // Helpers terminate disconnected work within 30s and all work within 10 minutes.
         // Old terminal records must not grow heartbeat payloads without bound.
-        if (['cancelled', 'failed'].includes(task.state) && now - task.updatedAt <= 600_000) cancelTaskIds.push(task.id);
+        if (['cancelling', 'cancelled', 'failed'].includes(task.state) && now - task.updatedAt <= 600_000) cancelTaskIds.push(task.id);
         if (task.state === 'queued') {
+          if (!device.agents.some((agent) => agent.provider === task.provider)) {
+            task.state = 'failed'; task.error = 'LOCAL_VERSION_UNSUPPORTED'; task.updatedAt = now;
+            continue;
+          }
+          try { validateNativeAgentConfiguration(task.agentSettings, device.agents.find((agent) => agent.provider === task.provider)); }
+          catch {
+            task.state = 'failed'; task.error = 'LOCAL_CONFIGURATION_UNSUPPORTED'; task.updatedAt = now;
+            continue;
+          }
           task.state = 'running'; task.updatedAt = now;
-          commands.push({ id: task.id, kind: task.kind, provider: task.provider, ...(task.kind === 'run' ? { prompt: task.prompt } : {}) });
+          commands.push({ id: task.id, kind: task.kind, provider: task.provider,
+            ...(task.kind === 'run' ? { prompt: task.prompt, ...(task.agentSettings ? { agentSettings: task.agentSettings } : {}) } : {}) });
         }
       }
       return { commands, cancelTaskIds: cancelTaskIds.slice(-1000) };

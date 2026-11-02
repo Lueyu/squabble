@@ -20,8 +20,11 @@ export function councilModelValue(member: Pick<CouncilMember, 'connectionId' | '
 export function assignLocalAgents(members: CouncilMember[], agents: LocalAgentConnection[]): CouncilMember[] {
   const available = agents.filter(agent => agent.connected && agent.available);
   if (!available.length) return members;
-  return members.map((member, index) => ({ ...member, executionMode: 'local',
-    agentId: available[index % available.length].id, connectionId: undefined }));
+  return members.map((member, index) => {
+    const agentId = available[index % available.length].id;
+    return { ...member, executionMode: 'local', agentId, connectionId: undefined,
+      agentSettings: member.executionMode === 'local' && member.agentId === agentId ? member.agentSettings : undefined };
+  });
 }
 
 export function useCouncilModels() {
@@ -47,7 +50,11 @@ export function useCouncilModels() {
     const agent = localAgents.data?.find(item => item.id === member.agentId);
     if (!agent) return t('council.localAgents.unavailable');
     const state = !agent.available ? agent.state === 'ready' ? 'offline' : agent.state : agent.busy ? 'busy' : null;
-    return [t('council.localAgents.routeAgent'), agent.name, state ? t(`council.localAgents.states.${state}`) : null]
+    const model = agent.models?.find(item => item.id === member.agentSettings?.model)?.name ?? member.agentSettings?.model;
+    const effort = member.agentSettings?.reasoningEffort;
+    return [t('council.localAgents.routeAgent'), agent.name, model,
+      effort ? t(`council.localAgents.effortLevels.${effort}`, { defaultValue: effort }) : null,
+      state ? t(`council.localAgents.states.${state}`) : null]
       .filter(Boolean).join(' · ');
   };
   return { options, localAgents: localAgents.data ?? [], memberLabel,

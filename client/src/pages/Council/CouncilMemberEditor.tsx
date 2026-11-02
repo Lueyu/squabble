@@ -6,6 +6,7 @@ import type { CouncilMember, CouncilResearchKind, CouncilRole } from '@shared/co
 import { COUNCIL_AVATARS, COUNCIL_RESEARCH_KINDS, COUNCIL_SPEAKING_STYLES } from '@shared/council-templates';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -13,6 +14,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import CouncilMemberAvatar from './CouncilMemberAvatar';
 import { councilModelValue, type CouncilModelOption } from './useCouncilModels';
 import type { LocalAgentConnection } from '@/api/local-agents';
+import { AGENT_MODEL_MAX_LENGTH, agentReasoningEfforts, agentSettingsProblem, cleanAgentSettings } from '@/utils/local-agent-settings';
 
 interface CouncilMemberEditorProps {
   member: CouncilMember;
@@ -29,15 +31,33 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
   const { t } = useTranslation();
   const [draft, setDraft] = useState<CouncilMember>({ ...member, researchFocus: [...(member.researchFocus ?? [])] });
   const [error, setError] = useState<string | null>(null);
+  const [customModel, setCustomModel] = useState(Boolean(member.agentSettings?.model
+    && !localAgents.find(agent => agent.id === member.agentId)?.models?.some(model => model.id === member.agentSettings?.model)));
   const update = (value: Partial<CouncilMember>) => { setDraft((current) => ({ ...current, ...value })); setError(null); };
   const currentModel = modelOptions.find((option: CouncilModelOption) => option.value === councilModelValue(draft));
+  const currentAgent = localAgents.find(agent => agent.id === draft.agentId);
+  const agentHelp = currentAgent ? t(`council.localAgents.providerHelp.${currentAgent.provider}`,
+    { defaultValue: currentAgent.configurationHelp ?? '' }) : '';
+  const agentModels = currentAgent?.models ?? [];
+  const modelSupported = currentAgent?.models !== undefined;
+  const agentModel = draft.agentSettings?.model ?? '';
+  const showCustomModel = customModel || Boolean(agentModel && !agentModels.some(model => model.id === agentModel));
+  const reasoningEfforts = agentReasoningEfforts(currentAgent, agentModel);
+  const effort = draft.agentSettings?.reasoningEffort ?? '';
+  const invalidEffort = Boolean(effort && !reasoningEfforts?.includes(effort));
+  const updateAgentModel = (model: string) => update({ agentSettings: {
+    model, reasoningEffort: agentReasoningEfforts(currentAgent, model)?.includes(effort) ? effort : undefined,
+  } });
   const save = () => {
     if (draft.executionMode === 'local') {
       if (!localAgents.some(agent => agent.id === draft.agentId && agent.available)) {
         setError(t('council.localAgents.unavailable')); return;
       }
+      const problem = agentSettingsProblem(draft.agentSettings, currentAgent);
+      if (problem) { setError(t(`council.localAgents.${problem}`)); return; }
     } else if (draft.connectionId && (!currentModel || currentModel.disabled)) { setError(t('council.members.connectionMissing')); return; }
-    const problem = onSave({ ...draft, name: draft.name.trim(), roleTitle: draft.roleTitle?.trim(), personality: draft.personality?.trim() });
+    const problem = onSave({ ...draft, name: draft.name.trim(), roleTitle: draft.roleTitle?.trim(), personality: draft.personality?.trim(),
+      agentSettings: draft.executionMode === 'local' ? cleanAgentSettings(draft.agentSettings) : undefined });
     if (problem) setError(problem); else onClose();
   };
   const toggleFocus = (focus: CouncilResearchKind) => {
@@ -89,7 +109,8 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
           <div className="space-y-2"><Label htmlFor="member-editor-execution">{t('council.localAgents.execution')}</Label>
             <select id="member-editor-execution" className={selectClass} value={draft.executionMode ?? 'model'} onChange={(event) => {
               const executionMode = event.target.value === 'local' ? 'local' : 'model';
-              update({ executionMode, ...(executionMode === 'local'
+              setCustomModel(false);
+              update({ executionMode, agentSettings: undefined, ...(executionMode === 'local'
                 ? { agentId: draft.agentId ?? localAgents.find(agent => agent.available)?.id, connectionId: undefined }
                 : { agentId: undefined, researchFocus: draft.researchFocus?.filter(focus => focus !== 'web' || webResearch) }) });
             }}>
@@ -100,13 +121,57 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
           {draft.executionMode === 'local' ? <div className="space-y-2">
             <Label htmlFor="member-editor-agent">{t('council.localAgents.choose')}</Label>
             <select id="member-editor-agent" className={selectClass} value={draft.agentId ?? ''}
-              onChange={(event) => update({ agentId: event.target.value })}>
+              onChange={(event) => { setCustomModel(false); update({ agentId: event.target.value, agentSettings: undefined }); }}>
               {!localAgents.some(agent => agent.id === draft.agentId) && <option value={draft.agentId ?? ''}>{t('council.localAgents.choose')}</option>}
               {localAgents.map(agent => <option key={agent.id} value={agent.id} disabled={!agent.available}>
                 {agent.name}{!agent.available ? ` · ${t(`council.localAgents.states.${agent.state === 'ready' ? 'offline' : agent.state}`)}`
                   : agent.busy ? ` · ${t('council.localAgents.states.busy')}` : ''}
               </option>)}
             </select>
+            {agentHelp && <p className="break-words text-xs leading-5 text-muted-foreground">{agentHelp}</p>}
+            <div className="space-y-2 pt-2">
+              <Label htmlFor="member-editor-agent-model">{t('council.localAgents.model')}</Label>
+              <NativeSelect id="member-editor-agent-model" className="w-full" disabled={!modelSupported}
+                value={!modelSupported ? '' : showCustomModel ? '__custom_model__' : agentModel}
+                onChange={(event) => {
+                  const custom = event.target.value === '__custom_model__';
+                  setCustomModel(custom); updateAgentModel(custom ? '' : event.target.value);
+                }}>
+                <option value="">{t('council.localAgents.inheritDefault')}</option>
+                {agentModels.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+                {modelSupported && <option value="__custom_model__">{t('council.localAgents.customModel')}</option>}
+              </NativeSelect>
+              {modelSupported && showCustomModel && <div className="space-y-2">
+                <Label htmlFor="member-editor-agent-custom-model">{t('council.localAgents.modelId')}</Label>
+                <Input id="member-editor-agent-custom-model" value={agentModel} maxLength={AGENT_MODEL_MAX_LENGTH}
+                  autoComplete="off" spellCheck={false} onChange={(event) => updateAgentModel(event.target.value)}
+                  aria-describedby="member-editor-agent-model-hint" />
+              </div>}
+              <p id="member-editor-agent-model-hint" className="text-xs leading-5 text-muted-foreground">
+                {t(!modelSupported ? 'council.localAgents.modelUnsupported'
+                  : showCustomModel ? 'council.localAgents.customModelHint' : 'council.localAgents.modelHint')}</p>
+              {!modelSupported && agentModel && <Button type="button" size="sm" variant="outline"
+                onClick={() => { setCustomModel(false); updateAgentModel(''); }}>{t('council.localAgents.inheritDefault')}</Button>}
+            </div>
+            <div className="space-y-2 pt-2">
+              <Label htmlFor="member-editor-agent-effort">{t('council.localAgents.reasoning')}</Label>
+              <NativeSelect id="member-editor-agent-effort" className="w-full" value={invalidEffort ? '' : effort}
+                disabled={!reasoningEfforts?.length} aria-describedby="member-editor-agent-effort-hint"
+                onChange={(event) => update({ agentSettings: { ...draft.agentSettings, reasoningEffort: event.target.value || undefined } })}>
+                <option value="">{t('council.localAgents.inheritDefault')}</option>
+                {reasoningEfforts?.map(value => <option key={value} value={value}>
+                  {t(`council.localAgents.effortLevels.${value}`, { defaultValue: value })}</option>)}
+              </NativeSelect>
+              <p id="member-editor-agent-effort-hint" className="text-xs leading-5 text-muted-foreground">
+                {t(reasoningEfforts === undefined ? 'council.localAgents.reasoningUnknown'
+                  : reasoningEfforts.length ? 'council.localAgents.reasoningHint' : 'council.localAgents.reasoningUnsupported')}</p>
+              {invalidEffort && <div className="space-y-2">
+                <p className="text-xs text-destructive">{t('council.localAgents.reasoningInvalid')}</p>
+                <Button type="button" size="sm" variant="outline" onClick={() => update({
+                  agentSettings: { ...draft.agentSettings, reasoningEffort: undefined },
+                })}>{t('council.localAgents.inheritDefault')}</Button>
+              </div>}
+            </div>
             <p className="text-xs leading-5 text-muted-foreground">{t('council.localAgents.budgetHint')}</p>
             <Link to="/settings#local-agents" className="inline-block text-xs text-primary hover:underline">{t('council.localAgents.manage')}</Link>
           </div> : <div className="space-y-2"><Label htmlFor="member-editor-model">{t('council.model')}</Label>

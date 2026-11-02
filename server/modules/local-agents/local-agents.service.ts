@@ -2,11 +2,12 @@ import { Inject, Injectable, Optional, type OnModuleDestroy } from '@nestjs/comm
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { LocalAgentConnection, LocalAgentsStatus, NativeAgentStatus, LocalAgentProvider } from '../../../shared/local-agents.interface';
+import { LOCAL_AGENT_PROVIDERS, type LocalAgentConnection, type LocalAgentsStatus, type NativeAgentStatus,
+  type LocalAgentProvider, type NativeAgentConfiguration } from '../../../shared/local-agents.interface';
 import { detectNativeAgents, openNativeLogin, runNativeAgent } from '../../local-agents/native';
 import { LocalAgentStore, type AgentTask } from './local-agents.store';
-import { LocalAgentError, type LocalAgentExecution, type LocalAgentResult } from './local-agents.types';
-import { providerCatalog, providerFromId } from './local-agents.requests';
+import { LocalAgentError, nativeFailureCode, type LocalAgentExecution, type LocalAgentResult } from './local-agents.types';
+import { providerCatalog, providerFromId, parseNativeAgentConfiguration, validateNativeAgentConfiguration } from './local-agents.requests';
 
 interface Runtime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -46,7 +47,7 @@ export class LocalAgentsService implements OnModuleDestroy {
     const foreign = mode === 'native' && await this.store.nativeClaimedByOther(owner);
     const detected = mode === 'native' && !foreign ? await this.detect() : device?.agents ?? [];
     const connected = mode === 'native' ? await this.store.nativeProviders(owner) : device?.providers ?? [];
-    const items: LocalAgentConnection[] = await Promise.all((['codex', 'claude'] as const).map(async (provider) => {
+    const items: LocalAgentConnection[] = await Promise.all(LOCAL_AGENT_PROVIDERS.map(async (provider) => {
       const native = detected.find((entry) => entry.provider === provider) ?? { ...providerCatalog[provider], state: 'error' as const };
       const id = `${mode}-${provider}`;
       return { ...native, id, connected: connected.includes(provider), available: online && native.state === 'ready' && connected.includes(provider),
@@ -55,10 +56,11 @@ export class LocalAgentsService implements OnModuleDestroy {
     return { mode, items, companion: { connected: mode === 'companion' && online, ...(device ? { name: device.name } : {}) } };
   }
   async list(owner: string): Promise<LocalAgentConnection[]> { return (await this.status(owner)).items.filter((item) => item.connected); }
-  async validate(owner: string, id: string): Promise<void> {
+  async validate(owner: string, id: string, agentSettings?: NativeAgentConfiguration): Promise<void> {
     const item = (await this.status(owner)).items.find((entry) => entry.id === id);
     if (!item?.connected) throw new LocalAgentError('LOCAL_AGENT_NOT_FOUND');
     if (!item.available) throw new LocalAgentError(item.state === 'login_required' ? 'LOCAL_LOGIN_REQUIRED' : 'LOCAL_UNAVAILABLE');
+    validateNativeAgentConfiguration(agentSettings, item);
   }
   async connect(owner: string, id: string): Promise<void> {
     const provider = providerFromId(id, this.mode);
@@ -101,14 +103,21 @@ export class LocalAgentsService implements OnModuleDestroy {
     const done = (async () => {
       try {
         const result = await this.runtime.runNativeAgent(task.provider, task.prompt, { root: join(this.store.root, 'workspaces', task.id), signal: abort.signal,
+          agentSettings: task.agentSettings,
           onProgress: (text: string) => { progressWrites = progressWrites.then(() => this.store.update(task.owner, task.id, { progress: text.slice(0, 500) })); } });
         await progressWrites;
+        if (abort.signal.aborted) {
+          await this.store.update(task.owner, task.id, { state: 'cancelled', error: 'LOCAL_CANCELLED' });
+          return;
+        }
         if (!result.text?.trim() || Buffer.byteLength(result.text) > 512_000) throw new LocalAgentError('LOCAL_INVALID_RESULT');
         await this.store.update(task.owner, task.id, { state: 'completed', text: result.text, usageTokens: result.usageTokens });
       } catch (error) {
         await progressWrites.catch(() => undefined);
-        await this.store.update(task.owner, task.id, { state: abort.signal.aborted ? 'cancelled' : 'failed',
-          error: abort.signal.aborted ? 'LOCAL_CANCELLED' : error instanceof LocalAgentError ? error.code : 'LOCAL_TASK_FAILED' });
+        const code = nativeFailureCode(error);
+        const cancelled = abort.signal.aborted && code !== 'LOCAL_DISPATCH_UNCERTAIN';
+        await this.store.update(task.owner, task.id, { state: cancelled ? 'cancelled' : 'failed',
+          error: cancelled ? 'LOCAL_CANCELLED' : code });
       } finally { this.running.delete(task.id); }
     })();
     this.running.set(task.id, { owner: task.owner, agentId: task.agentId, abort, done });
@@ -125,9 +134,10 @@ export class LocalAgentsService implements OnModuleDestroy {
       // Cancellation changes the durable state before the OS has finished killing
       // the process tree. Its execution slot remains reserved until done settles.
       if ([...this.running.values()].some((run) => run.agentId === options.agentId)) throw new LocalAgentError('LOCAL_BUSY');
-      await this.validate(owner, options.agentId);
+      const agentSettings = parseNativeAgentConfiguration(options.agentSettings);
+      await this.validate(owner, options.agentId, agentSettings);
       if (!options.prompt.trim() || Buffer.byteLength(options.prompt) > 256_000) throw new LocalAgentError('LOCAL_INVALID_INPUT');
-      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt);
+      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings);
       try {
         await options.onTask({ taskId: task.id, contextId: task.id });
         await options.onDispatch?.();
@@ -142,8 +152,14 @@ export class LocalAgentsService implements OnModuleDestroy {
       if (task.state === 'failed' || task.state === 'cancelled') throw new LocalAgentError(task.error || 'LOCAL_TASK_FAILED', task.id, task.id);
       if (task.state === 'staged') throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
       if (!await options.shouldContinue()) {
-        await this.store.cancel(owner, task.id); this.running.get(task.id)?.abort.abort();
-        throw new LocalAgentError('LOCAL_CANCELLED', task.id, task.id);
+        const cancellation = await this.store.cancel(owner, task.id);
+        this.running.get(task.id)?.abort.abort();
+        // A running upstream task must acknowledge its stop before the council
+        // clears this task reference and permits a new assignment.
+        // A report completed during changed steering is already stopped and must
+        // be discarded, so the next revision cannot reuse the superseded result.
+        const stopped = cancellation === 'cancelled' || cancellation === 'completed';
+        throw new LocalAgentError(stopped ? 'LOCAL_CANCELLED' : 'LOCAL_PAUSED', task.id, task.id);
       }
       const device = task.deviceId ? await this.store.deviceFor(owner) : undefined;
       if (Date.now() - task.createdAt > 600_000 || task.deviceId && (!device || Date.now() - device.lastSeen > 30_000)) {

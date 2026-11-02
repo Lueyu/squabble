@@ -9,18 +9,24 @@ import { test } from 'node:test';
 import { LocalAgentCompanion } from './companion.mts';
 import { LocalAgentStore } from '../server/modules/local-agents/local-agents.store';
 import { pairRequest, parseCompanionPoll, providerCatalog } from '../server/modules/local-agents/local-agents.requests';
+import type { NativeAgentConfiguration } from '../shared/local-agents.interface';
 
 test('desktop and broker exchange the actual pairing, task, recovery and revocation wire contract', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'squabble-companion-wire-'));
   const store = new LocalAgentStore(join(directory, 'broker'));
   const owner = 'fixture-owner';
   let runs = 0;
+  const agentSettings = { model: 'fixture/research', reasoningEffort: 'high' };
   const native = {
-    detectNativeAgents: async () => Object.values(providerCatalog).map((provider) => ({ ...provider, state: 'ready' as const })),
+    detectNativeAgents: async () => Object.values(providerCatalog).map((provider) => ({ ...provider, state: 'ready' as const,
+      models: [], reasoningEfforts: ['low', 'high'] })),
     openNativeLogin: async () => undefined,
-    runNativeAgent: async (_provider: string, _prompt: string, options: { signal: AbortSignal }) => {
+    runNativeAgent: async (_provider: string, _prompt: string, options: { signal: AbortSignal; agentSettings?: NativeAgentConfiguration }) => {
       runs += 1;
-      if (runs === 1) return { text: 'Fixture research report', usageTokens: null };
+      if (runs === 1) {
+        assert.deepEqual(options.agentSettings, agentSettings);
+        return { text: 'Fixture research report', usageTokens: null };
+      }
       return new Promise<{ text: string; usageTokens: null }>((_done, reject) => {
         options.signal.addEventListener('abort', () => reject(new Error('Fixture abort')), { once: true });
       });
@@ -52,7 +58,8 @@ test('desktop and broker exchange the actual pairing, task, recovery and revocat
     await helper.pollOnce();
     await helper.pollOnce();
     await store.connectCompanion(owner, 'codex');
-    const first = await store.stage(owner, 'companion-codex', 'codex', randomUUID(), 'Fixture research');
+    assert.equal((await store.deviceFor(owner))?.agents.length, 7);
+    const first = await store.stage(owner, 'companion-codex', 'codex', randomUUID(), 'Fixture research', 'run', agentSettings);
     await store.activate(owner, first.id);
     await helper.pollOnce();
     await helper.pollOnce();

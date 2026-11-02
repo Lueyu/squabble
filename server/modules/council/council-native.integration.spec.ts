@@ -11,9 +11,11 @@ import { CouncilService } from './council.service';
 import { newCheckpoint } from './council.dialogue';
 import { LocalAgentError, type LocalAgentExecution, type LocalAgentResult } from '../local-agents/local-agents.types';
 import type { CouncilMember } from '../../../shared/council.interface';
+import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
 
 const team: CouncilMember[] = [
-  { id: 'research', name: 'Research', role: 'researcher', instructions: '', model: 'fast', executionMode: 'local', agentId: 'local' },
+  { id: 'research', name: 'Research', role: 'researcher', instructions: '', model: 'fast', executionMode: 'local', agentId: 'local',
+    agentSettings: { model: 'fixture/research', reasoningEffort: 'high' } },
   { id: 'manager', name: 'Manager', role: 'manager', instructions: '', model: 'slow', executionMode: 'local', agentId: 'local' },
 ];
 const completed: LocalAgentResult = { text: '', usageTokens: null, data: {
@@ -47,7 +49,10 @@ test('native council delegates research, persists task lifecycle, and preserves 
         isConfigured: forbidden, chatFastJSON: forbidden, chatSlowJSON: forbidden } as never,
       { collectEvidence: forbidden, collectResearch: forbidden } as never,
       { getPortfolioContext: forbidden } as never, { listRuns: forbidden } as never,
-      { validate: async (user: string, agent: string) => { assert.equal(user, owner); assert.equal(agent, 'local'); }, execute } as never,
+      { validate: async (user: string, agent: string, settings?: NativeAgentConfiguration) => {
+        assert.equal(user, owner); assert.equal(agent, 'local');
+        if (settings) assert.deepEqual(settings, team[0].agentSettings);
+      }, execute } as never,
       { getSettings: async () => ({ enabled }) } as never);
     const done = async (service: CouncilService, id: string) => {
       for (let i = 0; i < 300; i++) {
@@ -74,6 +79,8 @@ test('native council delegates research, persists task lifecycle, and preserves 
       const session = await done(service, await start(service));
       assert.equal(session.status, 'completed');
       assert.equal(calls.length, 4);
+      assert.deepEqual(calls.map((call) => call.agentSettings), [team[0].agentSettings, undefined, team[0].agentSettings, undefined]);
+      assert.deepEqual(session.members?.[0].agentSettings, team[0].agentSettings);
       assert.equal(session.reports.length, 1);
       assert.equal(session.reports[0].engine, 'local');
       assert.equal(session.reports[0].externalUsageUnknown, true);
@@ -81,6 +88,7 @@ test('native council delegates research, persists task lifecycle, and preserves 
       assert.ok(session.messages.filter((message) => message.role !== 'system').every((message) => message.externalAgent && message.externalUsageUnknown));
       assert.ok(session.reports[0].evidence.some((item) => item.sourceUrl === 'https://www.sec.gov/Archives/example'));
       const [row] = await db.select().from(councilSessions).where(eq(councilSessions.id, session.id));
+      assert.deepEqual(row.profileSnapshot.council?.members[0].agentSettings, team[0].agentSettings);
       assert.ok(row.evidenceSnapshot.every((item) => item.relevanceScore === 0 && item.sourceName.includes('unverified')));
     });
 

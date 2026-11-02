@@ -76,11 +76,13 @@ npm run dev
 
 ## Connect native research agents
 
-Open **Settings → Local research agents** to use Codex or Claude Code already
+Open **Settings → Local research agents** to use Codex, Claude Code, Gemini CLI,
+Antigravity, OpenCode, Kimi or the community Doubao CLI already
 installed on your computer. Sign in through the provider's terminal, then click
 **Connect**. For Docker, open Squabble desktop on the same computer and pair it
 from web Settings; confirm the local address in the desktop dialog. Keep the app
-open while researching. [Setup and usage details](docs/local-agents.md).
+open while researching. Each member can select a model and the reasoning options
+supported by its agent, or inherit the existing defaults. [Setup and usage details](docs/local-agents.md).
 
 ## Connect your AI assistant
 
@@ -101,7 +103,7 @@ Self-hosted. Zero telemetry. The only outbound requests are the ones you make wi
 | Topic | Link |
 |---|---|
 | Local setup and troubleshooting | [docs/self-hosting.md](docs/self-hosting.md) |
-| Codex and Claude Code research | [docs/local-agents.md](docs/local-agents.md) |
+| Seven research agents and per-member model settings | [docs/local-agents.md](docs/local-agents.md) |
 | Server deployment (HTTPS) | [docs/public-deployment.md](docs/public-deployment.md) |
 | Import your portfolio | [docs/import.md](docs/import.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) |
