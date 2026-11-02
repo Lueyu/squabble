@@ -258,6 +258,7 @@ async function startDesktop(): Promise<void> {
   const origin = `http://127.0.0.1:${port}`;
   const environment = nestEnvironment(paths, secrets, database.connectionUrl, port);
 
+  markSmokeStage('before-backend-fork');
   backendLog = createWriteStream(join(paths.logsDir, 'backend.log'), { flags: 'a', mode: 0o600 });
   backendLog.on('error', () => undefined);
   backend = utilityProcess.fork(paths.serverEntry, [], {
@@ -265,9 +266,12 @@ async function startDesktop(): Promise<void> {
     env: environment,
     stdio: 'pipe',
   });
+  markSmokeStage('after-backend-fork');
+  backend.on('spawn', () => markSmokeStage('backend-spawned'));
   backend.stdout?.pipe(backendLog, { end: false });
   backend.stderr?.pipe(backendLog, { end: false });
   backend.on('exit', () => {
+    markSmokeStage('backend-exited');
     if (!quitting) {
       dialog.showErrorBox('Squabble stopped', 'The local server exited. See the log in your Squabble data folder.');
       app.quit();

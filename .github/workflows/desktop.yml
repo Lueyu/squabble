@@ -96,6 +96,8 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: ./desktop/ci/run-as-standard-user.ps1 -Scenario source-smoke
+      - name: Prepare complete production runtime
+        run: node scripts/prepare-desktop-runtime.cjs
       - name: Build Windows installer
         if: matrix.platform == 'windows'
         env:

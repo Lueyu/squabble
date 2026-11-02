@@ -23,6 +23,8 @@ files:
   - '!node_modules/**/tests/**'
   - '!node_modules/**/__tests__/**'
 extraResources:
+  - from: output/desktop-runtime/node_modules
+    to: app/node_modules
   - from: desktop/notices/PostgreSQL-COPYRIGHT
     to: notices/PostgreSQL-COPYRIGHT
   - from: LICENSE
