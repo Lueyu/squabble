@@ -45,6 +45,8 @@ try {
   const status = await fetch(`${origin}/api/auth/registration-status`);
   assert.equal(status.status, 200);
   assert.equal((await status.json()).registrationOpen, true);
+  const anonymousAgents = await fetch(`${origin}/api/settings/local-agents/status`);
+  assert.equal(anonymousAgents.status, 401, 'native agent settings require an authenticated account');
   const registered = await fetch(`${origin}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -60,11 +62,18 @@ try {
   });
   assert.equal(second.status, 201, 'a second desktop user can create an account');
   const secondUser = await second.json() as { user: { id: string } };
-  const firstUser = await registered.json() as { user: { id: string } };
+  const firstUser = await registered.json() as { user: { id: string }; accessToken: string };
   assert.notEqual(secondUser.user.id, firstUser.user.id, 'desktop accounts remain distinct');
+  const localAgents = await fetch(`${origin}/api/settings/local-agents/status`, {
+    headers: { Authorization: `Bearer ${firstUser.accessToken}` },
+  });
+  assert.equal(localAgents.status, 200);
+  const localStatus = await localAgents.json() as { mode: string; items: { provider: string }[] };
+  assert.equal(localStatus.mode, 'native', 'desktop exposes direct native execution');
+  assert.deepEqual(localStatus.items.map((item) => item.provider).sort(), ['claude', 'codex']);
   const denied = await fetch(`${origin}/api/health`, { headers: { Origin: 'https://wrong.example' } });
   assert.equal(denied.status, 403);
-  process.stdout.write('Desktop smoke: database, API, two registrations, and origin guard passed.\n');
+  process.stdout.write('Desktop smoke: database, API, two registrations, native agent catalog/auth, and origin guard passed.\n');
 } finally {
   if (server) {
     const child = server;

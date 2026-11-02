@@ -25,7 +25,9 @@ LABEL org.opencontainers.image.source="https://github.com/Lueyu/squabble"
 RUN apk add --no-cache postgresql16-client
 ENV NODE_ENV=production \
     SERVER_HOST=0.0.0.0 \
-    SERVER_PORT=3000
+    SERVER_PORT=3000 \
+    LOCAL_AGENTS_MODE=companion \
+    LOCAL_AGENTS_DATA_DIR=/app/.local-agents
 
 COPY package.json package-lock.json .npmrc ./
 COPY scripts/setup-git-hooks.js scripts/
@@ -44,6 +46,7 @@ COPY scripts/db/11_research_tools.sql ./scripts/db/11_research_tools.sql
 COPY scripts/db/12_council_dialogue.sql ./scripts/db/12_council_dialogue.sql
 COPY scripts/db/13_budget_toggle.sql ./scripts/db/13_budget_toggle.sql
 COPY scripts/db/14_a2a_agents.sql ./scripts/db/14_a2a_agents.sql
+COPY scripts/db/15_native_agents.sql ./scripts/db/15_native_agents.sql
 COPY scripts/ensure-settings-key.cjs scripts/ensure-jwt-secret.cjs scripts/start-app.cjs ./scripts/
 
 # Views and static assets are resolved from process.cwd()/dist/client

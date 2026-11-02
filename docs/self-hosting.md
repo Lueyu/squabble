@@ -128,6 +128,7 @@ deletes data and generated keys.
 |---|---|
 | Accounts, holdings, reports and encrypted provider credentials | `squabble-local_dpa-data` (`/var/lib/postgresql/data` in `db`) |
 | Generated JWT and settings keys | `squabble-local_settings-secrets` (`/app/.secrets` in `app`) |
+| Local agent pairing and task state | `squabble-local_local-agents-data` (`/app/.local-agents` in `app`) |
 | Backups made before click-to-update | `squabble-local_update-backups` (`/app/.backups` in `app`) |
 
 The default web stack uses a prebuilt image. For an existing source installation,
@@ -154,6 +155,27 @@ To build from source instead, use
 `docker compose -f docker-compose.yml -f docker-compose.source.yml up -d --build`.
 The page update button is disabled in source-build mode; pull new code and rebuild
 to update. Never use `docker compose down -v` for updates or troubleshooting.
+
+### Local research agents
+
+In the desktop app, open **Settings → Local research agents**. Install Codex or
+Claude Code using the official link shown there, complete **Sign in** in the
+provider's terminal, then choose **Connect**. Existing native CLI logins are detected.
+
+For Docker on Windows or macOS, install and open Squabble desktop on the same
+computer. Create a pairing request in web Settings, open the desktop companion,
+and confirm the displayed local web address in its dialog. Return to web Settings
+to sign in and connect agents. Keep the desktop app open; use **Help → Local Agent
+Companion** for status and web Settings to disconnect. The helper reconnects after
+brief outages, but stops active tasks after 30 seconds offline. Interrupted tasks
+are not automatically rerun. See [the native agent guide](local-agents.md).
+
+Pairing and task state live in the persistent `local-agents-data` volume. Preserve
+it alongside your database and secret volumes during updates. To back it up, stop
+the app with `docker compose stop app`, copy the directory with
+`docker compose cp app:/app/.local-agents ./backups/local-agents`, then run
+`docker compose up -d`. Keep that copy private. Restored pairings may need to be
+recreated in Settings. The desktop companion does not synchronize portfolio data.
 
 ### 🎭 Optional fictional demo
 
@@ -243,7 +265,7 @@ docker compose ps
 ```
 
 Recheck [health](http://localhost:3000/api/health), sign in and run a basic
-analysis. The app applies additive SQL migrations `03` through `14` at startup
+analysis. The app applies additive SQL migrations `03` through `15` at startup
 to an existing database. Fresh databases receive the base schema on first
 initialization. Do not remove Docker volumes during an update. If Git reports
 local changes, resolve them before pulling; if startup fails, read both app

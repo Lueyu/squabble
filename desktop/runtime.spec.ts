@@ -112,6 +112,8 @@ test('desktop server environment binds both services to loopback and keeps regis
   assert.equal(environment.SQUABBLE_DESKTOP_ORIGIN, 'http://127.0.0.1:41234');
   assert.equal(environment.NODE_ENV, 'production');
   assert.equal(environment.JWT_SECRET, 'b'.repeat(64));
+  assert.equal(environment.LOCAL_AGENTS_MODE, 'native');
+  assert.equal(environment.LOCAL_AGENTS_DATA_DIR, join('C:\\SquabbleData', 'local-agents'));
 });
 
 test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean stop', { timeout: 120_000 }, async () => {
@@ -130,11 +132,20 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
       const users = await client.query('SELECT count(*)::int AS count FROM users');
       assert.equal(users.rows[0].count, 0);
       const migration = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(migration.rows[0].version, 14);
+      assert.equal(migration.rows[0].version, 15);
       const latestColumn = await client.query("SELECT enabled FROM llm_budget_settings LIMIT 0");
       assert.deepEqual(latestColumn.rows, []);
       await client.query('CREATE TABLE desktop_persistence_probe (value text NOT NULL)');
       await client.query("INSERT INTO desktop_persistence_probe (value) VALUES ('saved')");
+      await client.query(`WITH profile AS (
+        INSERT INTO builder_profiles (owner, config) VALUES ('desktop-native-probe', '{}') RETURNING id
+      ), session AS (
+        INSERT INTO council_sessions (owner, profile_id, profile_version, profile_snapshot, ticker)
+        SELECT 'desktop-native-probe', id, 1, '{}', 'DEMO' FROM profile RETURNING id
+      ) INSERT INTO council_reports
+        (owner, session_id, version, revision, decision, summary, dissent, next_review_condition, evidence, engine)
+        SELECT 'desktop-native-probe', id, 1, 1, 'wait', 'Fixture report', '[]', 'Fixture review', '[]', 'local'
+        FROM session`);
     } finally {
       await client.end();
     }
@@ -153,9 +164,23 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
     try {
       const rows = await reopened.query('SELECT value FROM desktop_persistence_probe');
       assert.equal(rows.rows[0].value, 'saved');
+      // The backend also reapplies additive migrations at startup.
+      await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '14_a2a_agents.sql'), 'utf8'));
+      await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '15_native_agents.sql'), 'utf8'));
+      const report = await reopened.query("SELECT engine FROM council_reports WHERE owner = 'desktop-native-probe'");
+      assert.equal(report.rows[0].engine, 'local');
     } finally {
       await reopened.end();
     }
+    await second.stop();
+    second = undefined;
+    second = await runtime.startDesktopDatabase(paths, secrets);
+    const restarted = second.database.getPgClient('portfolio', '127.0.0.1');
+    await restarted.connect();
+    try {
+      const report = await restarted.query("SELECT engine FROM council_reports WHERE owner = 'desktop-native-probe'");
+      assert.equal(report.rows[0].engine, 'local');
+    } finally { await restarted.end(); }
   } finally {
     await second?.stop();
     await first?.stop();
@@ -201,7 +226,7 @@ test('desktop recovers a private PostgreSQL cluster after its owner is force kil
     await client.connect();
     try {
       const version = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(version.rows[0].version, 14);
+      assert.equal(version.rows[0].version, 15);
     } finally {
       await client.end();
     }
@@ -244,7 +269,7 @@ test('desktop reclaims an active private PostgreSQL cluster before starting anot
     await client.connect();
     try {
       const version = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(version.rows[0].version, 14);
+      assert.equal(version.rows[0].version, 15);
     } finally {
       await client.end();
     }

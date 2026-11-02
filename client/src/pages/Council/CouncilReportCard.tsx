@@ -78,7 +78,7 @@ export default function CouncilReportCard({ report, session, profileVersion }: {
           to={`/paper?orderId=${encodeURIComponent(report.paperOrderId)}`}>
           <FlaskConical className="size-3.5" />{t('council.report.paperOrder')} · {report.paperOrderId.slice(0, 8)}</Link>}
       </div>
-      <p className="text-xs leading-5 text-muted-foreground">{report.externalUsageUnknown ? t('council.report.externalUsageUnknown') : t(report.engine === 'a2a' || report.engine === 'mixed' ? 'council.report.externalReportedTokens' : 'council.report.tokens', {
+      <p className="text-xs leading-5 text-muted-foreground">{report.externalUsageUnknown ? t('council.report.externalUsageUnknown') : t(report.engine === 'local' || report.engine === 'a2a' || report.engine === 'mixed' ? 'council.report.externalReportedTokens' : 'council.report.tokens', {
         count: report.tokensUsed.toLocaleString(i18n.language),
       })}</p>
       <p className="text-xs leading-5 text-muted-foreground">{t(report.researchStance ? 'council.report.manualHint' : 'council.report.executionHint')}</p>

@@ -38,8 +38,8 @@ export interface ResearchAcquisition {
   kind?: CouncilResearchKind;
 }
 export interface CouncilMember {
-  /** Existing profiles default to direct model calls; A2A delegates research to a registered agent. */
-  executionMode?: 'model' | 'a2a';
+  /** Native CLI members reuse a connected local account; model members use application API settings. */
+  executionMode?: 'model' | 'local';
   agentId?: string;
   id: string;
   role: CouncilRole;
@@ -107,7 +107,8 @@ export interface CouncilReport {
   candidate: CouncilCandidate | null;
   paperOrderId: string | null;
   tokensUsed: number;
-  engine: 'basic' | 'llm' | 'a2a' | 'mixed';
+  /** a2a is retained only for historical reports. */
+  engine: 'basic' | 'llm' | 'local' | 'a2a' | 'mixed';
   externalUsageUnknown?: boolean;
   createdAt: string;
   researchStance?: 'positive' | 'balanced' | 'cautious' | null;

@@ -10,7 +10,7 @@ import { NotificationModule } from '../notifications/notification.module';
 import { QuoteModule } from '../quote/quote.module';
 import { MultiAgentModule } from '../multi-agent/multi-agent.module';
 import { CouncilModule } from '../council/council.module';
-import { LocalAgentsModule } from '../a2a/local-agents.module';
+import { LocalAgentsModule } from '../local-agents/local-agents.module';
 import { BuilderCadenceService } from './builder-cadence.service';
 import { AgentBuilderController } from './agent-builder.controller';
 import { AgentBuilderService } from './agent-builder.service';

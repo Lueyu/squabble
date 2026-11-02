@@ -18,9 +18,9 @@ export function councilModelValue(member: Pick<CouncilMember, 'connectionId' | '
 }
 
 export function assignLocalAgents(members: CouncilMember[], agents: LocalAgentConnection[]): CouncilMember[] {
-  const available = agents.filter(agent => agent.available);
+  const available = agents.filter(agent => agent.connected && agent.available);
   if (!available.length) return members;
-  return members.map((member, index) => ({ ...member, executionMode: 'a2a',
+  return members.map((member, index) => ({ ...member, executionMode: 'local',
     agentId: available[index % available.length].id, connectionId: undefined }));
 }
 
@@ -41,9 +41,15 @@ export function useCouncilModels() {
       label: `${connection.name} · ${connection[model === 'fast' ? 'fastModel' : 'slowModel']} · ${t(`council.members.modelTier.${model}`)}${connection.available && !connection.needsReentry ? '' : ` (${t('council.members.unavailable')})`}`,
     });
   }
-  const memberLabel = (member: CouncilMember): string => member.executionMode === 'a2a'
-    ? `${t('council.localAgents.routeAgent')} · ${localAgents.data?.find(agent => agent.id === member.agentId)?.name ?? t('council.localAgents.unavailable')}`
-    : options.find(option => option.value === councilModelValue(member))?.label ?? t('council.members.connectionMissing');
+  const memberLabel = (member: CouncilMember): string => {
+    if (member.executionMode !== 'local') return options.find(option => option.value === councilModelValue(member))?.label
+      ?? t('council.members.connectionMissing');
+    const agent = localAgents.data?.find(item => item.id === member.agentId);
+    if (!agent) return t('council.localAgents.unavailable');
+    const state = !agent.available ? agent.state === 'ready' ? 'offline' : agent.state : agent.busy ? 'busy' : null;
+    return [t('council.localAgents.routeAgent'), agent.name, state ? t(`council.localAgents.states.${state}`) : null]
+      .filter(Boolean).join(' · ');
+  };
   return { options, localAgents: localAgents.data ?? [], memberLabel,
     loading: integration.isLoading || connections.isLoading || localAgents.isLoading,
     error: integration.error ?? connections.error ?? localAgents.error,

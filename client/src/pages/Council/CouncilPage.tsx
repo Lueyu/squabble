@@ -42,7 +42,7 @@ export default function CouncilPage() {
   const selectedProfile = profiles.find((item: BuilderProfile) => item.id === session?.profileId);
   const defaultAvailable = integrations.data?.llm.available && integrations.data.llm.engine !== 'basic';
   const noModel = integrations.isSuccess && connections.isSuccess && (session?.members?.length
-    ? session.members.every((member) => member.executionMode === 'a2a' ? false : member.connectionId
+    ? session.members.every((member) => member.executionMode === 'local' ? false : member.connectionId
       ? !connections.data.some((connection) => connection.id === member.connectionId && connection.available) : !defaultAvailable)
     : localAgents.isSuccess && !localAgents.data.some(agent => agent.available)
       && !defaultAvailable && !connections.data.some((connection) => connection.available));

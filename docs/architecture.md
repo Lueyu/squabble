@@ -19,6 +19,10 @@ flowchart LR
     Backend --> Quotes[Public quote and FX providers]
     Backend -->|Optional company metrics and news| Finnhub[Finnhub]
     Backend -->|Configured AI requests| Model[OpenAI-compatible model provider]
+    Backend -->|Desktop native execution| Native[Codex or Claude Code]
+    Helper[Squabble desktop helper] -->|Outbound polling to paired local app| Backend
+    Helper -->|Local Docker research| Native
+    Native --> AgentProvider[Agent's configured provider]
     Backend -->|Configured notifications| Notify[Notification providers]
     External[External MCP client] -->|Session bearer token| Backend
 ```
@@ -46,6 +50,8 @@ build serves the client through NestJS;
 development runs the Vite client and NestJS server separately. Both local
 installation paths can make outbound requests for public quotes and FX data,
 or to explicitly configured model, research and notification providers.
+Native research agents also contact their configured providers and research
+sources; running the executable locally does not mean inference stays offline.
 
 ## Accounts, ownership and credentials
 
@@ -140,7 +146,60 @@ ledger; it does not update portfolio holdings or transactions.
 Notifications support Webhook, Bark, Server酱, SMTP and Telegram. Dispatch
 failures are logged and do not undo a paper fill.
 
-## External agents
+## Native research agents
+
+Research-room members can use `local` execution with **Codex** or **Claude
+Code**, or keep the existing model API execution. The desktop app's bundled
+Node backend detects the installed command-line applications, checks login
+state and launches the selected provider's native login in a terminal when
+requested. Settings exposes installation, login, connection, busy and offline
+states; it accepts no executable path or arbitrary agent endpoint.
+
+`server/local-agents/` owns discovery, provider commands, task workspaces and
+bounded process output. Tasks receive their prompt over standard input, with
+no shell interpolation. Codex runs with live search and a read-only sandbox;
+Claude uses the configured research-tool allowlist. Raw reasoning and tool
+payloads are not exposed as chat messages. Each provider has a bounded task
+slot and timeout. Native reports retain agent-provided provenance until
+independently checked; paper-trading approval and risk checks are unchanged.
+
+For Docker, the application cannot directly use the host's installed agents.
+Settings creates a five-minute, single-use pairing code and offers an explicit
+`squabble://pair` link. The desktop app validates the loopback origin and asks
+the user to confirm it before pairing. Only `localhost`, `127.0.0.1` and
+`[::1]` origins are supported, and redirects are rejected. The helper polls
+outbound for commands and returns progress and results; it opens no host
+listening port. The server stores a hash of its persistent credential; the
+helper stores the credential privately in local application data. Settings
+can revoke the pairing. Keep the helper running while research is active.
+
+`server/modules/local-agents/` owns authenticated connections, ownership,
+pairing and a durable task journal. Owners come from the verified application
+session, and each task is bound to its owner, provider and optional companion
+device. A native installation is claimed by one application account. Task
+identity and prompts are atomically persisted before dispatch; progress and
+results are saved as they arrive in the private local-agent data directory.
+Docker mounts a dedicated named volume. The helper persists processed task
+identifiers to prevent replay. Server task files and backups contain research
+context and are accessible to local administrators.
+
+Pause or disconnect cancels pending work and requests process-tree termination.
+Companion cancellation is delivered on polling; an expired execution lease
+interrupts work if the connection is lost. Restart recovery marks unfinished
+native jobs interrupted and never dispatches them a second time. Completed
+results stay available. This remains a single-instance journal, not a
+multi-replica job queue. Cancellation cannot undo provider charges already
+incurred.
+
+The research budget remains available for model API members, including mixed
+teams. Native providers bill their own account and do not consume the app's
+model API reservations. Missing native token usage remains unknown, not zero;
+connecting an agent never changes the budget switch. Legacy team execution
+values are normalized to `local`, but retired connection IDs need a supported
+provider selected again. Historical reports remain readable. See
+[local agent setup](local-agents.md) and [the research room](investment-council.md).
+
+## External clients
 
 Two separate integration paths exist:
 
@@ -160,12 +219,14 @@ pipeline to Python.
 |---|---|
 | `client/src/pages/`, `components/`, `hooks/`, `api/` | Web UI, queries, quote polling and API calls |
 | `server/modules/` | Auth, portfolio, analysis, market data, settings, imports, paper trading, notifications and MCP |
+| `server/local-agents/` | Native Codex/Claude detection, login, process execution and output parsing |
+| `server/modules/local-agents/` | Account-owned connections, companion pairing and durable task state |
 | `server/common/platform/` | Direct database connection, auth guard and local framework adapters |
 | `server/database/schema.ts` | Drizzle table definitions used by application code |
 | `shared/api.interface.ts` | Shared request/response and domain types |
 | `scripts/db/` | Base schema, fictional demo data and additive schema updates |
 | `agent/` | Optional Python CLI and its offline tests |
-| `desktop/` | Electron shell and local backend/database lifecycle for desktop installers |
+| `desktop/` | Electron shell, local backend/database lifecycle and outbound native-agent companion |
 | `docker-compose.yml`, `docker-compose.demo.yml` | Clean local and opt-in fictional demo installations |
 | `deploy/` | Earlier public beta deployment files; public server operation is no longer a supported installation path |
 
@@ -177,7 +238,9 @@ using a fixed table count as an architectural contract.
 
 Fresh databases need `scripts/db/01_schema.sql`. Demo data is in the separate
 `02_demo_seed.sql`. The current database provider applies the additive
-`03_agent_builder.sql` through `14_a2a_agents.sql` files during startup;
+`03_agent_builder.sql` through `15_native_agents.sql` files during startup;
 that process does not create the base portfolio schema on an empty database.
+Migration 15 adds the native `local` report engine while retaining historical
+report values.
 Keep the SQL and Drizzle definitions aligned. There is currently no
 `gen:db-schema` npm command in this repository.

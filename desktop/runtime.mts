@@ -19,6 +19,7 @@ export interface DesktopPaths {
   secretsFile: string;
   serverPortFile: string;
   logsDir: string;
+  localAgentsDir: string;
   schemaFile: string;
   serverEntry: string;
   resourceRoot: string;
@@ -30,6 +31,7 @@ export function desktopPaths(resourceRoot: string, dataRoot: string): DesktopPat
     secretsFile: join(dataRoot, 'secrets.json'),
     serverPortFile: join(dataRoot, 'server-port'),
     logsDir: join(dataRoot, 'logs'),
+    localAgentsDir: join(dataRoot, 'local-agents'),
     schemaFile: join(resourceRoot, 'scripts', 'db', '01_schema.sql'),
     serverEntry: join(resourceRoot, 'dist', 'server', 'main.js'),
     resourceRoot,
@@ -159,6 +161,8 @@ export function nestEnvironment(
     SETTINGS_ENCRYPTION_KEY: secrets.settingsEncryptionKey,
     REGISTER_ENABLED: 'true',
     AGENT_GATEWAY_ENABLED: 'false',
+    LOCAL_AGENTS_MODE: 'native',
+    LOCAL_AGENTS_DATA_DIR: paths.localAgentsDir,
     TRUST_PROXY: 'false',
     LOG_DIR: paths.logsDir,
   };

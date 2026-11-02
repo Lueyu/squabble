@@ -32,7 +32,7 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
   const update = (value: Partial<CouncilMember>) => { setDraft((current) => ({ ...current, ...value })); setError(null); };
   const currentModel = modelOptions.find((option: CouncilModelOption) => option.value === councilModelValue(draft));
   const save = () => {
-    if (draft.executionMode === 'a2a') {
+    if (draft.executionMode === 'local') {
       if (!localAgents.some(agent => agent.id === draft.agentId && agent.available)) {
         setError(t('council.localAgents.unavailable')); return;
       }
@@ -79,30 +79,33 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
             <div className="flex flex-wrap gap-2" role="group" aria-label={t('council.members.focus')}>
               {COUNCIL_RESEARCH_KINDS.map((focus) => <Button key={focus} type="button" size="sm"
                 variant={draft.researchFocus?.includes(focus) ? 'secondary' : 'outline'} aria-pressed={draft.researchFocus?.includes(focus) ?? false}
-                disabled={focus === 'web' && !webResearch && draft.executionMode !== 'a2a'} onClick={() => toggleFocus(focus)}>
+                disabled={focus === 'web' && !webResearch && draft.executionMode !== 'local'} onClick={() => toggleFocus(focus)}>
                 {draft.researchFocus?.includes(focus) && <Check className="size-3" />}{t(`council.members.focuses.${focus}`)}
               </Button>)}
             </div>
-            {draft.executionMode === 'a2a' ? <p className="text-xs leading-5 text-muted-foreground">{t('council.localAgents.toolsHint')}</p>
+            {draft.executionMode === 'local' ? <p className="text-xs leading-5 text-muted-foreground">{t('council.localAgents.toolsHint')}</p>
               : !webResearch && <p className="text-xs leading-5 text-muted-foreground">{t('council.members.webDisabled')}</p>}
           </div>
           <div className="space-y-2"><Label htmlFor="member-editor-execution">{t('council.localAgents.execution')}</Label>
             <select id="member-editor-execution" className={selectClass} value={draft.executionMode ?? 'model'} onChange={(event) => {
-              const executionMode = event.target.value === 'a2a' ? 'a2a' : 'model';
-              update({ executionMode, ...(executionMode === 'a2a'
+              const executionMode = event.target.value === 'local' ? 'local' : 'model';
+              update({ executionMode, ...(executionMode === 'local'
                 ? { agentId: draft.agentId ?? localAgents.find(agent => agent.available)?.id, connectionId: undefined }
                 : { agentId: undefined, researchFocus: draft.researchFocus?.filter(focus => focus !== 'web' || webResearch) }) });
             }}>
-              <option value="a2a">{t('council.localAgents.routeAgent')}</option>
+              <option value="local">{t('council.localAgents.routeAgent')}</option>
               <option value="model">{t('council.localAgents.routeModel')}</option>
             </select>
           </div>
-          {draft.executionMode === 'a2a' ? <div className="space-y-2">
+          {draft.executionMode === 'local' ? <div className="space-y-2">
             <Label htmlFor="member-editor-agent">{t('council.localAgents.choose')}</Label>
             <select id="member-editor-agent" className={selectClass} value={draft.agentId ?? ''}
               onChange={(event) => update({ agentId: event.target.value })}>
               {!localAgents.some(agent => agent.id === draft.agentId) && <option value={draft.agentId ?? ''}>{t('council.localAgents.choose')}</option>}
-              {localAgents.map(agent => <option key={agent.id} value={agent.id} disabled={!agent.available}>{agent.name}</option>)}
+              {localAgents.map(agent => <option key={agent.id} value={agent.id} disabled={!agent.available}>
+                {agent.name}{!agent.available ? ` · ${t(`council.localAgents.states.${agent.state === 'ready' ? 'offline' : agent.state}`)}`
+                  : agent.busy ? ` · ${t('council.localAgents.states.busy')}` : ''}
+              </option>)}
             </select>
             <p className="text-xs leading-5 text-muted-foreground">{t('council.localAgents.budgetHint')}</p>
             <Link to="/settings#local-agents" className="inline-block text-xs text-primary hover:underline">{t('council.localAgents.manage')}</Link>

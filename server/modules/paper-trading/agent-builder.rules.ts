@@ -25,13 +25,15 @@ export function normalizeCouncil(input?: CouncilConfig): CouncilConfig {
   };
   const ids = new Set<string>();
   const members = input.members.map((member) => {
+    // Historical A2A team records become native selections and require reconnecting their provider.
+    const executionMode = String(member?.executionMode ?? 'model') === 'a2a' ? 'local' : member?.executionMode;
     if (!member || !['researcher', 'challenger', 'manager'].includes(member.role)) throw new Error('Invalid council role');
     if (typeof member.id !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(member.id) || ids.has(member.id)) throw new Error('Invalid council member id');
     if (typeof member.name !== 'string' || !member.name.trim() || member.name.trim().length > 40) throw new Error('Member name must contain 1–40 characters');
     if (typeof member.instructions !== 'string' || member.instructions.length > 1000) throw new Error('Member instructions must be at most 1000 characters');
     if (member.model !== 'fast' && member.model !== 'slow') throw new Error('Invalid member model tier');
-    if (member.executionMode !== undefined && !['model', 'a2a'].includes(member.executionMode)) throw new Error('Invalid member execution mode');
-    if (member.executionMode === 'a2a' && (typeof member.agentId !== 'string'
+    if (executionMode !== undefined && !['model', 'local'].includes(executionMode)) throw new Error('Invalid member execution mode');
+    if (executionMode === 'local' && (typeof member.agentId !== 'string'
       || !/^[a-zA-Z0-9_-]{1,64}$/.test(member.agentId))) throw new Error('Select a registered local agent');
     if (member.connectionId !== undefined && (typeof member.connectionId !== 'string'
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(member.connectionId))) {
@@ -43,7 +45,7 @@ export function normalizeCouncil(input?: CouncilConfig): CouncilConfig {
       || member.researchFocus.some((kind) => !['financials', 'valuation', 'news', 'price', 'web'].includes(kind)))) throw new Error('Invalid research focus');
     ids.add(member.id);
     return { id: member.id, role: member.role, name: member.name.trim(), instructions: member.instructions.trim(), model: member.model,
-      ...(member.executionMode === 'a2a' ? { executionMode: 'a2a' as const, agentId: member.agentId } : {}),
+      ...(executionMode === 'local' ? { executionMode: 'local' as const, agentId: member.agentId } : {}),
       ...(member.connectionId === undefined ? {} : { connectionId: member.connectionId }),
       ...(member.avatar === undefined ? {} : { avatar: member.avatar }),
       ...(member.roleTitle === undefined ? {} : { roleTitle: optionalText(member.roleTitle, 60) }),

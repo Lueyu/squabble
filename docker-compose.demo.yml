@@ -32,10 +32,13 @@ services:
       SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:-}
       REGISTER_ENABLED: "true"
       AGENT_GATEWAY_ENABLED: "false"
+      LOCAL_AGENTS_MODE: companion
+      LOCAL_AGENTS_DATA_DIR: /app/.local-agents
     ports:
       - "127.0.0.1:${HOST_DEMO_PORT:-3001}:3000"
     volumes:
       - settings-secrets:/app/.secrets
+      - local-agents-data:/app/.local-agents
     depends_on:
       db:
         condition: service_healthy
@@ -43,3 +46,4 @@ services:
 volumes:
   dpa-data:
   settings-secrets:
+  local-agents-data:

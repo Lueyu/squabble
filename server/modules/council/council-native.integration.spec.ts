@@ -9,12 +9,12 @@ import { eq } from 'drizzle-orm';
 import { councilSessions } from '../../database/council.schema';
 import { CouncilService } from './council.service';
 import { newCheckpoint } from './council.dialogue';
-import { LocalAgentError, type LocalAgentExecution, type LocalAgentResult } from '../a2a/local-agents.types';
+import { LocalAgentError, type LocalAgentExecution, type LocalAgentResult } from '../local-agents/local-agents.types';
 import type { CouncilMember } from '../../../shared/council.interface';
 
 const team: CouncilMember[] = [
-  { id: 'research', name: 'Research', role: 'researcher', instructions: '', model: 'fast', executionMode: 'a2a', agentId: 'local' },
-  { id: 'manager', name: 'Manager', role: 'manager', instructions: '', model: 'slow', executionMode: 'a2a', agentId: 'local' },
+  { id: 'research', name: 'Research', role: 'researcher', instructions: '', model: 'fast', executionMode: 'local', agentId: 'local' },
+  { id: 'manager', name: 'Manager', role: 'manager', instructions: '', model: 'slow', executionMode: 'local', agentId: 'local' },
 ];
 const completed: LocalAgentResult = { text: '', usageTokens: null, data: {
   content: 'The agent researched the company and addressed the preceding view.',
@@ -23,11 +23,11 @@ const completed: LocalAgentResult = { text: '', usageTokens: null, data: {
   decision: 'approve', dissent: ['Valuation uncertainty'], nextReviewCondition: 'Next earnings release',
 } };
 
-test('A2A council delegates research, persists remote lifecycle, and preserves execution controls', {
+test('native council delegates research, persists task lifecycle, and preserves execution controls', {
   skip: !process.env.COUNCIL_TEST_DATABASE_URL,
 }, async (t) => {
   const connection = process.env.COUNCIL_TEST_DATABASE_URL!;
-  const namespace = `council_a2a_${randomUUID().replaceAll('-', '')}`;
+  const namespace = `council_native_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(connection, { max: 1, onnotice: () => {} });
   const client = postgres(connection, { max: 8, onnotice: () => {}, connection: { search_path: namespace } });
   const owner = randomUUID();
@@ -36,10 +36,10 @@ test('A2A council delegates research, persists remote lifecycle, and preserves e
     await admin`CREATE SCHEMA ${admin(namespace)}`;
     created = true;
     for (const name of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql',
-      '08_investment_council.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql']) {
+      '08_investment_council.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     }
-    await client`INSERT INTO users (id, username, password_hash) VALUES (${owner}, 'a2a-fixture', 'test-only')`;
+    await client`INSERT INTO users (id, username, password_hash) VALUES (${owner}, 'native-fixture', 'test-only')`;
     const db = drizzle(client);
     const forbidden = async () => { throw new Error('Legacy model or evidence path must not run for delegated team'); };
     const makeService = (execute: (user: string, options: LocalAgentExecution) => Promise<LocalAgentResult>, enabled = false) =>
@@ -63,7 +63,7 @@ test('A2A council delegates research, persists remote lifecycle, and preserves e
       return session.id;
     };
 
-    await t.test('all A2A members do their own research and report unknown usage honestly', async () => {
+    await t.test('all native members do their own research and report unknown usage honestly', async () => {
       const calls: LocalAgentExecution[] = [];
       const service = makeService(async (_user, options) => {
         calls.push(options);
@@ -75,7 +75,7 @@ test('A2A council delegates research, persists remote lifecycle, and preserves e
       assert.equal(session.status, 'completed');
       assert.equal(calls.length, 4);
       assert.equal(session.reports.length, 1);
-      assert.equal(session.reports[0].engine, 'a2a');
+      assert.equal(session.reports[0].engine, 'local');
       assert.equal(session.reports[0].externalUsageUnknown, true);
       assert.equal(session.reports[0].decision, 'wait', 'standalone research cannot authorize an order');
       assert.ok(session.messages.filter((message) => message.role !== 'system').every((message) => message.externalAgent && message.externalUsageUnknown));
@@ -84,13 +84,13 @@ test('A2A council delegates research, persists remote lifecycle, and preserves e
       assert.ok(row.evidenceSnapshot.every((item) => item.relevanceScore === 0 && item.sourceName.includes('unverified')));
     });
 
-    await t.test('enabled budget blocks autonomous agent dispatch', async () => {
+    await t.test('native research leaves enabled model budgets in place', async () => {
       let calls = 0;
       const service = makeService(async () => { calls++; return completed; }, true);
       const session = await service.createSession(owner, { ticker: 'AAPL', members: team });
-      await assert.rejects(() => service.runSession(owner, session.id), /预算|budget/);
-      assert.equal(calls, 0);
-      assert.equal((await service.getSession(owner, session.id)).status, 'idle');
+      await service.runSession(owner, session.id);
+      assert.equal((await done(service, session.id)).status, 'completed');
+      assert.equal(calls, 4);
     });
 
     await t.test('known task timeout resumes original task without new assignment ID', async () => {
@@ -102,7 +102,7 @@ test('A2A council delegates research, persists remote lifecycle, and preserves e
           timedOut = true; originalMessage = options.messageId;
           await options.onDispatch?.();
           await options.onTask({ taskId: 'slow-task', contextId: 'context' });
-          throw new LocalAgentError('A2A_TIMEOUT', 'slow-task', 'context');
+          throw new LocalAgentError('LOCAL_TIMEOUT', 'slow-task', 'context');
         }
         if (!resumed) {
           assert.equal(options.remoteTaskId, 'slow-task');
@@ -125,7 +125,7 @@ test('A2A council delegates research, persists remote lifecycle, and preserves e
       const service = makeService(async (_user, options) => {
         calls++;
         await options.onDispatch?.();
-        throw new LocalAgentError('A2A_DISPATCH_UNCERTAIN');
+        throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN');
       });
       const id = await start(service);
       assert.equal((await done(service, id)).status, 'paused');
@@ -140,7 +140,7 @@ test('A2A council delegates research, persists remote lifecycle, and preserves e
     await t.test('discovery failure before dispatch can retry without an uncertain-send lockout', async () => {
       let attempts = 0;
       const service = makeService(async () => {
-        if (++attempts === 1) throw new LocalAgentError('A2A_UNAVAILABLE');
+        if (++attempts === 1) throw new LocalAgentError('LOCAL_UNAVAILABLE');
         return completed;
       });
       const id = await start(service);
@@ -162,9 +162,9 @@ test('A2A council delegates research, persists remote lifecycle, and preserves e
           await options.onDispatch?.();
           await options.onTask({ taskId: 'question-task', contextId: 'context' });
           await options.onProgress('What investment horizon?');
-          throw new LocalAgentError('A2A_INPUT_REQUIRED', 'question-task', 'context');
+          throw new LocalAgentError('LOCAL_INPUT_REQUIRED', 'question-task', 'context');
         }
-        if (!answered && !options.resumeInput) throw new LocalAgentError('A2A_INPUT_REQUIRED', 'question-task', 'context');
+        if (!answered && !options.resumeInput) throw new LocalAgentError('LOCAL_INPUT_REQUIRED', 'question-task', 'context');
         if (!answered) {
           assert.equal(options.remoteTaskId, 'question-task');
           assert.notEqual(options.messageId, firstMessage);

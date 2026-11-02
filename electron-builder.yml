@@ -1,6 +1,10 @@
 appId: com.squabble.desktop
 productName: Squabble
 asar: false
+protocols:
+  - name: Squabble local agent pairing
+    schemes:
+      - squabble
 publish:
   provider: github
   owner: Lueyu

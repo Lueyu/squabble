@@ -94,6 +94,14 @@ test('budget validation rejects impossible or nonfinite caps and accepts unknown
   assert.equal(validateBudget({ ...settings, maxInputTokens: 30000 }), 'inconsistent');
 });
 
+test('native agent teams may use their own web tools while model members still require web permission', () => {
+  const members = ['researcher', 'manager'].map(role => ({ id: role, role, name: role,
+    instructions: '', model: 'fast', executionMode: 'local', agentId: 'native-codex', researchFocus: ['web'] }));
+  assert.equal(validateCouncilSettings({ enabled: true, members, webResearch: false }), null);
+  assert.equal(validateCouncilSettings({ enabled: true, members: [{ ...members[0], agentId: '' }, members[1]] }), 'teamInvalid');
+  assert.equal(validateCouncilSettings({ enabled: true, members: [{ ...members[0], executionMode: 'model' }, members[1]], webResearch: false }), 'teamInvalid');
+});
+
 test('localized presets are valid and template clones never share mutable research focus', () => {
   const { createCouncilPreset, createCouncilMember, COUNCIL_TEAM_PRESETS } = templates.exports;
   for (const language of ['en', 'zh-CN']) {

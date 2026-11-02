@@ -35,7 +35,7 @@ export default function CouncilMembersSheet({ session, onClose, onUseTeam }: {
           {member.instructions && <details className="mt-3 text-xs"><summary className="cursor-pointer text-muted-foreground">{t('council.members.prompt')}</summary>
             <p className="mt-2 whitespace-pre-wrap break-words leading-6">{member.instructions}</p></details>}
         </article>)}
-        <p className="text-xs leading-5 text-muted-foreground">{t(members.every(member => member.executionMode === 'a2a')
+        <p className="text-xs leading-5 text-muted-foreground">{t(members.every(member => member.executionMode === 'local')
           ? 'council.localAgents.toolsHint' : session.webResearch ? 'council.members.webEnabledSnapshot' : 'council.members.webDisabledSnapshot')}</p>
       </div>
       <div className="shrink-0 border-t border-border p-4"><Button type="button" className="h-auto min-h-9 w-full whitespace-normal" onClick={onUseTeam}>
