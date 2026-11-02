@@ -48,34 +48,15 @@ type MapField = 'ticker' | 'shares' | 'avgCost' | 'company';
 const FIELD_ALIASES: Record<MapField, string[]> = {
   ticker: ['ticker', 'symbol', 'code', '股票代码', '证券代码', '代码', 'symbol(id)'],
   shares: ['shares', 'quantity', 'qty', '股数', '持仓数量', '数量', '持有数量', '持仓'],
-  avgCost: ['avgcost', 'averagecost', 'costbasis', 'avgcostbasis', 'cost', 'price', '成本价', '买入成本', '成本', '均价', '平均成本', '购买价'],
+  avgCost: ['avgcost', 'averagecost', 'avgcostbasis', 'price', '成本价', '买入成本', '成本', '均价', '平均成本', '购买价'],
   company: ['company', 'name', 'description', '名称', '证券名称', '股票名称', '描述'],
 };
-
-/** Suggest a column index for each field from the header row. */
-function suggestMapping(headers: string[]): Partial<Record<MapField, number>> {
-  const out: Partial<Record<MapField, number>> = {};
-  const used = new Set<number>();
-  for (const field of Object.keys(FIELD_ALIASES) as MapField[]) {
-    const aliases = FIELD_ALIASES[field];
-    for (let i = 0; i < headers.length; i++) {
-      if (used.has(i)) continue;
-      const h = headers[i].toLowerCase().replace(/\s+/g, '');
-      if (aliases.some((a) => h === a || h.includes(a))) {
-        out[field] = i;
-        used.add(i);
-        break;
-      }
-    }
-  }
-  return out;
-}
 
 /** Robinhood preset: map by exact known headers (case-insensitive contains). */
 const ROBINHOOD_ALIASES: Record<MapField, string[]> = {
   ticker: ['symbol'],
   shares: ['quantity'],
-  avgCost: ['average cost', 'cost basis', 'avg cost', 'total cost'],
+  avgCost: ['average cost', 'avg cost'],
   company: ['description', 'name', 'instrument'],
 };
 
@@ -120,7 +101,11 @@ function suggestForPreset(headers: string[], presetKey: string): Partial<Record<
     for (let i = 0; i < headers.length; i++) {
       if (used.has(i)) continue;
       const h = headers[i].toLowerCase().replace(/\s+/g, '');
-      if (aliases[field].some((a) => h === a || h.includes(a))) {
+      if (field === 'avgCost' && /^(totalcost|costbasis|总成本|成本总额)/.test(h)) continue;
+      if (aliases[field].some((a) => {
+        const normalized = a.toLowerCase().replace(/\s+/g, '');
+        return h === normalized || h.includes(normalized);
+      })) {
         out[field] = i;
         used.add(i);
         break;
@@ -246,7 +231,7 @@ function CsvImport() {
     try {
       setCommitting(true);
       const r = await commitImport({
-        source: source === 'generic' ? 'csv' : source as 'csv' | 'robinhood',
+        source: source === 'robinhood' ? 'robinhood' : 'csv',
         rows: previewRows,
         filename: filename || undefined,
         buyDate: buyDate || undefined,

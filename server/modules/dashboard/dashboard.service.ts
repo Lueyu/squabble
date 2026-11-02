@@ -285,7 +285,7 @@ export class DashboardService {
       const snap = latestSnapshots[0];
       const snapDailyPl = parseFloat(String(snap.dailyPl));
       const snapDailyPct = snap.dailyPct != null ? parseFloat(String(snap.dailyPct)) : 0;
-      dailyPlBase = snapDailyPl;
+      dailyPlBase = await this.safeConvert(snapDailyPl, 'USD', base, String(snap.snapshotDate));
       dailyPctBase = snapDailyPct;
     }
 

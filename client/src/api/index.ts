@@ -238,10 +238,11 @@ export async function fetchAnalysisDates() {
  * @param params.limit - Maximum number of transactions to return.
  * @returns The `items` array of transaction records.
  */
-export async function fetchTransactions(params?: { ticker?: string; limit?: number }) {
+export async function fetchTransactions(params?: { ticker?: string; limit?: number; offset?: number }) {
   const query = new URLSearchParams();
   if (params?.ticker) query.set('ticker', params.ticker);
   if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.offset) query.set('offset', String(params.offset));
   const qs = query.toString();
   const response = await http({
     url: `/api/portfolio/transactions${qs ? `?${qs}` : ''}`,

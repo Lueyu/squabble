@@ -743,8 +743,9 @@ export class PaperTradingService {
     const [updated] = await this.db
       .update(paperOrders)
       .set({ status: 'cancelled', reason: '用户拒绝审批' })
-      .where(eq(paperOrders.id, orderId))
+      .where(and(eq(paperOrders.id, orderId), eq(paperOrders.owner, userId), eq(paperOrders.status, 'pending_approval')))
       .returning();
+    if (!updated) throw new BadRequestException('Order is no longer pending approval');
     await this.recordEvent(userId, account.id, 'order_rejected', {
       orderId,
       ticker: order.ticker,

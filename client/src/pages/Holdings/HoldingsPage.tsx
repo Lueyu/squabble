@@ -274,7 +274,13 @@ export default function HoldingsPage() {
       const va = (a as unknown as Record<string, unknown>)[sortKey];
       const vb = (b as unknown as Record<string, unknown>)[sortKey];
       let cmp: number;
-      if (typeof va === 'number' && typeof vb === 'number') {
+      if (['shares', 'buyPrice', 'currentPrice'].includes(sortKey)) {
+        const na = va === null || va === undefined || va === '' ? NaN : Number(va);
+        const nb = vb === null || vb === undefined || vb === '' ? NaN : Number(vb);
+        if (!Number.isFinite(na)) return Number.isFinite(nb) ? 1 : 0;
+        if (!Number.isFinite(nb)) return -1;
+        cmp = na - nb;
+      } else if (typeof va === 'number' && typeof vb === 'number') {
         cmp = va - vb;
       } else {
         cmp = String(va ?? '').localeCompare(String(vb ?? ''));

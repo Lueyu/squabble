@@ -230,8 +230,7 @@ export class SnapshotsService {
     if (prevAv != null && dto.accountValue !== undefined) {
       const grossDelta = accountValueNum - prevAv;
       dailyPl = grossDelta - netDepositBase;
-      const prevInvestedBase = prevAv - prevCumulativeNetDeposit;
-      dailyPct = prevInvestedBase > 0 ? (dailyPl / prevInvestedBase) * 100 : 0;
+      dailyPct = prevAv > 0 ? (dailyPl / prevAv) * 100 : 0;
     } else if (dto.dailyPl !== undefined) {
       dailyPl = dto.dailyPl;
       dailyPct = dto.dailyPct ?? 0;

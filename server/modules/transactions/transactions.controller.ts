@@ -34,10 +34,12 @@ export class TransactionsController {
     @Req() req: Request,
     @Query('ticker') ticker?: string,
     @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ): Promise<{ items: Transaction[] }> {
     const { userId } = req.userContext;
     const limitNum = limit ? Math.min(parseInt(limit, 10), 500) : 100;
-    const items = await this.transactionsService.list(userId, ticker, limitNum);
+    const offsetNum = Math.max(0, Number.parseInt(offset ?? '0', 10) || 0);
+    const items = await this.transactionsService.list(userId, ticker, limitNum, offsetNum);
     return { items };
   }
 

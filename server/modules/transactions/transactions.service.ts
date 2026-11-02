@@ -68,7 +68,7 @@ export class TransactionsService {
    * @param ticker  Optional ticker filter.
    * @param limit   Max rows (capped client-side by the caller; default 100).
    */
-  async list(userId: string, ticker?: string, limit: number = 100): Promise<Transaction[]> {
+  async list(userId: string, ticker?: string, limit: number = 100, offset = 0): Promise<Transaction[]> {
     const conditions = [eq(transactions.owner, userId)];
     if (ticker) conditions.push(eq(transactions.ticker, ticker));
 
@@ -77,7 +77,8 @@ export class TransactionsService {
       .from(transactions)
       .where(and(...conditions))
       .orderBy(desc(transactions.txDate), desc(transactions.id))
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
 
     return rows.map((row) => this.mapRow(row));
   }
@@ -299,6 +300,22 @@ export class TransactionsService {
 
     // Share trade (Buy/Sell/Opening): compute cash sign first.
     const result = await this.db.transaction(async (tx) => {
+      if (txType === 'Sell') {
+        await tx.select({ id: holdings.id }).from(holdings)
+          .where(and(eq(holdings.owner, userId), eq(holdings.ticker, ticker)))
+          .for('update');
+        const prior = await tx.select().from(transactions)
+          .where(and(eq(transactions.owner, userId), eq(transactions.ticker, ticker)))
+          .orderBy(asc(transactions.txDate), asc(transactions.id));
+        let available = 0;
+        for (const row of prior) {
+          if (row.txType === 'Buy' || row.txType === 'Opening') available += Number(row.shares);
+          if (row.txType === 'Sell') available -= Number(row.shares);
+        }
+        if (sharesNum > available + 1e-9) {
+          throw new BadRequestException(`持仓不足：可卖 ${available} 股`);
+        }
+      }
       const cashDelta =
         txType === 'Buy'
           ? -(sharesNum * priceNum + feesNum)
@@ -412,10 +429,12 @@ export class TransactionsService {
           newCashDelta = 0;
         }
 
-      // Apply only the NET cash difference caused by the edit.
-      const cashDiff = newCashDelta - oldCashDelta;
-      if (Math.abs(cashDiff) > 1e-9) {
-        await this.adjustCash(tx, userId, newCurrency, cashDiff);
+      if (newCurrency !== oldRow.currency) {
+        if (Math.abs(oldCashDelta) > 1e-9) await this.adjustCash(tx, userId, oldRow.currency, -oldCashDelta);
+        if (Math.abs(newCashDelta) > 1e-9) await this.adjustCash(tx, userId, newCurrency, newCashDelta);
+      } else {
+        const cashDiff = newCashDelta - oldCashDelta;
+        if (Math.abs(cashDiff) > 1e-9) await this.adjustCash(tx, userId, newCurrency, cashDiff);
       }
 
       const updatedRows = await tx
@@ -785,7 +804,6 @@ export class TransactionsService {
         // Only tickers that ever opened a position produce a holding.
         if (hasBuyOrOpening) rebuiltTickers.push(ticker);
       }
-
       const updatedHoldings: Array<{
         id: string;
         shares: string;
@@ -872,6 +890,7 @@ export class TransactionsService {
           const avgBuyPrice = cursor.costBasis / cursor.shares;
           newHoldings.push({
             ticker,
+            ...this.quoteService.detectMarket(ticker),
             company: cursor.company ?? ticker,
             shares: String(cursor.shares),
             buyPrice: String(avgBuyPrice),
@@ -1117,6 +1136,7 @@ export class TransactionsService {
       const hasBuyOrOpening = txs.some((t) => t.txType === 'Buy' || t.txType === 'Opening');
 
       if (!hasBuyOrOpening) {
+        if (existingH) deleteHoldingTickers.push(ticker);
         continue;
       }
 
@@ -1204,6 +1224,7 @@ export class TransactionsService {
       } else {
         await tx.insert(holdings).values({
           ticker,
+          ...this.quoteService.detectMarket(ticker),
           shares: data.shares,
           buyPrice: data.buyPrice,
           buyDate: data.buyDate,

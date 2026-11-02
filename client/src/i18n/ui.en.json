@@ -99,6 +99,7 @@
     "tradeCount": "Transactions",
     "totalBuys": "Total buys",
     "totalSells": "Total sells",
+    "loadedSubtotal": "Subtotal of loaded transactions",
     "emptyTx": "No transactions yet",
     "emptyTxHint": "Select “Add trade” to record your first transaction",
     "emptyRealized": "No realized P&L yet",

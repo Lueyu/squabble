@@ -58,6 +58,21 @@ function validatePassword(raw: string): void {
   }
 }
 
+const PASSWORD_HASH_VERSION = 'v2$';
+
+async function hashPassword(password: string): Promise<string> {
+  const digest = createHash('sha256').update(password, 'utf8').digest('hex');
+  return PASSWORD_HASH_VERSION + await bcrypt.hash(digest, 10);
+}
+
+async function comparePassword(password: string, stored: string): Promise<boolean> {
+  if (stored.startsWith(PASSWORD_HASH_VERSION)) {
+    const digest = createHash('sha256').update(password, 'utf8').digest('hex');
+    return bcrypt.compare(digest, stored.slice(PASSWORD_HASH_VERSION.length));
+  }
+  return bcrypt.compare(password, stored);
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -96,7 +111,7 @@ export class AuthService {
       }
     }
 
-    const passwordHash = await bcrypt.hash(input.password, 10);
+    const passwordHash = await hashPassword(input.password);
     const recoveryCode = randomBytes(24).toString('hex');
     const values = {
       username,
@@ -128,7 +143,7 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('Invalid username or password');
     }
-    const ok = await bcrypt.compare(input.password ?? '', user.passwordHash);
+    const ok = await comparePassword(input.password ?? '', user.passwordHash);
     if (!ok) {
       throw new UnauthorizedException('Invalid username or password');
     }
@@ -150,7 +165,7 @@ export class AuthService {
     if (!user?.recoveryCodeHash || user.recoveryCodeHash !== recoveryHash(code)) {
       throw new UnauthorizedException('Invalid recovery code');
     }
-    const passwordHash = await bcrypt.hash(input.newPassword!, 10);
+    const passwordHash = await hashPassword(input.newPassword!);
     const nextCode = randomBytes(24).toString('hex');
     return this.db.transaction(async (tx) => {
       const [updated] = await tx.update(users).set({
@@ -170,7 +185,7 @@ export class AuthService {
   /** Let an existing signed-in user create or rotate an offline recovery code. */
   async rotateRecoveryCode(userId: string, password: string): Promise<AuthResult> {
     const [user] = await this.db.select().from(users).where(eq(users.id, userId));
-    if (!user || !await bcrypt.compare(password ?? '', user.passwordHash)) {
+    if (!user || !await comparePassword(password ?? '', user.passwordHash)) {
       throw new UnauthorizedException('Invalid password');
     }
     const code = randomBytes(24).toString('hex');
