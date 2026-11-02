@@ -1,4 +1,4 @@
-# Investment council and research room
+# 🗣️ Investment council and research room
 
 [简体中文](investment-council.zh-CN.md) · [Documentation](README.md) · [Privacy](privacy.md)
 

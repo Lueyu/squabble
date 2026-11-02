@@ -1,4 +1,4 @@
-# Squabble appearance / 外观主题
+# 🎨 Squabble appearance / 外观主题
 
 Open the palette button in the top bar or the appearance card in Settings. Login and registration also offer the same picker. Changes apply immediately and are saved in this browser. Each visual style supports light and dark modes independently.
 

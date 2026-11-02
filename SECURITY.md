@@ -1,4 +1,4 @@
-# Security
+# 🔒 Security
 
 Squabble handles portfolio records and integration credentials. Treat the
 current release as a **local beta**: the controls described here are useful
@@ -6,7 +6,7 @@ boundaries, not an assurance that an instance is ready for unrestricted
 public access. See the [privacy and data-flow guide](docs/privacy.md)
 ([简体中文](docs/privacy.zh-CN.md)) for what the server and providers can access.
 
-## Report a vulnerability privately
+## 📨 Report a vulnerability privately
 
 Use this repository's
 [GitHub private vulnerability reporting](https://github.com/Lueyu/squabble/security/advisories/new).
@@ -19,7 +19,7 @@ file, reproduction steps, and impact. A minimal proof of concept with test data
 helps; it is not required. Test only instances and accounts you are authorized
 to assess.
 
-## What is in scope?
+## 🎯 Scope?
 
 - **Account isolation:** reading or changing another account's holdings,
   transactions, reports, settings, notifications, or agent sessions.
@@ -36,7 +36,7 @@ Fictional demo records are intentional. A way to access or modify someone
 else's real records is still a security issue. An operator's configuration can
 also matter to the report; include enough context to reproduce it.
 
-## Existing controls and their limits
+## 🛡️ Controls and their limits
 
 | Area | Current behavior and boundary |
 |---|---|
@@ -49,7 +49,7 @@ also matter to the report; include enough context to reproduce it.
 | First account | The clean local stack and desktop app allow one account to be registered. The registration endpoint requires same-origin JSON on a loopback host to prevent a web page from claiming that account through a cross-site form. |
 | Auditability | Analysis run events exist. A comprehensive audit of administrator access, privacy-consent controls, account-wide export, and complete self-service account erasure are not yet available. |
 
-## Run within the local trust boundary
+## ⚠️ Boundaries the local trust boundary
 
 The supported web stack binds its application port to `127.0.0.1` on the host,
 does not publish PostgreSQL, starts with an empty database, and generates stable

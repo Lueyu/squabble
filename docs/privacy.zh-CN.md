@@ -1,4 +1,4 @@
-# 隐私与数据流向
+# 🔒 隐私与数据流向
 
 [English](privacy.md) · [安全说明](../SECURITY.md) · [自托管指南](self-hosting.zh-CN.md)
 

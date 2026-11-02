@@ -1,4 +1,4 @@
-# Install Squabble locally
+# 🚀 Install Squabble locally
 
 [中文](self-hosting.zh-CN.md) · [README](../README.md) · [Privacy](privacy.md)
 
@@ -14,7 +14,7 @@ provider keys.
 | Desktop app | Windows x64 or macOS Intel/Apple silicon installer | Squabble application data directory on your computer |
 | Docker Compose | Git and Docker with Compose | Local PostgreSQL and secrets Docker volumes |
 
-## Desktop app
+## 🖥️ Desktop app
 
 When a release includes desktop assets, download the installer for your system
 from [Squabble Releases](https://github.com/Lueyu/squabble/releases): a Windows
@@ -78,7 +78,7 @@ A newly installed copy with an old application
 data directory will use that existing data; keep a backup before replacing
 the app or troubleshooting startup.
 
-## Docker Compose
+## 🐳 Docker Compose
 
 Install [Git](https://git-scm.com/downloads/) and
 [Docker with Compose](https://docs.docker.com/get-started/get-docker/). On
@@ -151,7 +151,7 @@ To build from source instead, use
 The page update button is disabled in source-build mode; pull new code and rebuild
 to update. Never use `docker compose down -v` for updates or troubleshooting.
 
-### Optional fictional demo
+### 🎭 Optional fictional demo
 
 To explore the sample portfolio and saved reports, run the separate demo
 stack:
@@ -183,7 +183,7 @@ volumes. The new clean `squabble-local` stack starts empty and does not import
 those records. If you entered real data into the old demo, keep its backup and
 plan any transfer separately.
 
-### Stop, update and back up
+### 🔄 Stop, update and back up
 
 Run these commands from the repository folder:
 
@@ -245,7 +245,7 @@ initialization. Do not remove Docker volumes during an update. If Git reports
 local changes, resolve them before pulling; if startup fails, read both app
 and database logs before making another change.
 
-### Troubleshooting
+### 🔧 Troubleshooting
 
 | Symptom | Check |
 |---|---|

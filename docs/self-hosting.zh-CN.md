@@ -1,4 +1,4 @@
-# 在本机安装吵股
+# 🚀 在本机安装吵股
 
 [English](self-hosting.md) · [返回首页](../README.zh-CN.md) · [隐私说明](privacy.zh-CN.md)
 
@@ -9,7 +9,7 @@
 | 桌面应用 | Windows x64 或 macOS Intel／Apple 芯片安装包 | 本机吵股应用数据目录 |
 | Docker Compose | Git 和带 Compose 的 Docker | 本地 PostgreSQL 与密钥 Docker 卷 |
 
-## 桌面应用
+## 🖥️ 桌面应用
 
 从 [Squabble Releases](https://github.com/Lueyu/squabble/releases) 下载与你系统匹配的文件：Windows x64 `.exe` 安装包，或适用于 macOS Intel（x64）／Apple 芯片（arm64）的 `.dmg`。安装并打开吵股。桌面应用会启动自己的本地后端和数据库，不要求 Docker、Node.js 或 Python。如果没有配置签名证书，macOS 构建未经签名，系统可能警告或阻止打开；决定打开前请核对安装包来源。
 
@@ -36,7 +36,7 @@ Windows 安装向导启动时可选择简体中文或 English。安装包需要�
 
 如果应用无法打开，先确认安装包与你的系统匹配、Windows 上没有以管理员身份运行，并检查可用磁盘空间。重新安装后若已有应用数据目录，应用会继续使用该数据；更换应用或排查启动问题前先备份。
 
-## Docker Compose
+## 🐳 Docker Compose
 
 安装 [Git](https://git-scm.com/downloads/) 和[带 Compose 的 Docker](https://docs.docker.com/get-started/get-docker/)。Windows／macOS 用户先打开 Docker Desktop，等待引擎启动；Linux 用户安装 Docker Engine 和 Compose 插件。先检查：
 
@@ -87,7 +87,7 @@ docker compose -f docker-compose.demo.yml up -d --build
 
 **从旧版默认演示升级：**旧版根目录 Compose 没有固定项目名。仓库目录名为 `squabble` 时通常使用 `squabble` 项目和 3000 端口；其他目录名或 Compose 覆盖值可能产生不同项目名。先备份，再用 `docker compose ls` 确认旧项目名。拉取新版文件前，在旧目录、沿用原有项目设置执行 `docker compose down`，不要加 `-v`。拉取后，常见的 `squabble` 项目可用 `docker compose -f docker-compose.demo.yml down` 管理；若旧项目名不同，在演示命令中加 `-p 旧项目名` 才能沿用原数据卷。新的干净 `squabble-local` 应用从空数据库开始，不会自动导入旧记录。如果你在旧演示中录入了真实资料，请保留备份，单独规划迁移。
 
-### 停止、升级和备份
+### 🔄 停止、升级和备份
 
 以下命令在仓库目录执行：
 

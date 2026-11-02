@@ -1,4 +1,4 @@
-# Development Guide
+# 🔧 Development Guide
 
 This guide is for changing Squabble's code. To use the product, start with
 the [desktop app or clean local Docker installation](self-hosting.md).

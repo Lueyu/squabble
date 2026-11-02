@@ -1,4 +1,4 @@
-# Privacy and data flow
+# 🔒 Privacy and data flow
 
 [简体中文](privacy.zh-CN.md) · [Security](../SECURITY.md) · [Self-hosting](self-hosting.md)
 
@@ -20,7 +20,7 @@ guide, not a privacy notice for every website running Squabble or a claim of
 legal compliance. The project is in public beta; the gaps below matter when
 deciding where to keep real portfolio records.
 
-## Who can access your data?
+## 👥 Who can access your data?
 
 | How you use Squabble | What that means |
 |---|---|
@@ -38,7 +38,7 @@ decryption key and decrypts credentials to use them. An operator with access to
 both the database and server secrets can do the same. Portfolio records are not
 end-to-end encrypted.
 
-## What is stored, and where?
+## 💾 What is stored, and where?
 
 “Instance database” below means the database in your Docker installation or
 desktop application.
@@ -61,7 +61,7 @@ There is no bundled analytics SDK or central usage-reporting service in this
 repository. **That does not mean there are no logs, network requests, or
 third-party records.** A deployment can add its own monitoring.
 
-## What leaves the instance?
+## 📤 What leaves the instance?
 
 | Action | Recipient and information sent |
 |---|---|
@@ -93,7 +93,7 @@ per-user consent control for that fallback. Check the active configuration in
 Settings before running analysis. A broken saved key stops analysis and
 asks for re-entry; it does not silently switch to the operator's model.
 
-## Controls available today
+## 🛡️ Controls today
 
 - **Settings:** view the active integration source; replace or remove saved
   LLM/Finnhub settings. Removing Finnhub returns research to public sources.
@@ -117,7 +117,7 @@ asks for re-entry; it does not silently switch to the operator's model.
   losing the settings key makes existing saved provider keys unreadable until
   users re-enter them.
 
-## Retention and current gaps
+## ⚠️ Gaps and current gaps
 
 The project does **not** implement a general retention schedule or automatic
 expiry for portfolio records, reports, logs, and backups. Their lifetime depends
@@ -138,7 +138,7 @@ deletion requests. Do not copy self-hosting language that says users alone hold
 the database. This repository does not identify an official hosted service or
 supply operator-specific contact details or terms.
 
-## Check the implementation
+## ✅ Verify implementation
 
 Start with the [database schema](../server/database/schema.ts),
 [authentication](../server/modules/auth/auth.service.ts),

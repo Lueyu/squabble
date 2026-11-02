@@ -1,4 +1,4 @@
-# Architecture
+# 🏗️ Architecture
 
 Squabble's application is a React client, a NestJS backend and PostgreSQL.
 The backend runs the built-in analysis pipeline, portfolio APIs, paper trading

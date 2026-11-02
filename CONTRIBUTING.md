@@ -1,4 +1,4 @@
-# Contributing to 吵股 Squabble
+# 🤝 Contributing to 吵股 Squabble
 
 Help make personal investing tools easier to understand and safer to try.
 Useful contributions include clearer onboarding, verified research data,
@@ -8,7 +8,7 @@ Start with the [local setup guide](docs/self-hosting.md), then use the
 If you use an AI coding agent, share the repository's
 [Squabble contributor skill](.agents/skills/squabble-contributor/SKILL.md) with it.
 
-## Project layout
+## 📁 Project layout
 
 GitHub is the single source of truth — every path accepts normal pull
 requests:
@@ -27,7 +27,7 @@ requests:
 The project was originally developed on the Miaoda (aPaaS) cloud; that
 coupling has been fully removed, so there is no mirror/sync workflow anymore.
 
-## How changes reach `main`
+## ✅ How changes reach `main`
 
 1. Create a branch from the current `main` and open a pull request targeting
    `main`. Direct pushes, force pushes and branch deletion are blocked.
@@ -50,7 +50,7 @@ enforces the PR, checks and conversation gates, including for administrators.
 If a check fails, fix the cause on the PR branch and let CI rerun. Do not
 disable a check or push directly to `main` to get around a failure.
 
-## Before you open a PR
+## ✅ Before you open a PR
 
 ```bash
 npm ci               # install the versions in package-lock.json
@@ -71,7 +71,7 @@ uv sync
 uv run pytest -q     # offline test suite, no live network access
 ```
 
-## Guidelines
+## 📝 Guidelines
 
 - **Scope**: one PR per feature or fix. Small, focused PRs get reviewed faster.
 - **Commits**: use [Conventional Commits](https://www.conventionalcommits.org/)
@@ -87,14 +87,14 @@ uv run pytest -q     # offline test suite, no live network access
   fresh installs; note schema changes in your PR description for existing
   deployments).
 
-## Reporting bugs
+## 🐛 Report a bug
 
 Open an issue with the **Bug report** template. The opt-in Docker demo
 (`docker compose -f docker-compose.demo.yml up -d --build`, then log in at
 `http://localhost:3001` with `demo` / `demo1234`) is useful for reproduction.
 Mention whether the bug also happens with a clean local account or desktop app.
 
-## Feature requests
+## 💡 Suggest a feature
 
 Ideas are welcome, especially around:
 

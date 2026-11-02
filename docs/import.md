@@ -1,10 +1,10 @@
-# Portfolio Import Guide
+# 📸 Portfolio Import Guide
 
 Three flows share one rule: **no holdings are written to the instance database
 until you confirm the preview**. Every import is recorded in history with per-row reasons for
 anything skipped.
 
-## Generic CSV
+## 📄 Generic CSV
 
 1. Open **持仓导入** in the sidebar, choose **CSV 文件**.
 2. Pick your file. Use a CSV with one holding per row —
@@ -16,7 +16,7 @@ anything skipped.
 4. Confirm the preview and import. Existing tickers are **skipped, never
    merged** — edit those positions on the holdings page instead.
 
-## Robinhood CSV
+## 📊 Robinhood CSV
 
 Same flow with the **Robinhood 导出** preset selected — known headers
 (`Symbol`, `Quantity`, `Cost Basis` …) are mapped automatically.
@@ -25,7 +25,7 @@ The current confirmed import paths are **Generic CSV**, **Robinhood CSV** and
 **Screenshot OCR**. Other broker presets visible in the UI are not yet accepted
 by the import API. Use Generic CSV and map the columns for those exports.
 
-## Screenshot OCR
+## 📷 Screenshot OCR
 
 For a broker that cannot export a suitable CSV:
 

@@ -1,4 +1,4 @@
-# Squabble documentation · 文档导航
+# 📚 Squabble documentation · 文档导航
 
 Choose one of the two supported local installation paths. You do not need the
 Python agent or a model key to start using Squabble.
@@ -7,9 +7,9 @@ Python agent or a model key to start using Squabble.
 
 | Goal / 目标 | English | 简体中文 |
 |---|---|---|
-| Install the Windows or macOS desktop app / 安装桌面应用 | [Desktop installation](self-hosting.md#desktop-app) | [桌面应用](self-hosting.zh-CN.md#桌面应用) |
-| Run clean local Docker Compose / 本地 Docker Compose 干净安装 | [Local setup](self-hosting.md#docker-compose) | [本地安装](self-hosting.zh-CN.md#docker-compose) |
-| Understand data handling / 数据存在哪里、谁能访问 | [Privacy and data flow](privacy.md) | [数据与隐私](privacy.zh-CN.md) |
+| 🖥️ Install the Windows or macOS desktop app / 安装桌面应用 | [Desktop installation](self-hosting.md#desktop-app) | [桌面应用](self-hosting.zh-CN.md#桌面应用) |
+| 🐳 Run clean local Docker Compose / 本地 Docker Compose 干净安装 | [Local setup](self-hosting.md#docker-compose) | [本地安装](self-hosting.zh-CN.md#docker-compose) |
+| 🔒 Understand data handling / 数据存在哪里、谁能访问 | [Privacy and data flow](privacy.md) | [数据与隐私](privacy.zh-CN.md) |
 
 For using the product / 功能使用：
 
