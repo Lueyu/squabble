@@ -48,7 +48,11 @@ still writing to disk and retry after closing any running Squabble app.
 Reinstalling does not automatically remove the application data directory.
 
 On first launch, create your account and save the one-time recovery code
-offline. The desktop app starts with no demo account or sample holdings. Add
+offline. The desktop login page keeps registration available for additional
+local accounts, each with its own sign-in and recovery code. Anyone who can
+open this desktop app on your computer can create an account. The Docker
+installation instead closes public registration after its first account.
+The desktop app starts with no demo account or sample holdings. Add
 holdings manually or [import a CSV](import.md). Account recovery uses the
 saved code; there is no email reset service.
 

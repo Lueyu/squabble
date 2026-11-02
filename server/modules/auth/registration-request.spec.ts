@@ -59,6 +59,29 @@ test('first-user registration accepts same-origin JSON requests', async () => {
   }
 });
 
+test('open desktop registration still rejects cross-site requests', async () => {
+  const previousMode = process.env.REGISTER_ENABLED;
+  const previousOrigin = process.env.SQUABBLE_DESKTOP_ORIGIN;
+  process.env.REGISTER_ENABLED = 'true';
+  process.env.SQUABBLE_DESKTOP_ORIGIN = 'http://127.0.0.1:3000';
+  let created = false;
+  try {
+    const controller = controllerForTest(() => { created = true; });
+    await assert.rejects(() => controller.register(requestForTest({
+      host: '127.0.0.1:3000',
+      origin: 'https://attacker.example',
+      'content-type': 'application/json',
+      'sec-fetch-site': 'cross-site',
+    }), { username: 'attacker', password: 'attacker-password-123' }));
+    assert.equal(created, false);
+  } finally {
+    if (previousMode === undefined) delete process.env.REGISTER_ENABLED;
+    else process.env.REGISTER_ENABLED = previousMode;
+    if (previousOrigin === undefined) delete process.env.SQUABBLE_DESKTOP_ORIGIN;
+    else process.env.SQUABBLE_DESKTOP_ORIGIN = previousOrigin;
+  }
+});
+
 for (const [name, headers] of [
   ['foreign Origin on a JSON request', {
     host: 'localhost:3000', origin: 'https://attacker.example',

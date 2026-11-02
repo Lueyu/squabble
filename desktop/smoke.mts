@@ -51,11 +51,20 @@ try {
     body: JSON.stringify({ username: 'desktop-smoke', password: secrets.jwtSecret, displayName: 'Desktop Smoke' }),
   });
   assert.equal(registered.status, 201, 'the first desktop user can create an account');
-  const closed = await fetch(`${origin}/api/auth/registration-status`);
-  assert.equal((await closed.json()).registrationOpen, false, 'registration closes after the first user');
+  const open = await fetch(`${origin}/api/auth/registration-status`);
+  assert.equal((await open.json()).registrationOpen, true, 'desktop registration remains open after the first user');
+  const second = await fetch(`${origin}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'desktop-second', password: secrets.jwtSecret, displayName: 'Second Desktop User' }),
+  });
+  assert.equal(second.status, 201, 'a second desktop user can create an account');
+  const secondUser = await second.json() as { user: { id: string } };
+  const firstUser = await registered.json() as { user: { id: string } };
+  assert.notEqual(secondUser.user.id, firstUser.user.id, 'desktop accounts remain distinct');
   const denied = await fetch(`${origin}/api/health`, { headers: { Origin: 'https://wrong.example' } });
   assert.equal(denied.status, 403);
-  process.stdout.write('Desktop smoke: database, API, first-user registration, and origin guard passed.\n');
+  process.stdout.write('Desktop smoke: database, API, two registrations, and origin guard passed.\n');
 } finally {
   if (server) {
     const child = server;

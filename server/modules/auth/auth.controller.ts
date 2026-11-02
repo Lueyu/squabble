@@ -35,7 +35,7 @@ export class AuthController {
     @Req() request: Request,
     @Body() body: { username?: string; password?: string; displayName?: string },
   ) {
-    if (process.env.REGISTER_ENABLED === 'first-user') {
+    if (process.env.REGISTER_ENABLED === 'first-user' || process.env.SQUABBLE_DESKTOP_ORIGIN) {
       const contentType = request.headers['content-type'];
       if (typeof contentType !== 'string' || !/^application\/json(?:\s*;|$)/iu.test(contentType)) {
         throw new UnsupportedMediaTypeException('Registration requires a JSON request');

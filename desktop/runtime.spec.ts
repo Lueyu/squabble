@@ -99,7 +99,7 @@ test('desktop startup errors retain PostgreSQL diagnostics without exposing secr
   for (const secret of Object.values(secrets)) assert.ok(!failure.message.includes(secret));
 });
 
-test('desktop server environment binds both services to loopback and enables first-user registration', async () => {
+test('desktop server environment binds both services to loopback and keeps registration open', async () => {
   const runtime = await runtimePromise;
   assert.ok(runtime?.nestEnvironment);
   const paths = runtime.desktopPaths('C:\\Squabble', 'C:\\SquabbleData');
@@ -108,7 +108,7 @@ test('desktop server environment binds both services to loopback and enables fir
   }, 'postgres://squabble:secret@127.0.0.1:5432/portfolio', 41234);
   assert.equal(environment.SERVER_HOST, '127.0.0.1');
   assert.equal(environment.SERVER_PORT, '41234');
-  assert.equal(environment.REGISTER_ENABLED, 'first-user');
+  assert.equal(environment.REGISTER_ENABLED, 'true');
   assert.equal(environment.SQUABBLE_DESKTOP_ORIGIN, 'http://127.0.0.1:41234');
   assert.equal(environment.NODE_ENV, 'production');
   assert.equal(environment.JWT_SECRET, 'b'.repeat(64));
