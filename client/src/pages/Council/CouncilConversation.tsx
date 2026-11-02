@@ -89,7 +89,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
           setContent((current) => current ? `${current}\n${question}`.slice(0, 2000) : question.slice(0, 2000)); inputRef.current?.focus();
         }} />)}
         <CouncilResearchProgress session={session} />
-        {session.status === 'running' && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
+        {session.status === 'running' && !session.progress && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card"><Loader2 className="size-4 animate-spin text-primary" /></span>
           {t('council.runningHint')}
         </div>}

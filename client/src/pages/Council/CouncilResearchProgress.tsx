@@ -7,11 +7,13 @@ export default function CouncilResearchProgress({ session }: { session: CouncilS
   const events = session.messages.filter((message) => message.acquisition || message.phase === 'progress');
   // Native CLIs may report the same tool step several times. Keep the latest occurrence of each
   // public update so the chat shows actual changes instead of repeated "researching" rows.
-  const distinct = events.filter((message, index) => {
+  const seen = new Set<string>();
+  const distinct = [...events].reverse().filter((message) => {
     const key = `${message.memberName}\u0000${message.acquisition?.status ?? ''}\u0000${message.acquisition?.detail ?? message.content}`;
-    return !events.slice(index + 1).some((later) =>
-      `${later.memberName}\u0000${later.acquisition?.status ?? ''}\u0000${later.acquisition?.detail ?? later.content}` === key);
-  });
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).reverse();
   const progress = session.progress;
   const activeMember = session.members?.find((member) => member.id === progress?.memberId);
   const latest = distinct.at(-1);
