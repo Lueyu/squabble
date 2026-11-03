@@ -32,6 +32,21 @@ Antigravity 研究使用独立临时设置，同时保留原生系统钥匙串�
 Windows 已验证隔离环境的启动、能力查询和未登录检测，真实账号研究兼容性尚未验证。
 更多实现依据见 [Clowder Agent、Skills 与 MCP 核对](clowder-agent-and-tool-research.md)。
 
+## 自动投研工具与聊天进度
+
+连接后无需额外配置。Codex 0.104.0+、Claude Code 2.1.221+ 在通过运行时检查后，
+可在任务中读取行情、财务、估值、新闻、当前账号的历史报告和本讨论上下文。
+启用网络研究时，还可使用现有预算约束下的网页检索。工具不会授予交易或持仓写入权限。
+
+其他五种运行时，以及低于上述版本或版本无法识别的 Codex/Claude，使用带时间的只读证据快照。
+设置页和成员编辑页会显示“投研工具”或“证据快照”及原因；快照不会显示成实时工具调用。
+该矩阵表示吵股已验证的接入能力，不表示其他 CLI 本身不支持 MCP。
+
+聊天中的“研究过程”会显示角色任务、公开工作摘要、具体工具动作、耗时、来源和失败/取消状态。
+刷新后可恢复已保存的过程；旧轮次单独折叠，最终回复可从任务卡跳转。
+助手没有报告的结果不会推断为成功，未知用量仍显示未知。过程不包含私有思维链、登录凭证或原始进程日志。
+研究工具只在任务临时配置中生效，不改写个人 CLI 配置；本机 MCP 端口仅在任务期间开启。
+
 ## 桌面版
 
 1. 打开 **设置 → 本地研究 Agent**。
@@ -56,7 +71,8 @@ Docker 使用同一台电脑上的吵股桌面应用作为助手：
 
 不需要填写账号 ID、服务地址、注册表、Token 或额外端口。配对链接会过期且只能使用一次；
 失败时在设置中重新创建即可。仅支持本机 `localhost`、`127.0.0.1` 或 `[::1]` 的网页地址。
-桌面助手主动连接网页服务，不会打开新的监听端口。桌面版与 Docker 的投资数据保持各自独立。
+桌面助手主动连接网页服务；兼容的原生 CLI 会使用任务期间的本机临时 MCP 端口，
+无需手动映射或开放端口。桌面版与 Docker 的投资数据保持各自独立。
 
 助手会自动重连。可在桌面 **帮助 → 本地 Agent 助手** 中查看连接地址和状态。
 在网页设置中断开助手会撤销配对凭证；桌面助手收到撤销后会停止任务并清除保存的配对。
@@ -78,6 +94,21 @@ Docker 使用同一台电脑上的吵股桌面应用作为助手：
 旧版外部 Agent 连接需要在设置中重新连接受支持的 Agent。已有报告仍可查看。
 
 ## English
+
+Compatible Codex 0.104.0+ and Claude Code 2.1.221+ automatically receive task-scoped,
+read-only tools for quotes, financials, valuation, news, saved account reports and
+discussion context. Web research is available only when enabled and retains the
+existing request budgets. No trade or portfolio-write permission is granted.
+Other runtimes, and older or unrecognized Codex/Claude versions, receive a dated
+evidence snapshot. Settings and the member editor show the mode and its reason.
+This describes verified Squabble integration, not the CLIs' general MCP support.
+
+Discussion chat shows public work summaries, tool outcomes, sources, elapsed time,
+and failure/cancellation states. Saved events survive refresh; previous revisions
+are separated and task cards link to final replies. Missing outcomes never imply
+success. Private reasoning, credentials and raw process logs are not displayed.
+Task configuration does not modify global CLI settings. Compatible runtimes use a
+temporary loopback MCP listener; no manual port mapping or configuration is needed.
 
 Squabble connects to **Codex, Claude Code, Gemini CLI, Antigravity, OpenCode, Kimi**
 and the community **Doubao CLI** installed on your computer.

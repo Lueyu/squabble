@@ -48,6 +48,7 @@ export function agentContribution(result: { data?: unknown; text: string }, evid
 
 export function agentErrorMessage(code: string, language: string): string {
   const messages: Record<string, [string, string]> = {
+    LOCAL_TOOL_ISOLATION_FAILED: ['无法隔离本地助手的工具配置，任务已停止。请升级助手并在设置中重新检查连接。', 'The native agent tool configuration could not be isolated. The task was stopped. Update the agent and check its connection in Settings.'],
     LOCAL_LOGIN_REQUIRED: ['本地 Agent 需要重新登录。请在设置中完成登录后新建讨论。', 'The local agent requires sign-in. Sign in from Settings and start a new discussion.'],
     LOCAL_INVALID_CONFIGURATION: ['本地 Agent 的模型或思考深度配置无效。请检查成员配置后新建讨论。', 'The local agent model or reasoning setting is invalid. Check the member configuration and start a new discussion.'],
     LOCAL_CONFIGURATION_UNSUPPORTED: ['当前本地 Agent 不支持所选模型或思考深度配置。请更新桌面助手或调整成员配置后新建讨论。', 'The local agent does not support the selected model or reasoning setting. Update the desktop companion or adjust the member configuration and start a new discussion.'],

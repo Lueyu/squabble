@@ -10,9 +10,15 @@ import { createNativeWorkspace } from './workspace';
 import { authenticationState, configuredModels, defaultCapabilities, geminiMetadata, kimiCredentialEnv, kimiMetadata, parseModels, supportsAntigravity } from './metadata';
 import { normalizedConfiguration, researchInvocation, type NativeProbe } from './research';
 import { runDoubao } from './doubao';
+import type { ResearchActivity } from '../../shared/research-events.interface';
+import type { ResearchToolCapability } from '../../shared/research-tools.interface';
+import { createResearchToolBridge, type NativeResearchTools, type ResearchToolBridge } from './tool-bridge';
+import { injectResearchTools, isolateCodexResearch, researchSnapshotPrompt, researchToolCapability } from './tool-config';
 
 export interface NativeRunOptions {
   root: string; signal: AbortSignal; onProgress: (text: string) => void; agentSettings?: NativeAgentConfiguration;
+  researchTools?: NativeResearchTools;
+  onEvent?: (event: ResearchActivity) => void;
 }
 export interface NativeRuntimeOptions extends NativeResolverOptions {
   authTimeoutMs?: number; runTimeoutMs?: number; maxOutputBytes?: number;
@@ -31,13 +37,15 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
     if (!launch) throw new Error('NATIVE_AGENT_NOT_INSTALLED');
     return launch;
   };
-  const probeFor = (launch: NativeLaunch, provider: LocalAgentProvider, model?: string): NativeProbe => (args: string[]): Promise<NativeProcessResult> => executeNativeProcess(launch, args, {
-    cwd: options.home ?? homedir(), env: env(provider, model), timeoutMs: options.authTimeoutMs ?? 8000, maxOutputBytes: 1024 * 1024,
+  const probeFor = (launch: NativeLaunch, provider: LocalAgentProvider, model?: string): NativeProbe => (args, context): Promise<NativeProcessResult> => executeNativeProcess(launch, args, {
+    cwd: context?.cwd ?? options.home ?? homedir(), env: context?.env ?? env(provider, model), signal: context?.signal,
+    timeoutMs: options.authTimeoutMs ?? 8000, maxOutputBytes: 1024 * 1024,
   });
   return {
     async detectNativeAgents(): Promise<NativeAgentStatus[]> {
       return Promise.all(LOCAL_AGENT_PROVIDERS.map(async (provider: LocalAgentProvider): Promise<NativeAgentStatus> => {
-        const status: NativeAgentStatus = { ...providerCatalog[provider], ...defaultCapabilities(provider), state: 'not_installed' };
+        const status: NativeAgentStatus = { ...providerCatalog[provider], ...defaultCapabilities(provider), state: 'not_installed',
+          researchTools: researchToolCapability(provider) };
         const launch: NativeLaunch | null = resolveCommand(provider);
         if (!launch) return status;
         const probe: NativeProbe = probeFor(launch, provider);
@@ -46,6 +54,7 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
           if (version.code !== 0) { status.state = 'error'; return status; }
           const line: string = version.stdout.trim().split(/\r?\n/)[0] ?? '';
           if (line.length <= 120 && /\d+\.\d+/u.test(line) && !/[\u0000-\u001f]/u.test(line)) status.version = line;
+          status.researchTools = researchToolCapability(provider, status.version);
           if (provider === 'gemini') Object.assign(status, geminiMetadata(options));
           else if (provider === 'kimi') {
             const doctor = await probe(['doctor', 'config']);
@@ -80,17 +89,46 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
       const settings: NativeAgentConfiguration = normalizedConfiguration(run.agentSettings);
       const launch: NativeLaunch = command(provider);
       const workspace = await createNativeWorkspace(run.root);
+      let bridge: ResearchToolBridge | undefined;
       try {
-        const invocation = await researchInvocation(provider, prompt, settings, workspace.cwd, env(provider, settings.model), options, probeFor(launch, provider, settings.model));
+        const probe: NativeProbe = probeFor(launch, provider, settings.model);
+        const tools = run.researchTools && (run.researchTools.snapshot.trim() || run.researchTools.descriptors.length) ? run.researchTools : undefined;
+        let capability: ResearchToolCapability = researchToolCapability(provider);
+        if (tools) {
+          try {
+            const version = await probe(['--version'], { signal: run.signal });
+            capability = researchToolCapability(provider, version.code === 0 ? version.stdout.trim() : undefined);
+          } catch { if (run.signal.aborted) throw new Error('NATIVE_AGENT_CANCELLED'); }
+        }
+        let invocation = await researchInvocation(provider, tools ? researchSnapshotPrompt(prompt, tools.snapshot) : prompt,
+          settings, workspace.cwd, env(provider, settings.model), options, probe);
+        if (tools && capability.mode === 'mcp' && tools.descriptors.length) {
+          bridge = await createResearchToolBridge(tools, run.signal);
+          try { invocation = await injectResearchTools(provider, invocation, bridge, tools.descriptors.map(tool => tool.name), probe, workspace.cwd, run.signal); }
+          catch {
+            await bridge.close(); bridge = undefined;
+            if (run.signal.aborted) throw new Error('NATIVE_AGENT_CANCELLED');
+            throw new Error('NATIVE_AGENT_TOOL_ISOLATION_FAILED');
+          }
+        }
+        if (tools && provider === 'codex' && !bridge) {
+          try { invocation = await isolateCodexResearch(invocation, probe, workspace.cwd, run.signal); }
+          catch { throw new Error(run.signal.aborted ? 'NATIVE_AGENT_CANCELLED' : 'NATIVE_AGENT_TOOL_ISOLATION_FAILED'); }
+        }
+        if (tools) run.onEvent?.({ id: `${provider}-research-capability`, kind: 'capability',
+          status: bridge ? 'succeeded' : 'unavailable', at: new Date().toISOString(),
+          summary: bridge ? 'Task-scoped research tools available' : capability.reason === 'version_unsupported'
+            ? 'CLI version is not verified for research tools; using read-only evidence snapshot'
+            : 'Isolated research tools are not available for this runtime; using read-only evidence snapshot' });
         const processOptions = { cwd: workspace.cwd, env: invocation.env, input: invocation.input, signal: run.signal,
           timeoutMs: options.runTimeoutMs ?? 10 * 60 * 1000, maxOutputBytes: options.maxOutputBytes ?? 4 * 1024 * 1024 };
-        if (provider === 'doubao') return await runDoubao(launch, invocation.args, processOptions, run.root, run.onProgress);
-        const collector: NativeEventCollector = new NativeEventCollector(provider, run.onProgress);
+        if (provider === 'doubao') return await runDoubao(launch, invocation.args, processOptions, run.root, run.onProgress, run.onEvent);
+        const collector: NativeEventCollector = new NativeEventCollector(provider, run.onProgress, run.onEvent);
         const result = await executeNativeProcess(launch, invocation.args, { ...processOptions, onLine: (line: string) => collector.read(line) });
         if (result.code !== 0) throw new Error('NATIVE_AGENT_FAILED');
         collector.completeProcess();
         return collector.result();
-      } finally { await workspace.dispose(); }
+      } finally { try { await bridge?.close(); } finally { await workspace.dispose(); } }
     },
   };
 }

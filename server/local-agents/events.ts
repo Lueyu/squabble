@@ -1,4 +1,6 @@
 import type { LocalAgentProvider } from '../../shared/local-agents.interface';
+import type { ResearchActivity } from '../../shared/research-events.interface';
+import { NativeActivityCollector } from './activity';
 
 interface JsonObject { [key: string]: unknown }
 function object(value: unknown): JsonObject {
@@ -28,12 +30,15 @@ export class NativeEventCollector {
   private terminal: boolean = false;
   private usageTokens: number | null = null;
   private lastProgress: string = '';
-  constructor(private readonly provider: LocalAgentProvider, private readonly onProgress: (text: string) => void) {}
+  private readonly activity: NativeActivityCollector;
+  constructor(private readonly provider: LocalAgentProvider, private readonly onProgress: (text: string) => void,
+    onEvent?: (event: ResearchActivity) => void) { this.activity = new NativeActivityCollector(provider, onEvent); }
 
   read(line: string): void {
     let parsed: unknown;
     try { parsed = JSON.parse(line); } catch { return; }
     const event: JsonObject = object(parsed);
+    this.activity.read(event);
     if (this.provider === 'codex') this.codex(event);
     else if (this.provider === 'claude') this.claude(event);
     else if (this.provider === 'gemini') this.gemini(event);
@@ -142,6 +147,7 @@ export class NativeEventCollector {
   }
 
   private doubao(event: JsonObject): void {
+    if (event.status === 'running') return;
     if (event.status !== 'completed') throw new Error('NATIVE_AGENT_INCOMPLETE');
     const reply: JsonObject = object(event.reply);
     if (reply.role !== 'assistant' || typeof reply.text !== 'string') throw new Error('NATIVE_AGENT_INCOMPLETE');

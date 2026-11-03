@@ -75,6 +75,13 @@
   },
   "teamInvalid": "Choose 2–6 distinct members and exactly one moderator. Check names, responsibilities, models, research focus, and prompt lengths.",
   "localAgents": {
+    "tools": {
+      "live": "Research tools available: this agent can request app data and permitted web sources as it works.",
+      "snapshot": "Snapshot mode: this agent receives the research data prepared at the start of its task.",
+      "version_unsupported": "This installed version cannot request additional app data during the task. Update the agent to enable research tools.",
+      "runtime_unsupported": "This agent does not currently support requesting additional app data during the task.",
+      "supported": "Research tools are available."
+    },
     "title": "Local research agents",
     "intro": "Connect Codex, Claude Code, Gemini CLI, Antigravity, OpenCode, Kimi or Doubao on your computer. Choose an agent and model for each team member, and follow their research progress and reports here.",
     "refresh": "Refresh status",
@@ -177,6 +184,14 @@
     "sourcePending": "Source {{index}} was cited. Its details will appear when this round's report is saved."
   },
   "progress": {
+    "taskStates": { "queued": "Waiting", "running": "Running", "succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled", "interrupted": "Interrupted", "unavailable": "Unavailable" },
+    "activityKinds": { "tool": "Research tool", "summary": "Activity update", "capability": "Research data access" },
+    "toolNames": { "get_quotes": "Fetch market quotes", "get_financials": "Fetch financial statements", "get_valuation": "Fetch valuation data", "get_news": "Fetch company news", "get_research_report": "Read saved research reports", "get_discussion_context": "Read discussion context", "search_research_web": "Search public research sources" },
+    "taskTurn": "Turn {{turn}}", "duration": "{{seconds}} s", "sourceAsOf": "Retrieved: {{at}}",
+    "olderActivities": "Show {{count}} earlier activities", "olderTasks": "Show {{count}} earlier tasks",
+    "previousRevisions": "Earlier discussion versions · {{count}} tasks", "previousRevision": "Earlier version {{revision}}",
+    "truncated": "Showing retained research activity. Some earlier events are no longer included in this snapshot.",
+    "viewReply": "View this member’s reply",
     "history": "Research activity", "turn": "{{turn}} / {{total}}", "waiting": "Research is underway. Completed source checks will appear here.",
     "phases": { "opening": "Sharing an initial view", "challenge": "Comparing views", "response": "Answering questions", "summary": "Preparing the research summary", "progress": "Checking sources" },
     "acquisition": { "started": "Checking", "succeeded": "Retrieved", "partial": "Partially retrieved", "failed": "Unavailable", "cache_hit": "Using verified data", "skipped": "Skipped" }

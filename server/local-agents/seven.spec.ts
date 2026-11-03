@@ -83,8 +83,28 @@ test('seven native agents expose bounded model/effort metadata without running p
     assert.deepEqual(statuses.find(s=>s.provider==='antigravity')?.models?.[0],{id:'gemini-research',name:'Gemini Research',reasoningEfforts:['low','high']});
     assert.deepEqual(statuses.find(s=>s.provider==='claude')?.models?.map(model=>model.id),['opus','sonnet','haiku']);
     assert.equal((await readdir(root)).filter(name=>name.startsWith('capture-')).length,0);
+    assert.ok(statuses.every(status => status.researchTools?.mode));
   });
 });
+
+for (const provider of ['gemini', 'antigravity', 'opencode', 'kimi', 'doubao'] as const) {
+  test(`${provider} receives dated fallback evidence without changing its read-only tool restrictions`, async () => {
+    await fixture(async ({ root, runtime }) => {
+      const activity: Array<{ kind: string; status: string }> = [];
+      await runtime.runNativeAgent(provider, 'Research TEST', { root: join(root, 'tasks'), signal: new AbortController().signal,
+        onProgress: () => undefined, onEvent: event => activity.push(event), researchTools: {
+          snapshot: 'Shared evidence for TEST as of 2026-11-03', descriptors: [],
+          call: async () => { throw new Error('Snapshot adapters must not call the bridge'); },
+        } });
+      const capture = JSON.parse(await readFile(join(root, `capture-${provider}`), 'utf8'));
+      assert.ok(JSON.stringify(capture).includes('Shared evidence for TEST'));
+      assert.equal(capture.env.SQUABBLE_RESEARCH_MCP_TOKEN, undefined);
+      assert.ok(activity.some(event => event.kind === 'capability' && event.status === 'unavailable'));
+      const calls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      assert.ok(calls.some(call => call.provider === provider && call.args.includes('--version')));
+    });
+  });
+}
 
 for (const provider of LOCAL_AGENT_PROVIDERS) {
   test(`${provider} executes a configured research turn with its native protocol`,async()=>{

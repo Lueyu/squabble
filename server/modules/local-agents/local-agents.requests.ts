@@ -27,14 +27,26 @@ export function validateNativeAgentConfiguration(input: unknown, status?: Native
   return settings;
 }
 export const pairRequest = z.object({ code: z.string().regex(/^[a-f0-9]{48}$/u), name: z.string().trim().min(1).max(80) }).strict();
+export const researchToolRequest = z.object({ taskId: z.string().uuid(), callId: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+  name: z.string().regex(/^[a-z_]{1,80}$/u), arguments: z.record(z.string(), z.unknown()).refine(value => Buffer.byteLength(JSON.stringify(value)) <= 4096),
+}).strict();
+export const researchToolCancelRequest = researchToolRequest.pick({ taskId: true, callId: true });
+const activity = z.object({ id: z.string().min(1).max(128), kind: z.enum(['task', 'tool', 'summary', 'capability']),
+  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted', 'unavailable']),
+  at: z.string().max(40).refine(value => Number.isFinite(Date.parse(value))), summary: z.string().max(2000),
+  toolName: z.string().max(101).optional(), callId: z.string().max(128).optional(), durationMs: z.number().finite().min(0).max(600_000).optional(),
+  sources: z.array(z.object({ title: z.string().max(160), url: z.string().max(2048).optional(), fetchedAt: z.string().max(40) }).strict()).max(8).optional(),
+}).strict();
 const pollRequest = z.object({
   agents: z.array(z.object({ provider, state: z.enum(['not_installed', 'login_required', 'ready', 'error']), version: z.string().max(120).optional(),
+    researchTools: z.object({ mode: z.enum(['mcp', 'snapshot']), reason: z.enum(['supported', 'version_unsupported', 'runtime_unsupported']) }).strict().optional(),
     models: z.array(z.object({ id: configurationText(160), name: configurationText(160), reasoningEfforts: reasoningEfforts.optional() }).strict())
       .max(256).refine((models) => new Set(models.map((model) => model.id)).size === models.length).optional(),
     reasoningEfforts: reasoningEfforts.optional(), configurationHelp: z.string().max(1000).optional(),
   })).max(LOCAL_AGENT_PROVIDERS.length),
   updates: z.array(z.object({ id: z.string().uuid(), state: z.enum(['running', 'completed', 'failed', 'cancelled']),
-    error: z.enum(['LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED', 'LOCAL_VERSION_UNSUPPORTED', 'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN']).optional(),
+    events: z.array(activity).max(64).optional(),
+    error: z.enum(['LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED', 'LOCAL_VERSION_UNSUPPORTED', 'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_TOOL_ISOLATION_FAILED']).optional(),
     progress: z.string().max(500).optional(), text: z.string().max(512_000).refine((value) => Buffer.byteLength(value) <= 512_000).optional(),
     usageTokens: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional() }).strict()).max(16),
 }).strict();

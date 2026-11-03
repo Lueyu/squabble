@@ -84,6 +84,11 @@ from web Settings; confirm the local address in the desktop dialog. Keep the app
 open while researching. Each member can select a model and the reasoning options
 supported by its agent, or inherit the existing defaults. [Setup and usage details](docs/local-agents.md).
 
+Compatible Codex and Claude Code versions automatically receive task-scoped,
+read-only research tools; other runtimes receive a dated evidence snapshot with
+the limitation shown in Settings. The discussion chat shows public work summaries,
+tool outcomes, elapsed time and sources. No MCP JSON or extra connection steps are needed.
+
 ## Connect your AI assistant
 
 Squabble has a built-in MCP server. Give Claude or ChatGPT access to your paper account:

@@ -8,6 +8,10 @@ import { detectNativeAgents, openNativeLogin, runNativeAgent } from '../../local
 import { LocalAgentStore, type AgentTask } from './local-agents.store';
 import { LocalAgentError, nativeFailureCode, type LocalAgentExecution, type LocalAgentResult } from './local-agents.types';
 import { providerCatalog, providerFromId, parseNativeAgentConfiguration, validateNativeAgentConfiguration } from './local-agents.requests';
+import { ResearchToolsService } from '../research-tools/research-tools.service';
+import type { ResearchToolRequest, ResearchToolResult } from '../../../shared/research-tools.interface';
+import { researchFailure } from '../research-tools/research-tools.output';
+import { createHash } from 'node:crypto';
 
 interface Runtime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -24,9 +28,11 @@ export class LocalAgentsService implements OnModuleDestroy {
   private readonly logins = new Set<LocalAgentProvider>();
   private detection?: { until: number; promise: Promise<NativeAgentStatus[]> };
   private stopping = false;
+  private readonly toolCalls = new Map<string, { fingerprint: string; promise: Promise<ResearchToolResult>; controller: AbortController }>();
 
   constructor(@Optional() @Inject('LOCAL_AGENT_RUNTIME') runtime?: Runtime,
-    @Optional() @Inject('LOCAL_AGENT_STORE') store?: LocalAgentStore) {
+    @Optional() @Inject('LOCAL_AGENT_STORE') store?: LocalAgentStore,
+    @Optional() private readonly researchTools?: ResearchToolsService) {
     this.runtime = runtime ?? { detectNativeAgents, openNativeLogin, runNativeAgent };
     this.store = store ?? new LocalAgentStore(resolve(process.env.LOCAL_AGENTS_DATA_DIR || join(homedir(), '.squabble', 'local-agents')));
   }
@@ -104,6 +110,9 @@ export class LocalAgentsService implements OnModuleDestroy {
       try {
         const result = await this.runtime.runNativeAgent(task.provider, task.prompt, { root: join(this.store.root, 'workspaces', task.id), signal: abort.signal,
           agentSettings: task.agentSettings,
+          ...(task.researchBundle ? { researchTools: { ...task.researchBundle,
+            call: (request: ResearchToolRequest, signal: AbortSignal) => this.callResearchTool(task.owner, task.id, request, signal) } } : {}),
+          onEvent: event => { progressWrites = progressWrites.then(() => this.store.appendEvents(task.owner, task.id, [event])); },
           onProgress: (text: string) => { progressWrites = progressWrites.then(() => this.store.update(task.owner, task.id, { progress: text.slice(0, 500) })); } });
         await progressWrites;
         if (abort.signal.aborted) {
@@ -137,7 +146,9 @@ export class LocalAgentsService implements OnModuleDestroy {
       const agentSettings = parseNativeAgentConfiguration(options.agentSettings);
       await this.validate(owner, options.agentId, agentSettings);
       if (!options.prompt.trim() || Buffer.byteLength(options.prompt) > 256_000) throw new LocalAgentError('LOCAL_INVALID_INPUT');
-      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings);
+      const research = options.researchScope && this.researchTools
+        ? { scope: options.researchScope, bundle: await this.researchTools.bundle(owner, options.researchScope) } : undefined;
+      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research);
       try {
         await options.onTask({ taskId: task.id, contextId: task.id });
         await options.onDispatch?.();
@@ -170,6 +181,76 @@ export class LocalAgentsService implements OnModuleDestroy {
       if (task.progress && task.progress !== progress) { progress = task.progress; await options.onProgress(progress); }
       await wait(300);
     }
+  }
+
+  /** The CLI only gets a task-specific local bridge; device/account credentials stay here. */
+  async cancelResearchTool(owner: string, taskId: string, callId: string): Promise<boolean> {
+    const cancelled = await this.store.cancelToolCall(owner, taskId, callId);
+    if (cancelled) this.toolCalls.get(`${owner}:${taskId}:${callId}`)?.controller.abort();
+    return cancelled;
+  }
+
+  async callResearchTool(owner: string, taskId: string, request: ResearchToolRequest, incomingSignal?: AbortSignal): Promise<ResearchToolResult> {
+    const controller = new AbortController();
+    const signal = incomingSignal ? AbortSignal.any([incomingSignal, controller.signal]) : controller.signal;
+    const failure = (code: string): ResearchToolResult => researchFailure(signal?.aborted ? 'cancelled' : 'failed', code);
+    if (!this.researchTools || signal?.aborted) return failure('RESEARCH_UNAVAILABLE');
+    if (!request || typeof request.name !== 'string' || typeof request.callId !== 'string'
+      || !request.arguments || typeof request.arguments !== 'object' || Array.isArray(request.arguments)) return failure('RESEARCH_INVALID_CALL');
+    const fingerprint = createHash('sha256').update(JSON.stringify([request.name, request.arguments])).digest('hex');
+    const eventKey = createHash('sha256').update(request.callId).digest('hex');
+    const key = `${owner}:${taskId}:${request.callId}`;
+    const previous = this.toolCalls.get(key);
+    if (previous) return previous.fingerprint === fingerprint ? previous.promise : failure('RESEARCH_CALL_CONFLICT');
+    const promise = (async (): Promise<ResearchToolResult> => {
+      let claimed = false;
+      const started = Date.now();
+      try {
+        const task = await this.store.task(owner, taskId);
+        if (!task.researchBundle?.descriptors.some(tool => tool.name === request.name)) return failure('RESEARCH_TOOL_NOT_ALLOWED');
+        if (!task.researchScope || !await this.researchTools!.isCurrent(owner, task.researchScope)) return failure('RESEARCH_SCOPE_EXPIRED');
+        const claim = await this.store.beginToolCall(owner, taskId, request);
+        if (!claim.run) return claim.result!;
+        claimed = true;
+        const en = task.researchScope.language === 'en';
+        await this.store.appendEvents(owner, taskId, [{ id: `tool:${eventKey}:start`, kind: 'tool', status: 'running',
+          at: new Date().toISOString(), callId: request.callId, toolName: request.name,
+          summary: en ? `Reading ${task.researchScope.ticker} research data` : `正在读取 ${task.researchScope.ticker} 的研究资料` }]);
+        const shouldContinue = async (): Promise<boolean> => {
+          const latest = await this.store.task(owner, taskId);
+          const device = latest.deviceId ? await this.store.deviceFor(owner) : undefined;
+          return !signal.aborted && !latest.cancelledToolCallIds?.includes(request.callId)
+            && latest.state === 'running' && latest.researchScope!.expiresAt > Date.now()
+            && (!latest.deviceId || device?.id === latest.deviceId && Date.now() - device.lastSeen < 30_000)
+            && await this.researchTools!.isCurrent(owner, latest.researchScope!);
+        };
+        let result = await shouldContinue()
+          ? await this.researchTools!.call(owner, task.researchScope, request, { signal, shouldContinue })
+          : researchFailure('cancelled', 'RESEARCH_CALL_CANCELLED');
+        if (!await shouldContinue()) result = researchFailure('cancelled', 'RESEARCH_TASK_INACTIVE', true);
+        result = await this.store.finishToolCall(owner, taskId, request.callId, result);
+        await this.store.appendEvents(owner, taskId, [{ id: `tool:${eventKey}:end`, kind: 'tool',
+          status: result.status === 'partial' ? 'succeeded' : result.status, at: new Date().toISOString(),
+          callId: request.callId, toolName: request.name, durationMs: Date.now() - started, sources: result.sources,
+          summary: result.status === 'succeeded'
+            ? en ? `Received research data (${result.sources.length} sources)` : `已取得研究资料（${result.sources.length} 个来源）`
+            : result.status === 'partial' ? en ? 'Partial data received; see source gaps.' : '已取得部分资料，请核对数据缺口。'
+              : en ? `Tool unavailable: ${result.errorCode ?? result.status}` : `工具未完成：${result.errorCode ?? result.status}` }]);
+        return result;
+      } catch (error) {
+        const code = error instanceof Error && /^(RESEARCH|LOCAL)_[A-Z_]+$/u.test(error.message) ? error.message : 'RESEARCH_TOOL_FAILED';
+        let result = failure(code);
+        if (claimed) {
+          result = await this.store.finishToolCall(owner, taskId, request.callId, result);
+          await this.store.appendEvents(owner, taskId, [{ id: `tool:${eventKey}:end`, kind: 'tool', status: result.status === 'cancelled' ? 'cancelled' : 'failed',
+            at: new Date().toISOString(), callId: request.callId, toolName: request.name, durationMs: Date.now() - started,
+            summary: `Research tool stopped: ${code}` }]);
+        }
+        return result;
+      }
+    })();
+    this.toolCalls.set(key, { fingerprint, promise, controller });
+    try { return await promise; } finally { this.toolCalls.delete(key); }
   }
   async onModuleDestroy(): Promise<void> {
     this.stopping = true;

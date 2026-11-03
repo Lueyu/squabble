@@ -137,7 +137,10 @@ test('a full Builder scan uses four budgeted council calls, fills once, and reus
     assert.equal(session.status, 'completed');
     assert.equal(session.language, 'en');
     const messages = await db.select().from(councilMessages).where(eq(councilMessages.owner, owner));
-    assert.equal(messages.length, 4);
+    assert.equal(messages.filter(message => message.metadata?.phase !== 'progress').length, 4);
+    const activity = messages.filter(message => message.metadata?.researchEvent);
+    assert.equal(activity.length, 12, 'each of four paid turns records queued, running and completed public activity');
+    assert.ok(activity.every(message => message.tokensUsed === 0), 'activity is not an extra model call');
     assert.equal(messages.reduce((sum, message) => sum + message.tokensUsed, 0), 600);
     const [report] = await db.select().from(councilReports).where(eq(councilReports.owner, owner));
     const [order] = await db.select().from(paperOrders).where(eq(paperOrders.owner, owner));

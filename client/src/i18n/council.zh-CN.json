@@ -75,6 +75,13 @@
   },
   "teamInvalid": "小组需要 2–6 位不同成员和一位主持人。请检查名字、角色、模型、研究重点及提示词长度。",
   "localAgents": {
+    "tools": {
+      "live": "支持研究工具：助手可以在研究过程中按需获取应用数据和获准访问的网页资料。",
+      "snapshot": "资料快照模式：助手使用任务开始时准备好的研究资料。",
+      "version_unsupported": "当前安装版本无法在任务中追加获取应用数据，更新助手后可启用研究工具。",
+      "runtime_unsupported": "此助手目前不支持在任务中追加获取应用数据。",
+      "supported": "研究工具可用。"
+    },
     "title": "本地投研 Agent",
     "intro": "连接电脑上的 Codex、Claude Code、Gemini CLI、Antigravity、OpenCode、Kimi 或豆包。为每位成员选择 Agent 和模型，在这里查看研究进度和报告。",
     "refresh": "刷新状态",
@@ -177,6 +184,14 @@
     "sourcePending": "资料 {{index}} 已被引用，详细来源将在本轮研报保存后显示。"
   },
   "progress": {
+    "taskStates": { "queued": "等待中", "running": "进行中", "succeeded": "已完成", "failed": "失败", "cancelled": "已取消", "interrupted": "已中断", "unavailable": "暂不可用" },
+    "activityKinds": { "tool": "研究工具", "summary": "活动更新", "capability": "研究资料获取方式" },
+    "toolNames": { "get_quotes": "获取行情", "get_financials": "获取财务资料", "get_valuation": "获取估值资料", "get_news": "获取公司新闻", "get_research_report": "读取历史研究报告", "get_discussion_context": "读取讨论上下文", "search_research_web": "搜索公开研究资料" },
+    "taskTurn": "第 {{turn}} 轮", "duration": "{{seconds}} 秒", "sourceAsOf": "获取时间：{{at}}",
+    "olderActivities": "展开更早的 {{count}} 条活动", "olderTasks": "展开更早的 {{count}} 个任务",
+    "previousRevisions": "历史讨论版本 · {{count}} 个任务", "previousRevision": "历史版本 {{revision}}",
+    "truncated": "正在显示保留的研究活动，部分更早的事件已不在当前快照中。",
+    "viewReply": "查看这位成员的回复",
     "history": "研究过程", "turn": "{{turn}} / {{total}}", "waiting": "研究正在进行，已完成的查证记录会显示在这里。",
     "phases": { "opening": "分享初步观点", "challenge": "交叉提问", "response": "回应问题", "summary": "整理研究结论", "progress": "查阅资料" },
     "acquisition": { "started": "查阅中", "succeeded": "已获取", "partial": "部分获取", "failed": "暂不可用", "cache_hit": "使用已核验资料", "skipped": "已跳过" }

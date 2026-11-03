@@ -1,4 +1,5 @@
 import type { NativeAgentConfiguration } from './local-agents.interface';
+import type { ResearchEvent } from './research-events.interface';
 /** Public contracts for bounded, user-owned investment research. */
 export interface LlmBudgetSettings {
   enabled: boolean;
@@ -78,6 +79,7 @@ export interface CouncilCandidate {
   reason: string;
 }
 export interface CouncilMessage {
+  taskId?: string;
   externalAgent?: boolean;
   externalUsageUnknown?: boolean;
   id: string;
@@ -116,6 +118,8 @@ export interface CouncilReport {
   researchStance?: 'positive' | 'balanced' | 'cautious' | null;
 }
 export interface CouncilSession {
+  researchEvents?: ResearchEvent[];
+  researchEventsTruncated?: boolean;
   id: string;
   profileId: string | null;
   profileVersion: number;

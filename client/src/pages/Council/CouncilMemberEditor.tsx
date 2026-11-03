@@ -129,6 +129,10 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
               </option>)}
             </select>
             {agentHelp && <p className="break-words text-xs leading-5 text-muted-foreground">{agentHelp}</p>}
+            {currentAgent?.researchTools && <p className="rounded-lg bg-muted/60 p-2.5 text-xs leading-5 text-muted-foreground">
+              {t(`council.localAgents.tools.${currentAgent.researchTools.mode === 'mcp' ? 'live' : 'snapshot'}`)}
+              {currentAgent.researchTools.mode === 'snapshot' && <> {' '}{t(`council.localAgents.tools.${currentAgent.researchTools.reason}`)}</>}
+            </p>}
             <div className="space-y-2 pt-2">
               <Label htmlFor="member-editor-agent-model">{t('council.localAgents.model')}</Label>
               <NativeSelect id="member-editor-agent-model" className="w-full" disabled={!modelSupported}
