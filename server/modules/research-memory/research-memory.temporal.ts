@@ -16,7 +16,9 @@ function latestInstant(value: string, precision?: 'day' | 'instant' | null): num
 }
 
 export function normalizeEvidenceMetadata(evidence: Evidence): EvidenceMetadata {
-  if (evidence.metadata?.sources?.length) return evidence.metadata;
+  if (evidence.metadata?.sources?.length) return { ...evidence.metadata, sources: evidence.metadata.sources.map(source =>
+    source.observedAt == null && Number.isFinite(stamp(evidence.fetchedAt)) ? { ...source,
+      observedAt: evidence.fetchedAt!, observationBasis: 'legacy_fetched_at' as const } : source) };
   const agent = /unverified|未(?:独立)?核验|未经核实/iu.test(`${evidence.title ?? ''} ${evidence.sourceName ?? ''}`);
   return { sources: [{ origin: agent ? 'agent' : 'legacy', verification: agent ? 'unverified' : 'unknown',
     provider: null, kind: ['financial', 'price', 'news'].includes(evidence.evidenceType ?? '')
@@ -36,14 +38,15 @@ export function compactEvidenceMetadata(metadata: EvidenceMetadata): CompactEvid
   }) };
 }
 
-/** Current-source prompts use a keyed synopsis. Historical memory keeps its full structured contexts. */
+/** Current-source facts remain numeric and grouped by exact measurement/period, never inferred from prose. */
 export function evidencePromptMetadata(metadata: EvidenceMetadata, outerUrl?: string | null) {
-  return metadata.sources.map(source => {
-    const groups = new Map<string, Set<string>>();
+  return { sources: metadata.sources.map(source => {
+    const groups = new Map<string, Map<string, Array<Pick<TypedEvidenceFact, 'metric' | 'value'>>>>();
     for (const fact of source.facts) {
-      const measurement = `${fact.actuality ?? 'unknown actual/forecast'}; unit=${fact.unit ?? 'unknown'}; currency=${fact.currency ?? 'unknown'}; basis=${fact.basis ?? 'unknown'}`;
-      const periods = groups.get(measurement) ?? new Set<string>();
-      periods.add(fact.instant ? `instant ${fact.instant}` : `${fact.periodStart ?? 'unknown start'}/${fact.periodEnd ?? 'unknown end'}`);
+      const measurement = `${fact.entity ?? 'unknown entity'}; ${fact.actuality ?? 'unknown actual/forecast'}; unit=${fact.unit ?? 'unknown'}; currency=${fact.currency ?? 'unknown'}; basis=${fact.basis ?? 'unknown'}`;
+      const periods = groups.get(measurement) ?? new Map<string, Array<Pick<TypedEvidenceFact, 'metric' | 'value'>>>();
+      const period = fact.instant ? `instant ${fact.instant}` : `${fact.periodStart ?? 'unknown start'}/${fact.periodEnd ?? 'unknown end'}`;
+      periods.set(period, [...periods.get(period) ?? [], { metric: fact.metric, value: fact.value }]);
       groups.set(measurement, periods);
     }
     return { provenance: `${source.origin}/${source.verification}/${source.provider ?? 'unknown provider'}`, kind: source.kind,
@@ -52,8 +55,38 @@ export function evidencePromptMetadata(metadata: EvidenceMetadata, outerUrl?: st
       observation: `${source.observedAt ?? 'unknown'} (${source.observationBasis})`,
       ...(source.supersedesSourceRevision || source.revisionReason ? { revision: {
         source: source.sourceRevision, supersedes: source.supersedesSourceRevision, reason: source.revisionReason } } : {}),
-      contexts: [...groups].map(([measurement, periods]) => ({ measurement, periods: [...periods] })) };
-  });
+      ...(groups.size ? { contexts: [...groups].map(([measurement, periods]) => ({ measurement,
+        periods: [...periods].map(([period, facts]) => ({ period, facts })) })) } : {}) };
+  }) };
+}
+
+/** Recognize the current-source projection for prompt protection, never for verification or authorization. */
+export function isEvidencePromptMetadata(value: unknown): boolean {
+  return Boolean(value && typeof value === 'object' && 'sources' in value && Array.isArray(value.sources)
+    && value.sources.length && value.sources.every(source => source && typeof source === 'object'
+      && typeof source.provenance === 'string' && typeof source.publication === 'string' && typeof source.observation === 'string'));
+}
+export function containsEvidencePromptMetadata(value: unknown): boolean {
+  return isEvidencePromptMetadata(value) || Boolean(value && typeof value === 'object'
+    && Object.values(value).some(containsEvidencePromptMetadata));
+}
+
+/** Only exact repeated source fields are omitted from the model envelope; the original tool result is unchanged. */
+export function compactEvidencePromptEnvelope(value: Record<string, unknown>): Record<string, unknown> {
+  if (!isEvidencePromptMetadata(value.metadata)) return value;
+  const sources = (value.metadata as ReturnType<typeof evidencePromptMetadata>).sources;
+  const result = { ...value };
+  if (sources.every(source => source.kind === value.evidenceType)) delete result.evidenceType;
+  if (value.source && typeof value.source === 'object' && !Array.isArray(value.source)) {
+    const remaining = Object.fromEntries(Object.entries(value.source).filter(([key, field]) => {
+      if (key === 'title') return !sources.some(source => source.provenance.endsWith(`/${field}`));
+      if (key === 'url') return !sources.some(source => source.sourceUrl === field);
+      if (key === 'fetchedAt') return !sources.some(source => source.observation.startsWith(`${field} (`));
+      return true;
+    }));
+    if (Object.keys(remaining).length) result.source = remaining; else delete result.source;
+  }
+  return result;
 }
 
 export function evidenceVisibleAt(metadata: EvidenceMetadata, ingestedAt: string, asOf: string): boolean {

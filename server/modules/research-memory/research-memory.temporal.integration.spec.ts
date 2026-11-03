@@ -16,6 +16,7 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { CouncilService } from '../council/council.service';
 import { evidenceExcerpts, type CouncilEvidence } from '../council/council.rules';
 import { nativeWorkflowSources } from '../council/council.workflow-executor';
+import { FinnhubEvidenceService } from '../multi-agent/finnhub-evidence.service';
 
 const enabled = { skip: !process.env.MEMORY_TEST_DATABASE_URL };
 const metadata = (value = 100): EvidenceMetadata => ({ sources: [{ origin: 'provider', verification: 'server-verified',
@@ -44,13 +45,13 @@ async function fixture(run: (f: Awaited<ReturnType<typeof setup>>) => Promise<vo
 async function setup(client: postgres.Sql) {
   const db = drizzle(client), owner = randomUUID();
   const service = new ResearchMemoryService(db, new QuoteService(db, undefined as never));
-  const seed = async (data: EvidenceMetadata | null = metadata(), claim = content, decision: 'wait' | 'reject' = 'wait') => {
+  const seed = async (data: EvidenceMetadata | null = metadata(), claim = content, decision: 'wait' | 'reject' = 'wait', fetchedAt = '2026-05-01T00:00:00Z') => {
     const [session] = await db.insert(councilSessions).values({ owner, profileVersion: 1, profileSnapshot: {} as never,
       ticker: 'AAPL', status: 'completed', language: 'en' }).returning();
     const [report] = await db.insert(councilReports).values({ owner, sessionId: session.id, version: 1, revision: 1,
       decision, summary: 'Historical quarterly evidence', dissent: [], nextReviewCondition: '', engine: 'llm',
       createdAt: new Date('2026-05-01T00:00:00Z'), evidence: [{ id: 'filing', title: 'Quarterly filing', content: 'Published source body',
-        sourceUrl: 'https://example.test/filing', fetchedAt: '2026-05-01T00:00:00Z', ...(data ? { metadata: data } : {}) }] }).returning();
+        sourceUrl: 'https://example.test/filing', fetchedAt, ...(data ? { metadata: data } : {}) }] }).returning();
     const memory = await service.archiveReport(owner, { sessionId: session.id, ticker: 'AAPL', language: 'en',
       report: { ...report, createdAt: report.createdAt.toISOString() }, thesisCandidates: [claim] });
     const thesis = (await service.list(owner, { ticker: 'AAPL' })).theses.find(item => item.memoryId === memory!.id)!;
@@ -108,16 +109,28 @@ test('real provider typed metadata survives tool archive, checkpoint, publicatio
       cf: [{ concept: 'us-gaap_NetCashProvidedByUsedInOperatingActivities', value: 20, unit: 'USD' }],
       bs: [{ concept: 'us-gaap_Liabilities', value: 50, unit: 'USD' }] } }] }, 'AAPL', 'quarterly', new Date('2026-11-03T12:00:00Z'));
   assert.equal(reported.hasStatements, true);
+  const publishedAt = new Date(Math.floor(Date.now() / 1000) * 1000 - 60000).toISOString();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json([{ headline: 'Company update', summary: 'Annual results published',
+    source: 'Publisher', url: 'https://example.test/news', datetime: Date.parse(publishedAt) / 1000 }]);
+  let news;
+  try { news = await new FinnhubEvidenceService({ getFinnhubKey: async () => 'fixture' } as never).getNews(owner, 'AAPL'); }
+  finally { globalThis.fetch = originalFetch; }
+  assert.equal(news?.[0].metadata?.sources[0].publishedAt, publishedAt);
   const [session] = await db.insert(councilSessions).values({ owner, profileVersion: 1,
     profileSnapshot: { council: { members: [{ id: 'researcher', role: 'researcher', name: 'Fixture', model: 'fast' }] } } as never,
     ticker: 'AAPL', status: 'running', language: 'en', checkpoint: { cycleId: randomUUID(), nextTurn: 0,
       turns: [{ memberId: 'researcher', phase: 'opening' }], pendingResearch: [], toolKindsUsed: [] } as never }).returning();
   const quotes = new QuoteService(db, undefined as never);
-  const tools = new ResearchToolsService(db, quotes, { collectResearch: async () => reported.items } as never, service);
+  const tools = new ResearchToolsService(db, quotes, { collectResearch: async (_ticker: string, _owner: string, kind: string) =>
+    kind === 'news' ? news : reported.items } as never, service);
   const result = await tools.call(owner, { sessionId: session.id, revision: 1, memberId: 'researcher', memberName: 'Fixture',
     turn: 0, ticker: 'AAPL', language: 'en', webResearch: false, expiresAt: Date.now() + 60000 },
   { callId: 'financials', name: 'get_financials', arguments: {} });
   assert.equal(result.status, 'succeeded');
+  await tools.call(owner, { sessionId: session.id, revision: 1, memberId: 'researcher', memberName: 'Fixture',
+    turn: 0, ticker: 'AAPL', language: 'en', webResearch: false, expiresAt: Date.now() + 60000 },
+  { callId: 'news', name: 'get_news', arguments: {} });
   const [current] = await db.select().from(councilSessions).where(eq(councilSessions.id, session.id));
   const evidence = current.evidenceSnapshot[0];
   assert.equal(evidence.metadata?.sources[0].facts[0].value, 100);
@@ -139,6 +152,14 @@ test('real provider typed metadata survives tool archive, checkpoint, publicatio
   const listing = await service.list(owner, { ticker: 'AAPL' });
   const graph = await service.evidenceGraph(owner, listing.memories[0].id);
   assert.equal(graph.evidence[0].metadata.sources[0].facts[0].value, 100);
+  const archivedNews = graph.evidence.flatMap(item => item.metadata.sources).find(source => source.kind === 'news')!;
+  assert.equal(archivedNews.publishedAt, publishedAt);
+  assert.equal(archivedNews.publicationPrecision, 'instant');
+  assert.equal(archivedNews.origin, 'provider');
+  assert.equal(archivedNews.provider, 'Finnhub API');
+  assert.equal(archivedNews.sourceUrl, 'https://example.test/news');
+  assert.ok(archivedNews.observedAt);
+  assert.deepEqual(archivedNews.facts, []);
   assert.ok(!JSON.stringify(listing.theses[0].citations).includes('"value":100'), 'prompt citations do not duplicate the fact archive');
   const native = nativeWorkflowSources({ sources: [{ id: 'fake', title: 'Claimed verified source', content: 'Claimed value',
     url: 'https://example.test/native', metadata: evidence.metadata }] }, 'attempt', [], 'en').sources[0];
@@ -167,6 +188,12 @@ test('known future publication is excluded despite an old fetch, while a previou
   const saved = await seed(future);
   assert.equal((await service.recall(owner, { ticker: 'AAPL' })).items.length, 0);
   await service.deleteMemory(owner, saved.memory.id);
+  const missingObservation = metadata(); missingObservation.sources[0].observedAt = null; missingObservation.sources[0].observationBasis = 'unknown';
+  const laterFetch = await seed(missingObservation, content, 'wait', new Date(Date.now() + 60000).toISOString());
+  await service.updateThesis(owner, laterFetch.thesis.id, { action: 'confirm', expectedVersion: 1 });
+  assert.equal((await service.recall(owner, { ticker: 'AAPL', asOf: new Date().toISOString() })).items.length, 0,
+    'a missing component observation must not hide the known later server fetch');
+  await service.deleteMemory(owner, laterFetch.memory.id);
   const forecast = metadata(); forecast.sources[0].facts[0] = { ...forecast.sources[0].facts[0], actuality: 'forecast', periodEnd: '2027-03-31' };
   const known = await seed(forecast);
   await service.updateThesis(owner, known.thesis.id, { action: 'confirm', expectedVersion: 1 });

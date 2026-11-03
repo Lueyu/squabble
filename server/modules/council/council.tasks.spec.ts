@@ -32,6 +32,7 @@ test('deliverables require cited snapshot IDs, explicit units and pinned skill i
   assert.throws(() => validateDelivery({ ...valid, evidenceIds: ['foreign'] }, new Set(['e1']), pins));
   assert.throws(() => validateDelivery({ ...valid, units: '' }, new Set(['e1']), pins));
   assert.throws(() => validateDelivery({ ...valid, skillVersions: [] }, new Set(['e1']), pins));
+  assert.throws(() => validateDelivery({ ...valid, skillVersions: [{ ...valid.skillVersions[0], hash: 'forged' }] }, new Set(['e1']), pins), /DELIVERY_SKILL_VERSION_INVALID/);
   assert.throws(() => validateDelivery({ ...valid, evidenceIds: [] }, new Set(['e1']), pins));
   assert.equal(validateDelivery({ ...valid, evidenceIds: [], gaps: ['Source unavailable'] }, new Set(), pins).gaps.length, 1);
 });

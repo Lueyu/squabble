@@ -1,16 +1,17 @@
 import type { ResearchToolResult } from '../../../shared/research-tools.interface';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { isMemoryToolData } from '../research-memory/research-memory.context';
+import { compactEvidencePromptEnvelope, containsEvidencePromptMetadata, isEvidencePromptMetadata } from '../research-memory/research-memory.temporal';
 
 /** Preserve numeric values and field names; text and list omissions are explicitly marked. */
 export function excerptToolData(value: unknown, limit = 300, depth = 0): unknown {
-  if (isMemoryToolData(value)) return value;
+  if (isMemoryToolData(value) || isEvidencePromptMetadata(value)) return value;
   if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
   if (typeof value === 'string') return value.length > limit ? `${value.slice(0, limit)} [excerpt]` : value;
-  if (depth > 7) return '[nested excerpt]';
+  if (depth > 7 && !containsEvidencePromptMetadata(value)) return '[nested excerpt]';
   if (Array.isArray(value)) return [...value.slice(0, 5).map(item => excerptToolData(item, limit, depth + 1)),
     ...(value.length > 5 ? [`[${value.length - 5} more items omitted]`] : [])];
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).slice(0, 40)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(compactEvidencePromptEnvelope(value as Record<string, unknown>)).slice(0, 40)
     .map(([key, entry]) => [key, excerptToolData(entry, limit, depth + 1)]));
   return value;
 }

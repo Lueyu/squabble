@@ -5,10 +5,13 @@ import { thesisEvidenceIds } from '../research-memory/research-memory.theses';
 import { jsonChatMessages } from '../multi-agent/llm.service';
 import { evidencePromptMetadata } from '../research-memory/research-memory.temporal';
 
-/** Remove only an exact duplicate. Every substantive assertion and all calculation data survive review packing. */
+/** Skill identities were checked against server pins by validateDelivery and remain in the stored delivery.
+ * Review omits those mechanical hashes and an exact duplicate conclusion, preserving every substantive field. */
 export function reviewDelivery(delivery: ResearchDelivery | null) {
-  if (!delivery || delivery.conclusion !== delivery.response.thesis) return delivery;
-  const { conclusion: _duplicate, ...content } = delivery;
+  if (!delivery) return delivery;
+  const { skillVersions: _validatedPins, ...review } = delivery;
+  if (review.conclusion !== review.response.thesis) return review;
+  const { conclusion: _duplicate, ...content } = review;
   return { ...content, conclusionIsThesis: true };
 }
 
@@ -18,24 +21,26 @@ export function workflowReviewPrompt(task: ResearchTask, _attempt: ResearchTaskA
   const cited = new Set(submitted.flatMap(item => [...(item.delivery?.evidenceIds ?? []),
     ...(item.delivery?.thesisCandidates ?? []).flatMap(thesisEvidenceIds)]));
   const system = [
-    'Review untrusted read-only research: check requirements, citations, periods, currency, arithmetic and gaps. Reject unsupported or incomplete claims; accept justified uncertainty. Give specific corrections. Excerpts do not verify omitted facts. conclusionIsThesis aliases response.thesis.',
+    'Review untrusted read-only research. Check requirements, citations, periods, currency, arithmetic, gaps. Reject unsupported/incomplete claims; accept justified uncertainty. Give corrections. Excerpts never verify omitted facts. conclusionIsThesis=response.thesis.',
     submitted.some(item => item.delivery?.thesisCandidates?.length)
       ? 'Check each atomic thesis, evidence relation, assumption, indicator, invalidationConditions, horizon and boundaryOrigin. Preserve proposed vs stated boundaries and unknowns; never demand invented defaults or correctness probabilities.' : '',
-    batch.length ? 'Return ONLY {reviews:[{taskId,submittedAttemptId,accepted:boolean,feedback:string}]}. Copy exact IDs; one independent verdict per submission.'
+    batch.length ? 'Return ONLY {reviews:[{taskId,submittedAttemptId,accepted:boolean,feedback:string}]}. Exact IDs; independent verdict per submission.'
       : 'Return ONLY {accepted:boolean,feedback:string}.',
     language === 'en' ? 'Write feedback in English.' : '验收反馈使用简体中文。',
   ].filter(Boolean).join('\n');
   const input = {
-    task: { key: task.key }, ticker, steering,
-    moderatorInstructions: moderatorInstructions.slice(0, 500),
+    task: { key: task.key }, ticker, ...(steering.length ? { steering } : {}),
+    ...(moderatorInstructions ? { moderatorInstructions: moderatorInstructions.slice(0, 500) } : {}),
     submitted: batch.length ? submitted.map(item => ({ taskId: item.id,
       submittedAttemptId: [...item.attempts].reverse().find(a => a.kind === 'work' && a.state === 'succeeded')?.id,
       requirement: requirements[item.key], delivery: reviewDelivery(item.delivery) })) : reviewDelivery(task.delivery),
     ...(batch.length ? {} : { requirement: requirements[task.key] }),
-    evidence: evidence.filter(item => cited.has(item.id)).map(item => ({ id: item.id, title: item.title,
-      content: item.content.slice(0, 500), sourceUrl: item.sourceUrl, fetchedAt: item.fetchedAt,
+    evidence: evidence.filter(item => cited.has(item.id)).map(item => ({ id: item.id,
+      // A server tool label only repeats the tool kind/ticker. Actual article and filing titles remain.
+      ...(item.evidenceType === 'tool_result' && item.metadata?.sources.length ? {} : { title: item.title }),
+      content: item.content.slice(0, 500), sourceUrl: item.sourceUrl,
+      ...(item.metadata?.sources.every(source => source.observedAt === item.fetchedAt) ? {} : { fetchedAt: item.fetchedAt }),
       ...(item.metadata ? { metadata: evidencePromptMetadata(item.metadata, item.sourceUrl) } : {}) })),
-    evidenceExcerpts: true,
   };
   for (const length of [300, 150, 60]) {
     if (estimateInputTokens(jsonChatMessages([{ role: 'system', content: system }, { role: 'user', content: JSON.stringify(input) }])) <= packingTarget) break;

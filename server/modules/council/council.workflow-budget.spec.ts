@@ -13,6 +13,7 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { reviewDelivery, workflowReviewPrompt } from './council.workflow-review';
 import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../../shared/research-workflow.interface';
 import { parseFinnhubFinancials } from '../multi-agent/finnhub-financials';
+import { FinnhubEvidenceService } from '../multi-agent/finnhub-evidence.service';
 
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
 const providerEvidence = (ticker: string) => parseFinnhubFinancials({ symbol: ticker, data: [{ symbol: ticker, cik: '123',
@@ -40,7 +41,7 @@ const response = (english: boolean) => english ? {
   nextChecks: ['核对下一期经营现金流、稀释后股数和调整利润的勾稽关系。若现金流持续落后于利润，或股数明显增长，应重新审视当前判断。'],
 };
 
-test('ordinary Chinese and English workflows fit default request budgets with real reservations', { skip: !url }, async () => {
+test('ordinary Chinese and English workflows fit default request budgets with real reservations', { skip: !url }, async t => {
   const namespace = `workflow_budget_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(url!, { max: 1, onnotice: () => {} });
   const client = postgres(url!, { max: 8, onnotice: () => {}, connection: { search_path: namespace } });
@@ -51,11 +52,21 @@ test('ordinary Chinese and English workflows fit default request budgets with re
       await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     }
     const db = drizzle(client), budget = new LlmBudgetService(db);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => Response.json([{ headline: 'Company update', summary: 'The company announced its annual results.',
+      source: 'Publisher', url: 'https://example.test/news', datetime: Math.floor(Date.now() / 1000) - 60 }]);
+    let providerNews;
+    try { providerNews = await new FinnhubEvidenceService({ getFinnhubKey: async () => 'fixture' } as never).getNews('fixture', 'AAPL'); }
+    finally { globalThis.fetch = originalFetch; }
     for (const language of ['zh-CN', 'en'] as const) {
       const owner = randomUUID(), sizes: Array<{ key: string; bytes: number }> = [];
       await client`INSERT INTO users(id, username, password_hash) VALUES (${owner}, ${language}, 'test-only')`;
       const model = async (messages: ChatMessage[], userId: string, options: LlmCallOptions) => {
         const input = JSON.parse(messages[1].content);
+        if (!input.submitted) for (const handoff of input.handoffs) {
+          assert.ok(Object.hasOwn(handoff, 'reason'), 'a predecessor keeps its exact workflow reason beside its state');
+          assert.ok(!input.coverage.some((item: { key: string }) => item.key === handoff.key), 'coverage does not repeat the handoff state');
+        }
         const complete = jsonChatMessages(messages);
         sizes.push({ key: `${input.task.key}:${input.submitted ? 'review' : 'work'}`, bytes: estimateInputTokens(complete) });
         const reservation = await budget.reserve(userId, { ...options, model: 'fixture', messages: complete }, options.onDispatch);
@@ -77,9 +88,8 @@ test('ordinary Chinese and English workflows fit default request budgets with re
       const tools = new ResearchToolsService(db, { getQuote: async (ticker: string) => ({ symbol: ticker,
         price: '100', currency: 'USD', market: 'US', timestamp: Date.now() }) } as never,
       { collectResearch: async (ticker: string, _owner: string, kind: string) => kind === 'financials' ? providerEvidence(ticker)
-        : [{ role: kind === 'news' ? 'news' : 'fundamental', evidenceType: kind === 'news' ? 'news' : 'financial',
-          title: kind === 'news' ? 'Company update' : 'Reported valuation ratios',
-          content: kind === 'news' ? 'The company announced its annual results.' : 'Trailing PE: 15; price/book: 2. Verify calculation periods.',
+        : kind === 'news' ? providerNews : [{ role: 'fundamental', evidenceType: 'financial',
+          title: 'Reported valuation ratios', content: 'Trailing PE: 15; price/book: 2. Verify calculation periods.',
           sourceName: 'Finnhub API', sourceUrl: 'https://example.test/provider', relevanceScore: 1 }] } as never, {} as never);
       const service = new CouncilService(db, { validateConnectionIds: async () => undefined, isConfigured: async () => true,
         chatFastJSON: model, chatSlowJSON: model } as never,
@@ -99,6 +109,7 @@ test('ordinary Chinese and English workflows fit default request budgets with re
       assert.equal(result.reports.at(-1)?.thesisCandidates, null, 'older model output remains unstructured without breaking the workflow');
       assert.equal(sizes.length, 8);
       assert.ok(sizes.every(size => size.bytes <= 6000), JSON.stringify(sizes));
+      t.diagnostic(JSON.stringify({ language, requestSizes: sizes }));
       assert.equal((await budget.getUsage(owner)).dayCalls, 8);
       const reviews = result.workflow!.tasks.flatMap(task => task.attempts).filter(attempt => attempt.kind === 'review');
       assert.ok(reviews.every(attempt => attempt.memory?.counts.prepared === 0 && attempt.memory?.counts.submitted === 0));
@@ -110,7 +121,7 @@ test('ordinary Chinese and English workflows fit default request budgets with re
       const packed = workflowReviewPrompt(oversized, { id: randomUUID(), revision: 1 } as ResearchTaskAttempt, [],
         { financials: 'Check the filing' } as Record<ResearchTask['key'], string>, 'AAPL', language, ['Keep user steering intact'], [], 'Reject drafts without cash-flow reconciliation.');
       assert.equal(packed.input.moderatorInstructions, 'Reject drafts without cash-flow reconciliation.');
-      assert.deepEqual(packed.input.submitted, oversized.delivery, 'oversized submissions cannot be silently truncated to gain acceptance');
+      assert.deepEqual(packed.input.submitted, reviewDelivery(oversized.delivery), 'oversized substantive submissions cannot be truncated to gain acceptance');
       await assert.rejects(budget.reserve(owner, { model: 'fixture', taskId: randomUUID(),
         messages: [{ role: 'system', content: packed.system }, { role: 'user', content: JSON.stringify(packed.input) }] }),
       (error: unknown) => (error as { reason: string }).reason === 'input_tokens');
@@ -119,15 +130,18 @@ test('ordinary Chinese and English workflows fit default request budgets with re
   } finally { await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
 });
 
-test('review packing removes only identical conclusions and preserves every other delivery field', () => {
+test('review projection omits validated skill hashes and an identical conclusion without changing stored substantive fields', () => {
   const delivery: ResearchDelivery = { conclusion: 'Same thesis', response: { thesis: 'Same thesis',
     evidencePoints: ['Exact numeric claim: 123.45'], risks: ['Contradiction'], nextChecks: ['Verify period'], details: 'Full details' },
   asOf: '2026-11-03', currency: 'USD', units: 'millions', assumptions: ['Assumed 12x'], gaps: ['Missing cash flow'],
   evidenceIds: ['source'], skillVersions: [{ id: 'skill', version: '1.0.0', hash: 'pin' }] };
   const packed = reviewDelivery(delivery)!;
   assert.equal('conclusionIsThesis' in packed && packed.conclusionIsThesis, true);
-  const restored = { ...packed, conclusion: packed.response.thesis } as ResearchDelivery & { conclusionIsThesis?: boolean };
+  const original = structuredClone(delivery);
+  const restored = { ...packed, skillVersions: delivery.skillVersions, conclusion: packed.response.thesis } as ResearchDelivery & { conclusionIsThesis?: boolean };
   delete restored.conclusionIsThesis;
   assert.deepEqual(restored, delivery);
-  assert.deepEqual(reviewDelivery({ ...delivery, conclusion: 'Distinct assertion' }), { ...delivery, conclusion: 'Distinct assertion' });
+  const { skillVersions: _validatedPins, ...substance } = delivery;
+  assert.deepEqual(reviewDelivery({ ...delivery, conclusion: 'Distinct assertion' }), { ...substance, conclusion: 'Distinct assertion' });
+  assert.deepEqual(delivery, original, 'review projection does not rewrite the durable delivery');
 });

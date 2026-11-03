@@ -4,6 +4,50 @@ import { attachValuation, excerptToolData, compactPeerComparison } from './counc
 import { nativeWorkflowSources } from './council.workflow-executor';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { workflowReviewPrompt } from './council.workflow-review';
+import { parseFinnhubFinancials } from '../multi-agent/finnhub-financials';
+import { ResearchToolsService } from '../research-tools/research-tools.service';
+import { compactToolEvidence } from '../research-tools/research-tools.evidence';
+import { CouncilWorkflowExecutor } from './council.workflow-executor';
+import { boundedResult } from '../research-tools/research-tools.output';
+
+test('real financial and nested peer facts survive tight executor excerpts or stop before dispatch', async () => {
+  const provider = parseFinnhubFinancials({ symbol: 'AAPL', data: [{ symbol: 'AAPL', cik: '123', startDate: '2025-01-01',
+    endDate: '2025-12-31', filedDate: '2026-02-01', accessNumber: '0000000123-26-000001', form: '10-K',
+    report: { ic: [{ concept: 'Revenues', value: 123456, unit: 'USD' }, { concept: 'NetIncomeLoss', value: 98765, unit: 'USD' }],
+      cf: [{ concept: 'NetCashProvidedByUsedInOperatingActivities', value: 87654, unit: 'USD' }],
+      bs: [{ concept: 'Liabilities', value: 76543, unit: 'USD' }] } }] }, 'AAPL', 'annual');
+  const result = (ResearchToolsService.prototype as unknown as { evidenceResult(...args: unknown[]): { data: object } })
+    .evidenceResult.call({}, provider.items, 'AAPL', new Date().toISOString(), 10);
+  for (const peer of [false, true]) {
+    const data = compactToolEvidence({ evidenceId: 'current-provider', ...(peer ? {
+      primary: 'AAPL', companies: [{ ticker: 'AAPL', financials: { data: result.data } }] } : result.data) });
+    const bounded = boundedResult({ ...result, data } as never);
+    const excerpt = JSON.stringify(excerptToolData(bounded.data, 60));
+    for (const value of [123456, 98765, 87654, 76543]) assert.ok(excerpt.includes(String(value)), `lost ${value} in ${peer ? 'peer' : 'direct'} projection`);
+    assert.ok(excerpt.includes(provider.items[0].sourceUrl!));
+    const row = { id: 'session', owner: 'owner', revision: 1, ticker: 'AAPL', language: 'en', status: 'running',
+      profileSnapshot: {}, checkpoint: { workflow: { peers: peer ? ['MSFT'] : [], recallEnabled: false } }, evidenceSnapshot: [] };
+    const builder = { from: () => builder, where: () => builder,
+      then: (resolve: (value: unknown) => unknown) => Promise.resolve([row]).then(resolve),
+      orderBy: async () => [{ content: '请核对财报期间和单位。'.repeat(100).slice(0, 960) }] };
+    let captured = '', measured = 0;
+    const executor = new CouncilWorkflowExecutor({ db: { select: () => builder },
+      llm: { getInputLimit: async () => 6000, chatFastJSON: async (messages: unknown) => { captured = JSON.stringify(messages); throw new Error('CAPTURED'); } },
+      tools: { call: async () => bounded },
+      store: { markRemote: async (_row: unknown, _task: unknown, _id: unknown, update: { memory: { requestTokens: number } }) => { measured = update.memory.requestTokens; } },
+      activity: async () => {} } as never);
+    await assert.rejects(executor.execute(row as never, { id: 'task', key: peer ? 'business' : 'financials', position: 0,
+      dependencies: [], skills: [], reason: null } as never, { id: 'attempt', revision: 1, kind: 'work' } as never,
+    { id: 'researcher', name: 'Fixture', model: 'fast', instructions: '' } as never, []), /CAPTURED|RESEARCH_CONTEXT_LIMIT/);
+    if (captured) {
+      assert.ok(measured <= 6000);
+      for (const value of [123456, 98765, 87654, 76543]) assert.ok(captured.includes(String(value)));
+      assert.ok(captured.includes(provider.items[0].sourceUrl!));
+      assert.match(captured, /2025-01-01.*2025-12-31/);
+      assert.match(captured, /currency=USD/); assert.match(captured, /basis=us-gaap/);
+    } else assert.ok(measured > 6000, 'an oversized protected source must fail before the model transport');
+  }
+});
 
 test('tool excerpts preserve numeric values and identify omitted text', () => {
   assert.deepEqual(excerptToolData({ price: 123.456, units: 'USD', details: 'long text' }, 4),

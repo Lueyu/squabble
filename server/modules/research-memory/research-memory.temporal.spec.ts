@@ -2,6 +2,31 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as rules from './research-memory.rules';
 import { memoryQuerySchema } from './research-memory.requests';
+import { compactEvidencePromptEnvelope, evidencePromptMetadata, normalizeEvidenceMetadata } from './research-memory.temporal';
+import type { EvidenceMetadata } from '@shared/research-evidence.interface';
+
+test('missing component observation falls back to known server fetch without replacing explicit invalid or future observations', () => {
+  for (const observedAt of [null, 'invalid', '2099-01-01T00:00:00Z']) {
+    const metadata = { sources: [{ ...source, observedAt, observationBasis: 'unknown' }] } as EvidenceMetadata;
+    const normalized = normalizeEvidenceMetadata({ metadata, fetchedAt: at }).sources[0];
+    assert.equal(normalized.observedAt, observedAt ?? at);
+    assert.equal(normalized.observationBasis, observedAt === null ? 'legacy_fetched_at' : 'unknown');
+    assert.equal(normalized.publishedAt, source.publishedAt);
+    assert.equal(metadata.sources[0].observedAt, observedAt, 'normalization does not rewrite the persisted record');
+  }
+});
+
+test('model envelope removes only exact source duplicates and keeps unique headlines, acquisition times and unknown fields', () => {
+  const metadata = evidencePromptMetadata({ sources: [source] } as EvidenceMetadata);
+  const item = { title: 'Unique filing headline', evidenceType: 'financial', metadata,
+    source: { title: source.provider, url: source.sourceUrl, fetchedAt: source.observedAt, license: null } };
+  const original = structuredClone(item);
+  assert.deepEqual(compactEvidencePromptEnvelope(item), { title: item.title, metadata, source: { license: null } });
+  const unique = { ...item, source: { title: 'Another publisher', url: 'https://example.test/other',
+    fetchedAt: '2026-06-01T00:00:00Z', license: null } };
+  assert.deepEqual(compactEvidencePromptEnvelope(unique).source, unique.source);
+  assert.deepEqual(item, original);
+});
 
 const at = '2026-11-03T12:00:00.000Z';
 const fact = { entity: 'AAPL', metric: 'us-gaap:Revenues', value: 100, unit: 'currency', currency: 'USD',

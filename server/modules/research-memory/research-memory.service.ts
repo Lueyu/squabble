@@ -296,6 +296,8 @@ export class ResearchMemoryService {
     const source = await this.sourceReport(owner, row);
     const records = source ? await this.db.select().from(researchMemoryEvidence)
       .where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemoryEvidence.memoryId, row.id))) : [];
+    for (const record of records) record.metadata = normalizeEvidenceMetadata({
+      ...source?.evidence.find(item => item.id === record.evidenceId), metadata: record.metadata });
     const known = row.createdAt.getTime() <= Date.parse(asOf) && row.reportCreatedAt.getTime() <= Date.parse(asOf)
       && source?.evidence.every(item => {
         const record = records.find(record => record.evidenceId === item.id);

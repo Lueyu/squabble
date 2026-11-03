@@ -29,7 +29,8 @@ export async function bindThesisEvidence(db: WriteDb, owner: string, versionId: 
 export async function evidenceComparisons(db: Pick<PostgresJsDatabase, 'select'>, owner: string, memory: Memory,
   local: EvidenceRow[], asOf: string, matchesSymbol: (ticker: string) => boolean): Promise<ResearchEvidenceGraph['comparisons']> {
   if (!local.some(row => row.metadata.sources.some(source => source.facts.length))) return [];
-  const rows = await db.select({ evidence: researchMemoryEvidence, memory: researchMemories, ticker: councilSessions.ticker }).from(researchMemoryEvidence)
+  const rows = await db.select({ evidence: researchMemoryEvidence, memory: researchMemories, ticker: councilSessions.ticker,
+    reportEvidence: councilReports.evidence }).from(researchMemoryEvidence)
     .innerJoin(researchMemories, and(eq(researchMemories.id, researchMemoryEvidence.memoryId), eq(researchMemories.owner, owner)))
     .innerJoin(councilReports, and(eq(councilReports.id, researchMemoryEvidence.reportId), eq(councilReports.owner, owner),
       eq(councilReports.version, researchMemoryEvidence.reportVersion), eq(councilReports.revision, researchMemoryEvidence.reportRevision)))
@@ -38,11 +39,12 @@ export async function evidenceComparisons(db: Pick<PostgresJsDatabase, 'select'>
     .where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemories.ticker, memory.ticker),
       eq(researchMemories.market, memory.market), eq(researchMemories.excluded, false), isNull(researchMemories.deletedAt)));
   const results: ResearchEvidenceGraph['comparisons'] = [];
-  for (const left of local) for (const { evidence: right, memory: peer, ticker } of rows) {
+  for (const left of local) for (const { evidence: right, memory: peer, ticker, reportEvidence } of rows) {
+    const rightMetadata = normalizeEvidenceMetadata({ ...reportEvidence.find(item => item.id === right.evidenceId), metadata: right.metadata });
     if (left.id === right.id || !matchesSymbol(ticker) || peer.reportCreatedAt.getTime() > Date.parse(asOf)
       || !evidenceVisibleAt(left.metadata, left.ingestedAt.toISOString(), asOf)
-      || !evidenceVisibleAt(right.metadata, right.ingestedAt.toISOString(), asOf)) continue;
-    for (const [leftSourceIndex, a] of left.metadata.sources.entries()) for (const [rightSourceIndex, b] of right.metadata.sources.entries())
+      || !evidenceVisibleAt(rightMetadata, right.ingestedAt.toISOString(), asOf)) continue;
+    for (const [leftSourceIndex, a] of left.metadata.sources.entries()) for (const [rightSourceIndex, b] of rightMetadata.sources.entries())
       for (const [leftFactIndex, x] of a.facts.entries()) for (const [rightFactIndex, y] of b.facts.entries()) {
       const { kind } = compareEvidence({ source: a, fact: x }, { source: b, fact: y });
       if (['conflict', 'superseded', 'different_period'].includes(kind)) results.push({ left: left.id, right: right.id,

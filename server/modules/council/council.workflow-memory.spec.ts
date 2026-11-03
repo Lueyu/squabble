@@ -90,7 +90,8 @@ test('real executor submissions match durable inventories across languages, refr
         key: 'financials', memberId: member.id, position: 0, dependencies: [], skills: [] }).returning();
       let transportFails = false, expectedLimit = 6000, captures: Array<{ memory?: string; steering: string[]; submitted?: unknown;
         readOnlyToolResults: Array<{ data: { revenue: number; fiscalYear: number } }>;
-        handoffs: Array<{ conclusion: string; evidenceIds: string[]; assumptions: string[]; gaps: string[] }>; evidence: unknown[] }> = [];
+        handoffs: Array<{ conclusion: string; evidenceIds: string[]; evidencePoints: string[]; assumptions: string[]; gaps: string[] }>;
+        evidence: Array<{ id: string; content: string }> }> = [];
       const caveat = 'Customer retention is not independently verified; treat every revenue scenario as conditional. '.repeat(5);
       const result = { conclusion: 'Finding', response: { thesis: 'Finding', evidencePoints: [], risks: [], nextChecks: [] },
         evidenceIds: [], asOf: '2026-11-03', currency: null, units: 'unknown', assumptions: [], gaps: ['No current evidence verified'], skillVersions: [] };
@@ -143,7 +144,8 @@ test('real executor submissions match durable inventories across languages, refr
         const attempt = (await store.claim(row, task, kind))!;
         let failure: unknown;
         const tasks = summary ? [task, { ...task, id: randomUUID(), key: 'financials' as const, delivery: { ...result,
-          conclusion: 'CURRENT: revenue 123.45 USD million', evidenceIds: ['tool-current'], assumptions: [caveat],
+          conclusion: 'CURRENT: revenue 123.45 USD million', evidenceIds: ['e0'], assumptions: [caveat],
+          response: { ...result.response, evidencePoints: ['Unique CFO: USD 123.45 for FY2025.'] },
           gaps: ['Cash flow statements have not been independently reconciled. '.repeat(4)] } as ResearchDelivery }] : [task];
         try { const output = await executor.execute(row, task, attempt, actor, tasks);
           await store.finish(row, task, attempt, actor, output); }
@@ -161,12 +163,25 @@ test('real executor submissions match durable inventories across languages, refr
       assert.ok(!JSON.stringify(first.latest.memory).includes(selected.content!.claim), 'no prompt copy in telemetry');
       const review = await run('review'); assert.equal(review.failure, undefined);
       assert.deepEqual(review.latest.memory!.counts, { requested: 0, selected: 0, prepared: 0, submitted: 0 });
-      const summary = await run('work', member, true); assert.equal(summary.failure, undefined);
-      assert.match(captures.at(-1)!.handoffs[0].conclusion, /123.45/);
-      assert.deepEqual(captures.at(-1)!.handoffs[0].evidenceIds, ['tool-current']);
-      assert.equal(captures.at(-1)!.handoffs[0].assumptions[0], caveat, 'historical memory must not squeeze out current caveats');
-      assert.equal(captures.at(-1)!.handoffs[0].gaps[0], 'Cash flow statements have not been independently reconciled. '.repeat(4));
+      expectedLimit = 3800;
+      await budgets.saveSettings(owner, { ...await budgets.getSettings(owner), maxInputTokens: expectedLimit });
+      const beforeSummary = captures.length;
+      const summary = await run('work', member, true);
+      if (summary.failure) {
+        assert.match(String(summary.failure), /RESEARCH_CONTEXT_LIMIT/);
+        assert.equal(captures.length, beforeSummary, 'unique current evidence must cause a safe no-fit rather than a weakened dispatch');
+        assert.equal(summary.latest.memory!.counts.prepared, 0);
+      } else {
+        assert.match(captures.at(-1)!.handoffs[0].conclusion, /123.45/);
+        assert.deepEqual(captures.at(-1)!.handoffs[0].evidenceIds, ['e0']);
+        assert.deepEqual(captures.at(-1)!.handoffs[0].evidencePoints, ['Unique CFO: USD 123.45 for FY2025.']);
+        assert.ok(captures.at(-1)!.evidence.some(item => item.id === 'e0' && item.content), 'a source ID alone cannot replace the cited source excerpt');
+        assert.equal(captures.at(-1)!.handoffs[0].assumptions[0], caveat, 'historical memory must not squeeze out current caveats');
+        assert.equal(captures.at(-1)!.handoffs[0].gaps[0], 'Cash flow statements have not been independently reconciled. '.repeat(4));
+      }
       assert.ok(summary.latest.memory!.omissions.some(item => item.kind === 'history' && item.reason === 'budget'));
+      expectedLimit = 6000;
+      await budgets.saveSettings(owner, { ...await budgets.getSettings(owner), maxInputTokens: expectedLimit });
       const savedMessages = await db.select().from(councilMessages).where(eq(councilMessages.sessionId, created.id));
       const savedMessage = savedMessages.find(message => message.metadata?.taskId === first.latest.id)!;
       assert.deepEqual(savedMessage.metadata?.memory, first.latest.memory, 'message details retain the attempt inventory across later cycles');
