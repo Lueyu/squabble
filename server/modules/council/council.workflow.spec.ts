@@ -15,6 +15,8 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { CouncilWorkflowStore } from './council.workflow-store';
 import type { CouncilSession } from '../../../shared/council.interface';
 import type { ResearchTaskKind } from '../../../shared/research-workflow.interface';
+import { ResearchMemoryService } from '../research-memory/research-memory.service';
+import { QuoteService } from '../quote/quote.service';
 
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -27,6 +29,10 @@ const output = (input: Input) => input.submitted ? Array.isArray(input.submitted
   asOf: new Date().toISOString(), currency: 'USD', units: 'USD million', assumptions: [], gaps: [],
   skillVersions: input.skills.map(({ id, version, hash }) => ({ id, version, hash })),
   response: { thesis: `${input.task.key} finding`, evidencePoints: ['Supported observation'], risks: ['Demand risk'], nextChecks: ['Next filing'] },
+  ...(input.task.key === 'summary' ? { thesisCandidates: [{ claim: 'Cash conversion remains resilient',
+    supportingEvidence: input.evidence.slice(0, 1).map(e => ({ evidenceId: e.id })), opposingEvidence: ['Demand risk'],
+    assumptions: [], indicators: ['Operating cash flow'], invalidationConditions: ['Two negative quarters'], boundaryOrigin: 'proposed',
+    horizon: { reviewAt: '2027-02-01T00:00:00.000Z' }, evidenceRelations: input.evidence.slice(0, 1).map(e => ({ evidenceId: e.id, role: 'support' })) }] } : {}),
   ...(input.task.key === 'valuation' ? { valuationScenario: { metric: 'earnings', multiples: { bear: 10, base: 15, bull: 20 } } } : {}),
 };
 
@@ -37,11 +43,12 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
     for (const name of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql', '08_investment_council.sql',
-      '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '18_research_workflow.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
+      '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     const db = drizzle(client);
+    const memory = new ResearchMemoryService(db, new QuoteService(db, undefined as never));
     const owner = randomUUID();
     await client`INSERT INTO users(id, username, password_hash) VALUES (${owner}, 'workflow-test', 'test-only')`;
-    let active = 0, maximum = 0, failFinancials = false, rejectFinancials = 0;
+    let active = 0, maximum = 0, failFinancials = false, rejectFinancials = 0, unrelatedGap = false;
     const calls: string[] = [];
     const summaryHandoffs: string[] = [];
     let releaseHeld: (() => void) | undefined;
@@ -51,6 +58,10 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     const openingBarrier = new Promise<void>(resolve => { releaseOpenings = resolve; });
     const model = async (prompt: { content: string }[]) => {
       const input: Input = JSON.parse(prompt[1].content);
+      if (input.task.key === 'summary' && !input.submitted) {
+        assert.match(prompt[0].content, /thesisCandidates/);
+        assert.match(prompt[0].content, /unknown/);
+      }
       const key = `${input.task.key}:${input.submitted ? 'review' : 'work'}`;
       if (input.task.key === 'summary') summaryHandoffs.push(JSON.stringify(input.handoffs));
       calls.push(key); active++; maximum = Math.max(maximum, active);
@@ -71,7 +82,8 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
           return { data: 'reviews' in data ? { reviews: data.reviews!.map((r, i) => i === 0 ? { ...r, accepted: false, feedback: 'Verify the reporting period.' } : r) }
             : { accepted: false, feedback: 'Verify the reporting period.' }, tokens: 5 };
         }
-        return { data: output(input), tokens: 5 };
+        return { data: { ...output(input), ...(unrelatedGap && input.task.key === 'business' && !input.submitted
+          ? { gaps: ['Competitor unit data unavailable; cash-flow claim is independently supported.'] } : {}) }, tokens: 5 };
       } finally { active--; }
     };
     const svc = new CouncilService(db, { validateConnectionIds: async () => undefined, isConfigured: async () => true,
@@ -79,7 +91,7 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     { collectEvidence: async () => [{ role: 'fundamental', evidenceType: 'other', title: 'Annual financial filing',
       content: 'Annual revenue 100 USD million; net income 10 USD million.', sourceName: 'Filing', sourceUrl: 'https://example.test/filing', relevanceScore: 1 }] } as never,
     { getPortfolioContext: async () => ({ totalValue: 1000, holdings: [], cash: 1000 }) } as never,
-    { listRuns: async () => ({ items: [] }) } as never);
+    { listRuns: async () => ({ items: [] }) } as never, undefined, undefined, memory);
     const waitFor = async (id: string, predicate: (session: CouncilSession) => boolean = s => s.status !== 'running') => {
       for (let i = 0; i < 500; i++) { const session = await svc.getSession(owner, id); if (predicate(session)) return session; await pause(10); }
       throw new Error('Workflow did not reach expected state');
@@ -94,8 +106,30 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     parallelProbe = false;
     assert.ok(complete.workflow!.tasks.every(t => t.state === 'accepted' && t.acceptedAttemptId));
     assert.equal(complete.reports.at(-1)?.coverage?.complete, true);
+    const published = complete.reports.at(-1)!;
+    assert.equal(published.thesisCandidates?.[0].claim, 'Cash conversion remains resilient');
+    for (let i = 0; i < 100 && !(await memory.list(owner, { ticker: 'AAPL' })).theses.length; i++) await pause(10);
+    const archived = (await memory.list(owner, { ticker: 'AAPL' })).theses[0];
+    assert.equal(archived.claim, published.thesisCandidates![0].claim);
+    assert.equal(archived.status, 'accepted', 'Agent acceptance must never be human confirmation');
+    assert.equal(archived.boundaryOrigin, 'proposed');
+    assert.deepEqual(archived.horizon, { reviewAt: '2027-02-01T00:00:00.000Z' });
+    assert.equal(archived.provenance?.origin, 'agent');
+    assert.equal(archived.provenance?.workflow?.attemptId, complete.workflow!.tasks.find(t => t.key === 'summary')!.acceptedAttemptId);
+    const recalled = (await memory.recall(owner, { ticker: 'AAPL' })).items.find(item => item.kind === 'thesis');
+    assert.equal(recalled?.endorsement, 'agent');
     assert.ok(complete.messages.filter(m => m.role !== 'system').every(m => m.response));
     assert.deepEqual((await svc.listSessions(randomUUID())), []);
+
+    unrelatedGap = true;
+    const withGap = await create(); await svc.runSession(owner, withGap.id);
+    const gapResult = await waitFor(withGap.id);
+    assert.equal(gapResult.reports.at(-1)?.coverage?.complete, false);
+    assert.ok(gapResult.workflow!.tasks.every(task => task.state === 'accepted'));
+    for (let i = 0; i < 100 && !(await memory.list(owner, { ticker: 'AAPL' })).theses.some(t => t.source?.sessionId === withGap.id); i++) await pause(10);
+    assert.equal((await memory.list(owner, { ticker: 'AAPL' })).theses.find(t => t.source?.sessionId === withGap.id)?.status, 'accepted',
+      'an explicitly accepted unrelated data gap does not disqualify a supported atomic claim');
+    unrelatedGap = false;
 
     failFinancials = true; calls.length = 0;
     const second = await create(); await svc.runSession(owner, second.id);
@@ -189,7 +223,7 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
         sources: [{ id: 'source', title: 'Native filing', url: 'https://example.test/filing', content: 'Annual data' }] };
       return { taskId, text: '', data, usageTokens: 7 };
     } };
-    const nativeSvc = new CouncilService(db, svc['llm'], svc['evidence'], svc['portfolio'], svc['research'], local as never);
+    const nativeSvc = new CouncilService(db, svc['llm'], svc['evidence'], svc['portfolio'], svc['research'], local as never, undefined, memory);
     const localMembers = DEFAULT_MEMBERS.map(m => ({ ...m, executionMode: 'local' as const, agentId: 'native-codex' }));
     const nativeSession = await nativeSvc.createSession(owner, { ticker: 'MSFT', goal: 'comprehensive', language: 'en', recallEnabled: false, members: localMembers });
     await nativeSvc.runSession(owner, nativeSession.id);
@@ -197,6 +231,11 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     assert.equal(nativeCalls.length, 8);
     assert.equal(nativeComplete.reports.at(-1)!.tokensUsed, 56, 'native moderator review usage must be counted once per actual request');
     assert.equal(nativeComplete.reports.at(-1)!.externalUsageUnknown, false);
+    for (let i = 0; i < 100 && !(await memory.list(owner, { ticker: 'MSFT' })).theses.some(t => t.source?.sessionId === nativeSession.id); i++) await pause(10);
+    const nativeThesis = (await memory.list(owner, { ticker: 'MSFT' })).theses.find(t => t.source?.sessionId === nativeSession.id)!;
+    assert.equal(nativeThesis.status, 'candidate', 'unverified native evidence cannot auto-accept a thesis');
+    assert.ok(nativeThesis.flags.includes('unverified'));
+    assert.ok(!(await memory.recall(owner, { ticker: 'MSFT' })).items.some(item => item.kind === 'thesis' && item.id === nativeThesis.id));
 
     nativeCalls.length = 0; nativeFailure = 'quota';
     const limited = await nativeSvc.createSession(owner, { ticker: 'MSFT', goal: 'comprehensive', language: 'en', recallEnabled: false, members: localMembers });

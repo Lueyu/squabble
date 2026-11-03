@@ -24,7 +24,7 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
     for (const file of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql',
-      '08_investment_council.sql', '12_council_dialogue.sql', '14_a2a_agents.sql', '17_research_memory.sql', '18_research_workflow.sql']) {
+      '08_investment_council.sql', '12_council_dialogue.sql', '14_a2a_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     const db = drizzle(client);
@@ -40,8 +40,47 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
           content: 'DO NOT COPY RAW EVIDENCE INTO VERSIONS', sourceUrl: 'https://example.test/filing',
           fetchedAt: createdAt.toISOString() }] : [], engine: 'llm' }).returning();
       const report: CouncilReport = { ...row, createdAt: row.createdAt.toISOString() };
-      return { session, report, input: { sessionId: session.id, ticker, report, language: 'en' as const } };
+      return { session, report, input: { sessionId: session.id, ticker, report, language: 'en' as const,
+        thesisCandidates: [{ claim: 'Cash conversion remains resilient', supportingEvidence: evidence ? [{ evidenceId: 'e1' }] : [],
+          opposingEvidence: [], assumptions: [], indicators: [], invalidationConditions: [] }] } };
     };
+    const legacy = await seed('INTC');
+    const legacyMemory = await service.archiveReport(owner, { ...legacy.input, thesisCandidates: undefined });
+    const legacyListing = await service.list(owner, { ticker: 'INTC' });
+    assert.equal(legacyListing.theses.length, 0, 'old reports must never become fabricated summary theses');
+    assert.equal(legacyMemory?.thesisStructure, 'missing');
+    await assert.rejects(service.archiveReport(owner, { ...legacy.input, thesisCandidates: [{ ...legacy.input.thesisCandidates[0],
+      evidenceRelations: [{ evidenceId: 'foreign', role: 'refute' }] }] }), /MEMORY_INVALID_EVIDENCE/);
+    await assert.rejects(service.archiveReport(owner, { ...legacy.input, thesisCandidates: [{ ...legacy.input.thesisCandidates[0],
+      provenance: { origin: 'agent' } }] }), /MEMORY_INVALID_THESIS/);
+    await assert.rejects(service.archiveReport(owner, { ...legacy.input, thesisCandidates: [null] as never }), /MEMORY_INVALID_THESIS/);
+    const structured = await seed('TSM');
+    const explicitCandidate = { ...structured.input.thesisCandidates[0], claim: 'Persisted atomic claim', boundaryOrigin: 'stated' as const,
+      horizon: { reviewAt: '2027-02-01T00:00:00.000Z' }, evidenceRelations: [{ evidenceId: 'e1', role: 'support' as const }] };
+    await db.update(councilReports).set({ thesisCandidates: [explicitCandidate, explicitCandidate,
+      { ...explicitCandidate, claim: 'Persisted atomic claim with a different condition' }] }).where(eq(councilReports.id, structured.report.id));
+    await service.archiveReport(owner, { ...structured.input, thesisCandidates: undefined,
+      report: { ...structured.report, thesisCandidates: [{ ...explicitCandidate, claim: 'Forged request claim' }] } });
+    const structuredListing = await service.list(owner, { ticker: 'TSM' });
+    assert.equal(structuredListing.theses.length, 2, 'only exact duplicate candidates are removed');
+    assert.equal(structuredListing.memories[0].thesisStructure, 'present');
+    assert.ok(structuredListing.theses.every(thesis => thesis.claim.startsWith('Persisted atomic claim')));
+    assert.ok(structuredListing.theses.every(thesis => thesis.status === 'candidate' && thesis.provenance?.origin === 'agent'),
+      'a report without persisted accepted workflow authority is never auto accepted');
+    const structural = structuredListing.theses[0];
+    const structuralEdit = await service.updateThesis(owner, structural.id, { action: 'edit', expectedVersion: 1,
+      content: { ...structured.input.thesisCandidates[0], claim: 'User edit from an older client' } });
+    assert.deepEqual(structuralEdit.horizon, explicitCandidate.horizon, 'optional new metadata survives older clients editing base fields');
+    assert.deepEqual(structuralEdit.evidenceRelations, explicitCandidate.evidenceRelations);
+    const oldContent = structuredListing.theses[1];
+    await db.update(researchTheses).set({ content: structured.input.thesisCandidates[0] }).where(eq(researchTheses.id, oldContent.id));
+    const normalizedLegacy = await service.getThesis(owner, oldContent.id);
+    assert.equal(normalizedLegacy.boundaryOrigin, 'unknown');
+    assert.equal(normalizedLegacy.provenance?.origin, 'legacy');
+    assert.deepEqual(normalizedLegacy.evidenceRelations, []);
+    await service.deleteThesis(owner, structural.id, structuralEdit.version);
+    await service.archiveReport(owner, { ...structured.input, thesisCandidates: undefined });
+    assert.equal((await service.list(owner, { ticker: 'TSM' })).theses.length, 1, 'deleted thesis never reappears on repeated archive');
     const positive = await seed('META');
     const cautious = await seed('META');
     await db.update(councilReports).set({ researchStance: 'positive' }).where(eq(councilReports.id, positive.report.id));
@@ -118,6 +157,9 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
     await service.archiveReport(owner, { ...source.input, thesisCandidates: [{ claim: 'Attempted overwrite',
       supportingEvidence: [{ evidenceId: 'e1' }], opposingEvidence: [], assumptions: [], indicators: [], invalidationConditions: [] }] });
     assert.equal((await service.getThesis(owner, thesis.id)).claim, current.claim);
+    assert.equal(current.provenance?.origin, 'user');
+    assert.equal(current.boundaryOrigin, 'unknown');
+    await assert.rejects(service.updateThesis(owner, thesis.id, { action: 'accepted', expectedVersion: current.version } as never));
     const versions = await service.thesisVersions(owner, thesis.id);
     assert.equal(versions.length, current.version);
     assert.ok(!JSON.stringify(await db.select().from(researchThesisVersions)).includes('DO NOT COPY RAW EVIDENCE'));
@@ -131,6 +173,7 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
       content: { claim: 'User edited claim', supportingEvidence: current.supportingEvidence,
         opposingEvidence: [], assumptions: ['Demand remains stable'], indicators: ['Margin'], invalidationConditions: ['Two margin declines'] } });
     assert.equal(edited.status, 'confirmed');
+    assert.equal(edited.provenance?.origin, 'user');
     assert.ok(!(await service.refreshRecall(owner, frozen)).items.some(item => item.kind === 'thesis'), 'old pinned thesis must not upgrade silently');
     current = edited;
 

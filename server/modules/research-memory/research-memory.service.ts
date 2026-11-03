@@ -10,6 +10,8 @@ import type { ArchiveResearchReport, MemoryCitation, MemoryFlag, ResearchMemoryI
 import { canonicalMemorySymbol, MEMORY_STALE_MS, normalizedTopic, rankMemoryRecall } from './research-memory.rules';
 import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema,
   thesisCandidateSchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
+import { isUnverifiedCitation, normalizeThesisContent, thesisEvidenceIds, thesisFingerprint, validateThesisReferences } from './research-memory.theses';
+import { acceptedWorkflowProvenance } from './research-memory.provenance';
 
 type MemoryRow = typeof researchMemories.$inferSelect;
 type ThesisRow = typeof researchTheses.$inferSelect;
@@ -49,12 +51,31 @@ export class ResearchMemoryService {
     if (sourceSymbol.ticker !== symbol.ticker || sourceSymbol.market !== symbol.market
       || input.language !== source.session.language) throw new BadRequestException('MEMORY_SOURCE_MISMATCH');
     const report = source.report;
-    const candidates = input.thesisCandidates ?? [{ claim: report.summary.slice(0, 1500),
-      supportingEvidence: report.evidence.slice(0, 20).map(evidence => ({ evidenceId: evidence.id })),
-      opposingEvidence: report.dissent.slice(0, 20).map(line => line.slice(0, 1500)).filter(Boolean),
-      assumptions: [], indicators: report.nextReviewCondition ? [report.nextReviewCondition.slice(0, 1500)] : [],
-      invalidationConditions: [] }];
-    if (candidates.length > 5) throw new BadRequestException('MEMORY_TOO_MANY_CANDIDATES');
+    const supplied = input.thesisCandidates !== undefined;
+    const raw = supplied ? input.thesisCandidates! : report.thesisCandidates ?? [];
+    if (!Array.isArray(raw) || raw.length > 5) throw new BadRequestException('MEMORY_TOO_MANY_CANDIDATES');
+    const workflow = !supplied ? await acceptedWorkflowProvenance(this.db, owner, source.session.id, report) : undefined;
+    const seen = new Set<string>();
+    const candidates = raw.map(candidate => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new BadRequestException('MEMORY_INVALID_THESIS');
+      // Stored provenance is server-owned; request bodies cannot assert it.
+      const { provenance: _provenance, ...stored } = candidate;
+      const parsed = thesisCandidateSchema.safeParse(supplied ? candidate : stored);
+      if (!parsed.success) throw new BadRequestException('MEMORY_INVALID_THESIS');
+      const { expiresAt, ...fields } = parsed.data;
+      const content = normalizeThesisContent(fields, supplied ? 'user' : 'agent');
+      if (workflow) content.provenance = { origin: 'agent', workflow };
+      this.validateEvidence(content, report);
+      const accepted = Boolean(workflow && this.hasSources(content, report) && thesisEvidenceIds(content).every(id => {
+        const evidence = report.evidence.find(item => item.id === id)!;
+        return !isUnverifiedCitation(evidence) && Date.now() - Date.parse(evidence.fetchedAt) <= MEMORY_STALE_MS;
+      }) && Date.now() - report.createdAt.getTime() <= MEMORY_STALE_MS && (!expiresAt || Date.parse(expiresAt) > Date.now()));
+      return { content, expiresAt: expiresAt ? new Date(expiresAt) : null, status: accepted ? 'accepted' as const : 'candidate' as const };
+    }).filter(candidate => {
+      const fingerprint = thesisFingerprint({ ...candidate.content, expiresAt: candidate.expiresAt?.toISOString() ?? null } as ThesisContent);
+      if (seen.has(fingerprint)) return false;
+      seen.add(fingerprint); return true;
+    });
     const id = await this.db.transaction(async tx => {
       const [created] = await tx.insert(researchMemories).values({ owner, ...symbol, topic: normalizedTopic(input.topic),
         language: input.language, sessionId: source.session.id, reportId: report.id, reportVersion: report.version,
@@ -65,15 +86,10 @@ export class ResearchMemoryService {
           eq(researchMemories.reportId, report.id), eq(researchMemories.reportVersion, report.version)));
         return existing?.deletedAt ? null : existing?.id ?? null;
       }
-      for (const inputCandidate of candidates) {
-        const parsed = thesisCandidateSchema.safeParse(inputCandidate);
-        if (!parsed.success) throw new BadRequestException('MEMORY_INVALID_THESIS');
-        const { expiresAt, ...content } = parsed.data;
-        this.validateEvidence(content, report);
-        const [thesis] = await tx.insert(researchTheses).values({ owner, memoryId: created.id, content,
-          expiresAt: expiresAt ? new Date(expiresAt) : null }).returning();
+      for (const { content, expiresAt, status } of candidates) {
+        const [thesis] = await tx.insert(researchTheses).values({ owner, memoryId: created.id, content, status, expiresAt }).returning();
         await tx.insert(researchThesisVersions).values({ owner, thesisId: thesis.id, version: 1, content,
-          status: 'candidate', action: 'candidate', excluded: false, expiresAt: thesis.expiresAt });
+          status, action: status === 'accepted' ? 'accept' : 'candidate', excluded: false, expiresAt: thesis.expiresAt });
       }
       return created.id;
     });
@@ -131,13 +147,16 @@ export class ResearchMemoryService {
     if (current.version !== input.expectedVersion) throw new ConflictException('MEMORY_VERSION_CONFLICT');
     const memory = await this.memoryRow(owner, current.memoryId);
     const source = await this.sourceReport(owner, memory);
-    const content = parsed.data.content ?? current.content;
+    const content = parsed.data.content ? normalizeThesisContent({ horizon: current.content.horizon,
+      boundaryOrigin: current.content.boundaryOrigin, evidenceRelations: current.content.evidenceRelations, ...parsed.data.content }, 'user')
+      : normalizeThesisContent(current.content);
     if (source) this.validateEvidence(content, source);
+    else if (parsed.data.content && thesisEvidenceIds(content).length) throw new BadRequestException('MEMORY_SOURCE_REQUIRED');
     if (input.action === 'confirm' && (!source || !this.hasSources(content, source))) {
       throw new BadRequestException('MEMORY_SOURCE_REQUIRED');
     }
     const status = input.action === 'confirm' ? 'confirmed' : input.action === 'dismiss' ? 'dismissed'
-      : input.action === 'expire' ? 'expired' : current.status;
+      : input.action === 'expire' ? 'expired' : input.action === 'edit' && current.status === 'accepted' ? 'candidate' : current.status;
     const expiresAt = input.expiresAt === undefined ? current.expiresAt : input.expiresAt ? new Date(input.expiresAt) : null;
     if (input.action === 'confirm' && expiresAt && expiresAt <= new Date()) throw new BadRequestException('MEMORY_THESIS_EXPIRED');
     await this.db.transaction(async tx => {
@@ -169,7 +188,7 @@ export class ResearchMemoryService {
       .where(and(eq(researchThesisVersions.owner, owner), eq(researchThesisVersions.thesisId, id)))
       .orderBy(desc(researchThesisVersions.version));
     return versions.map(row => ({ version: row.version, action: row.action, status: row.status,
-      content: thesis.sourceStatus === 'available' ? row.content : null, expiresAt: row.expiresAt?.toISOString() ?? null,
+      content: thesis.sourceStatus === 'available' ? normalizeThesisContent(row.content) : null, expiresAt: row.expiresAt?.toISOString() ?? null,
       excluded: row.excluded, sourceStatus: thesis.sourceStatus, createdAt: row.createdAt.toISOString() }));
   }
 
@@ -259,27 +278,24 @@ export class ResearchMemoryService {
     }
     if (Date.now() - row.reportCreatedAt.getTime() > MEMORY_STALE_MS
       || citations.some(citation => Date.now() - Date.parse(citation.fetchedAt) > MEMORY_STALE_MS)) flags.push('stale');
-    if (!citations.length || citations.some(citation => /unverified|未(?:独立)?核验|未经核实/iu.test(citation.title)
-      || !citation.sourceUrl || !Number.isFinite(Date.parse(citation.fetchedAt))
-      || Date.parse(citation.fetchedAt) > Date.now() + 300_000)) flags.push('unverified');
+    if (!citations.length || citations.some(isUnverifiedCitation)) flags.push('unverified');
     return { id: row.id, ticker: row.ticker, market: row.market, topic: row.topic, language: row.language,
       summary: report ? row.summary : '', decision: report ? row.decision : 'wait', excluded: row.excluded,
       sourceStatus: report ? 'available' : 'source-deleted', source: report ? { sessionId: row.sessionId,
         reportId: row.reportId, reportVersion: row.reportVersion, reportRevision: row.reportRevision,
         reportCreatedAt: row.reportCreatedAt.toISOString(),
         url: `/council?sessionId=${row.sessionId}&reportId=${row.reportId}#report-${row.reportId}-v${row.reportVersion}` } : null,
-      citations, flags, createdAt: row.createdAt.toISOString() };
+      citations, flags, thesisStructure: report?.thesisCandidates?.length ? 'present' : 'missing', createdAt: row.createdAt.toISOString() };
   }
   private materializeThesis(row: ThesisRow, memory: ResearchMemoryItem): ResearchThesis {
     const available = memory.sourceStatus === 'available';
-    const citations = memory.citations.filter(citation => row.content.supportingEvidence.some(ref => ref.evidenceId === citation.evidenceId));
+    const ids = thesisEvidenceIds(row.content);
+    const citations = memory.citations.filter(citation => ids.includes(citation.evidenceId));
     const flags: MemoryFlag[] = memory.flags.filter(flag => flag !== 'stale' && flag !== 'unverified');
     if ((memory.source && Date.now() - Date.parse(memory.source.reportCreatedAt) > MEMORY_STALE_MS)
       || citations.some(citation => Date.now() - Date.parse(citation.fetchedAt) > MEMORY_STALE_MS)) flags.push('stale');
-    if (!citations.length || citations.length !== row.content.supportingEvidence.length || citations.some(citation =>
-      /unverified|未(?:独立)?核验|未经核实/iu.test(citation.title) || !citation.sourceUrl
-      || !Number.isFinite(Date.parse(citation.fetchedAt)) || Date.parse(citation.fetchedAt) > Date.now() + 300_000)) flags.push('unverified');
-    return { ...(available ? row.content : EMPTY_CONTENT), id: row.id, memoryId: row.memoryId, ticker: memory.ticker,
+    if (!row.content.supportingEvidence.length || citations.length !== ids.length || citations.some(isUnverifiedCitation)) flags.push('unverified');
+    return { ...normalizeThesisContent(available ? row.content : EMPTY_CONTENT), id: row.id, memoryId: row.memoryId, ticker: memory.ticker,
       market: memory.market, topic: memory.topic, status: row.expiresAt && row.expiresAt <= new Date() ? 'expired' : row.status,
       version: row.version, excluded: row.excluded, expiresAt: row.expiresAt?.toISOString() ?? null,
       sourceStatus: memory.sourceStatus, source: memory.source, citations, flags,
@@ -289,8 +305,7 @@ export class ResearchMemoryService {
     try { const url = new URL(value ?? ''); return ['https:', 'http:'].includes(url.protocol) ? url.toString() : null; } catch { return null; }
   }
   private validateEvidence(content: ThesisContent, report: ReportRow): void {
-    const ids = content.supportingEvidence.map(ref => ref.evidenceId);
-    if (new Set(ids).size !== ids.length || ids.some(id => !report.evidence.some(evidence => evidence.id === id))) {
+    if (!validateThesisReferences(content, new Set(report.evidence.map(evidence => evidence.id)))) {
       throw new BadRequestException('MEMORY_INVALID_EVIDENCE');
     }
   }
@@ -300,7 +315,7 @@ export class ResearchMemoryService {
       && Date.parse(evidence.fetchedAt) <= Date.now() + 300_000));
   }
   private recallableThesis(thesis: ResearchThesis): boolean {
-    return thesis.status === 'confirmed' && !thesis.excluded && Boolean(thesis.source)
+    return ['accepted', 'confirmed'].includes(thesis.status) && !thesis.excluded && Boolean(thesis.source)
       && !thesis.flags.includes('unverified') && !thesis.flags.includes('stale');
   }
   private historyRecallItem(memory: ResearchMemoryItem): ResearchMemoryRecallItem {
@@ -312,6 +327,7 @@ export class ResearchMemoryService {
       summary: [thesis.claim, ...thesis.opposingEvidence.map(line => `Opposing: ${line}`),
         ...thesis.assumptions.map(line => `Assumption: ${line}`), ...thesis.indicators.map(line => `Indicator: ${line}`),
         ...thesis.invalidationConditions.map(line => `Invalidation: ${line}`)].join('\n'),
-      flags: thesis.flags, source: thesis.source!, citations: thesis.citations };
+      flags: thesis.flags, source: thesis.source!, citations: thesis.citations, provenance: thesis.provenance,
+      endorsement: thesis.status === 'confirmed' ? 'user' : 'agent' };
   }
 }

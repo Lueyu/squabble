@@ -1,7 +1,7 @@
 import type { CouncilReport } from './council.interface';
 import type { Market } from './api.interface';
 
-export const THESIS_STATUSES = ['candidate', 'confirmed', 'dismissed', 'expired'] as const;
+export const THESIS_STATUSES = ['candidate', 'accepted', 'confirmed', 'dismissed', 'expired'] as const;
 export type ThesisStatus = (typeof THESIS_STATUSES)[number];
 export type MemoryFlag = 'opinion' | 'stale' | 'contradictory' | 'unverified';
 export interface ResearchMemoryPreferences { autoArchive: boolean; recallEnabled: boolean }
@@ -22,6 +22,12 @@ export interface ThesisContent {
   assumptions: string[];
   indicators: string[];
   invalidationConditions: string[];
+  /** Omission means unknown for older records; no horizon is inferred. */
+  horizon?: { startAt?: string; endAt?: string; reviewAt?: string };
+  boundaryOrigin?: 'stated' | 'proposed' | 'unknown';
+  evidenceRelations?: Array<{ evidenceId: string; role: 'support' | 'refute' | 'qualify' }>;
+  /** Assigned by the server. Workflow acceptance never implies user endorsement. */
+  provenance?: { origin: 'agent' | 'user' | 'legacy'; workflow?: { cycleId: string; taskId: string; attemptId: string } };
 }
 export interface ThesisCandidateInput extends ThesisContent { expiresAt?: string | null }
 export interface ResearchMemoryItem {
@@ -29,6 +35,7 @@ export interface ResearchMemoryItem {
   summary: string; decision: CouncilReport['decision']; excluded: boolean;
   sourceStatus: 'available' | 'source-deleted'; source: MemorySource | null;
   citations: MemoryCitation[]; flags: MemoryFlag[]; createdAt: string;
+  thesisStructure?: 'present' | 'missing';
 }
 export interface ResearchThesis extends ThesisContent {
   id: string; memoryId: string; ticker: string; market: Market; topic: string;
@@ -37,7 +44,7 @@ export interface ResearchThesis extends ThesisContent {
   citations: MemoryCitation[]; flags: MemoryFlag[]; createdAt: string; updatedAt: string;
 }
 export interface ResearchThesisVersion {
-  version: number; action: 'candidate' | 'confirm' | 'edit' | 'dismiss' | 'expire' | 'exclude';
+  version: number; action: 'candidate' | 'accept' | 'confirm' | 'edit' | 'dismiss' | 'expire' | 'exclude';
   status: ThesisStatus; content: ThesisContent | null; expiresAt: string | null; excluded: boolean;
   sourceStatus: 'available' | 'source-deleted'; createdAt: string;
 }
@@ -48,6 +55,7 @@ export interface ResearchMemoryRecallItem {
   kind: 'history' | 'thesis'; id: string; version: number; memoryId: string;
   topic?: string;
   summary: string; flags: MemoryFlag[]; source: MemorySource; citations: MemoryCitation[];
+  provenance?: ThesisContent['provenance']; endorsement?: 'agent' | 'user';
 }
 export interface ResearchMemoryRecall {
   items: ResearchMemoryRecallItem[]; context: string; preferences: ResearchMemoryPreferences;

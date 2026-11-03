@@ -54,8 +54,14 @@ export function nativeWorkflowSources(raw: Record<string, unknown>, attemptId: s
       content: s.content.slice(0, 2000), sourceUrl: url.href, fetchedAt: new Date().toISOString(),
       sourceName: 'Native agent · unverified', role: 'news', evidenceType: 'other', relevanceScore: 0 });
   }
+  const rewrite = (refs: unknown) => Array.isArray(refs) ? refs.map(ref => ref && typeof ref === 'object' && !Array.isArray(ref)
+    ? { ...ref, evidenceId: typeof ref.evidenceId === 'string' ? aliases.get(ref.evidenceId) ?? ref.evidenceId : ref.evidenceId } : ref) : refs;
   return { sources, data: { ...raw, evidenceIds: Array.isArray(raw.evidenceIds)
-    ? raw.evidenceIds.map(id => typeof id === 'string' ? aliases.get(id) ?? id : id) : raw.evidenceIds } };
+    ? raw.evidenceIds.map(id => typeof id === 'string' ? aliases.get(id) ?? id : id) : raw.evidenceIds,
+    ...(Array.isArray(raw.thesisCandidates) ? { thesisCandidates: raw.thesisCandidates.map(candidate =>
+      candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? { ...candidate,
+        supportingEvidence: rewrite(candidate.supportingEvidence),
+        ...(candidate.evidenceRelations !== undefined ? { evidenceRelations: rewrite(candidate.evidenceRelations) } : {}) } : candidate) } : {}) } };
 }
 
 export class CouncilWorkflowExecutor {
@@ -110,6 +116,7 @@ export class CouncilWorkflowExecutor {
         : '主要回复通常300–600字，总结500–800字。保留关键事实、依据、风险与分歧，不凑字数。' : '',
       batch.length ? 'This is a batch review. Instead return ONLY {reviews:[{taskId,submittedAttemptId,accepted:boolean,feedback:string}]}, one independent verdict per submitted task. Copy exact task and submission IDs. Passing one task does not imply passing another.' : '',
       !review && task.key === 'summary' ? 'Also return researchStance:"positive|balanced|cautious" based on the actual findings.' : '',
+      !review && task.key === 'summary' ? 'Add 1–5 thesisCandidates:{claim,supportingEvidence:[{evidenceId}],opposingEvidence:[],assumptions:[],indicators:[],invalidationConditions:[],boundaryOrigin:"stated|proposed|unknown",evidenceRelations:[{evidenceId,role:"support|refute|qualify"}],horizon?:{startAt?,endAt?,reviewAt?}}. Atomic claims, never summaries. Scope all IDs. Missing conditions=[],boundaryOrigin=unknown; keep stated/proposed distinction and omit unknown ISO dates. No invented defaults, correctness probabilities or user endorsement. Omit provenance; server assigns Agent.' : '',
       !review && task.key === 'valuation' ? 'Also return valuationScenario:{metric:"earnings|revenue|book_value",multiples:{bear:number,base:number,bull:number}} and justify assumptions. The application calculates total equity values. No invented inputs, per-share targets or upside.' : '',
       member.executionMode === 'local' ? 'You may research with available read-only tools. For new sources also return sources:[{id,title,url,content}]. Cite their unique id aliases in evidenceIds. Each excerpt at most 2000 characters, at most 12 sources. Distinguish agent-provided sources from independently verified facts.' : 'Use supplied evidence only. No source invention or implied live tool access.',
       row.language === 'en' ? 'Write reader-facing text in English.' : '面向读者的内容使用简体中文。',
@@ -127,6 +134,7 @@ export class CouncilWorkflowExecutor {
         requirement: instructions[t.key], delivery: t.delivery })) : task.delivery : undefined,
       handoffs: tasks.filter(t => task.dependencies.includes(t.key) && t.delivery).map(t => ({ key: t.key, state: t.state,
         conclusion: t.delivery!.conclusion.slice(0, 800), evidenceIds: t.delivery!.evidenceIds,
+        thesisCandidates: t.delivery!.thesisCandidates,
         computedValuation: t.delivery!.valuation ? excerptToolData(t.delivery!.valuation.data) : undefined,
         evidencePoints: t.delivery!.response.evidencePoints.slice(0, 4).map(point => point.slice(0, 600)),
         assumptions: t.delivery!.assumptions, gaps: t.delivery!.gaps })),

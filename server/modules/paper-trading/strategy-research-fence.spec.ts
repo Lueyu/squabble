@@ -28,7 +28,7 @@ test('publication keeps the active plan and position protection when accepted re
     await admin`CREATE SCHEMA ${admin(namespace)}`;
     initialized = true;
     for (const name of ['01_schema', '03_agent_builder', '07_llm_budget', '08_investment_council',
-      '12_council_dialogue', '14_a2a_agents', '16_daily_strategy', '18_research_workflow']) {
+      '12_council_dialogue', '14_a2a_agents', '16_daily_strategy', '18_research_workflow', '19_atomic_research_theses']) {
       await client.unsafe(readFileSync(`scripts/db/${name}.sql`, 'utf8'));
     }
     await client`INSERT INTO users(id, username, password_hash) VALUES(${owner}, 'strategy-fence-test', 'test-only')`;

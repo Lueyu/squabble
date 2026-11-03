@@ -3,6 +3,8 @@ import type { CouncilMember } from '../../../shared/council.interface';
 import type { ResearchDelivery, ResearchGoal, ResearchSkillPin, ResearchTaskKind, ResearchWorkflowConfig } from '../../../shared/research-workflow.interface';
 import { normalizeTicker } from './council.rules';
 import { canonicalResearchTicker } from '../research-tools/research-valuation';
+import { thesisCandidateSchema } from '../research-memory/research-memory.requests';
+import { normalizeThesisContent, validateThesisReferences } from '../research-memory/research-memory.theses';
 
 export interface TaskPlan { key: ResearchTaskKind; dependencies: ResearchTaskKind[]; memberId: string; position: number }
 export function validateWorkflowInput(input: { goal?: unknown; peers?: unknown; parallelism?: unknown; recallEnabled?: unknown }, ticker: string): ResearchWorkflowConfig | undefined {
@@ -57,7 +59,18 @@ export function validateDelivery(raw: unknown, validIds: Set<string>, pins: Rese
   const response = v.response as Record<string, unknown> | undefined;
   if (!response || typeof response !== 'object') throw new Error('DELIVERY_RESPONSE_INVALID');
   if (v.currency !== null && (typeof v.currency !== 'string' || !/^[A-Z]{3}$/.test(v.currency))) throw new Error('DELIVERY_CURRENCY_INVALID');
+  let thesisCandidates: ResearchDelivery['thesisCandidates'];
+  if (v.thesisCandidates !== undefined) {
+    if (!Array.isArray(v.thesisCandidates) || !v.thesisCandidates.length || v.thesisCandidates.length > 5) throw new Error('DELIVERY_THESIS_INVALID');
+    thesisCandidates = v.thesisCandidates.map(candidate => {
+      const parsed = thesisCandidateSchema.safeParse(candidate);
+      if (!parsed.success) throw new Error('DELIVERY_THESIS_INVALID');
+      if (!validateThesisReferences(parsed.data, validIds)) throw new Error('DELIVERY_CITATION_INVALID');
+      return { ...normalizeThesisContent(parsed.data, 'agent'), ...(parsed.data.expiresAt !== undefined ? { expiresAt: parsed.data.expiresAt } : {}) };
+    });
+  }
   return { conclusion: text(v.conclusion), evidenceIds, asOf, currency: v.currency as string | null, units: text(v.units, 100),
+    ...(thesisCandidates ? { thesisCandidates } : {}),
     ...(['positive', 'balanced', 'cautious'].includes(String(v.researchStance))
       ? { researchStance: v.researchStance as ResearchDelivery['researchStance'] } : {}),
     assumptions: strings(v.assumptions), gaps, skillVersions: pins.map(({ id, version, hash }) => ({ id, version, hash })),

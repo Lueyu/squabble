@@ -1,6 +1,6 @@
 export const memoryCopy = {
   en: {
-    title: 'Research memory', description: 'Historical opinions are not verified facts. Only confirmed, current theses with sources enter future research.',
+    title: 'Research memory', description: 'Historical opinions are not verified facts. Current, sourced Agent research and user-confirmed theses can enter future research. Agent acceptance does not mean you endorsed the claim.',
     archive: 'Automatically archive completed reports', recall: 'Use memory in future research', history: 'Report history', theses: 'Long-term theses',
     empty: 'No archived research for this symbol yet.', noTicker: 'Select a symbol to view its research memory.', loading: 'Loading memory…',
     failed: 'Could not load or save research memory.', conflict: 'This thesis changed elsewhere. Close the editor and reopen the latest version before saving.',
@@ -10,14 +10,14 @@ export const memoryCopy = {
     claim: 'Claim', supportingEvidence: 'Supporting evidence', opposingEvidence: 'Opposing evidence', assumptions: 'Assumptions',
     indicators: 'Indicators to monitor', invalidationConditions: 'Invalidation conditions', lines: 'One item per line',
     editDescription: 'Review the claim and its sources. Saving an edit creates a new version; candidates still need explicit confirmation.',
-    candidate: 'Candidate', confirmed: 'Confirmed', dismissed: 'Dismissed', expired: 'Expired',
+    candidate: 'Candidate', accepted: 'Agent accepted · not user confirmed', confirmed: 'User confirmed', dismissed: 'Dismissed', expired: 'Expired',
     opinion: 'Historical opinion', stale: 'Stale', contradictory: 'Contradictory opinions', unverified: 'Unverified',
     editAction: 'Edited', confirmAction: 'Confirmed', dismissAction: 'Dismissed', expireAction: 'Expired', excludeAction: 'Inclusion changed',
     noEvidence: 'This report has no source citations.', confirmHint: 'Candidate: review and confirm to allow future recall.',
     deleted: 'Deleted', general: 'General', invalid: 'Enter a claim and keep each field within 20 lines of 1,500 characters.',
   },
   'zh-CN': {
-    title: '研究记忆', description: '历史观点不等于已核实事实。只有经你确认、仍有效且有来源的长期论点会进入后续研究。',
+    title: '研究记忆', description: '历史观点不等于已核实事实。仍有效且有来源的 Agent 研究和用户确认论点可进入后续研究。Agent 验收不代表你认同该观点。',
     archive: '自动归档已完成报告', recall: '后续研究使用记忆', history: '历史报告', theses: '长期论点',
     empty: '该标的暂无研究记忆。', noTicker: '选择标的后查看研究记忆。', loading: '正在加载记忆…',
     failed: '研究记忆读取或保存失败。', conflict: '这条论点已在其他地方修改。请关闭编辑框，重新打开最新版本后再保存。',
@@ -27,7 +27,7 @@ export const memoryCopy = {
     claim: '核心观点', supportingEvidence: '支持证据', opposingEvidence: '反对证据', assumptions: '关键假设',
     indicators: '跟踪指标', invalidationConditions: '失效条件', lines: '每行一项',
     editDescription: '检查观点及其来源。保存修改会创建新版本；候选论点仍需单独确认。',
-    candidate: '候选', confirmed: '已确认', dismissed: '已驳回', expired: '已过期',
+    candidate: '候选', accepted: 'Agent 已采纳 · 用户未确认', confirmed: '用户已确认', dismissed: '已驳回', expired: '已过期',
     opinion: '历史观点', stale: '资料陈旧', contradictory: '观点冲突', unverified: '尚未核实',
     editAction: '已编辑', confirmAction: '已确认', dismissAction: '已驳回', expireAction: '已过期', excludeAction: '已调整是否参与研究',
     noEvidence: '这份报告没有可引用的来源。', confirmHint: '候选论点：检查并确认后才可被后续研究召回。',

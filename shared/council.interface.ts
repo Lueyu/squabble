@@ -1,6 +1,7 @@
 import type { NativeAgentConfiguration } from './local-agents.interface';
 import type { ResearchEvent } from './research-events.interface';
 import type { ResearchCoverage, ResearchGoal, ResearchWorkflowView } from './research-workflow.interface';
+import type { ThesisCandidateInput } from './research-memory.interface';
 /** Public contracts for bounded, user-owned investment research. */
 export interface LlmBudgetSettings {
   enabled: boolean;
@@ -119,6 +120,7 @@ export interface CouncilMessage {
   researchEventId?: string;
 }
 export interface CouncilReport {
+  thesisCandidates?: ThesisCandidateInput[] | null;
   coverage?: ResearchCoverage | null;
   id: string;
   version: number;

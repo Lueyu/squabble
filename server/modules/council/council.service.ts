@@ -68,7 +68,7 @@ export class CouncilService implements OnModuleInit {
       get: (owner, id) => this.requireSession(owner, id), members: row => this.members(row.profileSnapshot),
       snapshot: row => this.collectSnapshot(row.owner, row.ticker, row.language, row.profileSnapshot, null, true, row),
       pin: pinResearchSkills,
-      publish: (row, opinion, coverage, stance) => this.publish(row.owner, row, opinion, this.executionEngine(this.members(row.profileSnapshot)), null, stance ?? 'balanced', coverage),
+      publish: (row, opinion, coverage, stance, theses) => this.publish(row.owner, row, opinion, this.executionEngine(this.members(row.profileSnapshot)), null, stance ?? 'balanced', coverage, theses),
     });
   }
 
@@ -691,7 +691,7 @@ export class CouncilService implements OnModuleInit {
   }
 
   private async publish(userId: string, row: SessionRow, opinion: CouncilOpinion, engine: CouncilReport['engine'], error: string | null,
-    researchStance: CouncilReport['researchStance'] = null, coverage?: ResearchCoverage): Promise<boolean> {
+    researchStance: CouncilReport['researchStance'] = null, coverage?: ResearchCoverage, thesisCandidates?: CouncilReport['thesisCandidates']): Promise<boolean> {
     const published = await this.db.transaction(async (tx) => {
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
@@ -710,7 +710,7 @@ export class CouncilService implements OnModuleInit {
       const historical = (current.checkpoint?.evidenceArchive ?? []).filter((item) => !row.evidenceSnapshot.some((fact) => fact.id === item.id))
         .map((item) => ({ ...item, title: (row.language === 'en' ? 'Earlier source: ' : '本轮较早资料：') + item.title }));
       await tx.insert(councilReports).values({ owner: userId, sessionId: row.id, version: (latest?.version ?? 0) + 1,
-        coverage,
+        coverage, thesisCandidates,
         revision: row.revision, decision: opinion.decision, summary: opinion.summary, dissent: opinion.dissent,
         nextReviewCondition: opinion.nextReviewCondition, sourceRunId: row.sourceRunId,
         candidate: row.candidate, engine, researchStance, tokensUsed: Math.min(2_147_483_647, Number(usage?.total ?? 0) + externalTokens),
@@ -725,8 +725,7 @@ export class CouncilService implements OnModuleInit {
       const [report] = await this.db.select().from(councilReports).where(and(eq(councilReports.owner, userId), eq(councilReports.sessionId, row.id)))
         .orderBy(desc(councilReports.version)).limit(1);
       if (report) try { await this.memory.archiveReport(userId, { sessionId: row.id, ticker: row.ticker, language: row.language,
-        report: this.mapReport(report), topic: row.checkpoint?.workflow?.goal ?? 'comprehensive',
-        ...(coverage && !coverage.complete ? { thesisCandidates: [] } : {}) }); }
+        report: this.mapReport(report), topic: row.checkpoint?.workflow?.goal ?? 'comprehensive' }); }
       catch { this.logger.warn(`Report ${report.id} could not be archived to research memory`); }
     }
     return published;
@@ -876,7 +875,7 @@ export class CouncilService implements OnModuleInit {
 
   private mapReport(row: ReportRow): CouncilReport {
     return { id: row.id, version: row.version, revision: row.revision, decision: row.decision, summary: row.summary,
-      coverage: row.coverage,
+      coverage: row.coverage, thesisCandidates: row.thesisCandidates,
       dissent: row.dissent, nextReviewCondition: row.nextReviewCondition, evidence: row.evidence,
       sourceRunId: row.sourceRunId, candidate: row.candidate, paperOrderId: row.paperOrderId,
       tokensUsed: row.tokensUsed, engine: row.engine, createdAt: row.createdAt.toISOString(), researchStance: row.researchStance };

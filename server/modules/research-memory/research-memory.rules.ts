@@ -43,6 +43,7 @@ export function rankMemoryRecall(items: ResearchMemoryRecallItem[], topic: strin
   const bounded: ResearchMemoryRecallItem[] = [];
   for (const item of selected) {
     const line = JSON.stringify({ kind: item.kind, id: item.id, version: item.version, summary: item.summary,
+      provenance: item.provenance, endorsement: item.endorsement,
       flags: item.flags, source: item.source, evidence: item.citations.map(citation => ({
         evidenceId: citation.evidenceId, fetchedAt: citation.fetchedAt,
       })) }) + '\n';

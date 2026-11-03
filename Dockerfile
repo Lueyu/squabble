@@ -50,6 +50,7 @@ COPY scripts/db/15_native_agents.sql ./scripts/db/15_native_agents.sql
 COPY scripts/db/16_daily_strategy.sql ./scripts/db/16_daily_strategy.sql
 COPY scripts/db/17_research_memory.sql ./scripts/db/17_research_memory.sql
 COPY scripts/db/18_research_workflow.sql ./scripts/db/18_research_workflow.sql
+COPY scripts/db/19_atomic_research_theses.sql ./scripts/db/19_atomic_research_theses.sql
 COPY scripts/ensure-settings-key.cjs scripts/ensure-jwt-secret.cjs scripts/start-app.cjs ./scripts/
 
 # Views and static assets are resolved from process.cwd()/dist/client

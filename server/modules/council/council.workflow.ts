@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilSessions } from '../../database/council.schema';
 import type { CouncilMember } from '../../../shared/council.interface';
+import type { ThesisCandidateInput } from '../../../shared/research-memory.interface';
 import type { ResearchCoverage, ResearchSkillPin, ResearchTask, ResearchTaskKind } from '../../../shared/research-workflow.interface';
 import { analysisErrorCode, safeAnalysisError } from '../multi-agent/analysis-report';
 import { agentErrorMessage } from './council.native';
@@ -18,7 +19,7 @@ export interface WorkflowCallbacks {
   get(owner: string, id: string): Promise<Session>;
   members(row: Session): CouncilMember[];
   snapshot(row: Session): Promise<{ evidence: CouncilEvidence[]; sourceRunId: string | null }>;
-  publish(row: Session, opinion: CouncilOpinion, coverage: ResearchCoverage, stance?: 'positive' | 'balanced' | 'cautious'): Promise<boolean>;
+  publish(row: Session, opinion: CouncilOpinion, coverage: ResearchCoverage, stance?: 'positive' | 'balanced' | 'cautious', theses?: ThesisCandidateInput[]): Promise<boolean>;
   pin(key: ResearchTaskKind): ResearchSkillPin[];
 }
 
@@ -117,7 +118,9 @@ export class CouncilWorkflow {
         await this.callbacks.publish(row, { decision: 'wait', summary: partial + [response.thesis,
           ...response.evidencePoints, ...response.risks, ...response.nextChecks, response.details].filter(Boolean).join('\n\n'),
           dissent: tasks.flatMap(t => t.delivery?.gaps ?? (t.reason ? [t.reason] : [])).slice(0, 12),
-          nextReviewCondition: response.nextChecks.join('\n'), evidenceIds: summary.delivery.evidenceIds }, coverage, summary.delivery.researchStance);
+          nextReviewCondition: response.nextChecks.join('\n'), evidenceIds: summary.delivery.evidenceIds }, coverage, summary.delivery.researchStance,
+        summary.delivery.thesisCandidates?.map(candidate => ({ ...candidate, provenance: { origin: 'agent',
+          workflow: { cycleId: summary.cycleId, taskId: summary.id, attemptId: summary.acceptedAttemptId! } } })));
         return;
       }
       const runnable: ResearchTask[] = [];

@@ -49,7 +49,7 @@ export async function createDatabase(connectionString?: string): Promise<Squabbl
     max: Number(process.env.DB_POOL_MAX ?? 10),
   });
   try {
-    for (const name of ['03_agent_builder.sql', '04_user_api_settings.sql', '05_analysis_language.sql', '06_account_recovery.sql', '07_llm_budget.sql', '08_investment_council.sql', '09_builder_cadence.sql', '10_model_connections.sql', '11_research_tools.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '16_daily_strategy.sql', '17_research_memory.sql', '18_research_workflow.sql']) {
+    for (const name of ['03_agent_builder.sql', '04_user_api_settings.sql', '05_analysis_language.sql', '06_account_recovery.sql', '07_llm_budget.sql', '08_investment_council.sql', '09_builder_cadence.sql', '10_model_connections.sql', '11_research_tools.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '16_daily_strategy.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql']) {
       const migrationPath = resolve(process.cwd(), 'scripts/db', name);
       const migration = readFileSync(migrationPath, 'utf8');
       for (const statement of migration.split(';').map((item) => item.trim()).filter(Boolean)) {

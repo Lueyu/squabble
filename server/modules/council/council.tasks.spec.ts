@@ -35,3 +35,41 @@ test('deliverables require cited snapshot IDs, explicit units and pinned skill i
   assert.throws(() => validateDelivery({ ...valid, evidenceIds: [] }, new Set(['e1']), pins));
   assert.equal(validateDelivery({ ...valid, evidenceIds: [], gaps: ['Source unavailable'] }, new Set(), pins).gaps.length, 1);
 });
+
+test('atomic thesis candidates retain explicit boundaries in both languages without inventing missing structure', () => {
+  const delivery = { conclusion: 'Finding', evidenceIds: ['e1', 'e2'], asOf: '2026-11-03', currency: null,
+    units: 'ratio', assumptions: [], gaps: [], skillVersions: [],
+    response: { thesis: 'Finding', evidencePoints: [], risks: [], nextChecks: [] } };
+  for (const claim of ['Cash conversion remains resilient.', '现金转化能力仍有韧性。']) {
+    const candidate = { claim, supportingEvidence: [{ evidenceId: 'e1' }], opposingEvidence: ['Margin pressure'],
+      assumptions: [], indicators: ['Operating cash flow'], invalidationConditions: ['Two negative quarters'],
+      boundaryOrigin: 'stated', horizon: { reviewAt: '2027-02-01T00:00:00.000Z' },
+      evidenceRelations: [{ evidenceId: 'e1', role: 'support' }, { evidenceId: 'e2', role: 'refute' }] };
+    const result = validateDelivery({ ...delivery, thesisCandidates: [candidate] }, new Set(['e1', 'e2']), []);
+    assert.deepEqual(result.thesisCandidates, [{ ...candidate, provenance: { origin: 'agent' } }]);
+  }
+  assert.equal(validateDelivery(delivery, new Set(['e1', 'e2']), []).thesisCandidates, undefined);
+  const sparse = { claim: 'Boundary is unknown', supportingEvidence: [], opposingEvidence: [], assumptions: [], indicators: [], invalidationConditions: [] };
+  const normalized = validateDelivery({ ...delivery, thesisCandidates: [sparse] }, new Set(['e1', 'e2']), []).thesisCandidates![0];
+  assert.equal(normalized.boundaryOrigin, 'unknown');
+  assert.deepEqual(normalized.invalidationConditions, []);
+  assert.equal(normalized.horizon, undefined);
+});
+
+test('atomic candidates reject foreign nested references, invented fields and invalid bounds', () => {
+  const delivery = { conclusion: 'Finding', evidenceIds: ['e1'], asOf: '2026-11-03', currency: null,
+    units: 'ratio', assumptions: [], gaps: [], skillVersions: [],
+    response: { thesis: 'Finding', evidencePoints: [], risks: [], nextChecks: [] } };
+  const candidate = { claim: 'A single claim', supportingEvidence: [{ evidenceId: 'e1' }], opposingEvidence: [],
+    assumptions: [], indicators: [], invalidationConditions: [], boundaryOrigin: 'unknown', evidenceRelations: [] };
+  for (const patch of [
+    { supportingEvidence: [{ evidenceId: 'foreign' }] },
+    { evidenceRelations: [{ evidenceId: 'foreign', role: 'refute' }] },
+    { evidenceRelations: [{ evidenceId: 'e1', role: 'certain' }] },
+    { correctnessProbability: 0.99 }, { provenance: { origin: 'user' } },
+    { horizon: { startAt: '2027-01-02T00:00:00.000Z', endAt: '2027-01-01T00:00:00.000Z' } },
+  ]) assert.throws(() => validateDelivery({ ...delivery, thesisCandidates: [{ ...candidate, ...patch }] }, new Set(['e1']), []));
+  for (const thesisCandidates of [[], Array.from({ length: 6 }, () => candidate)]) {
+    assert.throws(() => validateDelivery({ ...delivery, thesisCandidates }, new Set(['e1']), []));
+  }
+});

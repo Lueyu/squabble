@@ -38,7 +38,7 @@ test('native council delegates research, persists task lifecycle, and preserves 
     await admin`CREATE SCHEMA ${admin(namespace)}`;
     created = true;
     for (const name of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql',
-      '08_investment_council.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '18_research_workflow.sql']) {
+      '08_investment_council.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     }
     await client`INSERT INTO users (id, username, password_hash) VALUES (${owner}, 'native-fixture', 'test-only')`;
