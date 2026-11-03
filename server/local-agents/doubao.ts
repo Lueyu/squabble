@@ -4,6 +4,8 @@ import { NativeEventCollector } from './events';
 import { jsonValues, object, type JsonObject } from './metadata';
 import { executeNativeProcess, NativeProcessFailure, type NativeProcessOptions, type NativeProcessResult } from './process';
 import type { NativeLaunch } from './resolver';
+import type { ResearchActivity } from '../../shared/research-events.interface';
+import { NativeActivityCollector } from './activity';
 
 function resultObject(result: NativeProcessResult): JsonObject { return object(jsonValues(result.stdout).at(-1)); }
 function receiptFrom(value: JsonObject): { conversationId: string; runId: string } | null {
@@ -15,7 +17,8 @@ function receiptFrom(value: JsonObject): { conversationId: string; runId: string
 
 /** A Doubao ACK starts an upstream task. Killing `wait` does not cancel it. */
 export async function runDoubao(launch: NativeLaunch, args: string[], processOptions: NativeProcessOptions,
-  root: string, onProgress: (text: string) => void): Promise<{ text: string; usageTokens: number | null }> {
+  root: string, onProgress: (text: string) => void, onEvent?: (event: ResearchActivity) => void): Promise<{ text: string; usageTokens: number | null }> {
+  const activity = new NativeActivityCollector('doubao', onEvent);
   const deadline: number = Date.now() + processOptions.timeoutMs;
   let receipt: { conversationId: string; runId: string } | null = null;
   let accepted: boolean = false;
@@ -41,6 +44,7 @@ export async function runDoubao(launch: NativeLaunch, args: string[], processOpt
       [...args.slice(0, -2), '--timeout', String(Math.max(1, Math.ceil(Math.min(processOptions.timeoutMs, 30_000) / 1000))), ...args.slice(-2)],
       { ...processOptions, signal: undefined, timeoutMs: Math.min(processOptions.timeoutMs, 35_000), onLine: undefined });
     const response: JsonObject = resultObject(submission);
+    activity.read(response);
     receipt = receiptFrom(response);
     accepted = response.accepted === true || receipt !== null || submission.code === 0;
     if (submission.code !== 0 || !receipt) throw new Error(accepted ? 'NATIVE_AGENT_UPSTREAM_PENDING' : 'NATIVE_AGENT_FAILED');
@@ -52,6 +56,7 @@ export async function runDoubao(launch: NativeLaunch, args: string[], processOpt
       '--run', receipt.runId, '--json', '--timeout', String(Math.max(1, Math.ceil(remaining / 1000)))],
       { ...processOptions, input: undefined, onLine: undefined, timeoutMs: remaining });
     const result: JsonObject = resultObject(completion);
+    activity.read(result);
     if (result.status === 'failed' || result.status === 'cancelled') { accepted = false; throw new Error('NATIVE_AGENT_FAILED'); }
     if (completion.code !== 0 || result.status !== 'completed') throw new Error('NATIVE_AGENT_UPSTREAM_PENDING');
     accepted = false;

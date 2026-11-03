@@ -1,7 +1,7 @@
 import {
   BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional, type OnModuleInit,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperOrders } from '../../database/schema';
@@ -29,12 +29,14 @@ import { LocalAgentsService } from '../local-agents/local-agents.service';
 import { LocalAgentError } from '../local-agents/local-agents.types';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { agentAssignment, agentContribution, agentErrorMessage } from './council.native';
+import type { ResearchEvent } from '../../../shared/research-events.interface';
+import { publicText } from '../local-agents/research-journal';
 
 type SessionRow = typeof councilSessions.$inferSelect;
 type ReportRow = typeof councilReports.$inferSelect;
 interface ResearchSnapshot { evidence: CouncilEvidence[]; sourceRunId: string | null }
 interface MemberOutput { member: CouncilMember; contribution: DiscussionContribution; tokens: number; replyToMessageId: string | null;
-  externalUsageUnknown?: boolean; sources?: CouncilEvidence[] }
+  externalUsageUnknown?: boolean; sources?: CouncilEvidence[]; taskId?: string }
 
 @Injectable()
 export class CouncilService implements OnModuleInit {
@@ -380,12 +382,13 @@ export class CouncilService implements OnModuleInit {
       await tx.insert(councilMessages).values({ owner: userId, sessionId: row.id, role: output.member.role,
         memberName: output.member.name, revision: row.revision, tokensUsed: output.tokens, content: contribution.content,
         metadata: { cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
+          taskId: output.taskId,
           replyToMessageId: output.replyToMessageId, evidenceIds: contribution.evidenceIds,
           reasoningSummary: contribution.reasoningSummary, questions: contribution.questions } });
       if (output.member.executionMode === 'local') await tx.update(councilMessages).set({ metadata: {
         cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
         replyToMessageId: output.replyToMessageId, evidenceIds: contribution.evidenceIds, reasoningSummary: contribution.reasoningSummary,
-        questions: contribution.questions, externalAgent: true, externalUsageUnknown: output.externalUsageUnknown,
+        questions: contribution.questions, externalAgent: true, externalUsageUnknown: output.externalUsageUnknown, taskId: output.taskId,
       } }).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id),
         sql`${councilMessages.metadata}->>'cycleId' = ${checkpoint.cycleId}`, sql`(${councilMessages.metadata}->>'turn')::int = ${checkpoint.nextTurn}`));
       await tx.update(councilSessions).set({ updatedAt: new Date(),
@@ -419,21 +422,56 @@ export class CouncilService implements OnModuleInit {
         const latest = await this.requireSession(userId, row.id);
         return latest.status === 'running' && latest.revision === row.revision;
       } };
-    const result = member.model === 'slow' ? await this.llm.chatSlowJSON(prompt, userId, options)
-      : await this.llm.chatFastJSON(prompt, userId, options);
-    return { member, contribution: parseContribution(result.data, new Set(data.evidence.map((item) => item.id)), turn, row.candidate),
-      tokens: Number.isFinite(result.tokens) ? Math.max(0, Math.trunc(result.tokens)) : 0,
-      replyToMessageId: data.conversation.at(-1)?.id ?? messages.filter((item) => item.role === 'user').at(-1)?.id ?? null };
+    const taskId = `model:${row.checkpoint!.cycleId}:${row.checkpoint!.nextTurn}:${row.revision}`;
+    const started = Date.now();
+    const activity = (status: ResearchEvent['status'], summary: string) => this.recordActivity(userId, row, {
+      id: randomUUID(), kind: 'task', status, summary, at: new Date().toISOString(), taskId, sessionId: row.id,
+      memberId: member.id, memberName: member.name, turn: row.checkpoint!.nextTurn, revision: row.revision,
+      sequence: 0, durationMs: Date.now() - started,
+    });
+    await activity('queued', row.language === 'en' ? 'Preparing the assigned model request' : '正在准备本轮模型请求');
+    await activity('running', row.language === 'en' ? 'Waiting for the model’s research response' : '正在等待模型的研究回复');
+    try {
+      const result = member.model === 'slow' ? await this.llm.chatSlowJSON(prompt, userId, options)
+        : await this.llm.chatFastJSON(prompt, userId, options);
+      const contribution = parseContribution(result.data, new Set(data.evidence.map((item) => item.id)), turn, row.candidate);
+      await activity('succeeded', row.language === 'en' ? 'Research response received' : '已收到研究回复');
+      return { member, taskId, contribution, tokens: Number.isFinite(result.tokens) ? Math.max(0, Math.trunc(result.tokens)) : 0,
+        replyToMessageId: data.conversation.at(-1)?.id ?? messages.filter((item) => item.role === 'user').at(-1)?.id ?? null };
+    } catch (error) {
+      await activity('failed', safeAnalysisError(error, row.language));
+      throw error;
+    }
+  }
+
+  private async recordActivity(userId: string, row: SessionRow, event: ResearchEvent, acquisition?: ResearchAcquisition): Promise<void> {
+    if (!row.checkpoint) return;
+    await this.db.transaction(async tx => {
+      const [current] = await tx.select().from(councilSessions)
+        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+      if (!current || current.status !== 'running' || current.revision !== row.revision || current.checkpoint?.cycleId !== row.checkpoint!.cycleId) return;
+      const [count] = await tx.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(councilMessages)
+        .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id),
+          sql`${councilMessages.metadata}->'researchEvent'->>'taskId' = ${event.taskId}`));
+      if (count.count >= 256) return;
+      const safe: ResearchEvent = { ...event, summary: publicText(event.summary), sequence: count.count + 1 };
+      await tx.insert(councilMessages).values({ owner: userId, sessionId: row.id, role: 'system',
+        memberName: safe.memberName, revision: row.revision, content: safe.summary, tokensUsed: 0,
+        metadata: { phase: 'progress', cycleId: row.checkpoint!.cycleId, researchEvent: safe, ...(acquisition ? { acquisition } : {}) } });
+    });
   }
 
   private async recordAcquisition(userId: string, row: SessionRow, acquisition: ResearchAcquisition): Promise<void> {
     if (!row.checkpoint) return;
-    const current = await this.requireSession(userId, row.id);
-    if (current.checkpoint?.cycleId !== row.checkpoint.cycleId) return;
-    await this.db.insert(councilMessages).values({ owner: userId, sessionId: row.id, role: 'system',
-      memberName: row.language === 'en' ? 'Research tools' : '资料检索', revision: row.revision,
-      content: acquisition.detail.slice(0, 1000), tokensUsed: 0,
-      metadata: { phase: 'progress', acquisition: { ...acquisition, detail: acquisition.detail.slice(0, 1000) }, cycleId: row.checkpoint.cycleId } });
+    const taskId = `evidence:${row.checkpoint.cycleId}:${row.revision}`;
+    const callId = createHash('sha256').update(`${acquisition.source}:${acquisition.kind ?? 'initial'}`).digest('hex').slice(0, 24);
+    await this.recordActivity(userId, row, { id: randomUUID(), kind: 'tool', taskId, callId, sequence: 0,
+      sessionId: row.id, revision: row.revision, memberId: 'research-tools', memberName: row.language === 'en' ? 'Research tools' : '资料检索',
+      turn: row.checkpoint.nextTurn, toolName: acquisition.kind ?? 'research', at: new Date().toISOString(),
+      status: acquisition.status === 'started' ? 'running' : acquisition.status === 'failed' ? 'failed'
+        : acquisition.status === 'skipped' ? 'unavailable' : 'succeeded',
+      summary: `${acquisition.source} · ${acquisition.detail}`,
+    }, { ...acquisition, detail: publicText(acquisition.detail, 1000) });
   }
 
   private async validateMembers(userId: string, members: CouncilMember[]): Promise<void> {
@@ -468,6 +506,9 @@ export class CouncilService implements OnModuleInit {
     if (!saved || resumeInput) await this.db.update(councilSessions).set({ checkpoint: { ...current.checkpoint!, remote } })
       .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     const result = await this.localAgents.execute(userId, { agentId: member.agentId, messageId: remote.messageId,
+      researchScope: { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
+        turn: row.checkpoint.nextTurn, ticker: row.ticker, language: row.language,
+        webResearch: row.profileSnapshot.council?.webResearch === true, expiresAt: Date.now() + 600_000 },
       agentSettings: member.agentSettings,
       remoteTaskId: remote.taskId, contextId: remote.contextId, resumeInput,
       prompt: agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
@@ -488,17 +529,14 @@ export class CouncilService implements OnModuleInit {
             .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         });
       },
-      onProgress: (text) => {
-        const localized: Record<string, string> = { 'Searching sources…': '正在检索资料…',
-          'Analyzing sources…': '正在分析资料…', 'Preparing research results…': '正在整理研究结果…' };
-        return this.recordAcquisition(userId, row, { source: member.name, status: 'started',
-          detail: (row.language === 'en' ? text : localized[text] ?? text).slice(0, 1000) });
-      },
+      // Structured task activity is read from the durable journal; no duplicate generic chat rows.
+      onProgress: async () => undefined,
       shouldContinue: async () => { const latest = await this.requireSession(userId, row.id);
         return latest.status === 'running' && latest.revision === row.revision; },
     });
     try {
       return { member, ...agentContribution(result, row.evidenceSnapshot, turn, row.candidate, row.language),
+        taskId: result.taskId,
         tokens: result.usageTokens ?? 0, externalUsageUnknown: result.usageTokens === null,
         replyToMessageId: messages.filter((item) => item.role !== 'system').at(-1)?.id ?? null };
     } catch { throw new LocalAgentError('LOCAL_INVALID_RESULT'); }
@@ -699,13 +737,17 @@ export class CouncilService implements OnModuleInit {
       this.db.select().from(councilReports)
         .where(and(eq(councilReports.owner, userId), eq(councilReports.sessionId, row.id))).orderBy(councilReports.version),
     ]);
+    const activity = this.localAgents?.store ? await this.localAgents.store.eventsForSession(userId, row.id) : undefined;
+    const events = [...(activity?.events ?? []), ...messages.flatMap(message => message.metadata?.researchEvent ? [message.metadata.researchEvent] : [])]
+      .sort((a, b) => a.at.localeCompare(b.at) || a.sequence - b.sequence);
     return { id: row.id, profileId: row.profileId, profileVersion: row.profileVersion,
+      researchEvents: events.slice(-2048), researchEventsTruncated: activity?.truncated || events.length > 2048,
       ticker: row.ticker, language: row.language, status: row.status, revision: row.revision,
       messages: messages.map(({ id, role, memberName, content, revision, tokensUsed, createdAt, metadata }) => ({
         id, role, memberName, content, revision, tokensUsed, createdAt: createdAt.toISOString(),
         ...(metadata ? { memberId: metadata.memberId, phase: metadata.phase, replyToMessageId: metadata.replyToMessageId,
           evidenceIds: metadata.evidenceIds, reasoningSummary: metadata.reasoningSummary, questions: metadata.questions,
-          acquisition: metadata.acquisition, externalAgent: metadata.externalAgent, externalUsageUnknown: metadata.externalUsageUnknown } : {}),
+          acquisition: metadata.acquisition, externalAgent: metadata.externalAgent, externalUsageUnknown: metadata.externalUsageUnknown, taskId: metadata.taskId } : {}),
       })), reports: reports.map((report) => ({ ...this.mapReport(report), externalUsageUnknown: messages.some((message) =>
         message.createdAt <= report.createdAt && message.metadata?.externalUsageUnknown === true) })), error: row.error,
       members: this.members(row.profileSnapshot), webResearch: row.profileSnapshot.council?.webResearch ?? false,

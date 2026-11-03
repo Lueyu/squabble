@@ -4,8 +4,16 @@ import { join } from 'node:path';
 import type { CompanionPoll, CompanionPollResult, LocalAgentProvider, NativeAgentConfiguration, NativeAgentStatus } from '../../../shared/local-agents.interface';
 import { LocalAgentError } from './local-agents.types';
 import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from './local-agents.requests';
+import type { ResearchActivity, ResearchEventPage } from '../../../shared/research-events.interface';
+import type { ResearchToolBundle, ResearchToolRequest, ResearchToolResult, ResearchToolScope } from '../../../shared/research-tools.interface';
+import { appendResearchEvents, recordTaskLifecycle } from './research-journal';
+import { researchFailure } from '../research-tools/research-tools.output';
 
 export interface AgentTask {
+  researchScope?: ResearchToolScope; researchBundle?: ResearchToolBundle;
+  events?: ResearchEventPage['events']; eventSequence?: number; eventIds?: string[]; eventsTruncated?: boolean;
+  toolCalls?: Record<string, { fingerprint: string; result?: ResearchToolResult }>;
+  cancelledToolCallIds?: string[];
   id: string; owner: string; agentId: string; provider: LocalAgentProvider;
   deviceId?: string; kind: 'run' | 'login'; messageId: string; prompt: string;
   agentSettings?: NativeAgentConfiguration;
@@ -77,7 +85,9 @@ export class LocalAgentStore {
       const task = JSON.parse(await readFile(join(this.root, 'tasks', name), 'utf8')) as AgentTask;
       if (`${task.id}.json` !== name || !task.owner || !task.state) fail('LOCAL_STATE_INVALID');
       if (active(task)) {
+        const previousState = task.state;
         task.state = 'failed'; task.error = 'LOCAL_INTERRUPTED'; task.updatedAt = Date.now();
+        recordTaskLifecycle(task, previousState);
         await this.atomic(join(this.root, 'tasks', name), task);
       }
       this.state.tasks[task.id] = task;
@@ -95,6 +105,7 @@ export class LocalAgentStore {
       const { tasks: previousTasks, ...previousConnections } = this.state;
       // Write tasks first: interrupted jobs may be recovered, but never dispatched twice.
       for (const task of Object.values(tasks)) {
+        recordTaskLifecycle(task, previousTasks[task.id]?.state);
         if (JSON.stringify(task) !== JSON.stringify(previousTasks[task.id])) {
           await this.atomic(join(this.root, 'tasks', `${task.id}.json`), task);
         }
@@ -198,7 +209,8 @@ export class LocalAgentStore {
   busy(owner: string, agentId: string): Promise<boolean> { return this.access(false, (state) => Object.values(state.tasks).some((task) => task.owner === owner && task.agentId === agentId && active(task))); }
 
   stage(owner: string, agentId: string, provider: LocalAgentProvider, messageId: string, prompt: string,
-    kind: 'run' | 'login' = 'run', inputSettings?: NativeAgentConfiguration): Promise<AgentTask> {
+    kind: 'run' | 'login' = 'run', inputSettings?: NativeAgentConfiguration,
+    research?: { scope: ResearchToolScope; bundle: ResearchToolBundle }): Promise<AgentTask> {
     const agentSettings = parseNativeAgentConfiguration(inputSettings);
     return this.access(true, (state) => {
       const existing = Object.values(state.tasks).find((task) => task.owner === owner && task.messageId === messageId);
@@ -213,6 +225,7 @@ export class LocalAgentStore {
       } else if (state.nativeOwner !== owner || (kind === 'run' && !state.nativeProviders.includes(provider))) fail('LOCAL_AGENT_NOT_FOUND');
       const task: AgentTask = { id: randomUUID(), owner, agentId, provider, deviceId: device?.id, kind, messageId, prompt,
         ...(agentSettings ? { agentSettings } : {}),
+        ...(research ? { researchScope: research.scope, researchBundle: research.bundle } : {}),
         state: 'staged', createdAt: Date.now(), updatedAt: Date.now() };
       state.tasks[task.id] = task;
       return task;
@@ -246,6 +259,86 @@ export class LocalAgentStore {
     });
   }
 
+  appendEvents(owner: string, id: string, events: ResearchActivity[]): Promise<void> {
+    return this.access(true, state => appendResearchEvents(ownedTask(state, owner, id), events));
+  }
+
+  eventsForSession(owner: string, sessionId: string): Promise<ResearchEventPage> {
+    return this.access(false, state => {
+      const tasks = Object.values(state.tasks).filter(task => task.owner === owner && task.researchScope?.sessionId === sessionId)
+        .sort((a, b) => a.createdAt - b.createdAt);
+      const events = tasks.flatMap(task => task.events ?? []);
+      return { events: events.slice(-2048), cursor: events.length,
+        truncated: events.length > 2048 || tasks.some(task => task.eventsTruncated) };
+    });
+  }
+
+  private assertResearchTask(task: AgentTask): void {
+    if (task.state !== 'running' || !task.researchScope || task.researchScope.expiresAt <= Date.now()
+      || Date.now() - task.createdAt > 600_000) fail('RESEARCH_TASK_INACTIVE');
+  }
+
+  companionTask(token: string, id: string): Promise<AgentTask> {
+    return this.access(false, state => {
+      const fingerprint = hash(token);
+      const device = state.devices.find(item => item.tokenHash.length === fingerprint.length
+        && timingSafeEqual(Buffer.from(item.tokenHash), Buffer.from(fingerprint)));
+      if (!device || Date.now() - device.lastSeen >= 30_000) return fail('LOCAL_COMPANION_UNAUTHORIZED');
+      const task = ownedTask(state, device.owner, id);
+      if (task.deviceId !== device.id) return fail('LOCAL_TASK_NOT_FOUND');
+      this.assertResearchTask(task);
+      return task;
+    });
+  }
+
+  beginToolCall(owner: string, id: string, request: ResearchToolRequest): Promise<{ run: boolean; result?: ResearchToolResult }> {
+    return this.access(true, state => {
+      const task = ownedTask(state, owner, id); this.assertResearchTask(task);
+      if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(request.callId) || !/^[a-z_]{1,80}$/u.test(request.name)
+        || !request.arguments || typeof request.arguments !== 'object' || Array.isArray(request.arguments)
+        || Buffer.byteLength(JSON.stringify(request.arguments)) > 4096) fail('RESEARCH_INVALID_CALL');
+      const fingerprint = hash(JSON.stringify([request.name, Object.entries(request.arguments).sort(([a], [b]) => a.localeCompare(b))]));
+      const calls = task.toolCalls ??= {};
+      const existing = Object.hasOwn(calls, request.callId) ? calls[request.callId] : undefined;
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) fail('RESEARCH_CALL_CONFLICT');
+        return { run: false, result: existing.result ?? { status: 'failed', data: { message: 'Prior call completion is unknown; it was not retried.' }, sources: [], asOf: new Date().toISOString(),
+          truncated: false, errorCode: 'RESEARCH_CALL_UNCERTAIN' } };
+      }
+      if (task.cancelledToolCallIds?.includes(request.callId)) {
+        return { run: false, result: researchFailure('cancelled', 'RESEARCH_CALL_CANCELLED') };
+      }
+      if (Object.keys(calls).length >= 24) fail('RESEARCH_TASK_LIMIT');
+      Object.defineProperty(calls, request.callId, { value: { fingerprint }, enumerable: true, writable: true, configurable: true });
+      return { run: true };
+    });
+  }
+
+  cancelToolCall(owner: string, id: string, callId: string): Promise<boolean> {
+    return this.access(true, state => {
+      const task = ownedTask(state, owner, id); this.assertResearchTask(task);
+      if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(callId)) fail('RESEARCH_INVALID_CALL');
+      const entry = task.toolCalls && Object.hasOwn(task.toolCalls, callId) ? task.toolCalls[callId] : undefined;
+      if (entry?.result) return entry.result.status === 'cancelled';
+      const cancelled = task.cancelledToolCallIds ??= [];
+      if (cancelled.includes(callId)) return true;
+      if (cancelled.length >= 128) fail('RESEARCH_TASK_LIMIT');
+      cancelled.push(callId);
+      // Cancellation may arrive before the original HTTP request has claimed this ID.
+      if (entry) entry.result = researchFailure('cancelled', 'RESEARCH_CALL_CANCELLED', true);
+      return true;
+    });
+  }
+
+  finishToolCall(owner: string, id: string, callId: string, result: ResearchToolResult): Promise<ResearchToolResult> {
+    return this.access(true, state => {
+      const task = ownedTask(state, owner, id);
+      const entry = task.toolCalls && Object.hasOwn(task.toolCalls, callId) ? task.toolCalls[callId] : undefined;
+      if (entry && !entry.result) entry.result = result;
+      return entry?.result ?? result;
+    });
+  }
+
   poll(token: string, request: CompanionPoll): Promise<CompanionPollResult> {
     return this.access(true, (state) => {
       const tokenHash = hash(token);
@@ -263,6 +356,7 @@ export class LocalAgentStore {
         if (!task || task.deviceId !== device.id || task.owner !== device.owner) continue;
         if (recordLateUncertainty(task, update)) continue;
         if (!['running', 'cancelling'].includes(task.state)) continue;
+        appendResearchEvents(task, update.events ?? []);
         if (task.state === 'cancelling' && update.state === 'running') continue;
         if (task.state === 'cancelling' && update.state === 'completed') {
           task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED';
@@ -296,6 +390,7 @@ export class LocalAgentStore {
           }
           task.state = 'running'; task.updatedAt = now;
           commands.push({ id: task.id, kind: task.kind, provider: task.provider,
+            ...(task.researchBundle ? { researchTools: task.researchBundle } : {}),
             ...(task.kind === 'run' ? { prompt: task.prompt, ...(task.agentSettings ? { agentSettings: task.agentSettings } : {}) } : {}) });
         }
       }

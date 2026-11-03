@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ResearchEventBuffer } from './research-events.mjs';
+import { researchFailure, validResearchBundle, validResearchRequest, validResearchResult,
+  type ResearchActivity, type ResearchToolBundle, type ResearchToolCapability,
+  type ResearchToolRequest, type ResearchToolResult } from './research-protocol.mjs';
 
 // This package has an independent rootDir. Keep this narrow wire contract in sync
 // with shared/local-agents.interface.ts without pulling backend sources into Electron.
@@ -17,6 +21,7 @@ export interface NativeAgentStatus {
   models?: Array<{ id: string; name: string; reasoningEfforts?: string[] }>;
   reasoningEfforts?: string[];
   configurationHelp?: string;
+  researchTools?: ResearchToolCapability;
 }
 export interface NativeRuntime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -24,17 +29,25 @@ export interface NativeRuntime {
   runNativeAgent(provider: NativeProvider, prompt: string, options: {
     root: string; signal: AbortSignal; onProgress: (text: string) => void;
     agentSettings?: NativeAgentConfiguration;
+    researchTools?: ResearchToolBundle & { call: (request: ResearchToolRequest, signal: AbortSignal) => Promise<ResearchToolResult> };
+    onEvent?: (event: ResearchActivity) => void;
   }): Promise<{ text: string; usageTokens: number | null }>;
 }
-interface Command { id: string; kind: 'run' | 'login'; provider: NativeProvider; prompt?: string; agentSettings?: NativeAgentConfiguration }
+interface Command {
+  id: string; kind: 'run' | 'login'; provider: NativeProvider; prompt?: string;
+  agentSettings?: NativeAgentConfiguration; researchTools?: ResearchToolBundle;
+}
 interface Update {
   id: string;
   state: 'running' | 'completed' | 'failed' | 'cancelled';
   progress?: string;
   text?: string;
   usageTokens?: number | null;
-  error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED' | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN';
+  events?: ResearchActivity[];
+  error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED'
+    | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED';
 }
+interface UpdateSnapshot { source: Update; wire: Update }
 interface Pairing {
   origin: string; token: string; deviceId: string; processedTaskIds: string[];
 }
@@ -108,7 +121,8 @@ function pollResponse(value: unknown): value is { commands: Command[]; cancelTas
       && typeof command.id === 'string' && TASK_ID.test(command.id)
       && NATIVE_PROVIDERS.some((provider) => provider === command.provider)
       && validConfiguration(command.agentSettings)
-      && ((command.kind === 'login' && command.prompt === undefined && command.agentSettings === undefined)
+      && (command.researchTools === undefined || validResearchBundle(command.researchTools))
+      && ((command.kind === 'login' && command.prompt === undefined && command.agentSettings === undefined && command.researchTools === undefined)
         || (command.kind === 'run' && typeof command.prompt === 'string'
           && command.prompt.length > 0 && command.prompt.length <= MAX_TEXT)));
 }
@@ -129,13 +143,14 @@ function nativeFailureCode(error: unknown): Update['error'] {
     NATIVE_AGENT_INVALID_CONFIGURATION: 'LOCAL_INVALID_CONFIGURATION',
     NATIVE_AGENT_CONFIGURATION_UNSUPPORTED: 'LOCAL_CONFIGURATION_UNSUPPORTED',
     NATIVE_AGENT_VERSION_UNSUPPORTED: 'LOCAL_VERSION_UNSUPPORTED',
+    NATIVE_AGENT_TOOL_ISOLATION_FAILED: 'LOCAL_TOOL_ISOLATION_FAILED',
     NATIVE_AGENT_CANCEL_UNCONFIRMED: 'LOCAL_DISPATCH_UNCERTAIN',
     NATIVE_AGENT_UPSTREAM_PENDING: 'LOCAL_DISPATCH_UNCERTAIN',
   };
   return error instanceof Error ? codes[error.message] : undefined;
 }
 
-async function readJson(response: Response): Promise<unknown> {
+async function readJson(response: Response, limit = 2 * 1024 * 1024): Promise<unknown> {
   if (!response.body) throw new Error('Empty companion response');
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -145,7 +160,7 @@ async function readJson(response: Response): Promise<unknown> {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 2 * 1024 * 1024) throw new Error('Companion response too large');
+      if (size > limit) throw new Error('Companion response too large');
       chunks.push(value);
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
@@ -160,6 +175,7 @@ export class LocalAgentCompanion {
   private agents: NativeAgentStatus[] = [];
   private readonly processed = new Set<string>();
   private readonly updates = new Map<string, Update>();
+  private readonly events = new Map<string, ResearchEventBuffer>();
   private readonly tasks = new Map<string, RunningTask>();
   private readonly request: typeof fetch;
   private readonly now: () => number;
@@ -196,6 +212,7 @@ export class LocalAgentCompanion {
       this.processed.clear();
       for (const id of value.processedTaskIds) this.processed.add(id);
       this.updates.clear();
+      this.events.clear();
       // Notify the broker immediately after a crash. It ignores already-terminal
       // task updates; recent IDs go first so interrupted work is released promptly.
       for (const id of [...this.processed].reverse()) this.updates.set(id, {
@@ -243,6 +260,7 @@ export class LocalAgentCompanion {
     this.pairing = next;
     this.processed.clear();
     this.updates.clear();
+    this.events.clear();
     this.state = 'connecting';
     this.lastSuccess = this.now();
     this.failures = 0;
@@ -308,18 +326,23 @@ export class LocalAgentCompanion {
       const response = await this.request(`${pairing.origin}/api/local-agent-companion/poll`, {
         method: 'POST', redirect: 'error', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pairing.token}` },
-        body: JSON.stringify({ agents: this.agents, updates: snapshot }),
+        body: JSON.stringify({ agents: this.agents, updates: snapshot.map(item => item.wire) }),
       });
       if (generation !== this.generation) return;
       if (response.status === 401 || response.status === 403) { await this.forget(); return; }
       if (!response.ok) throw new Error('Companion poll failed');
       const result = await readJson(response);
-      if (!pollResponse(result)) throw new Error('Invalid companion response');
+      if (!pollResponse(result) || JSON.stringify(result).includes(pairing.token)) throw new Error('Invalid companion response');
       if (generation !== this.generation) return;
       this.lastSuccess = this.now();
       this.state = 'connected';
       this.failures = 0;
-      for (const update of snapshot) if (this.updates.get(update.id) === update) this.updates.delete(update.id);
+      for (const { source, wire } of snapshot) {
+        const events = this.events.get(wire.id);
+        events?.acknowledge(wire.events ?? []);
+        if (!events?.length) this.events.delete(wire.id);
+        if (!events?.length && wire.state === source.state && this.updates.get(wire.id) === source) this.updates.delete(wire.id);
+      }
       for (const id of result.cancelTaskIds) this.tasks.get(id)?.controller.abort();
       const cancelled = new Set(result.cancelTaskIds);
       for (const command of result.commands) {
@@ -344,22 +367,30 @@ export class LocalAgentCompanion {
       .catch(() => { this.agents = []; }).finally(() => { this.detecting = false; });
   }
 
-  private selectUpdates(): Update[] {
-    const snapshot: Update[] = [];
+  private selectUpdates(): UpdateSnapshot[] {
+    const snapshot: UpdateSnapshot[] = [];
     const baseBytes = Buffer.byteLength(JSON.stringify({ agents: this.agents, updates: [] }), 'utf8');
     let bytes = baseBytes;
     for (const queued of this.updates.values()) {
-      let update = queued;
+      let source = queued;
+      const buffer = this.events.get(queued.id);
+      const events = buffer?.snapshot() ?? [];
+      // A terminal update with a partial event batch would cause the broker to
+      // reject later activity. Keep the terminal report until older batches drain.
+      let update: Update = buffer && buffer.length > events.length
+        ? { id: queued.id, state: 'running' } : { ...queued };
+      if (events.length) update.events = events;
       let size = Buffer.byteLength(JSON.stringify(update), 'utf8');
       // JSON escaping can make a bounded UTF-8 report exceed the HTTP body limit.
       if (size + baseBytes > MAX_POLL_BYTES) {
-        update = { id: queued.id, state: 'failed', progress: 'Native report exceeded the delivery limit. Start a new task.' };
-        this.updates.set(update.id, update);
+        source = { id: queued.id, state: 'failed', progress: 'Native report exceeded the delivery limit. Start a new task.' };
+        this.updates.set(source.id, source);
+        update = { ...source, ...(events.length ? { events } : {}) };
         size = Buffer.byteLength(JSON.stringify(update), 'utf8');
       }
       const separator = snapshot.length ? 1 : 0;
       if (snapshot.length >= 16 || bytes + size + separator > MAX_POLL_BYTES) break;
-      snapshot.push(update);
+      snapshot.push({ source, wire: update });
       bytes += size + separator;
     }
     return snapshot;
@@ -400,6 +431,7 @@ export class LocalAgentCompanion {
   }
 
   private async execute(command: Command, pairing: Pairing, controller: AbortController): Promise<void> {
+    let acceptingEvents = true;
     const update = (value: Update): void => {
       if (this.pairing === pairing) this.updates.set(command.id, value);
     };
@@ -413,6 +445,18 @@ export class LocalAgentCompanion {
       const result = await this.options.native.runNativeAgent(command.provider, command.prompt ?? '', {
         root: join(this.options.dataDir, 'tasks', command.id), signal: controller.signal,
         agentSettings: command.agentSettings,
+        ...(command.researchTools ? { researchTools: { ...command.researchTools,
+          call: (request: ResearchToolRequest, signal: AbortSignal) => this.callResearchTool(command, pairing, request,
+            AbortSignal.any([controller.signal, signal])) } } : {}),
+        onEvent: (event) => {
+          if (!acceptingEvents || this.pairing !== pairing) return;
+          const buffer = this.events.get(command.id) ?? new ResearchEventBuffer();
+          buffer.append(event, pairing.token);
+          if (buffer.length) {
+            this.events.set(command.id, buffer);
+            if (!this.updates.has(command.id)) update({ id: command.id, state: 'running' });
+          }
+        },
         onProgress: (progress) => {
           if (!controller.signal.aborted) update({ id: command.id, state: 'running', progress: progress.slice(0, 500) });
         },
@@ -426,6 +470,51 @@ export class LocalAgentCompanion {
       const cancelled = controller.signal.aborted && code !== 'LOCAL_DISPATCH_UNCERTAIN';
       update({ id: command.id, state: cancelled ? 'cancelled' : 'failed', ...(code && !cancelled ? { error: code } : {}),
         progress: cancelled ? 'Task interrupted.' : 'Native agent failed. Check its installation and sign-in before starting another task.' });
+    } finally { acceptingEvents = false; }
+  }
+
+  private async callResearchTool(command: Command, pairing: Pairing, request: ResearchToolRequest,
+    signal: AbortSignal): Promise<ResearchToolResult> {
+    if (signal.aborted || this.pairing !== pairing || !this.tasks.has(command.id)) return researchFailure('cancelled', 'RESEARCH_CANCELLED');
+    if (!command.researchTools || !validResearchRequest(request, command.researchTools)) return researchFailure('failed', 'RESEARCH_INVALID_CALL');
+    let cancellation: Promise<void> | undefined;
+    const cancel = (): void => {
+      cancellation ??= this.cancelResearchTool(command.id, request.callId, pairing);
+    };
+    signal.addEventListener('abort', cancel, { once: true });
+    try {
+      const response = await this.request(`${pairing.origin}/api/local-agent-companion/research-tools`, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pairing.token}` },
+        body: JSON.stringify({ taskId: command.id, callId: request.callId, name: request.name, arguments: request.arguments }),
+      });
+      if (!response.ok) throw new Error('Research request failed');
+      const result = await readJson(response, 64_000);
+      if (signal.aborted || this.pairing !== pairing) return researchFailure('cancelled', 'RESEARCH_CANCELLED', true);
+      if (!validResearchResult(result) || JSON.stringify(result).includes(pairing.token)) throw new Error('Invalid research response');
+      return result;
+    } catch {
+      return signal.aborted || this.pairing !== pairing ? researchFailure('cancelled', 'RESEARCH_CANCELLED', true)
+        : researchFailure('unavailable', 'RESEARCH_TRANSPORT_UNAVAILABLE', true);
+    } finally {
+      signal.removeEventListener('abort', cancel);
+      await cancellation;
+    }
+  }
+
+  private async cancelResearchTool(taskId: string, callId: string, pairing: Pairing): Promise<void> {
+    // A transport disconnect is not a cancellation. Only the explicit call signal
+    // sends this idempotent intent, using a fresh deadline rather than the aborted signal.
+    for (let attempt = 0; attempt < 2 && this.pairing === pairing; attempt++) {
+      try {
+        const response = await this.request(`${pairing.origin}/api/local-agent-companion/research-tools/cancel`, {
+          method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5_000),
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pairing.token}` },
+          body: JSON.stringify({ taskId, callId }),
+        });
+        await response.body?.cancel();
+        if (response.ok || response.status === 401 || response.status === 403) return;
+      } catch { /* A lost acknowledgement can safely retry this cancellation. */ }
     }
   }
 
@@ -435,6 +524,7 @@ export class LocalAgentCompanion {
     this.pairing = null;
     this.processed.clear();
     this.updates.clear();
+    this.events.clear();
     this.state = 'unpaired';
     await this.writes.catch(() => undefined);
     await rm(join(this.options.dataDir, 'pairing.json'), { force: true });

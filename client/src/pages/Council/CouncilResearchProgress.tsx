@@ -1,8 +1,19 @@
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, CircleAlert, Loader2, Search } from 'lucide-react';
 import type { CouncilSession } from '@shared/council.interface';
+import CouncilResearchTimeline from './CouncilResearchTimeline';
 
 export default function CouncilResearchProgress({ session }: { session: CouncilSession }) {
+  if (!session.researchEvents?.length) return <LegacyResearchProgress session={session} />;
+  const hasCurrentEvents = session.researchEvents.some(event => event.revision === session.revision);
+  return <>
+    <CouncilResearchTimeline session={session} />
+    {!hasCurrentEvents && <LegacyResearchProgress session={{ ...session,
+      messages: session.messages.filter(message => message.revision === session.revision) }} />}
+  </>;
+}
+
+function LegacyResearchProgress({ session }: { session: CouncilSession }) {
   const { t } = useTranslation();
   const events = session.messages.filter((message) => message.acquisition || message.phase === 'progress');
   // Native CLIs may report the same tool step several times. Keep the latest occurrence of each

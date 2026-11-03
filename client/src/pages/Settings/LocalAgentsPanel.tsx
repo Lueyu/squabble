@@ -129,6 +129,10 @@ export default function LocalAgentsPanel() {
             </div>
             <p className="mt-3 flex-1 text-xs leading-5 text-muted-foreground">{key(`stateHints.${state}`)}</p>
             {agentHelp && <p className="mt-2 break-words text-xs leading-5 text-muted-foreground">{agentHelp}</p>}
+            {agent.researchTools && <p className="mt-2 rounded-lg bg-muted/60 p-2.5 text-xs leading-5 text-muted-foreground">
+              {key(`tools.${agent.researchTools.mode === 'mcp' ? 'live' : 'snapshot'}`)}
+              {agent.researchTools.mode === 'snapshot' && <> {' '}{key(`tools.${agent.researchTools.reason}`)}</>}
+            </p>}
             <div className="mt-4 flex flex-wrap gap-2">
               {!offline && agent.state === 'not_installed' && <Button asChild size="sm" variant="outline">
                 <a href={agent.installUrl} target="_blank" rel="noreferrer" aria-label={`${key('install')} · ${agent.name}`}>

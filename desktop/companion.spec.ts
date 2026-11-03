@@ -113,6 +113,19 @@ async function fixture(overrides: { runNativeAgent?: ReturnType<typeof idleNativ
 
 async function settle(): Promise<void> { await new Promise<void>((done) => setImmediate(done)); }
 
+test('native research isolation failures preserve their actionable error code', async () => {
+  const f = await fixture({ runNativeAgent: async () => { throw new Error('NATIVE_AGENT_TOOL_ISOLATION_FAILED'); } });
+  try {
+    f.response({ commands: [{ id: 'isolation-failure', kind: 'run', provider: 'codex', prompt: 'Research' }], cancelTaskIds: [] });
+    await f.helper.pollOnce(); await settle();
+    f.response({ commands: [], cancelTaskIds: [] }); await f.helper.pollOnce();
+    assert.deepEqual(f.sent.at(-1)?.updates[0], {
+      id: 'isolation-failure', state: 'failed', error: 'LOCAL_TOOL_ISOLATION_FAILED',
+      progress: 'Native agent failed. Check its installation and sign-in before starting another task.',
+    });
+  } finally { await f.helper.stop(); await f.temporary.remove(); }
+});
+
 test('poll persists task IDs before launch, deduplicates delivery and preserves completed updates after failures', async () => {
   let runs = 0;
   const f = await fixture({ runNativeAgent: async () => { runs += 1; return { text: 'complete', usageTokens: null }; } });

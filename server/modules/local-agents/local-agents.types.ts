@@ -1,7 +1,9 @@
 import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
+import type { ResearchToolScope } from '../../../shared/research-tools.interface';
 
 export interface LocalAgentTaskRef { taskId: string; contextId: string }
 export interface LocalAgentExecution {
+  researchScope?: ResearchToolScope;
   agentId: string;
   messageId: string;
   prompt: string;
@@ -38,6 +40,7 @@ export function nativeFailureCode(error: unknown): string {
     NATIVE_AGENT_VERSION_UNSUPPORTED: 'LOCAL_VERSION_UNSUPPORTED',
     NATIVE_AGENT_CANCEL_UNCONFIRMED: 'LOCAL_DISPATCH_UNCERTAIN',
     NATIVE_AGENT_UPSTREAM_PENDING: 'LOCAL_DISPATCH_UNCERTAIN',
+    NATIVE_AGENT_TOOL_ISOLATION_FAILED: 'LOCAL_TOOL_ISOLATION_FAILED',
   };
   return error instanceof Error ? codes[error.message] ?? 'LOCAL_TASK_FAILED' : 'LOCAL_TASK_FAILED';
 }

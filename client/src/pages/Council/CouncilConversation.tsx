@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
 import { shouldSendCouncilMessage, shouldStartCouncilAfterMessage } from '@/utils/council-state';
+import { researchTimeline } from '@/utils/research-events';
 import CouncilChatMessage from './CouncilChatMessage';
 import CouncilResearchProgress from './CouncilResearchProgress';
 
@@ -30,6 +31,8 @@ export default function CouncilConversation({ session, actions, profileChanged }
   const sending = useRef(false);
   const composing = useRef(false);
   const lastMessageId = session.messages.at(-1)?.id;
+  const researchCursor = researchTimeline(session).cursor;
+  const hasCurrentResearchEvents = session.researchEvents?.some(event => event.revision === session.revision);
   const messageLimitReached = session.messages.filter((message: CouncilMessage) => message.role === 'user').length >= 30;
 
   useEffect(() => {
@@ -37,7 +40,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
     if (!viewport) return;
     if (stickToBottom.current) viewport.scrollTop = viewport.scrollHeight;
     else setUnread(true);
-  }, [lastMessageId, session.status]);
+  }, [lastMessageId, session.status, researchCursor]);
 
   const jumpToLatest = () => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -80,7 +83,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
         <p className="mx-auto max-w-md text-center text-[11px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">{session.members?.length
           ? t('council.members.roomHint', { names: session.members.map((member) => member.name).join(' · ') }) : t('council.roomHint')}</p>
         {profileChanged && <p className="mx-auto max-w-xl rounded-lg bg-card p-3 text-center text-xs leading-5 text-muted-foreground">{t('council.profileChanged')}</p>}
-        {session.messages.length === 0 && <div className="mx-auto flex max-w-sm flex-col items-center gap-3 py-12 text-center text-muted-foreground">
+        {session.messages.length === 0 && !session.researchEvents?.length && <div className="mx-auto flex max-w-sm flex-col items-center gap-3 py-12 text-center text-muted-foreground">
           <MessageCircle className="size-8 text-primary/60" />
           <p className="text-sm leading-6">{t(session.status === 'running' ? 'council.startingHint'
             : session.reports.some((report) => report.engine === 'basic') ? 'council.noMessagesBasic' : 'council.noMessages')}</p>
@@ -89,7 +92,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
           setContent((current) => current ? `${current}\n${question}`.slice(0, 2000) : question.slice(0, 2000)); inputRef.current?.focus();
         }} />)}
         <CouncilResearchProgress session={session} />
-        {session.status === 'running' && !session.progress && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
+        {session.status === 'running' && !session.progress && !hasCurrentResearchEvents && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card"><Loader2 className="size-4 animate-spin text-primary" /></span>
           {t('council.runningHint')}
         </div>}

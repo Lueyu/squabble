@@ -279,6 +279,28 @@ test('all seven provider cards render localized capability help as text', () => 
   assert.ok(nodes(tree).every(node => !node.props.dangerouslySetInnerHTML));
 });
 
+test('agent settings and member editor explain live tools and snapshot fallback in both languages', async () => {
+  const i18n = require('i18next').createInstance();
+  const resources = Object.fromEntries(['zh-CN', 'en'].map(language => [language, { translation: {
+    council: JSON.parse(fs.readFileSync(path.join(root, `client/src/i18n/council.${language}.json`), 'utf8')),
+  } }]));
+  await i18n.init({ lng: 'en', resources });
+  for (const language of ['en', 'zh-CN']) {
+    await i18n.changeLanguage(language);
+    const t = i18n.t.bind(i18n);
+    for (const capability of [{ mode: 'mcp', reason: 'supported' }, { mode: 'snapshot', reason: 'version_unsupported' },
+      { mode: 'snapshot', reason: 'runtime_unsupported' }]) {
+      const known = agent({ connected: true, available: true, researchTools: capability });
+      const key = capability.mode === 'mcp' ? 'live' : capability.reason;
+      const expected = resources[language].translation.council.localAgents.tools?.[key];
+      assert.ok(expected, `Missing ${language} capability copy: ${key}`);
+      assert.ok(text(editor({}, [known], t).render()).includes(expected));
+      assert.ok(text(panel({ mode: 'native', items: [known], companion: { connected: false } }, t).render()).includes(expected));
+      assert.doesNotMatch(expected, /MCP|JSON|A2A/);
+    }
+  }
+});
+
 test('provider help is bilingual, describes the Doubao community bridge, and falls back to server text', async () => {
   const i18n = require('i18next').createInstance();
   const resources = Object.fromEntries(['zh-CN', 'en'].map(language => [language, { translation: {

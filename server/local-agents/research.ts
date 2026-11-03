@@ -7,7 +7,7 @@ import type { NativeProcessResult } from './process';
 import type { NativeResolverOptions } from './resolver';
 
 export interface ResearchInvocation { args: string[]; input: string; env: NodeJS.ProcessEnv }
-export type NativeProbe = (args: string[]) => Promise<NativeProcessResult>;
+export type NativeProbe = (args: string[], context?: { cwd?: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal }) => Promise<NativeProcessResult>;
 const RESEARCH_INSTRUCTIONS: string = 'Research the user request with sources. Return a complete report. Use only the provided read and web research tools.';
 
 export function normalizedConfiguration(settings: NativeAgentConfiguration | undefined): NativeAgentConfiguration {
