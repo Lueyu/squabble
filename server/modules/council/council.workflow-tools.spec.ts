@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { attachValuation, excerptToolData, compactPeerComparison } from './council.workflow-tools';
+import { attachValuation, excerptToolData, compactPeerComparison, compactValuationHandoff, referenceEvidenceMetadata } from './council.workflow-tools';
 import { nativeWorkflowSources } from './council.workflow-executor';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { workflowReviewPrompt } from './council.workflow-review';
@@ -9,6 +9,86 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { compactToolEvidence } from '../research-tools/research-tools.evidence';
 import { CouncilWorkflowExecutor } from './council.workflow-executor';
 import { boundedResult } from '../research-tools/research-tools.output';
+import { evidenceExcerpts, type CouncilEvidence } from './council.rules';
+import { evidencePromptMetadata } from '../research-memory/research-memory.temporal';
+import { valuationScenarios } from '../research-tools/research-valuation';
+
+test('calculator handoffs compact exact repeated fields while preserving measurements and every limitation', () => {
+  const result = valuationScenarios('AAPL', [{ metric: 'earnings', value: 123.45, annual: true, currency: 'USD', units: 'currency',
+    periodStart: '2025-01-01', periodEnd: '2025-12-31', source: { title: 'SEC EDGAR', url: 'https://example.test/filing', fetchedAt: '2026-02-01T00:00:00Z' } }],
+  { metric: 'earnings', multiples: { bear: 10, base: 15, bull: 20 } }, { price: 100, currency: 'USD', asOf: '2026-02-02T00:00:00Z' }, '2026-02-02T00:00:00Z');
+  const data = result.data as Record<string, unknown> & { scenarios: Array<Record<string, unknown>>; limitations: string[] };
+  data.limitations.push('Unique issuer-specific caveat: no reliable renewal data.');
+  const before = structuredClone(data);
+  const packed = compactValuationHandoff(data) as typeof data & { scenarioDefaults: Record<string, unknown> };
+  assert.deepEqual(packed.scenarios.map(scenario => ({ ...packed.scenarioDefaults, ...scenario })), data.scenarios);
+  assert.deepEqual(packed.denominator, data.denominator);
+  assert.deepEqual(packed.quote, data.quote);
+  assert.equal('assumptions' in packed, false, 'scenario multiples already retain exactly the same assumptions');
+  assert.deepEqual(packed.limitations, [
+    'Multiples are caller assumptions, not verified forecasts or recommendations.',
+    'No verified share count: no per-share target or upside.',
+    'No FX conversion, growth extrapolation or annualization.',
+    'Floating-point approximations; source currency units preserved.',
+    data.limitations.at(-1),
+  ]);
+  assert.ok(Buffer.byteLength(JSON.stringify(packed)) < Buffer.byteLength(JSON.stringify(data)) - 250);
+  assert.deepEqual(data, before, 'the durable calculation and full caveats remain unchanged');
+  for (const variation of ['missing', 'null', 'different', 'empty']) {
+    const changed = structuredClone(data);
+    if (variation === 'empty') changed.scenarios = [];
+    else if (variation === 'missing') delete changed.scenarios[0].currency;
+    else changed.scenarios[0].currency = variation === 'null' ? null : 'EUR';
+    const projected = compactValuationHandoff(changed) as typeof packed;
+    assert.deepEqual(projected.scenarios.map(scenario => ({ ...projected.scenarioDefaults, ...scenario })), changed.scenarios);
+  }
+  const different = { ...data, assumptions: { bear: 1, base: 15, bull: 20, additional: null }, formula: 'An issuer-defined formula.' };
+  const projected = compactValuationHandoff(different) as typeof different;
+  assert.deepEqual(projected.assumptions, different.assumptions);
+  assert.equal(projected.formula, different.formula);
+});
+
+test('snapshot metadata references identical tool facts while retaining each observation and unique prose', () => {
+  const provider = parseFinnhubFinancials({ symbol: 'AAPL', data: [{ symbol: 'AAPL', cik: '123', startDate: '2025-01-01',
+    endDate: '2025-12-31', filedDate: '2026-02-01', accessNumber: '0000000123-26-000001', form: '10-K',
+    report: { ic: [{ concept: 'Revenues', value: 123456, unit: 'USD' }, { concept: 'NetIncomeLoss', value: 98765, unit: 'USD' }],
+      cf: [{ concept: 'NetCashProvidedByUsedInOperatingActivities', value: 87654, unit: 'USD' }],
+      bs: [{ concept: 'Liabilities', value: 76543, unit: 'USD' }] } }] }, 'AAPL', 'annual').items[0];
+  const original: CouncilEvidence = { ...provider, id: 'old-citation', content: 'Unique accounting qualification.',
+    sourceName: provider.sourceName!, sourceUrl: provider.sourceUrl!, fetchedAt: '2026-02-02T00:00:00Z' };
+  const fresh = { ...original, id: 'tool-citation', fetchedAt: '2026-02-03T00:00:00Z', metadata: structuredClone(original.metadata!) };
+  fresh.metadata.sources[0].observedAt = fresh.fetchedAt;
+  fresh.metadata.sources[0].observationBasis = 'server';
+  const excerpts = evidenceExcerpts([original], 550), before = structuredClone([original, fresh]);
+  const available = [{ id: fresh.id, data: { metadata: evidencePromptMetadata(fresh.metadata) } }];
+  const aliased = referenceEvidenceMetadata(excerpts, [original, fresh], available);
+  assert.deepEqual(aliased[0].metadata, { sameSourcesAs: { evidenceId: fresh.id, sourceIndexes: [0] },
+    observations: [{ at: null, basis: 'unknown' }] });
+  assert.equal(aliased[0].fetchedAt, original.fetchedAt);
+  assert.equal(aliased[0].content, original.content);
+  const repeated = referenceEvidenceMetadata(excerpts, [original, fresh], [{ ...available[0], data: {
+    metadata: evidencePromptMetadata(fresh.metadata), title: excerpts[0].title, content: original.content } }]);
+  assert.equal(repeated[0].content, '', 'only a prose excerpt already present in the tool is omitted');
+  assert.equal('title' in repeated[0], false, 'an exact repeated title can use its referenced tool source');
+  assert.equal('source' in repeated[0], false, 'an exact provider already in referenced provenance is not repeated');
+  assert.deepEqual([original, fresh], before, 'prompt deduplication never changes historical observation metadata');
+  for (const change of [
+    (source: typeof fresh.metadata.sources[0]) => { source.facts[0].value = 1; },
+    (source: typeof fresh.metadata.sources[0]) => { source.facts[0].periodStart = '2025-04-01'; },
+    (source: typeof fresh.metadata.sources[0]) => { source.facts[0].currency = 'EUR'; },
+    (source: typeof fresh.metadata.sources[0]) => { source.facts[0].unit = 'shares'; },
+    (source: typeof fresh.metadata.sources[0]) => { source.facts[0].basis = 'adjusted'; },
+    (source: typeof fresh.metadata.sources[0]) => { source.sourceRevision = 'amended'; },
+    (source: typeof fresh.metadata.sources[0]) => { source.publishedAt = '2026-02-02'; },
+    (source: typeof fresh.metadata.sources[0]) => { source.sourceUrl = 'https://example.test/other'; },
+  ]) {
+    const changed = structuredClone(fresh); change(changed.metadata.sources[0]);
+    assert.deepEqual(referenceEvidenceMetadata(excerpts, [original, changed], available), excerpts);
+  }
+  assert.deepEqual(referenceEvidenceMetadata(excerpts, [original, fresh], []), excerpts, 'an archived tool absent from the request is not a usable reference');
+  assert.deepEqual(referenceEvidenceMetadata(excerpts, [original, fresh], [{ id: fresh.id, data: {} }]), excerpts,
+    'an archived source absent from the actual tool excerpt is not a usable reference');
+});
 
 test('real financial and nested peer facts survive tight executor excerpts or stop before dispatch', async () => {
   const provider = parseFinnhubFinancials({ symbol: 'AAPL', data: [{ symbol: 'AAPL', cik: '123', startDate: '2025-01-01',

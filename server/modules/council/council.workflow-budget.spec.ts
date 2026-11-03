@@ -20,7 +20,8 @@ const providerEvidence = (ticker: string) => parseFinnhubFinancials({ symbol: ti
   startDate: '2025-01-01', endDate: '2025-12-31', filedDate: '2026-02-01', accessNumber: '0000000123-26-000001', form: '10-K',
   report: { ic: [{ concept: 'Revenues', value: 1000, unit: 'USD' }, { concept: 'NetIncomeLoss', value: 100, unit: 'USD' }],
     cf: [{ concept: 'NetCashProvidedByUsedInOperatingActivities', value: 140, unit: 'USD' }],
-    bs: [{ concept: 'Liabilities', value: 200, unit: 'USD' }] } }] }, ticker, 'annual').items;
+    bs: [{ concept: 'Liabilities', value: 200, unit: 'USD' }] } }] }, ticker, 'annual').items.map(item => ({ ...item,
+      metadata: { sources: item.metadata!.sources.map(source => ({ ...source, observedAt: new Date().toISOString(), observationBasis: 'server' as const })) } }));
 const response = (english: boolean) => english ? {
   thesis: 'Reported growth supports a balanced view, but cash conversion and dilution still need verification before the valuation can support a stronger conclusion.',
   evidencePoints: [

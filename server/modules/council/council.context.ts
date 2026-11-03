@@ -23,10 +23,16 @@ export function packDiscussionContext(input: ContextInput) {
     { evidence: 1300, dialogue: 800, history: 1, custom: 140, personality: 60, gaps: 120 },
     { evidence: 1100, dialogue: 650, history: 0, custom: 80, personality: 50, gaps: 100 },
     { evidence: 900, dialogue: 550, history: 0, custom: 60, personality: 0, gaps: 80 },
+    { evidence: 900, dialogue: 350, history: 0, custom: 0, personality: 0, gaps: 60, evidenceText: 160 },
   ];
-  const make = (limits: typeof profiles[number]) => ({
+  const make = (limits: typeof profiles[number]) => {
+    const evidence = evidenceExcerpts(input.evidence, limits.evidence).map(item => ({ ...item,
+      content: limits.evidenceText && item.metadata ? byteExcerpt(item.content, limits.evidenceText) : item.content }));
+    const included = new Set(evidence.map(item => item.id));
+    return {
     ticker: input.ticker, candidate: input.candidate, phase: input.turn.phase,
-    ruleOnly: isRuleCandidate(input.config, input.candidate), criticalEvidenceMissing: criticalEvidenceGaps(input.evidence),
+    ruleOnly: isRuleCandidate(input.config, input.candidate),
+    criticalEvidenceMissing: criticalEvidenceGaps(input.evidence.filter(item => included.has(item.id) || item.sourceName === 'Data Unavailable')),
     member: { name: input.member.name, role: input.member.roleTitle ?? input.member.role,
       personality: byteExcerpt(input.member.personality ?? '', limits.personality), focus: input.member.researchFocus,
       style: input.member.speakingStyle, instructions: byteExcerpt(input.member.instructions, limits.custom) },
@@ -38,10 +44,11 @@ export function packDiscussionContext(input: ContextInput) {
     conversation: conversationExcerpt(input.currentDiscussion, limits.dialogue),
     contextWindow: { olderContentIsExcerpted: true, previousUserMessages: Math.max(0, input.userMessages.length - 1) },
     availableResearch: ['financials', 'valuation', 'news', 'price', ...(input.config.council?.webResearch ? ['web'] : [])],
-    evidenceExcerpts: true, evidence: evidenceExcerpts(input.evidence, limits.evidence),
+    evidenceExcerpts: true, evidence,
     gaps: input.evidence.filter((item) => item.sourceName === 'Data Unavailable').slice(0, 3)
       .map((item) => ({ title: byteExcerpt(item.title, 50), detail: byteExcerpt(item.content, limits.gaps) })),
-  });
+    };
+  };
   let data = make(profiles[0]);
   for (const profile of profiles) {
     data = make(profile);

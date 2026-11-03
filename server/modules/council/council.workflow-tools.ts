@@ -1,7 +1,81 @@
 import type { ResearchToolResult } from '../../../shared/research-tools.interface';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { isMemoryToolData } from '../research-memory/research-memory.context';
-import { compactEvidencePromptEnvelope, containsEvidencePromptMetadata, isEvidencePromptMetadata } from '../research-memory/research-memory.temporal';
+import { compactEvidencePromptEnvelope, containsEvidencePromptMetadata, evidencePromptMetadata, isEvidencePromptMetadata } from '../research-memory/research-memory.temporal';
+import type { CouncilEvidence } from './council.rules';
+import type { EvidenceSourceMetadata } from '../../../shared/research-evidence.interface';
+
+/** Prompt-only projection of the server calculator. Unknown wording and nonuniform measurements remain exact. */
+export function compactValuationHandoff(value: unknown): unknown {
+  const record = (item: unknown): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item));
+  if (!record(value)) return value;
+  const result = { ...value };
+  const caveats = new Map([
+    ['Multiples are explicit caller assumptions, not verified forecasts or recommendations.', 'Multiples are caller assumptions, not verified forecasts or recommendations.'],
+    ['Verified comparable share count is unavailable; per-share target and upside cannot be calculated.', 'No verified share count: no per-share target or upside.'],
+    ['No currency conversion, growth extrapolation or annualization is performed.', 'No FX conversion, growth extrapolation or annualization.'],
+    ['The arithmetic uses floating-point numbers; values are indicative and preserve source currency units.', 'Floating-point approximations; source currency units preserved.'],
+  ]);
+  if (Array.isArray(value.limitations)) {
+    result.limitations = value.limitations.map(item => typeof item === 'string' ? caveats.get(item) ?? item : item);
+    if (value.limitations.includes('Verified comparable share count is unavailable; per-share target and upside cannot be calculated.')) {
+      if (result.perShareTarget === null) delete result.perShareTarget;
+      if (result.upsidePercent === null) delete result.upsidePercent;
+    }
+  }
+  if (result.formula === 'total equity value = sourced monetary denominator × assumed multiple') {
+    result.formula = 'equityValue = denominator.value × assumed multiple';
+  }
+  if (Array.isArray(value.scenarios) && value.scenarios.length && value.scenarios.every(record) && !('scenarioDefaults' in value)) {
+    const scenarios = value.scenarios.map(item => ({ ...item })), defaults: Record<string, string> = {};
+    for (const key of ['currency', 'units']) {
+      const first = scenarios[0][key];
+      if (typeof first === 'string' && first && scenarios.every(item => item[key] === first)) {
+        defaults[key] = first; scenarios.forEach(item => { delete item[key]; });
+      }
+    }
+    if (Object.keys(defaults).length) { result.scenarioDefaults = defaults; result.scenarios = scenarios; }
+    const assumptions = value.assumptions;
+    if (record(assumptions) && Object.keys(assumptions).length === scenarios.length
+      && new Set(scenarios.map(item => item.name)).size === scenarios.length
+      && scenarios.every(item => typeof item.name === 'string' && typeof item.multiple === 'number'
+        && Number.isFinite(item.multiple) && assumptions[item.name] === item.multiple)) delete result.assumptions;
+  }
+  return result;
+}
+
+/** Reference only complete source/fact matches actually present in this request. Observation differences stay explicit. */
+export function referenceEvidenceMetadata<T extends { id: string; content: string; title?: string; source?: string; metadata?: unknown }>(excerpts: T[], snapshot: CouncilEvidence[],
+  available: Array<{ id: string; data: unknown }>) {
+  const identity = ({ observedAt: _observedAt, observationBasis: _basis, ...source }: EvidenceSourceMetadata) => JSON.stringify(source);
+  const contains = (data: unknown, source: EvidenceSourceMetadata): boolean => {
+    if (isEvidencePromptMetadata(data)) return (data as ReturnType<typeof evidencePromptMetadata>).sources.some(item =>
+      JSON.stringify(item) === JSON.stringify(evidencePromptMetadata({ sources: [source] }).sources[0]));
+    return Boolean(data && typeof data === 'object' && Object.values(data).some(value => contains(value, source)));
+  };
+  const containsText = (data: unknown, key: string, text: string, prefix = false): boolean => Boolean(text && data && typeof data === 'object'
+    && Object.entries(data).some(([field, value]) => field === key && typeof value === 'string'
+      && (prefix ? value.startsWith(text) : value === text) || containsText(value, key, text, prefix)));
+  return excerpts.map(excerpt => {
+    const original = snapshot.find(item => item.id === excerpt.id)?.metadata;
+    if (!original?.sources.length) return excerpt;
+    for (const tool of available) {
+      const replacement = snapshot.find(item => item.id === tool.id)?.metadata;
+      if (!replacement?.sources.length) continue;
+      const indexes = original.sources.map(source => replacement.sources.findIndex(other => identity(source) === identity(other)
+        && contains(tool.data, other)));
+      if (indexes.some(index => index < 0)) continue;
+      const { title, source, ...remaining } = excerpt;
+      return { ...remaining,
+        ...(title && !containsText(tool.data, 'title', title) ? { title } : {}),
+        ...(source && !replacement.sources.some(item => item.provider === source) ? { source } : {}),
+        content: containsText(tool.data, 'content', excerpt.content.replace(/…$/u, ''), true) ? '' : excerpt.content,
+        metadata: { sameSourcesAs: { evidenceId: tool.id, sourceIndexes: indexes },
+        observations: original.sources.map(source => ({ at: source.observedAt, basis: source.observationBasis })) } };
+    }
+    return excerpt;
+  });
+}
 
 /** Preserve numeric values and field names; text and list omissions are explicitly marked. */
 export function excerptToolData(value: unknown, limit = 300, depth = 0): unknown {
