@@ -17,7 +17,7 @@ import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
 const EMPTY: SaveModelConnection = { name: '', baseUrl: '', fastModel: '', slowModel: '', apiKey: '' };
 const QUERY_KEY = ['settings', 'model-connections'];
 
-export default function ModelConnectionsPanel() {
+export default function ModelConnectionsPanel({ active = true }: { active?: boolean } = {}) {
   const { t, i18n } = useTranslation();
   const client = useQueryClient();
   const list = useQuery({ queryKey: QUERY_KEY, queryFn: fetchModelConnections });
@@ -83,7 +83,7 @@ export default function ModelConnectionsPanel() {
       </div>)}</div>
       <p className="text-xs leading-5 text-muted-foreground">{key('budget')}</p>
     </CardContent>
-    <Dialog open={open} onOpenChange={value => { setOpen(value); if (!value) setDraft({ ...EMPTY }); }}>
+    <Dialog open={active && open} onOpenChange={value => { setOpen(value); if (!value) setDraft({ ...EMPTY }); }}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader><DialogTitle>{editing ? key('edit') : key('add')}</DialogTitle><DialogDescription>{key('guide')}</DialogDescription></DialogHeader>
         <form className="space-y-4" onSubmit={event => { event.preventDefault(); setFailure(''); save.mutate(); }}>
@@ -108,7 +108,7 @@ export default function ModelConnectionsPanel() {
         </form>
       </DialogContent>
     </Dialog>
-    <AlertDialog open={Boolean(deleting)} onOpenChange={value => { if (!value) setDeleting(null); }}>
+    <AlertDialog open={active && Boolean(deleting)} onOpenChange={value => { if (!value) setDeleting(null); }}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{key('remove')}</AlertDialogTitle><AlertDialogDescription>{key('removeHint')}</AlertDialogDescription></AlertDialogHeader>
         {failure && <p role="alert" className="text-sm text-destructive">{failure}</p>}
         <AlertDialogFooter><AlertDialogCancel>{key('cancel')}</AlertDialogCancel><AlertDialogAction disabled={remove.isPending} onClick={event => {

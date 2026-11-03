@@ -58,6 +58,9 @@ jobs:
       - name: Run client tests
         run: npm run test:client
 
+      - name: Verify development startup and process cleanup
+        run: npm run test:dev
+
       - name: Run native agent tests
         run: |
           npm run test:local-agents

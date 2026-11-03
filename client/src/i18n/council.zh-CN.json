@@ -273,5 +273,28 @@
     "fields": { "dailyTokenLimit": "每日 Token 上限", "monthlyTokenLimit": "每月 Token 上限", "perTaskTokenLimit": "每任务 Token 上限", "maxInputTokens": "每次输入 Token 上限", "maxOutputTokens": "每次输出 Token 上限", "maxCallsPerTask": "每任务调用次数", "dailyCallLimit": "每日调用次数", "inputUsdPerMillion": "输入单价 · 美元 / 百万", "outputUsdPerMillion": "输出单价 · 美元 / 百万" },
     "status": { "reserved": "已预留", "completed": "服务商已返回用量", "estimated": "估算用量", "failed_unknown": "失败 · 用量未知", "failed": "失败", "released": "已释放", "settled": "已结算" },
     "purposes": { "council": "小组投研", "analysis": "投资分析", "builder": "智能体评审", "builder-review": "智能体评审", "connection-test": "连接测试", "council:researcher": "小组 · 研究员", "council:challenger": "小组 · 质疑者", "council:manager": "小组 · 投资经理", "analysis-bull-opening": "多头观点", "analysis-bear-opening": "空头观点", "analysis-bull-rebuttal": "多头反驳", "analysis-bear-rebuttal": "空头反驳", "analysis-critique": "研究质检", "analysis-rating": "投资评级" }
+  },
+  "studio": {
+    "yourCall": "不同视角，最终由你判断",
+    "followUp": "追问这条观点",
+    "copy": "复制观点",
+    "copied": "已复制",
+    "copyFailed": "复制失败，请手动选择文字复制。",
+    "replyingTo": "追问 {{name}}",
+    "cancelReply": "取消引用",
+    "replyPrefix": "关于 {{name}} 的观点「{{excerpt}}」：",
+    "tooLong": "引用和正文合计最多 2000 字，请缩短正文。",
+    "join": "把你的想法带到桌上",
+    "prompts": "选择一个讨论方向",
+    "promptLabels": {
+      "upside": "看看增长机会",
+      "downside": "检验下行风险",
+      "evidence": "还有哪些证据缺口？"
+    },
+    "promptText": {
+      "upside": "这家公司的增长机会来自哪里？请结合证据说明。",
+      "downside": "如果最乐观的假设不成立，主要下行风险是什么？",
+      "evidence": "目前哪些结论还缺少证据？下一步最值得核实什么？"
+    }
   }
 }

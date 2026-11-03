@@ -152,7 +152,7 @@ export default function LocalAgentsPanel() {
         })}
       </div>
       <p className="text-xs leading-5 text-muted-foreground">{key('budgetHint')}{' '}
-        <Link to="/settings#research-budget" className="font-medium text-primary hover:underline">{t('council.budget.open')}</Link>
+        <Link to="/settings/budget" className="font-medium text-primary hover:underline">{t('council.budget.open')}</Link>
       </p>
     </CardContent>
   </Card>;

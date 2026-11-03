@@ -171,7 +171,7 @@ export default function CouncilPage() {
         </div>
         <div className="flex shrink-0 items-center justify-between border-t border-border p-4 text-xs">
           <Link to="/agent-builder" className="text-primary hover:underline">{t('council.builder')}</Link>
-          <Link to="/settings#research-budget" className="text-muted-foreground hover:underline">{t('council.budget.open')}</Link>
+          <Link to="/settings/budget" className="text-muted-foreground hover:underline">{t('council.budget.open')}</Link>
         </div>
       </SheetContent>
     </Sheet>

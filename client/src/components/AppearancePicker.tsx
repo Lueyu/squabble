@@ -53,7 +53,7 @@ function ThemePreview({ designTheme, mode }: { designTheme: DesignTheme; mode: T
   );
 }
 
-function AppearanceControls() {
+export function AppearanceControls() {
   const { t } = useTranslation();
   const { theme, designTheme, setTheme, setDesignTheme } = useTheme();
   const id: string = useId();
