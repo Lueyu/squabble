@@ -180,10 +180,13 @@
     "modelTier": { "fast": "Fast model", "slow": "Deep model" }
   },
   "chat": {
+    "evidencePoints": "Evidence and rationale", "risks": "Risks and uncertainties", "nextChecks": "Next checks", "details": "Full analysis",
     "replyTo": "Replying to {{name}}", "basis": "Basis for this view", "sources": "Sources · {{count}}",
     "sourcePending": "Source {{index}} was cited. Its details will appear when this round's report is saved."
   },
   "progress": {
+    "researching": "Researching",
+    "sourceGaps": "Source gaps · {{count}}",
     "taskStates": { "queued": "Waiting", "running": "Running", "succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled", "interrupted": "Interrupted", "unavailable": "Unavailable" },
     "activityKinds": { "tool": "Research tool", "summary": "Activity update", "capability": "Research data access" },
     "toolNames": { "get_quotes": "Fetch market quotes", "get_financials": "Fetch financial statements", "get_valuation": "Fetch valuation data", "get_news": "Fetch company news", "get_research_report": "Read saved research reports", "get_discussion_context": "Read discussion context", "search_research_web": "Search public research sources" },

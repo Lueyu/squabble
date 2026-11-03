@@ -1,6 +1,7 @@
 import type { LocalAgentProvider } from '../../shared/local-agents.interface';
 import type { ResearchActivity } from '../../shared/research-events.interface';
 import { NativeActivityCollector } from './activity';
+import { providerFailure } from './failures';
 
 interface JsonObject { [key: string]: unknown }
 function object(value: unknown): JsonObject {
@@ -55,7 +56,7 @@ export class NativeEventCollector {
   }
 
   private codex(event: JsonObject): void {
-    if (event.type === 'turn.failed' || event.type === 'error') throw new Error('NATIVE_AGENT_FAILED');
+    if (event.type === 'turn.failed' || event.type === 'error') throw providerFailure(event);
     const item: JsonObject = object(event.item);
     if (event.type === 'item.started') this.progress(item.type === 'web_search' ? 'Searching sources…' : 'Analyzing sources…');
     if (event.type === 'item.completed' && item.type === 'agent_message' && typeof item.text === 'string') {
@@ -81,7 +82,7 @@ export class NativeEventCollector {
       }
     }
     if (event.type === 'result') {
-      if (event.is_error === true || event.subtype !== 'success') throw new Error('NATIVE_AGENT_FAILED');
+      if (event.is_error === true || event.subtype !== 'success') throw providerFailure([event, event.result]);
       this.terminal = true;
       if (typeof event.result === 'string') this.text = event.result;
       const usage: JsonObject = object(event.usage);
@@ -90,14 +91,14 @@ export class NativeEventCollector {
   }
 
   private gemini(event: JsonObject): void {
-    if (event.type === 'error' && event.severity === 'error') throw new Error('NATIVE_AGENT_FAILED');
+    if (event.type === 'error' && event.severity === 'error') throw providerFailure(event);
     if (event.type === 'tool_use') this.progress('Searching sources…');
     if (event.type === 'message' && event.role === 'assistant' && typeof event.content === 'string') {
       this.text = event.delta === true ? this.text + event.content : event.content;
       this.progress('Preparing research results…');
     }
     if (event.type === 'result') {
-      if (event.status !== 'success' || event.error) throw new Error('NATIVE_AGENT_FAILED');
+      if (event.status !== 'success' || event.error) throw providerFailure(event);
       this.terminal = true;
       const stats: JsonObject = object(event.stats);
       this.usageTokens = checkedTokenSum(stats);
@@ -111,14 +112,14 @@ export class NativeEventCollector {
     }
     if (event.event !== 'result') return;
     const result: JsonObject = object(event.result);
-    if (result.status !== 'SUCCESS' || result.error) throw new Error('NATIVE_AGENT_FAILED');
+    if (result.status !== 'SUCCESS' || result.error) throw providerFailure(result);
     this.terminal = true;
     if (typeof result.response === 'string') this.text = result.response;
     this.usageTokens = checkedTokenSum(object(result.usage));
   }
 
   private opencode(event: JsonObject): void {
-    if (event.type === 'error') throw new Error('NATIVE_AGENT_FAILED');
+    if (event.type === 'error') throw providerFailure(event);
     const part: JsonObject = object(event.part);
     if (event.type === 'tool_use') { this.terminal = false; this.progress('Searching sources…'); }
     if (event.type === 'text' && typeof part.text === 'string') { this.text = part.text; this.progress('Preparing research results…'); }
@@ -131,7 +132,7 @@ export class NativeEventCollector {
   }
 
   private kimi(event: JsonObject): void {
-    if (event.type === 'error' || event.role === 'error') throw new Error('NATIVE_AGENT_FAILED');
+    if (event.type === 'error' || event.role === 'error') throw providerFailure([event, event.content]);
     if (event.role !== 'assistant') return;
     this.terminal = false;
     if (Array.isArray(event.tool_calls) && event.tool_calls.length) {
@@ -148,7 +149,7 @@ export class NativeEventCollector {
 
   private doubao(event: JsonObject): void {
     if (event.status === 'running') return;
-    if (event.status !== 'completed') throw new Error('NATIVE_AGENT_INCOMPLETE');
+    if (event.status !== 'completed') throw providerFailure(event, 'NATIVE_AGENT_INCOMPLETE');
     const reply: JsonObject = object(event.reply);
     if (reply.role !== 'assistant' || typeof reply.text !== 'string') throw new Error('NATIVE_AGENT_INCOMPLETE');
     this.text = reply.text; this.terminal = true;

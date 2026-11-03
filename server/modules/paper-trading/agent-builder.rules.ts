@@ -7,6 +7,7 @@ import type {
 import type { CouncilConfig } from '../../../shared/council.interface';
 import { normalizeCadence } from './trading-cadence';
 import { parseNativeAgentConfiguration } from '../local-agents/local-agents.requests';
+import { normalizeAutomation } from './strategy.rules';
 
 export function normalizeCouncil(input?: CouncilConfig): CouncilConfig {
   if (input === undefined) return { enabled: false, members: [
@@ -146,8 +147,18 @@ export function normalizeBuilderConfig(input: BuilderConfig): BuilderConfig {
     throw new Error('Daily order cap must be between 1 and 20');
   }
   if (typeof input.notifyOnProposal !== 'boolean') throw new Error('Notification preference is required');
+  const automation = normalizeAutomation(input.automation);
+  if (automation.fastReviewer) {
+    automation.fastReviewer = normalizeCouncil({ enabled: true, members: [
+      { ...automation.fastReviewer, id: 'fast-reviewer', role: 'researcher', model: 'fast' },
+      { id: 'validation-manager', role: 'manager', name: 'Manager', instructions: '', model: 'slow' },
+    ] }).members[0];
+  }
+  const council = normalizeCouncil(input.council);
+  if (automation.enabled && !council.enabled) throw new Error('Daily automation requires an enabled research council');
   return { ...input, name, tickers, priceRules, customPrompt: input.customPrompt.trim(), language: input.language ?? 'zh-CN',
-    cadence: normalizeCadence(input.cadence), council: normalizeCouncil(input.council) };
+    cadence: normalizeCadence(input.cadence), council,
+    ...(input.automation === undefined ? {} : { automation }) };
 }
 
 /** A transparent, deterministic decision. The LLM may veto but never bypass it. */

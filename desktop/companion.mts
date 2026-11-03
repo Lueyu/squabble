@@ -45,7 +45,7 @@ interface Update {
   usageTokens?: number | null;
   events?: ResearchActivity[];
   error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED'
-    | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED';
+    | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED' | 'LOCAL_USAGE_LIMIT' | 'LOCAL_RATE_LIMIT';
 }
 interface UpdateSnapshot { source: Update; wire: Update }
 interface Pairing {
@@ -144,6 +144,8 @@ function nativeFailureCode(error: unknown): Update['error'] {
     NATIVE_AGENT_CONFIGURATION_UNSUPPORTED: 'LOCAL_CONFIGURATION_UNSUPPORTED',
     NATIVE_AGENT_VERSION_UNSUPPORTED: 'LOCAL_VERSION_UNSUPPORTED',
     NATIVE_AGENT_TOOL_ISOLATION_FAILED: 'LOCAL_TOOL_ISOLATION_FAILED',
+    NATIVE_AGENT_USAGE_LIMIT: 'LOCAL_USAGE_LIMIT',
+    NATIVE_AGENT_RATE_LIMIT: 'LOCAL_RATE_LIMIT',
     NATIVE_AGENT_CANCEL_UNCONFIRMED: 'LOCAL_DISPATCH_UNCERTAIN',
     NATIVE_AGENT_UPSTREAM_PENDING: 'LOCAL_DISPATCH_UNCERTAIN',
   };
@@ -323,11 +325,24 @@ export class LocalAgentCompanion {
     const controller = new AbortController();
     this.requestController = controller;
     try {
-      const response = await this.request(`${pairing.origin}/api/local-agent-companion/poll`, {
+      const requestOptions: RequestInit = {
         method: 'POST', redirect: 'error', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pairing.token}` },
-        body: JSON.stringify({ agents: this.agents, updates: snapshot.map(item => item.wire) }),
+      };
+      const updates = snapshot.map(item => item.wire);
+      const send = (wire: Update[]) => this.request(`${pairing.origin}/api/local-agent-companion/poll`, {
+        ...requestOptions, body: JSON.stringify({ agents: this.agents, updates: wire }),
       });
+      let response = await send(updates);
+      const isLimitError = (error: Update['error']) => error === 'LOCAL_USAGE_LIMIT' || error === 'LOCAL_RATE_LIMIT';
+      if (response.status === 400 && updates.some(update => isLimitError(update.error)) && generation === this.generation) {
+        // Older servers reject new enum values before processing the poll. Retry only
+        // this status acknowledgement once, retaining its safe progress and task IDs.
+        // This never resubmits a model request or changes the durable local update.
+        await response.body?.cancel();
+        if (generation !== this.generation) return;
+        response = await send(updates.map(update => isLimitError(update.error) ? { ...update, error: undefined } : update));
+      }
       if (generation !== this.generation) return;
       if (response.status === 401 || response.status === 403) { await this.forget(); return; }
       if (!response.ok) throw new Error('Companion poll failed');
@@ -469,7 +484,10 @@ export class LocalAgentCompanion {
       const code = nativeFailureCode(error);
       const cancelled = controller.signal.aborted && code !== 'LOCAL_DISPATCH_UNCERTAIN';
       update({ id: command.id, state: cancelled ? 'cancelled' : 'failed', ...(code && !cancelled ? { error: code } : {}),
-        progress: cancelled ? 'Task interrupted.' : 'Native agent failed. Check its installation and sign-in before starting another task.' });
+        progress: cancelled ? 'Task interrupted.'
+          : code === 'LOCAL_USAGE_LIMIT' ? 'Provider usage limit or insufficient balance. Check the provider account or change the model. No automatic retry.'
+            : code === 'LOCAL_RATE_LIMIT' ? 'Provider rate limit. Try again later or change the model. No automatic retry.'
+              : 'Native agent failed. Check its installation and sign-in before starting another task.' });
     } finally { acceptingEvents = false; }
   }
 

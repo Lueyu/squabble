@@ -27,7 +27,7 @@ Then you make the call.
 Most portfolio trackers show numbers. Squabble argues about them.
 
 - **AI research reports.** A bull and a bear debate your holdings. A critic removes weak arguments. Your risk rules run as hard gates. The result is a 14-section report with both sides preserved.
-- **AI paper trading.** A virtual account. Your AI watches markets, trades on your research signals, and sends you a push notification on every fill. Connect Claude or ChatGPT through MCP. Set per-agent spending limits and approval modes.
+- **AI paper trading.** Opt into daily team research, a dated trading plan, scheduled market checks and a fast model review before automatic simulated fills. Configure push notifications and hard risk limits. Manual and MCP agent orders remain available.
 - **Your data stays yours.** Self-hosted. Zero telemetry. Only a username and password — no phone number, no email verification.
 
 ## Install
@@ -88,6 +88,26 @@ Compatible Codex and Claude Code versions automatically receive task-scoped,
 read-only research tools; other runtimes receive a dated evidence snapshot with
 the limitation shown in Settings. The discussion chat shows public work summaries,
 tool outcomes, elapsed time and sources. No MCP JSON or extra connection steps are needed.
+
+Each role's research is collapsed above its reply. Replies separate the conclusion,
+supporting evidence, risks and next checks; longer analysis remains expandable.
+
+## Daily strategies and automatic paper trading
+
+In **Agent Builder**, enable the research team and **Daily strategy**, choose the
+fast reviewer, configure notifications, then save and activate the profile.
+The team prepares a plan before each market opens. During continuous trading,
+the program checks its conditions and computes indicators; the fast reviewer
+can approve, wait or veto. The ledger checks the current plan, price, funds,
+position limits and risk rules again before a simulated fill. Protective stops
+use deterministic rules. Notifications are queued independently of orders.
+
+Existing profiles keep their previous mode until you opt in. The server must
+remain running. Public Yahoo quotes may be delayed; indicators use completed
+daily candles, not intraday candles. The bundled US/HK/CN calendar covers 2026;
+unavailable calendars or invalid data block execution. This is paper trading,
+with no broker connection. API research uses your configured budget; native
+agents use their own provider billing.
 
 ## Connect your AI assistant
 

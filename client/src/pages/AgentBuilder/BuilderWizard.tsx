@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { errorMessage } from './errorMessage';
 import CouncilConfigEditor, { defaultCouncil } from './CouncilConfigEditor';
+import StrategyAutomationEditor from './StrategyAutomationEditor';
 import { DEFAULT_CADENCE, validateCouncilSettings } from '@/utils/council-state';
 
 interface BuilderWizardProps {
@@ -204,6 +205,9 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
       setFormError(t(`council.${councilInvalid}`));
       return;
     }
+    if (config.automation?.enabled && !config.council?.enabled) {
+      setFormError(t('strategy.needsCouncil')); return;
+    }
     setFormError(null);
     setStep(1);
   };
@@ -310,9 +314,13 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
                 onChange={(event) => setConfig({ ...config, name: event.target.value })} />
             </div>
             <CouncilConfigEditor council={config.council ?? defaultCouncil(i18n.language)}
+              automationEnabled={config.automation?.enabled}
               cadence={config.cadence ?? DEFAULT_CADENCE}
               onCouncilChange={(council) => setConfig({ ...config, council })}
               onCadenceChange={(cadence) => setConfig({ ...config, cadence })} />
+            <StrategyAutomationEditor value={config.automation} councilEnabled={Boolean(config.council?.enabled)}
+              notifications={config.notifyOnProposal} onChange={(automation) => setConfig({ ...config, automation })}
+              onNotificationsChange={(notifyOnProposal) => setConfig({ ...config, notifyOnProposal })} />
             <div className="flex justify-end">
               <Button type="button" onClick={goToRules}>
                 {t('ui.builder.next')} <ChevronRight />
@@ -335,7 +343,7 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
                   onChange={(event) => setTickerText(event.target.value)} />
                 <p className="text-xs text-muted-foreground">{t('ui.builder.tickersHint')}</p>
               </div>
-              <div className="space-y-3 rounded-xl border border-border p-4 md:col-span-2">
+              {!config.automation?.enabled && <div className="space-y-3 rounded-xl border border-border p-4 md:col-span-2">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h4 className="font-semibold">{t('ui.builder.priceRules')}</h4>
@@ -379,8 +387,8 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
                     </Button>
                   </div>
                 ))}
-              </div>
-              <div className="space-y-2">
+              </div>}
+              {!config.automation?.enabled && <div className="space-y-2">
                 <Label htmlFor="builder-rating">{t('ui.builder.minimumRating')}</Label>
                 <select id="builder-rating" value={config.minimumRating}
                   onChange={(event) => setConfig({ ...config,
@@ -389,7 +397,7 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
                   <option value="Buy">{t('ui.builder.ratingBuy')}</option>
                   <option value="Strong Buy">{t('ui.builder.ratingStrongBuy')}</option>
                 </select>
-              </div>
+              </div>}
               <NumberField id="builder-order-pct" label={t('ui.builder.maxOrderPct')}
                 value={config.maxOrderPct} min={0.1} max={20} step={0.1}
                 onChange={(value: number) => setConfig({ ...config, maxOrderPct: value })} />
@@ -399,9 +407,10 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
               <NumberField id="builder-order-count" label={t('ui.builder.maxOrdersPerDay')}
                 value={config.maxOrdersPerDay} min={1} max={20} step={1}
                 onChange={(value: number) => setConfig({ ...config, maxOrdersPerDay: value })} />
+              {config.automation?.enabled && <p className="text-xs leading-5 text-muted-foreground md:col-span-2">{t('strategy.riskHint')}</p>}
               <div className="flex items-center justify-between rounded-lg border border-border p-4 md:col-span-2">
                 <div>
-                  <Label htmlFor="builder-notify">{t('ui.builder.notifyOnProposal')}</Label>
+                  <Label htmlFor="builder-notify">{t(config.automation?.enabled ? 'strategy.notifications' : 'ui.builder.notifyOnProposal')}</Label>
                   <p className="mt-1 text-xs text-muted-foreground">{t('ui.builder.notifyHint')}</p>
                 </div>
                 <Switch id="builder-notify" checked={config.notifyOnProposal}
@@ -464,8 +473,12 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
               {t('ui.builder.paperOnlyNotice')}
             </p>
             <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm leading-6">
+              {config.automation?.enabled && <div className="mb-3 border-b border-border pb-3">
+                <p className="font-semibold">{t('strategy.preview')}</p>
+                <p className="mt-1 text-muted-foreground">{t('strategy.previewHint')}</p>
+              </div>}
               <p>{t(config.council?.enabled ? 'council.team.enabledHint' : 'council.team.rulesOnly')}</p>
-              <p className="mt-2 text-muted-foreground">{t('council.cadence.summary', {
+              <p className="mt-2 text-muted-foreground">{t(config.automation?.enabled ? 'strategy.cadenceSummary' : 'council.cadence.summary', {
                 days: config.cadence?.reviewEveryTradingDays ?? DEFAULT_CADENCE.reviewEveryTradingDays,
                 orders: config.cadence?.maxOrdersPerWeek ?? DEFAULT_CADENCE.maxOrdersPerWeek,
               })}</p>

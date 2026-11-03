@@ -87,7 +87,7 @@ function idleNative() {
   };
 }
 
-async function fixture(overrides: { runNativeAgent?: ReturnType<typeof idleNative>['runNativeAgent'] } = {}) {
+async function fixture(overrides: { runNativeAgent?: ReturnType<typeof idleNative>['runNativeAgent'] } = {}, legacy = false) {
   const api = await companionPromise;
   assert.ok(api?.LocalAgentCompanion);
   const temporary = await temporaryDirectory();
@@ -101,8 +101,14 @@ async function fixture(overrides: { runNativeAgent?: ReturnType<typeof idleNativ
       assert.equal(options?.redirect, 'error');
       if (String(url).endsWith('/pair')) return Response.json({ token, deviceId });
       assert.equal(new Headers(options?.headers).get('authorization'), `Bearer ${token}`);
-      sent.push(JSON.parse(String(options?.body)));
+      const body = JSON.parse(String(options?.body));
+      sent.push(body);
       if (failure) return new Response('', { status: failure });
+      const previousErrors = ['LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED', 'LOCAL_VERSION_UNSUPPORTED',
+        'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_TOOL_ISOLATION_FAILED'];
+      if (legacy && body.updates.some((update: { error?: string }) => update.error && !previousErrors.includes(update.error))) {
+        return new Response('', { status: 400 });
+      }
       return Response.json(response);
     },
   });
@@ -112,6 +118,57 @@ async function fixture(overrides: { runNativeAgent?: ReturnType<typeof idleNativ
 }
 
 async function settle(): Promise<void> { await new Promise<void>((done) => setImmediate(done)); }
+
+for (const kind of ['USAGE_LIMIT', 'RATE_LIMIT']) test(`older server acknowledges ${kind} without blocking companion heartbeats`, async () => {
+  let runs = 0;
+  const f = await fixture({ runNativeAgent: async () => { runs++; throw new Error(`NATIVE_AGENT_${kind}`); } }, true);
+  try {
+    f.response({ commands: [{ id: 'old-server-limit', kind: 'run', provider: 'opencode', prompt: 'Research' }], cancelTaskIds: [] });
+    await f.helper.pollOnce(); await settle();
+    f.response({ commands: [], cancelTaskIds: [] }); await f.helper.pollOnce();
+    assert.equal(f.helper.status.state, 'connected');
+    assert.equal(f.sent.length, 3);
+    const update = f.sent.at(-1)?.updates[0] as { state: string; error?: string; progress?: string };
+    assert.equal(update.state, 'failed'); assert.equal(update.error, undefined);
+    assert.match(update.progress ?? '', /usage limit|rate limit/i);
+    await f.helper.pollOnce();
+    assert.deepEqual(f.sent.at(-1)?.updates, []);
+    assert.equal(runs, 1);
+  } finally { await f.helper.stop(); await f.temporary.remove(); }
+});
+
+test('limit acknowledgement fallback is bounded and keeps the original code until a successful acknowledgement', async () => {
+  const f = await fixture({ runNativeAgent: async () => { throw new Error('NATIVE_AGENT_USAGE_LIMIT'); } });
+  try {
+    f.response({ commands: [{ id: 'rejected-ack', kind: 'run', provider: 'opencode', prompt: 'Research' }], cancelTaskIds: [] });
+    await f.helper.pollOnce(); await settle();
+    f.response({ commands: [], cancelTaskIds: [] }); f.fail(400);
+    await f.helper.pollOnce();
+    assert.equal(f.sent.length, 3);
+    assert.equal(f.helper.status.state, 'offline');
+    f.fail(0); await f.helper.pollOnce();
+    assert.equal((f.sent.at(-1)?.updates[0] as { error?: string }).error, 'LOCAL_USAGE_LIMIT');
+    assert.equal(f.helper.status.state, 'connected');
+    await f.helper.pollOnce();
+    assert.deepEqual(f.sent.at(-1)?.updates, []);
+  } finally { await f.helper.stop(); await f.temporary.remove(); }
+});
+
+for (const kind of ['USAGE_LIMIT', 'RATE_LIMIT']) test(`companion preserves ${kind} without redispatching the failed task`, async () => {
+  let runs = 0;
+  const f = await fixture({ runNativeAgent: async () => { runs++; throw new Error(`NATIVE_AGENT_${kind}`); } });
+  try {
+    const command = { id: 'provider-limit', kind: 'run', provider: 'opencode', prompt: 'Research' };
+    f.response({ commands: [command], cancelTaskIds: [] });
+    await f.helper.pollOnce(); await settle();
+    await f.helper.pollOnce(); await settle();
+    const update = f.sent.at(-1)?.updates[0] as { state: string; error?: string; progress?: string };
+    assert.equal(update.error, `LOCAL_${kind}`);
+    assert.equal(update.state, 'failed');
+    assert.match(update.progress ?? '', /usage limit|rate limit/i);
+    assert.equal(runs, 1);
+  } finally { await f.helper.stop(); await f.temporary.remove(); }
+});
 
 test('native research isolation failures preserve their actionable error code', async () => {
   const f = await fixture({ runNativeAgent: async () => { throw new Error('NATIVE_AGENT_TOOL_ISOLATION_FAILED'); } });

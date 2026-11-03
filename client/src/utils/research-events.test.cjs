@@ -137,3 +137,73 @@ test('source links allow only web URLs and source counts deduplicate references'
     event(2, { kind: 'tool', sources: [source] })]))?.tasks[0];
   assert.equal(task?.sourceCount, 1);
 });
+
+test('a reused task ID never merges different turns or attaches the wrong reply', () => {
+  const events = [event(1), event(2, { turn: 2 })];
+  const reply = { id: 'reply', taskId: 't1', revision: 2, turn: 2, role: 'researcher', content: 'Second answer' };
+  const tasks = reduce(session(events, { messages: [reply] })).tasks;
+  assert.equal(tasks.length, 2);
+  assert.equal(tasks[0].replyMessageId, undefined);
+  assert.equal(tasks[0].status, 'running');
+  assert.equal(tasks[1].replyMessageId, 'reply');
+  const ambiguous = reduce(session(events, { messages: [{ ...reply, turn: undefined }] })).tasks;
+  assert.ok(ambiguous.every(task => !task.replyMessageId), 'legacy replies need an unambiguous task, never a name match');
+});
+
+test('a running turn becomes a reply in the same conversation entry while user messages and history remain', () => {
+  const conversation = exportsForTest.researchConversation;
+  const user = { id: 'u1', role: 'user', content: 'Keep the evidence', revision: 2, createdAt: event(3).at };
+  const older = { id: 'old', role: 'researcher', memberName: 'Morgan', content: 'Earlier answer', revision: 1, createdAt: event(0).at };
+  const running = conversation?.(session([event(1)], { messages: [older, user] }));
+  assert.ok(running, 'conversation entries must combine task progress and replies');
+  const placeholder = running.entries.find(entry => entry.task?.taskId === 't1');
+  assert.equal(placeholder.message, undefined);
+  const reply = { id: 'reply', taskId: 't1', revision: 2, turn: 0, role: 'researcher', content: 'Answer', createdAt: event(5).at };
+  const complete = conversation(session([event(1), event(4, { status: 'succeeded' })], { messages: [older, user, reply] }));
+  const card = complete.entries.find(entry => entry.task?.taskId === 't1');
+  assert.equal(card.key, placeholder.key);
+  assert.equal(card.message.id, 'reply');
+  assert.deepEqual(Array.from(complete.entries, entry => entry.message?.id), ['old', 'reply', 'u1']);
+  assert.equal(complete.entries.filter(entry => entry.message?.id === 'reply').length, 1);
+});
+
+test('conversation preserves uncorrelated legacy research, explicit failures and same-name members', () => {
+  const messages = [
+    { id: 'legacy', role: 'system', phase: 'progress', revision: 1, content: 'Original public activity', createdAt: event(0).at },
+    { id: 'other', role: 'researcher', memberName: 'Morgan', taskId: 'other-task', turn: 0, revision: 2, content: 'Unrelated answer', createdAt: event(4).at },
+  ];
+  const result = exportsForTest.researchConversation?.(session([event(1), event(2, { status: 'failed' })], { messages }));
+  assert.ok(result);
+  assert.equal(result.entries.length, 3);
+  assert.equal(result.entries[0].legacyActivity?.content, 'Original public activity');
+  assert.equal(result.entries[1].task.status, 'failed');
+  assert.equal(result.entries[1].message, undefined);
+  assert.equal(result.entries[2].message.id, 'other');
+});
+
+test('a turn stays in place when evidence acquisition is followed by the model lifecycle', () => {
+  const first = event(1, { kind: 'tool', callId: 'filing' });
+  const user = { id: 'u1', role: 'user', content: 'A follow-up', revision: 2, createdAt: event(2).at };
+  const before = exportsForTest.researchConversation(session([first], { messages: [user] }));
+  const after = exportsForTest.researchConversation(session([first,
+    event(3, { kind: 'tool', callId: 'filing', status: 'succeeded' }), event(4)], { messages: [user] }));
+  assert.equal(after.entries[0].key, before.entries[0].key);
+  assert.equal(after.entries[0].at, first.at);
+  assert.equal(after.entries[1].message.id, 'u1');
+});
+
+test('persisted activity backing rows do not duplicate the public event in conversation', () => {
+  const progress = { id: 'stored', researchEventId: 'e1', phase: 'progress', role: 'system',
+    content: 'Preparing research', createdAt: event(1).at };
+  const result = exportsForTest.researchConversation(session([event(1)], { messages: [progress] }));
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].task.taskId, 't1');
+});
+
+test('a queued turn keeps its position when research starts after a user follow-up', () => {
+  const queued = event(1, { status: 'queued' });
+  const user = { id: 'u1', role: 'user', content: 'A follow-up', revision: 2, createdAt: event(2).at };
+  const result = exportsForTest.researchConversation(session([queued, event(3)], { messages: [user] }));
+  assert.equal(result.entries[0].task?.taskId, 't1');
+  assert.equal(result.entries[0].at, queued.at);
+});

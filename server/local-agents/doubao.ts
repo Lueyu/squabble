@@ -6,6 +6,7 @@ import { executeNativeProcess, NativeProcessFailure, type NativeProcessOptions, 
 import type { NativeLaunch } from './resolver';
 import type { ResearchActivity } from '../../shared/research-events.interface';
 import { NativeActivityCollector } from './activity';
+import { providerFailure } from './failures';
 
 function resultObject(result: NativeProcessResult): JsonObject { return object(jsonValues(result.stdout).at(-1)); }
 function receiptFrom(value: JsonObject): { conversationId: string; runId: string } | null {
@@ -46,6 +47,7 @@ export async function runDoubao(launch: NativeLaunch, args: string[], processOpt
     const response: JsonObject = resultObject(submission);
     activity.read(response);
     receipt = receiptFrom(response);
+    if (!receipt && response.accepted === false && response.status === 'failed') throw providerFailure(response);
     accepted = response.accepted === true || receipt !== null || submission.code === 0;
     if (submission.code !== 0 || !receipt) throw new Error(accepted ? 'NATIVE_AGENT_UPSTREAM_PENDING' : 'NATIVE_AGENT_FAILED');
     if (processOptions.signal?.aborted) throw new Error('NATIVE_AGENT_CANCELLED');
@@ -57,7 +59,7 @@ export async function runDoubao(launch: NativeLaunch, args: string[], processOpt
       { ...processOptions, input: undefined, onLine: undefined, timeoutMs: remaining });
     const result: JsonObject = resultObject(completion);
     activity.read(result);
-    if (result.status === 'failed' || result.status === 'cancelled') { accepted = false; throw new Error('NATIVE_AGENT_FAILED'); }
+    if (result.status === 'failed' || result.status === 'cancelled') { accepted = false; throw providerFailure(result); }
     if (completion.code !== 0 || result.status !== 'completed') throw new Error('NATIVE_AGENT_UPSTREAM_PENDING');
     accepted = false;
     const collector = new NativeEventCollector('doubao', onProgress);

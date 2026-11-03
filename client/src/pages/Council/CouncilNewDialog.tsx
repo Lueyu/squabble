@@ -15,6 +15,8 @@ import CouncilTeamEditor from './CouncilTeamEditor';
 import { useQuery } from '@tanstack/react-query';
 import { fetchLocalAgents } from '@/api/local-agents';
 import { assignLocalAgents } from './useCouncilModels';
+import CouncilWorkflowOptions, { type WorkflowDraft } from './CouncilWorkflowOptions';
+import { workflowCopy } from './workflow-copy';
 
 interface CouncilNewDialogProps {
   open: boolean;
@@ -34,6 +36,7 @@ export default function CouncilNewDialog({ open, onOpenChange, profiles, loading
   const { t, i18n } = useTranslation();
   const [profileId, setProfileId] = useState(initialProfileId);
   const [ticker, setTicker] = useState(initialTicker);
+  const [workflow, setWorkflow] = useState<WorkflowDraft>({ goal: 'comprehensive', peers: '', recallEnabled: true, parallelism: 2 });
   const [team, setTeam] = useState<CouncilConfig>(() => initialTeam ?? {
     enabled: true, members: createCouncilPreset('balanced', i18n.language), webResearch: false,
   });
@@ -64,8 +67,14 @@ export default function CouncilNewDialog({ open, onOpenChange, profiles, loading
     }
     const invalid = validateCouncilSettings(team, undefined);
     if (invalid) { setFormError(t(`council.${invalid}`)); return; }
+    const peers = workflow.peers.split(/[,，\s]+/u).map(p => p.trim().toUpperCase()).filter(Boolean);
+    if (peers.length > 3 || new Set(peers).size !== peers.length || peers.includes(symbol)
+      || peers.some(p => !/^[A-Z0-9][A-Z0-9.^-]{0,19}$/u.test(p)) || (workflow.goal === 'peers' && !peers.length)) {
+      setFormError(workflowCopy[i18n.language.startsWith('zh') ? 'zh-CN' : 'en'].invalidPeers); return;
+    }
     setFormError(null);
     try { await onCreate({ ticker: symbol, ...(profileId ? { profileId } : {}), members: team.members,
+      goal: workflow.goal, peers, parallelism: workflow.parallelism, recallEnabled: workflow.recallEnabled,
       webResearch: Boolean(team.webResearch), language: i18n.language.startsWith('zh') ? 'zh-CN' : 'en' }); }
     catch (cause) { setFormError(errorMessage(cause, t('council.actionFailed'))); }
   };
@@ -80,6 +89,7 @@ export default function CouncilNewDialog({ open, onOpenChange, profiles, loading
           <div className="space-y-2"><Label htmlFor="council-ticker">{t('council.ticker')}</Label>
             <Input autoFocus id="council-ticker" value={ticker} maxLength={20} placeholder="AAPL / 0700.HK / 600519.SS"
               onChange={(event) => setTicker(event.target.value)} /></div>
+          <CouncilWorkflowOptions ticker={ticker} value={workflow} onChange={setWorkflow} />
           <CouncilTeamEditor value={team} onChange={changeTeam} />
           <Collapsible defaultOpen={Boolean(initialProfileId)} className="rounded-xl border border-border">
             <CollapsibleTrigger asChild><Button type="button" variant="ghost" className="h-auto min-h-9 w-full justify-between py-2 text-left text-xs">

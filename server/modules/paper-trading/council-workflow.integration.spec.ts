@@ -35,7 +35,7 @@ test('a full Builder scan uses four budgeted council calls, fills once, and reus
     await admin`CREATE SCHEMA ${admin(namespace)}`;
     createdSchema = true;
     for (const file of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql',
-      '08_investment_council.sql', '09_builder_cadence.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql']) {
+      '08_investment_council.sql', '09_builder_cadence.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '18_research_workflow.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     // JS time fixes the US market-open window. Align report freshness in this
@@ -98,7 +98,7 @@ test('a full Builder scan uses four budgeted council calls, fills once, and reus
       assert.equal(request.url, 'https://workflow-model.invalid/v1/chat/completions');
       const body = JSON.parse(String(request.data)) as { model: string; max_tokens: number;
         messages: Array<{ role: string; content: string }> };
-      assert.equal(body.max_tokens, 900);
+      assert.equal(body.max_tokens, 1000, 'the default account output budget caps the expanded council response allowance');
       const system = body.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
       assert.match(system, /Write for the reader in English/);
       const data = JSON.parse(body.messages.find(message => message.role === 'user')!.content) as {
@@ -127,7 +127,7 @@ test('a full Builder scan uses four budgeted council calls, fills once, and reus
 
     const scan = await paper.runBotScan(owner);
     assert.equal(scan.scanned, 1);
-    assert.equal(scan.placed, 1);
+    assert.equal(scan.placed, 1, JSON.stringify({ scan, calls }));
     assert.equal(scan.rejected, 0);
     assert.equal(calls.length, 4);
     assert.deepEqual(new Set(calls.map(call => call.role)), new Set(['researcher', 'challenger', 'manager']));

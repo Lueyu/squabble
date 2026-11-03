@@ -25,8 +25,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
-import { and, desc, eq, gte, or } from 'drizzle-orm';
+import { and, desc, eq, gte, or, sql } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import {
@@ -50,10 +51,15 @@ import { isMarketOpen } from '../../common/market-clock';
 import { AgentBuilderService } from './agent-builder.service';
 import { decideBuilderSignal } from './agent-builder.rules';
 import { BuilderCadenceService } from './builder-cadence.service';
-import { cadenceRejection, normalizeCadence } from './trading-cadence';
+import { cadenceRejection, normalizeCadence, marketDate } from './trading-cadence';
 import { CouncilService } from '../council/council.service';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import type { CouncilCandidate } from '@shared/council.interface';
+import { strategyOutbox, strategyPlans, strategyProtections, strategySignals } from '../../database/strategy.schema';
+import { TradingMarketService } from './trading-market.service';
+import { strategyTriggerMatches } from './strategy.rules';
+import type { TradingMarketSnapshot } from '../../../shared/trading-market.interface';
+import type { StrategyRule } from '../../../shared/strategy.interface';
 import type {
   BuilderProfile,
   Market,
@@ -113,6 +119,7 @@ export class PaperTradingService {
     private readonly builder: AgentBuilderService,
     private readonly cadence: BuilderCadenceService,
     private readonly council: CouncilService,
+    @Optional() private readonly tradingMarket?: TradingMarketService,
   ) {}
 
   /** Get (or lazily create) the caller's paper account. */
@@ -140,9 +147,12 @@ export class PaperTradingService {
       if (!account) throw new NotFoundException('Paper account not found');
 
       // A reset stops the configured agent and keeps its real-action history.
-      await tx.update(builderProfiles)
-        .set({ status: 'paused', updatedAt: new Date() })
-        .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.status, 'active')));
+      const resetProfiles = await tx.update(builderProfiles)
+        .set({ status: 'paused', version: sql`${builderProfiles.version} + 1`, updatedAt: new Date() })
+        .where(eq(builderProfiles.owner, userId)).returning();
+      if (resetProfiles.some((profile) => (profile.config as { automation?: unknown }).automation)) {
+        await tx.delete(strategyProtections).where(eq(strategyProtections.owner, userId));
+      }
       // Paper orders are cleared below; proposals retain their reference
       // price, reason and self-reported execution without a dangling order ID.
       await tx.update(builderProposals)
@@ -282,6 +292,7 @@ export class PaperTradingService {
     strictQuote = false,
     builderProfile?: BuilderProfile,
     councilApproval?: { sessionId: string; reportId: string; candidate: CouncilCandidate },
+    strategySignalId?: string,
   ): Promise<PaperOrder> {
     const initialAccount = await this.requireAccount(userId);
     if (dto.orderType && dto.orderType !== 'market') {
@@ -297,7 +308,25 @@ export class PaperTradingService {
 
     let price: ResolvedPrice | null;
     let quoteTimestamp: number | null = null;
-    if (strictQuote) {
+    let strategySnapshot: TradingMarketSnapshot | null = null;
+    if (strategySignalId) {
+      if (!this.tradingMarket || source !== 'agent' || !builderProfile?.config.automation?.enabled) {
+        throw new BadRequestException('A current automatic strategy is required');
+      }
+      const [requestedSignal] = await this.db.select({ candidate: strategySignals.candidate }).from(strategySignals)
+        .where(and(eq(strategySignals.id, strategySignalId), eq(strategySignals.owner, userId)));
+      const intendedProtection = requestedSignal?.candidate.protectiveStop === true;
+      strategySnapshot = await this.tradingMarket.getSnapshot(dto.ticker, new Date(), true);
+      if (!(intendedProtection ? strategySnapshot.quoteUsable : strategySnapshot.usable) || !strategySnapshot.price || !strategySnapshot.currency
+        || !strategySnapshot.market || !strategySnapshot.quoteTimestamp || !strategySnapshot.schedule?.isOpen) {
+        throw new BadRequestException('Fresh validated market data is unavailable');
+      }
+      const fxToUsd = await this.fxService.convert(1, strategySnapshot.currency, 'USD');
+      if (!Number.isFinite(fxToUsd) || fxToUsd <= 0) throw new BadRequestException('FX data unavailable');
+      price = { price: strategySnapshot.price, market: strategySnapshot.market,
+        currency: strategySnapshot.currency, company: null, fxToUsd };
+      quoteTimestamp = Date.parse(strategySnapshot.quoteTimestamp);
+    } else if (strictQuote) {
       const quote = await this.quoteService.getQuote(dto.ticker);
       const fetchedRecently = quote && Number.isFinite(quote.timestamp)
         && Math.abs(Date.now() - quote.timestamp) <= 5 * 60 * 1000;
@@ -356,7 +385,61 @@ export class PaperTradingService {
           throw new BadRequestException('Agent configuration changed during the scan');
         }
       }
-      if (builderProfile?.config.council?.enabled && !councilApproval) {
+      if (builderProfile?.config.automation?.enabled && !strategySignalId) {
+        throw new BadRequestException('An immutable approved strategy signal is required');
+      }
+      let strategyRule: StrategyRule | null = null;
+      let protectiveStrategyStop = false;
+      let strategyPlanId: string | null = null;
+      if (strategySignalId) {
+        const [signal] = await tx.select().from(strategySignals).where(and(eq(strategySignals.id, strategySignalId),
+          eq(strategySignals.owner, userId))).for('update');
+        const [plan] = signal ? await tx.select().from(strategyPlans).where(and(eq(strategyPlans.id, signal.planId),
+          eq(strategyPlans.owner, userId))).for('update') : [];
+        const candidate = signal?.candidate;
+        strategyRule = plan?.rules.find((rule) => rule.id === signal?.ruleId) ?? null;
+        const now = Date.now();
+        if (!signal || signal.state !== 'approved' || signal.orderId || !candidate || !plan || !strategyRule
+          || !builderProfile || signal.profileId !== builderProfile.id
+          || candidate.planVersion !== plan.version || candidate.ticker !== dto.ticker || candidate.side !== dto.side
+          || candidate.quantity !== quantity || candidate.signalId !== signal.id
+          || candidate.market !== price.market || plan.market !== price.market
+          || strategyRule.ticker !== dto.ticker || !strategySnapshot?.schedule?.calendarVerified
+          || !strategySnapshot.schedule.isOpen || !strategySnapshot.schedule.sessions.some((session) =>
+            now >= Date.parse(session.opensAt) && now < Date.parse(session.closesAt))
+          || Math.abs(now - Date.parse(candidate.quoteAt)) > strategySnapshot.maxQuoteAgeSeconds * 1000) {
+          throw new BadRequestException('Strategy signal is stale, changed, consumed or no longer triggered');
+        }
+        strategyPlanId = plan.id;
+        if (candidate.protectiveStop) {
+          const [protection] = candidate.protectionId ? await tx.select().from(strategyProtections).where(and(
+            eq(strategyProtections.id, candidate.protectionId), eq(strategyProtections.owner, userId),
+            eq(strategyProtections.accountId, lockedAccount.id))).for('update') : [];
+          if (!protection || protection.version !== candidate.protectionVersion || protection.ticker !== dto.ticker
+            || protection.planId !== plan.id || protection.ruleId !== strategyRule.id
+            || dto.side !== 'sell' || price.price > Number(protection.stopLossPrice)) {
+            throw new BadRequestException('Position protection is no longer valid or triggered');
+          }
+          protectiveStrategyStop = true;
+        } else if (plan.profileId !== builderProfile.id || plan.profileVersion !== builderProfile.version
+          || plan.status !== 'active' || plan.expiresAt.getTime() <= now || Date.parse(strategyRule.expiresAt) <= now
+          || strategySnapshot.schedule.tradingDate !== plan.marketDate || Math.abs(price.price / candidate.price - 1) > 0.005
+          || strategyRule.side !== dto.side || !strategyTriggerMatches(strategyRule, price.price, strategySnapshot.indicators)) {
+          throw new BadRequestException('Entry plan is expired, superseded or price moved');
+        }
+        if (!protectiveStrategyStop) {
+          if (builderProfile.config.tickers.length && !builderProfile.config.tickers.includes(dto.ticker)) {
+            throw new BadRequestException('Ticker is outside the current investor allowlist');
+          }
+          if (!builderProfile.config.tickers.length) {
+            const owned = await tx.select({ id: holdings.id }).from(holdings).where(and(eq(holdings.owner, userId), eq(holdings.ticker, dto.ticker))).limit(1);
+            const watched = await tx.select({ id: watchlist.id }).from(watchlist).where(and(eq(watchlist.owner, userId), eq(watchlist.ticker, dto.ticker))).limit(1);
+            const held = await tx.select({ id: paperPositions.id }).from(paperPositions).where(and(eq(paperPositions.owner, userId), eq(paperPositions.ticker, dto.ticker))).limit(1);
+            if (!owned.length && !watched.length && !held.length) throw new BadRequestException('Ticker was removed from the investor universe');
+          }
+        }
+      }
+      if (builderProfile?.config.council?.enabled && !councilApproval && !strategySignalId) {
         throw new BadRequestException('A current council approval is required');
       }
       if (councilApproval) {
@@ -380,7 +463,7 @@ export class PaperTradingService {
         }
       }
       if (strictQuote && (quoteTimestamp === null
-        || Math.abs(Date.now() - quoteTimestamp) > 5 * 60 * 1000)) {
+        || Math.abs(Date.now() - quoteTimestamp) > (strategySnapshot?.maxQuoteAgeSeconds ?? 300) * 1000)) {
         throw new BadRequestException(`无法获取 ${dto.ticker} 的近期报价，订单未执行`);
       }
       const account = lockedAccount;
@@ -392,7 +475,12 @@ export class PaperTradingService {
       const todayOrders = await tx.select().from(paperOrders)
         .where(and(eq(paperOrders.accountId, account.id), gte(paperOrders.createdAt, utcDayStart)));
       const todayBotCount = todayOrders.filter((o) => o.source === 'agent').length;
-      const guardrails = this.parseGuardrails(account.guardrails);
+      const accountGuardrails = this.parseGuardrails(account.guardrails);
+      const guardrails = builderProfile ? {
+        maxOrderPct: Math.min(accountGuardrails.maxOrderPct, builderProfile.config.maxOrderPct),
+        dailyLossLimitPct: Math.min(accountGuardrails.dailyLossLimitPct, builderProfile.config.dailyLossLimitPct),
+        maxOrdersPerDay: Math.min(accountGuardrails.maxOrdersPerDay, builderProfile.config.maxOrdersPerDay),
+      } : accountGuardrails;
 
       // ---- Risk gate (bot orders; manual orders skip caps but keep solvency) ----
       let rejection: string | undefined;
@@ -400,14 +488,14 @@ export class PaperTradingService {
       if (source === 'agent') {
         if (!isMarketOpen(price.market)) {
           rejection = `${dto.ticker} 所在市场当前未开盘`;
-        } else if (this.circuitBreakerHit(dayStart, equity, guardrails)) {
+        } else if (!protectiveStrategyStop && this.circuitBreakerHit(dayStart, equity, guardrails)) {
           circuitBreaker = true;
           rejection = `日亏损熔断：当日权益回撤已超过 ${guardrails.dailyLossLimitPct}%，今日停止交易`;
         } else if (dto.side === 'buy' && notionalUsd > (equity * guardrails.maxOrderPct) / 100) {
           // The per-order cap constrains exposure on the way in; closing a
           // position must never be blocked by it.
           rejection = `单笔金额 ${(notionalUsd / equity * 100).toFixed(1)}% 超过上限 ${guardrails.maxOrderPct}%`;
-        } else if (todayBotCount >= guardrails.maxOrdersPerDay) {
+        } else if (!protectiveStrategyStop && todayBotCount >= guardrails.maxOrdersPerDay) {
           rejection = `今日 bot 订单已达 ${guardrails.maxOrdersPerDay} 笔上限`;
         }
         const recentOrders = await tx.select().from(paperOrders).where(and(
@@ -419,13 +507,13 @@ export class PaperTradingService {
             createdAt: order.createdAt, status: order.status,
             notionalUsd: Number((order.riskCheck as RiskCheck | null)?.notionalUsd ?? 0) })),
         });
-        rejection ??= cadenceReason ?? undefined;
+        if (!protectiveStrategyStop) rejection ??= cadenceReason ?? undefined;
         const rule = builderProfile?.config.priceRules?.find((item) => item.ticker === dto.ticker.toUpperCase());
-        if (dto.side === 'buy' && rule?.buyAtOrBelow !== undefined && price.price > rule.buyAtOrBelow) {
+        if (!strategySignalId && dto.side === 'buy' && rule?.buyAtOrBelow !== undefined && price.price > rule.buyAtOrBelow) {
           rejection ??= 'Price is above the investor buy threshold';
         }
         const originalReason = councilApproval?.candidate.reason ?? dto.reason ?? '';
-        if (dto.side === 'sell' && rule?.sellAtOrAbove !== undefined
+        if (!strategySignalId && !protectiveStrategyStop && dto.side === 'sell' && rule?.sellAtOrAbove !== undefined
           && originalReason.includes('Investor price rule:') && price.price < rule.sellAtOrAbove) {
           rejection ??= 'Price is below the investor sell threshold';
         }
@@ -440,10 +528,24 @@ export class PaperTradingService {
       if (dto.side === 'buy' && notionalUsd > cash) {
         rejection = rejection ?? `现金不足：需 ${notionalUsd.toFixed(2)} USD，可用 ${cash.toFixed(2)} USD`;
       }
+      if (strategyRule && dto.side === 'buy') {
+        const totalExposure = (quantity + Number(existing?.shares ?? 0)) * price.price * price.fxToUsd;
+        if (builderProfile?.config.template === 'guard' || totalExposure > equity * strategyRule.maxPositionPct / 100) {
+          rejection ??= 'Strategy maximum position or template limit exceeded';
+        }
+      }
       if (dto.side === 'sell') {
         const held = existing ? Number(existing.shares) : 0;
         if (quantity > held) {
           rejection = rejection ?? `持仓不足：仅有 ${held} 股，无法卖出 ${quantity} 股`;
+        }
+        if (strategySignalId && price.market === 'CN') {
+          const buys = await tx.select().from(paperOrders).where(and(eq(paperOrders.accountId, account.id),
+            eq(paperOrders.ticker, dto.ticker), eq(paperOrders.side, 'buy'), eq(paperOrders.status, 'filled'),
+            gte(paperOrders.createdAt, new Date(Date.now() - 48 * 3600000))));
+          const boughtToday = buys.filter((order) => marketDate('CN', order.createdAt) === marketDate('CN'))
+            .reduce((sum, order) => sum + Number(order.quantity), 0);
+          if (quantity > Math.max(0, held - boughtToday)) rejection ??= 'CN T+1 shares are not yet sellable';
         }
       }
 
@@ -487,6 +589,18 @@ export class PaperTradingService {
           agentName: agentInfo?.agentName ?? null,
         })
         .returning();
+
+      if (strategySignalId && builderProfile) {
+        await tx.update(strategySignals).set({ state: finalStatus === 'filled' ? 'filled' : 'blocked',
+          orderId: order.id, reason: rejection ?? dto.reason ?? '', updatedAt: new Date() })
+          .where(and(eq(strategySignals.id, strategySignalId), eq(strategySignals.owner, userId)));
+        if (builderProfile.config.notifyOnProposal) await tx.insert(strategyOutbox).values({ owner: userId, profileId: builderProfile.id,
+          eventKey: `strategy-order:${order.id}`, payload: { event: finalStatus === 'filled' ? 'strategy_filled' : 'strategy_blocked',
+            title: builderProfile.config.language === 'en'
+              ? finalStatus === 'filled' ? 'Automatic PAPER fill' : 'Automatic PAPER risk block'
+              : finalStatus === 'filled' ? '自动模拟盘成交' : '自动模拟盘风控拦截',
+            body: `${ticker} ${dto.side} ${quantity} @ ${price.price} ${price.currency}\n${rejection ?? dto.reason ?? ''}` } });
+      }
 
       if (rejection) {
         await tx.insert(paperEvents).values({
@@ -546,6 +660,13 @@ export class PaperTradingService {
             avgCost: String(avgCost),
           });
         }
+        if (strategyRule && strategyPlanId) await tx.insert(strategyProtections).values({ owner: userId,
+          accountId: account.id, ticker, market: price.market, stopLossPrice: String(strategyRule.stopLossPrice),
+          planId: strategyPlanId, ruleId: strategyRule.id }).onConflictDoUpdate({
+          target: [strategyProtections.owner, strategyProtections.accountId, strategyProtections.ticker],
+          set: { stopLossPrice: sql`greatest(${strategyProtections.stopLossPrice}, ${strategyRule.stopLossPrice})`,
+            planId: strategyPlanId, ruleId: strategyRule.id, version: sql`${strategyProtections.version} + 1`, updatedAt: new Date() },
+        });
       } else {
         cashAfter = cash + notionalUsd;
         realizedPl = (price.price - Number(existing.avgCost)) * quantity;
@@ -557,6 +678,8 @@ export class PaperTradingService {
             .where(eq(paperPositions.id, existing.id));
         } else {
           await tx.delete(paperPositions).where(eq(paperPositions.id, existing.id));
+          await tx.delete(strategyProtections).where(and(eq(strategyProtections.owner, userId),
+            eq(strategyProtections.accountId, account.id), eq(strategyProtections.ticker, ticker)));
         }
       }
 
@@ -593,7 +716,7 @@ export class PaperTradingService {
       // The proposal is committed with the fill under the same account lock.
       // A second replica hitting the daily unique key rolls back its entire
       // paper order instead of leaving a duplicate fill without an inbox row.
-      if (builderProfile) {
+      if (builderProfile && !strategySignalId) {
         const now = new Date();
         const [proposal] = await tx.insert(builderProposals).values({
           owner: userId,
@@ -628,7 +751,7 @@ export class PaperTradingService {
     if (committed.notification) {
       await this.notifications.notifyUser(userId, committed.notification);
     }
-    if (builderProfile?.config.notifyOnProposal && committed.order.status === 'filled') {
+    if (builderProfile?.config.notifyOnProposal && !strategySignalId && committed.order.status === 'filled') {
       await this.notifications.notifyUser(userId, {
         event: 'builder_proposal',
         title: `${builderProfile.config.name}: ${committed.order.ticker} ${dto.side === 'buy' ? 'buy' : 'sell'} idea`,
@@ -812,6 +935,8 @@ export class PaperTradingService {
           .where(eq(paperPositions.id, existing.id));
       } else {
         await tx.delete(paperPositions).where(eq(paperPositions.id, existing.id));
+        await tx.delete(strategyProtections).where(and(eq(strategyProtections.owner, userId),
+          eq(strategyProtections.accountId, account.id), eq(strategyProtections.ticker, ticker)));
       }
     }
 
@@ -867,6 +992,9 @@ export class PaperTradingService {
       throw new BadRequestException('Bot is not enabled');
     }
     const activeProfile = await this.builder.getActiveProfile(userId);
+    if (activeProfile?.config.automation?.enabled) {
+      throw new BadRequestException('Use the daily automation monitor for this profile');
+    }
     if (activeProfile) {
       if (this.activeBuilderScans.has(userId)) {
         throw new BadRequestException('An agent scan is already running');

@@ -29,7 +29,7 @@ const orm = {
 };
 const decorator = () => () => {};
 const common = {
-  Inject: decorator, Injectable: decorator, forwardRef: fn => fn,
+  Inject: decorator, Injectable: decorator, Optional: decorator, forwardRef: fn => fn,
   BadRequestException: class extends Error {}, NotFoundException: class extends Error {},
   Logger: class { warn() {} error() {} log() {} },
 };

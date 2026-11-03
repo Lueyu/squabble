@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { NativeLaunch } from './resolver';
+import { NativeProviderFailure } from './failures';
 
 export interface NativeProcessOptions {
   cwd: string;
@@ -11,6 +12,7 @@ export interface NativeProcessOptions {
   timeoutMs: number;
   maxOutputBytes: number;
   onLine?: (line: string) => void;
+  onStderrLine?: (line: string) => void;
 }
 export interface NativeProcessResult { code: number; stdout: string; stderr: string }
 /** Internal output is retained only to recover an accepted remote task; never use it in UI errors. */
@@ -46,10 +48,13 @@ export function executeNativeProcess(launch: NativeLaunch, args: string[], optio
     let stdout: string = '';
     let stderr: string = '';
     let partial: string = '';
+    let stderrPartial: string = '';
     let bytes: number = 0;
     let killTimer: NodeJS.Timeout | undefined;
     let closeTimer: NodeJS.Timeout | undefined;
     const decoder: StringDecoder = new StringDecoder('utf8');
+    const stderrDecoder: StringDecoder = new StringDecoder('utf8');
+    const callbackFailure = (error: unknown): string => error instanceof NativeProviderFailure ? error.message : 'NATIVE_AGENT_FAILED';
     const finish = (code: number): void => {
       if (completed) return;
       completed = true;
@@ -87,15 +92,29 @@ export function executeNativeProcess(launch: NativeLaunch, args: string[], optio
       const lines: string[] = partial.split('\n');
       partial = lines.pop() ?? '';
       try { for (const line of lines) if (line.trim()) options.onLine(line.trim()); }
-      catch { stop('NATIVE_AGENT_FAILED'); }
+      catch (error) { stop(callbackFailure(error)); }
     });
-    child.stderr.on('data', (chunk: Buffer) => { if (recordBytes(chunk)) stderr += chunk.toString('utf8'); });
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (!recordBytes(chunk)) return;
+      const text = stderrDecoder.write(chunk);
+      stderr += text;
+      if (!options.onStderrLine) return;
+      stderrPartial += text;
+      const lines = stderrPartial.split('\n');
+      stderrPartial = lines.pop() ?? '';
+      try { for (const line of lines) if (line.trim()) options.onStderrLine(line.trim()); }
+      catch (error) { stop(callbackFailure(error)); }
+    });
     child.once('error', () => { failure ??= new Error('NATIVE_AGENT_LAUNCH_FAILED'); finish(-1); });
     child.once('close', (code: number | null) => {
-      if (!failure && options.onLine) {
-        partial += decoder.end();
-        try { if (partial.trim()) options.onLine(partial.trim()); }
-        catch { failure = new Error('NATIVE_AGENT_FAILED'); }
+      const tail = decoder.end(); const stderrTail = stderrDecoder.end();
+      stdout += tail; stderr += stderrTail;
+      if (!failure) {
+        partial += tail; stderrPartial += stderrTail;
+        try {
+          if (partial.trim()) options.onLine?.(partial.trim());
+          if (stderrPartial.trim()) options.onStderrLine?.(stderrPartial.trim());
+        } catch (error) { failure = new Error(callbackFailure(error)); }
       }
       finish(code ?? -1);
     });

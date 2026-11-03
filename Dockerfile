@@ -47,6 +47,9 @@ COPY scripts/db/12_council_dialogue.sql ./scripts/db/12_council_dialogue.sql
 COPY scripts/db/13_budget_toggle.sql ./scripts/db/13_budget_toggle.sql
 COPY scripts/db/14_a2a_agents.sql ./scripts/db/14_a2a_agents.sql
 COPY scripts/db/15_native_agents.sql ./scripts/db/15_native_agents.sql
+COPY scripts/db/16_daily_strategy.sql ./scripts/db/16_daily_strategy.sql
+COPY scripts/db/17_research_memory.sql ./scripts/db/17_research_memory.sql
+COPY scripts/db/18_research_workflow.sql ./scripts/db/18_research_workflow.sql
 COPY scripts/ensure-settings-key.cjs scripts/ensure-jwt-secret.cjs scripts/start-app.cjs ./scripts/
 
 # Views and static assets are resolved from process.cwd()/dist/client

@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CirclePause, FileText, History, Loader2, MessageCircle, Play, Plus, Users } from 'lucide-react';
+import { BookOpen, CirclePause, FileText, History, Loader2, MessageCircle, Play, Plus, Users } from 'lucide-react';
 import type { BuilderProfile } from '@shared/api.interface';
 import type { CouncilConfig, CouncilSession, CreateCouncilSession } from '@shared/council.interface';
 import { createCouncilPreset } from '@shared/council-templates';
@@ -20,6 +20,10 @@ import CouncilConversation from './CouncilConversation';
 import CouncilNewDialog from './CouncilNewDialog';
 import CouncilReports from './CouncilReports';
 import CouncilMembersSheet from './CouncilMembersSheet';
+import { CouncilMemoryPanel } from './CouncilMemoryPanel';
+import CouncilReportCard from './CouncilReportCard';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { workflowCopy } from './workflow-copy';
 
 export default function CouncilPage() {
   const { t, i18n } = useTranslation();
@@ -28,13 +32,17 @@ export default function CouncilPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const copy = workflowCopy[i18n.language.startsWith('zh') ? 'zh-CN' : 'en'];
+  const sourceReportId = params.get('reportId');
+  useEffect(() => { if (sourceReportId) setMemoryOpen(false); }, [sourceReportId]);
   const [newSeed, setNewSeed] = useState<{ key: number; ticker: string; team?: CouncilConfig }>({ key: 0, ticker: params.get('ticker') ?? '' });
   const profilesQuery = useQuery({ queryKey: ['builder', 'profiles'], queryFn: fetchBuilderProfiles });
   const integrations = useQuery({ queryKey: ['settings', 'integrations'], queryFn: fetchIntegrationSettings });
   const connections = useQuery({ queryKey: ['settings', 'model-connections'], queryFn: fetchModelConnections });
   const localAgents = useQuery({ queryKey: ['settings', 'local-agents'], queryFn: fetchLocalAgents });
   const sessionsQuery = useCouncilSessions();
-  const selectedId = params.get('session') ?? sessionsQuery.data?.[0]?.id ?? null;
+  const selectedId = params.get('sessionId') ?? params.get('session') ?? sessionsQuery.data?.[0]?.id ?? null;
   const sessionQuery = useCouncilSession(selectedId);
   const actions = useCouncilActions();
   const session = sessionQuery.data;
@@ -87,6 +95,8 @@ export default function CouncilPage() {
       </TooltipTrigger><TooltipContent>{t('council.members.groupTitle', { count: session.members?.length ?? 0 })}</TooltipContent></Tooltip>}
       {session && <Button variant="ghost" size="icon" className="shrink-0 xl:hidden" aria-label={t('council.report.history')}
         onClick={() => setReportsOpen(true)}><FileText className="size-4" /></Button>}
+      {session && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" aria-label={copy.memoryManage}
+        onClick={() => setMemoryOpen(true)}><BookOpen className="size-4" /></Button></TooltipTrigger><TooltipContent>{copy.memoryManage}</TooltipContent></Tooltip>}
       <Tooltip><TooltipTrigger asChild>
         <Button size="sm" className="shrink-0 gap-1.5" aria-label={t('council.newSession')} onClick={() => setNewOpen(true)}>
           <Plus className="size-4" /><span className="hidden sm:inline">{t('council.newSession')}</span></Button>
@@ -117,6 +127,22 @@ export default function CouncilPage() {
         aria-label={t('council.report.history')}><CouncilReports session={session} profileVersion={selectedProfile?.version} /></aside>}
     </div>
 
+    <Sheet open={memoryOpen} onOpenChange={setMemoryOpen}>
+      <SheetContent className="w-[min(620px,96vw)] overflow-y-auto sm:max-w-[620px]">
+        <SheetHeader><SheetTitle>{copy.memoryManage}</SheetTitle><SheetDescription>{copy.preferencesHint}</SheetDescription></SheetHeader>
+        {session && <CouncilMemoryPanel ticker={session.ticker} />}
+      </SheetContent>
+    </Sheet>
+    <Dialog open={Boolean(sourceReportId && session)} onOpenChange={open => {
+      if (!open) { const next = new URLSearchParams(params); next.delete('reportId'); setParams(next, { replace: true }); }
+    }}>
+      <DialogContent className="max-h-[90dvh] max-w-3xl overflow-y-auto">
+        <DialogHeader><DialogTitle>{copy.report}</DialogTitle><DialogDescription>{session?.ticker}</DialogDescription></DialogHeader>
+        {session && (session.reports.some(report => report.id === sourceReportId)
+          ? <CouncilReportCard session={session} report={session.reports.find(report => report.id === sourceReportId)!} profileVersion={selectedProfile?.version} />
+          : <p>{copy.sourceMissing}</p>)}
+      </DialogContent>
+    </Dialog>
     <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
       <SheetContent side="left" className="w-[min(360px,90vw)] gap-0 p-0">
         <SheetHeader className="border-b border-border px-5 py-5 pr-12">

@@ -42,7 +42,7 @@ jobs:
           PGPASSWORD: test-only
         run: |
           psql -h localhost -U postgres -d squabble_test -v ON_ERROR_STOP=1 -f scripts/db/01_schema.sql
-          for migration in scripts/db/{03,04,05,06,07,08,09,10,11,12,13,14,15}_*.sql; do
+          for migration in scripts/db/{03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18}_*.sql; do
             psql -h localhost -U postgres -d squabble_test -v ON_ERROR_STOP=1 -f "$migration"
           done
 
@@ -51,6 +51,8 @@ jobs:
           BUDGET_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
           COUNCIL_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
           AUTH_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
+          STRATEGY_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
+          MEMORY_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
         run: npm run test:server
 
       - name: Run client tests

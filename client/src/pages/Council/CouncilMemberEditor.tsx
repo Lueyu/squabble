@@ -21,13 +21,14 @@ interface CouncilMemberEditorProps {
   webResearch: boolean;
   modelOptions: CouncilModelOption[];
   localAgents: LocalAgentConnection[];
+  modelOnly?: boolean;
   onSave: (member: CouncilMember) => string | null;
   onClose: () => void;
 }
 
 const selectClass = 'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export default function CouncilMemberEditor({ member, webResearch, modelOptions, localAgents, onSave, onClose }: CouncilMemberEditorProps) {
+export default function CouncilMemberEditor({ member, webResearch, modelOptions, localAgents, modelOnly = false, onSave, onClose }: CouncilMemberEditorProps) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<CouncilMember>({ ...member, researchFocus: [...(member.researchFocus ?? [])] });
   const [error, setError] = useState<string | null>(null);
@@ -68,11 +69,11 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
   return <Sheet open onOpenChange={(open: boolean) => { if (!open) onClose(); }}>
     <SheetContent className="w-[min(480px,96vw)] gap-0 p-0 sm:max-w-[480px]">
       <SheetHeader className="shrink-0 border-b border-border px-5 py-5 pr-12 text-left">
-        <SheetTitle>{t('council.members.editTitle')}</SheetTitle><SheetDescription>{t('council.members.editHint')}</SheetDescription>
+        <SheetTitle>{t(modelOnly ? 'strategy.reviewer' : 'council.members.editTitle')}</SheetTitle><SheetDescription>{t(modelOnly ? 'strategy.reviewerHint' : 'council.members.editHint')}</SheetDescription>
       </SheetHeader>
       <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); save(); }}>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
-          <div className="space-y-2"><Label>{t('council.members.avatar')}</Label>
+          {!modelOnly && <><div className="space-y-2"><Label>{t('council.members.avatar')}</Label>
             <div className="flex flex-wrap gap-2" role="group" aria-label={t('council.members.avatar')}>
               {COUNCIL_AVATARS.map((avatar) => <button type="button" key={avatar} aria-pressed={draft.avatar === avatar}
                 aria-label={t(`council.members.avatars.${avatar}`)} title={t(`council.members.avatars.${avatar}`)}
@@ -106,6 +107,7 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
             {draft.executionMode === 'local' ? <p className="text-xs leading-5 text-muted-foreground">{t('council.localAgents.toolsHint')}</p>
               : !webResearch && <p className="text-xs leading-5 text-muted-foreground">{t('council.members.webDisabled')}</p>}
           </div>
+          </>}
           <div className="space-y-2"><Label htmlFor="member-editor-execution">{t('council.localAgents.execution')}</Label>
             <select id="member-editor-execution" className={selectClass} value={draft.executionMode ?? 'model'} onChange={(event) => {
               const executionMode = event.target.value === 'local' ? 'local' : 'model';
@@ -129,7 +131,7 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
               </option>)}
             </select>
             {agentHelp && <p className="break-words text-xs leading-5 text-muted-foreground">{agentHelp}</p>}
-            {currentAgent?.researchTools && <p className="rounded-lg bg-muted/60 p-2.5 text-xs leading-5 text-muted-foreground">
+            {!modelOnly && currentAgent?.researchTools && <p className="rounded-lg bg-muted/60 p-2.5 text-xs leading-5 text-muted-foreground">
               {t(`council.localAgents.tools.${currentAgent.researchTools.mode === 'mcp' ? 'live' : 'snapshot'}`)}
               {currentAgent.researchTools.mode === 'snapshot' && <> {' '}{t(`council.localAgents.tools.${currentAgent.researchTools.reason}`)}</>}
             </p>}
@@ -188,7 +190,7 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
             </select>
             <Link to="/settings" className="inline-block text-xs text-primary hover:underline">{t('council.members.manageModels')}</Link>
           </div>}
-          <Collapsible className="rounded-xl border border-border">
+          {!modelOnly && <Collapsible className="rounded-xl border border-border">
             <CollapsibleTrigger asChild><Button type="button" variant="ghost" className="h-auto min-h-9 w-full justify-between px-3 py-2 text-left text-sm">
               <span className="min-w-0 whitespace-normal">{t('council.members.advanced')}</span><ChevronDown className="size-4" /></Button></CollapsibleTrigger>
             <CollapsibleContent className="space-y-4 px-3 pb-4">
@@ -206,12 +208,12 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
                 <p className="text-xs text-muted-foreground">{t('council.members.promptHint')}</p>
               </div>
             </CollapsibleContent>
-          </Collapsible>
+          </Collapsible>}
         </div>
         <div className="shrink-0 space-y-3 border-t border-border p-4">
           {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={onClose}>{t('council.members.cancel')}</Button>
-            <Button type="submit">{t('council.members.save')}</Button></div>
+            <Button type="submit">{t(modelOnly ? 'strategy.saveReviewer' : 'council.members.save')}</Button></div>
         </div>
       </form>
     </SheetContent>

@@ -4,8 +4,33 @@ import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { executeNativeProcess } from './process';
+import { NativeEventCollector } from './events';
+import { readOpenCodeDiagnostic } from './failures';
 
 const execFileAsync = promisify(execFile);
+
+for (const newline of [true, false]) test(`structured quota errors survive the process boundary (newline: ${newline})`, async () => {
+  const collector = new NativeEventCollector('codex', () => undefined);
+  const event = JSON.stringify({ type: 'turn.failed', error: { message: 'insufficient_quota private-token' } });
+  await assert.rejects(executeNativeProcess({ executable: process.execPath, prefixArgs: [] },
+    ['-e', `process.stdout.write(${JSON.stringify(event + (newline ? '\n' : ''))})`], {
+      cwd: tmpdir(), env: process.env, timeoutMs: 3000, maxOutputBytes: 4096, onLine: line => collector.read(line),
+    }), { message: 'NATIVE_AGENT_USAGE_LIMIT' });
+});
+
+test('stderr diagnostics without a final newline are classified when the process closes', async () => {
+  await assert.rejects(executeNativeProcess({ executable: process.execPath, prefixArgs: [] },
+    ['-e', 'process.stderr.write(\'level=ERROR message="stream error" small=false error="rate_limit_exceeded"\'); process.exitCode=1'], {
+      cwd: tmpdir(), env: process.env, timeoutMs: 3000, maxOutputBytes: 4096, onStderrLine: readOpenCodeDiagnostic,
+    }), { message: 'NATIVE_AGENT_RATE_LIMIT' });
+});
+
+test('untyped callback errors cannot publish arbitrary diagnostics', async () => {
+  await assert.rejects(executeNativeProcess({ executable: process.execPath, prefixArgs: [] }, ['-e', 'console.log("event")'], {
+    cwd: tmpdir(), env: process.env, timeoutMs: 3000, maxOutputBytes: 4096,
+    onLine: () => { throw new Error('private-token'); },
+  }), { message: 'NATIVE_AGENT_FAILED' });
+});
 
 async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs: number): Promise<void> {
   const deadline: number = Date.now() + timeoutMs;

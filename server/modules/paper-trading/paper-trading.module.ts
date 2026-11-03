@@ -5,6 +5,7 @@
  * Notification module (fill/risk push).
  */
 import { Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
 import { FxModule } from '../fx/fx.module';
 import { NotificationModule } from '../notifications/notification.module';
 import { QuoteModule } from '../quote/quote.module';
@@ -17,11 +18,18 @@ import { AgentBuilderService } from './agent-builder.service';
 import { BotScheduler } from './bot.scheduler';
 import { PaperTradingController } from './paper-trading.controller';
 import { PaperTradingService } from './paper-trading.service';
+import { TradingMarketService } from './trading-market.service';
+import { StrategyStore } from './strategy.store';
+import { StrategyModelService } from './strategy-model.service';
+import { StrategyService } from './strategy.service';
+import { StrategyNotificationsService } from './strategy-notifications.service';
+import { StrategyScheduler } from './strategy.scheduler';
 
 @Module({
-  imports: [QuoteModule, FxModule, NotificationModule, MultiAgentModule, CouncilModule, LocalAgentsModule],
+  imports: [HttpModule, QuoteModule, FxModule, NotificationModule, MultiAgentModule, CouncilModule, LocalAgentsModule],
   controllers: [PaperTradingController, AgentBuilderController],
-  providers: [PaperTradingService, AgentBuilderService, BuilderCadenceService, BotScheduler],
+  providers: [PaperTradingService, AgentBuilderService, BuilderCadenceService, BotScheduler,
+    TradingMarketService, StrategyStore, StrategyModelService, StrategyService, StrategyNotificationsService, StrategyScheduler],
   exports: [PaperTradingService],
 })
 export class PaperTradingModule {}

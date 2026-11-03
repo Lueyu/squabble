@@ -73,6 +73,27 @@ dbTest('sequential discussion responds to prior messages and publishes public ra
   assert.equal(result.reports[0].decision, 'wait', 'Manual research has no trade approval capability');
 });
 
+dbTest('structured replies survive persistence with exact task, revision and turn identity and full report details', async () => {
+  const response = { thesis: 'The evidence supports a balanced view.', evidencePoints: ['Cash flow covers reported capex.'],
+    risks: ['Valuation remains uncertain.'], nextChecks: ['Review the next filing.'], details: 'Complete supporting analysis. '.repeat(200) };
+  const svc = service(async () => ({ data: { response, evidenceIds: [], researchStance: 'balanced' }, tokens: 8 }));
+  const session = await svc.createSession(owner, { ticker: 'AAPL', language: 'en' });
+  await svc.runSession(owner, session.id);
+  const result = await completed(svc, session.id);
+  const replies = result.messages.filter(message => message.response);
+  assert.equal(replies.length, 4);
+  assert.deepEqual(replies.map(message => message.turn), [0, 1, 2, 3]);
+  assert.ok(replies.every(message => message.cycleId && message.taskId && message.revision === result.revision));
+  // The parser normalizes boundary whitespace; every substantive sentence must survive persistence.
+  assert.deepEqual(replies[0].response, { ...response, details: response.details.trim() });
+  for (const reply of replies) {
+    assert.ok(result.researchEvents?.some(event => event.taskId === reply.taskId
+      && event.revision === reply.revision && event.turn === reply.turn));
+  }
+  assert.ok(result.messages.filter(message => message.phase === 'progress').every(message => message.researchEventId));
+  assert.ok(result.reports[0].summary.includes(response.details.trim()));
+});
+
 dbTest('manual research rooms require no Builder profile and cannot become trading candidates', async () => {
   const svc = service();
   const session = await svc.createSession(owner, { ticker: 'AAPL', language: 'en', webResearch: false });
@@ -416,7 +437,8 @@ dbTest('default prompts stay within the default conservative input budget', asyn
   await svc.runSession(owner, session.id);
   await completed(svc, session.id);
   assert.equal(captures.length, 8);
-  assert.ok(captures.slice(0, 4).reduce((sum, size) => sum + size + 900, 0) <= DEFAULT_LLM_BUDGET.perTaskTokenLimit, `default round reservations: ${captures.slice(0, 4)}`);
+  assert.ok(captures.slice(0, 4).reduce((sum, size) => sum + size + DEFAULT_LLM_BUDGET.maxOutputTokens, 0)
+    <= DEFAULT_LLM_BUDGET.perTaskTokenLimit, `default round reservations: ${captures.slice(0, 4)}`);
   for (const size of captures) assert.ok(size <= DEFAULT_LLM_BUDGET.maxInputTokens, `prompt size ${size}`);
 });
 

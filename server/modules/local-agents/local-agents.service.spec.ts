@@ -13,6 +13,30 @@ import { LOCAL_AGENT_PROVIDERS } from '../../../shared/local-agents.interface';
 const options = (messageId = 'message-1'): LocalAgentExecution => ({ agentId: 'native-codex', messageId, prompt: 'Public research',
   onTask: async () => undefined, onProgress: async () => undefined, shouldContinue: async () => true });
 
+for (const kind of ['USAGE_LIMIT', 'RATE_LIMIT']) test(`native ${kind} persists and resuming does not charge for a second run`, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'squabble-native-limit-'));
+  const priorMode = process.env.LOCAL_AGENTS_MODE; const priorHost = process.env.SERVER_HOST;
+  process.env.LOCAL_AGENTS_MODE = 'native'; process.env.SERVER_HOST = '127.0.0.1';
+  let executions = 0;
+  const service = new LocalAgentsService({
+    detectNativeAgents: async () => [{ ...providerCatalog.codex, state: 'ready' }], openNativeLogin: async () => undefined,
+    runNativeAgent: async () => { executions++; throw new Error(`NATIVE_AGENT_${kind}`); },
+  }, new LocalAgentStore(directory));
+  try {
+    await service.connect('alice', 'native-codex');
+    await assert.rejects(service.execute('alice', options()), { message: `LOCAL_${kind}` });
+    const task = await service.store.findMessage('alice', 'message-1');
+    assert.equal(task?.state, 'failed'); assert.equal(task?.error, `LOCAL_${kind}`);
+    await assert.rejects(service.execute('alice', { ...options(), remoteTaskId: task!.id }), { message: `LOCAL_${kind}` });
+    assert.equal(executions, 1);
+  } finally {
+    await service.onModuleDestroy();
+    if (priorMode === undefined) delete process.env.LOCAL_AGENTS_MODE; else process.env.LOCAL_AGENTS_MODE = priorMode;
+    if (priorHost === undefined) delete process.env.SERVER_HOST; else process.env.SERVER_HOST = priorHost;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('native service claims per-account execution, persists before dispatch, and resumes without rerunning', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'squabble-native-service-'));
   const priorMode = process.env.LOCAL_AGENTS_MODE; const priorHost = process.env.SERVER_HOST;
@@ -90,6 +114,16 @@ test('native sign-in failures retain an exact public code through the companion 
   assert.equal(parseCompanionPoll({ agents: [], updates: [{ id, state: 'failed', error: 'LOCAL_LOGIN_REQUIRED' }] }).updates[0].error,
     'LOCAL_LOGIN_REQUIRED');
   assert.throws(() => parseCompanionPoll({ agents: [], updates: [{ id, state: 'failed', error: 'private diagnostic' }] }));
+});
+
+test('native usage and rate limits retain safe public codes through companion validation', () => {
+  for (const kind of ['USAGE_LIMIT', 'RATE_LIMIT']) {
+    const code = `LOCAL_${kind}`;
+    assert.equal(nativeFailureCode(new Error(`NATIVE_AGENT_${kind}`)), code);
+    assert.equal(parseCompanionPoll({ agents: [], updates: [{ id: '5c5b47c2-4e9a-4f4e-bb17-a206e877ff13',
+      state: 'failed', error: code }] }).updates[0].error, code);
+  }
+  assert.equal(nativeFailureCode(new Error('private-token: insufficient_quota')), 'LOCAL_TASK_FAILED');
 });
 
 test('all seven providers retain bounded capabilities through companion status', () => {

@@ -12,8 +12,9 @@ export function defaultCouncil(language: string): CouncilConfig {
   return { enabled: true, members: createCouncilPreset('balanced', language), webResearch: false };
 }
 
-export default function CouncilConfigEditor({ council, cadence, onCouncilChange, onCadenceChange }: {
+export default function CouncilConfigEditor({ council, cadence, onCouncilChange, onCadenceChange, automationEnabled = false }: {
   council: CouncilConfig; cadence: TradingCadence;
+  automationEnabled?: boolean;
   onCouncilChange: (value: CouncilConfig) => void;
   onCadenceChange: (value: TradingCadence) => void;
 }) {
@@ -34,7 +35,7 @@ export default function CouncilConfigEditor({ council, cadence, onCouncilChange,
       <div><h4 className="flex items-center gap-2 font-semibold"><CalendarClock className="size-5 text-primary" />
         {t('council.cadence.title')}</h4><p className="mt-2 text-sm leading-6 text-muted-foreground">{t('council.cadence.intro')}</p></div>
       <div className="grid gap-4 sm:grid-cols-2">
-        {(Object.keys(DEFAULT_CADENCE) as Array<keyof TradingCadence>).map((field) => <div key={field} className="space-y-2">
+        {(Object.keys(DEFAULT_CADENCE) as Array<keyof TradingCadence>).filter(field => !automationEnabled || field !== 'reviewEveryTradingDays').map((field) => <div key={field} className="space-y-2">
           <Label htmlFor={`cadence-${field}`}>{t(`council.cadence.${field}`)}</Label>
           <Input id={`cadence-${field}`} type="number" step={field === 'maxWeeklyTurnoverPct' ? 0.1 : 1}
             min={field === 'cooldownTradingDays' ? 0 : field === 'maxWeeklyTurnoverPct' ? 0.1 : 1}
@@ -42,7 +43,7 @@ export default function CouncilConfigEditor({ council, cadence, onCouncilChange,
             value={cadence[field]} onChange={(event) => onCadenceChange({ ...cadence, [field]: Number(event.target.value) })} />
         </div>)}
       </div>
-      <p className="text-xs leading-5 text-muted-foreground">{t('council.cadence.calendarHint')}</p>
+      <p className="text-xs leading-5 text-muted-foreground">{t(automationEnabled ? 'strategy.cadenceHint' : 'council.cadence.calendarHint')}</p>
     </section>
   </div>;
 }

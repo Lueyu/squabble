@@ -1,5 +1,6 @@
 import type { NativeAgentConfiguration } from './local-agents.interface';
 import type { ResearchEvent } from './research-events.interface';
+import type { ResearchCoverage, ResearchGoal, ResearchWorkflowView } from './research-workflow.interface';
 /** Public contracts for bounded, user-owned investment research. */
 export interface LlmBudgetSettings {
   enabled: boolean;
@@ -59,6 +60,10 @@ export interface CouncilMember {
 }
 export interface CouncilConfig { enabled: boolean; members: CouncilMember[]; webResearch?: boolean }
 export interface CreateCouncilSession {
+  goal?: ResearchGoal;
+  peers?: string[];
+  parallelism?: 1 | 2;
+  recallEnabled?: boolean;
   profileId?: string;
   ticker: string;
   language?: 'zh-CN' | 'en';
@@ -78,8 +83,21 @@ export interface CouncilCandidate {
   price: number;
   reason: string;
 }
+/** Reader-facing findings and supporting reasons, never private model reasoning. */
+export interface CouncilResponse {
+  thesis: string;
+  evidencePoints: string[];
+  risks: string[];
+  nextChecks: string[];
+  /** Optional complete supporting analysis; displayed on demand without truncation. */
+  details?: string;
+}
 export interface CouncilMessage {
   taskId?: string;
+  cycleId?: string;
+  /** Zero-based turn within a discussion cycle. Older messages may omit it. */
+  turn?: number;
+  response?: CouncilResponse;
   externalAgent?: boolean;
   externalUsageUnknown?: boolean;
   id: string;
@@ -97,8 +115,11 @@ export interface CouncilMessage {
   reasoningSummary?: string[];
   questions?: string[];
   acquisition?: ResearchAcquisition | null;
+  /** Identifies a progress message already represented by the public event stream. */
+  researchEventId?: string;
 }
 export interface CouncilReport {
+  coverage?: ResearchCoverage | null;
   id: string;
   version: number;
   revision: number;
@@ -118,6 +139,7 @@ export interface CouncilReport {
   researchStance?: 'positive' | 'balanced' | 'cautious' | null;
 }
 export interface CouncilSession {
+  workflow?: ResearchWorkflowView;
   researchEvents?: ResearchEvent[];
   researchEventsTruncated?: boolean;
   id: string;

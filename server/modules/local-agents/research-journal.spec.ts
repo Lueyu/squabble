@@ -22,6 +22,19 @@ async function start(store: LocalAgentStore, value = scope()) {
   await store.activate('alice', task.id); await store.takeNative('alice', task.id);
   return { task, scope: value };
 }
+
+for (const language of ['en', 'zh']) for (const kind of ['USAGE_LIMIT', 'RATE_LIMIT']) {
+  test(`${language} ${kind} remains actionable after reloading the research journal`, async () => fixture(async (store, root) => {
+    const { task, scope: value } = await start(store, { ...scope(), language });
+    await store.update('alice', task.id, { state: 'failed', error: `LOCAL_${kind}` });
+    const restored = new LocalAgentStore(root);
+    const last = (await restored.eventsForSession('alice', value.sessionId)).events.at(-1);
+    assert.equal(last?.status, 'failed');
+    assert.match(last?.summary ?? '', kind === 'USAGE_LIMIT' ? /额度|usage limit/i : /频率|rate limit/i);
+    assert.doesNotMatch(last?.summary ?? '', /connection|连接/);
+    assert.equal((await restored.task('alice', task.id)).error, `LOCAL_${kind}`);
+  }));
+}
 test('research scope and public task lifecycle are durably attached before native execution', async () => fixture(async (store, root) => {
   const { task, scope: value } = await start(store);
   assert.deepEqual((await store.task('alice', task.id)).researchScope, value);

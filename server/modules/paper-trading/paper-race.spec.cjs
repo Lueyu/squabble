@@ -5,6 +5,7 @@ const PaperTradingService = loadService('server/modules/paper-trading/paper-trad
   'node:crypto': require('node:crypto'),
   '../../database/schema': tables,
   '../../database/council.schema': {},
+  '../../database/strategy.schema': {},
   '../notifications/notification.service': { NotificationService: class {} },
   '../../common/market-clock': {},
   './agent-builder.service': { AgentBuilderService: class {} },
@@ -12,6 +13,8 @@ const PaperTradingService = loadService('server/modules/paper-trading/paper-trad
   './builder-cadence.service': { BuilderCadenceService: class {} },
   './trading-cadence': {},
   '../council/council.service': { CouncilService: class {} },
+  './trading-market.service': { TradingMarketService: class {} },
+  './strategy.rules': {},
 });
 function deferred() {
   let resolve;

@@ -38,7 +38,7 @@ function harness(file) {
       } }, { filename: relative });
     return exports;
   }
-  return { render(props) { cursor = 0; refCursor = 0; effectCursor = 0; return load(file).default(props); },
+  return { load, render(props) { cursor = 0; refCursor = 0; effectCursor = 0; return load(file).default(props); },
     runEffects() { for (const effect of effects.splice(0)) effect(); } };
 }
 function nodes(tree) { return Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : []; }
@@ -48,14 +48,19 @@ const event = (sequence, changes = {}) => ({ sequence, id: `e${sequence}`, taskI
   status: 'running', at: '2026-11-03T00:00:00Z', summary: `Public step ${sequence}`, ...changes });
 const session = (events, changes = {}) => ({ id: 'room', revision: 2, status: 'running', members: [], reports: [],
   messages: [{ id: 'legacy', memberName: 'Morgan', phase: 'progress', content: 'Legacy acquisition' }], researchEvents: events, ...changes });
-const progress = () => harness('client/src/pages/Council/CouncilResearchProgress.tsx');
+const progress = () => {
+  const view = harness('client/src/pages/Council/CouncilResearchTimeline.tsx');
+  return { render: ({ session }) => view.load('client/src/utils/research-events.ts').researchTimeline(session).tasks
+    .map(task => view.render({ task })) };
+};
 
-test('structured task cards replace legacy acquisition text and show public tools and waiting state', () => {
+test('structured turn research is collapsed and retains public tools and waiting state', () => {
   const tree = progress().render({ session: session([event(1, { kind: 'task', status: 'queued' }), event(2, { kind: 'capability', status: 'succeeded', summary: 'Snapshot mode' })]) });
   assert.ok(!text(tree).includes('Legacy acquisition'));
   assert.ok(text(tree).includes('council.progress.taskStates.queued'));
   assert.ok(text(tree).includes('Snapshot mode'));
-  assert.ok(nodes(tree).some(node => node.type === 'article' && node.props['aria-label'].includes('Morgan')));
+  assert.ok(nodes(tree).some(node => node.type === 'details' && !node.props.open));
+  assert.ok(nodes(tree).some(node => node.type === 'summary' && text(node).includes('council.progress.taskStates.queued')));
 });
 
 test('terminal task cards have no spinners and preserve tool failures and safe source links', () => {
@@ -98,32 +103,36 @@ test('built-in research tools have translated names while unknown native tools r
   }
 });
 
-test('older activities expand accessibly while stale revisions have their own labeled disclosure', () => {
+test('all retained activities remain available inside collapsed per-turn research, including interrupted history', () => {
   const tree = progress().render({ session: session([...Array.from({ length: 10 }, (_, i) => event(i, { status: 'succeeded' })),
     event(1, { taskId: 'old', revision: 1 })], { researchEventsTruncated: true }) });
   const disclosures = nodes(tree).filter(node => node.type === 'details');
-  assert.ok(disclosures.some(node => text(node).includes('council.progress.olderActivities:4')));
-  assert.ok(disclosures.some(node => text(node).includes('council.progress.previousRevisions')));
-  assert.ok(text(tree).includes('council.progress.truncated'));
+  assert.equal(disclosures.length, 2);
+  assert.ok(disclosures.every(node => !node.props.open));
+  for (let i = 0; i < 10; i++) assert.ok(text(tree).includes(`Public step ${i}`));
   assert.ok(text(tree).includes('council.progress.taskStates.interrupted'));
 });
 
 test('legacy history still renders when structured events are absent', () => {
-  const tree = progress().render({ session: session(undefined) });
+  const tree = harness('client/src/pages/Council/CouncilResearchProgress.tsx').render({ message: session(undefined).messages[0] });
   assert.ok(text(tree).includes('Legacy acquisition'));
+  assert.ok(nodes(tree).some(node => node.type === 'details' && !node.props.open));
 });
 
-test('a new revision retains its legacy progress until its own structured events arrive', () => {
-  const current = { id: 'current', revision: 2, memberName: 'Morgan', phase: 'progress', content: 'Current data gathering' };
-  const previous = { id: 'previous', revision: 1, memberName: 'Morgan', phase: 'progress', content: 'Old duplicated acquisition' };
-  const props = { session: session([event(1, { revision: 1 })], { messages: [previous, current] }) };
-  const view = progress();
-  let tree = view.render(props);
-  assert.ok(text(tree).includes('Current data gathering'));
-  assert.ok(!text(tree).includes('Old duplicated acquisition'));
-  props.session.researchEvents.push(event(1, { kind: 'task' }));
-  tree = view.render(props);
-  assert.ok(!text(tree).includes('Current data gathering'));
+test('a new revision retains uncorrelated legacy progress and removes only identified event backing rows', () => {
+  const current = { id: 'current', revision: 2, memberName: 'Morgan', phase: 'progress', content: 'Current data gathering', createdAt: event(1).at };
+  const previous = { ...current, id: 'previous', revision: 1, researchEventId: 'e1', content: 'Old duplicated acquisition' };
+  const view = harness('client/src/pages/Council/CouncilResearchProgress.tsx');
+  const conversation = view.load('client/src/utils/research-events.ts').researchConversation;
+  const room = session([event(1, { revision: 1 })], { messages: [previous, current] });
+  let entries = conversation(room).entries;
+  assert.ok(entries.some(entry => entry.legacyActivity?.content === 'Current data gathering'));
+  assert.ok(!entries.some(entry => entry.legacyActivity?.content === 'Old duplicated acquisition'));
+  room.researchEvents.push(event(2, { kind: 'task' }));
+  entries = conversation(room).entries;
+  assert.ok(entries.some(entry => entry.legacyActivity?.content === 'Current data gathering'));
+  current.researchEventId = 'e2';
+  assert.ok(!conversation(room).entries.some(entry => entry.legacyActivity?.id === 'current'));
 });
 
 test('new task-local events scroll only when already following the newest activity', () => {

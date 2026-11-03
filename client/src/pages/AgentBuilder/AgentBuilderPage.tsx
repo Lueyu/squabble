@@ -31,6 +31,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import BuilderWizard from './BuilderWizard';
+import StrategyRuntimeCard from './StrategyRuntimeCard';
 import { errorMessage } from './errorMessage';
 import { DEFAULT_CADENCE } from '@/utils/council-state';
 
@@ -99,6 +100,7 @@ export default function AgentBuilderPage() {
     mutationFn: runBuilderProfile,
     onSuccess: (result: BuilderRunResult) => {
       void refresh();
+      if (result.automation) { toast.success(t('strategy.checked')); return; }
       const summary: string = t('ui.builder.runSummary', {
         scanned: result.scanned,
         placed: result.placed,
@@ -278,10 +280,12 @@ export default function AgentBuilderPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                <Badge variant="outline">{t(profile.config.automation?.enabled ? 'strategy.paperLabel' : 'strategy.modeLegacy')}</Badge>
+                <StrategyRuntimeCard profile={profile} />
                 <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/40 p-3 text-xs">
-                  <div><span className="text-muted-foreground">{t('ui.builder.minimumRating')}</span>
-                    <p className="mt-1 font-semibold">{t(profile.config.minimumRating === 'Buy'
-                      ? 'ui.builder.ratingBuy' : 'ui.builder.ratingStrongBuy')}</p></div>
+                  <div><span className="text-muted-foreground">{t(profile.config.automation?.enabled ? 'strategy.monitorSeconds' : 'ui.builder.minimumRating')}</span>
+                    <p className="mt-1 font-semibold">{profile.config.automation?.enabled ? profile.config.automation.monitorSeconds
+                      : t(profile.config.minimumRating === 'Buy' ? 'ui.builder.ratingBuy' : 'ui.builder.ratingStrongBuy')}</p></div>
                   <div><span className="text-muted-foreground">{t('ui.builder.maxOrderPct')}</span>
                     <p className="mt-1 font-semibold">{profile.config.maxOrderPct}%</p></div>
                   <div><span className="text-muted-foreground">{t('ui.builder.maxOrdersPerDay')}</span>
@@ -291,13 +295,13 @@ export default function AgentBuilderPage() {
                       ? profile.config.tickers.join(', ') : t('ui.builder.allTracked')}</p></div>
                 </div>
                 <div className="rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
-                  <p>{t('council.cadence.summary', {
+                  <p>{t(profile.config.automation?.enabled ? 'strategy.cadenceSummary' : 'council.cadence.summary', {
                     days: profile.config.cadence?.reviewEveryTradingDays ?? DEFAULT_CADENCE.reviewEveryTradingDays,
                     orders: profile.config.cadence?.maxOrdersPerWeek ?? DEFAULT_CADENCE.maxOrdersPerWeek,
                   })}</p>
                   <p className="mt-1">{t(profile.config.council?.enabled ? 'council.team.enabledHint' : 'council.team.rulesOnly')}</p>
                 </div>
-                {(profile.config.priceRules?.length ?? 0) > 0 && (
+                {!profile.config.automation?.enabled && (profile.config.priceRules?.length ?? 0) > 0 && (
                   <div className="space-y-2">
                     <p className="text-xs font-medium text-muted-foreground">
                       {t('ui.builder.priceRuleSummary')}
@@ -380,7 +384,7 @@ export default function AgentBuilderPage() {
         </p>}
         {!proposalsQuery.isLoading && !proposalsQuery.isError && pending.length === 0 && (
           <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">
-            {t('ui.builder.emptyInbox')}
+            {t(profilesQuery.data?.some(profile => profile.config.automation?.enabled) ? 'strategy.emptyInbox' : 'ui.builder.emptyInbox')}
           </CardContent></Card>
         )}
         <div className="space-y-3">

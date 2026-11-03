@@ -811,7 +811,7 @@ function NotificationChannelsCard() {
   };
 
   return (
-    <Card>
+    <Card id="notifications" className="scroll-mt-4">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="flex items-center gap-1.5 text-sm">
           <BellRing size={14} /> {t('ui.paper.notificationChannels')}

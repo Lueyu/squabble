@@ -132,9 +132,22 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
       const users = await client.query('SELECT count(*)::int AS count FROM users');
       assert.equal(users.rows[0].count, 0);
       const migration = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(migration.rows[0].version, 15);
+      assert.equal(migration.rows[0].version, 18);
       const latestColumn = await client.query("SELECT enabled FROM llm_budget_settings LIMIT 0");
       assert.deepEqual(latestColumn.rows, []);
+      const strategyTables = await client.query(`SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name IN
+          ('strategy_tasks', 'strategy_plans', 'strategy_signals', 'strategy_runtime', 'strategy_outbox', 'strategy_protections')
+        ORDER BY table_name`);
+      assert.deepEqual(strategyTables.rows.map((row: { table_name: string }) => row.table_name),
+        ['strategy_outbox', 'strategy_plans', 'strategy_protections', 'strategy_runtime', 'strategy_signals', 'strategy_tasks']);
+      const protectionColumns = await client.query(`SELECT column_name, data_type, column_default
+        FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'strategy_protections'
+          AND column_name IN ('stop_loss_price', 'version') ORDER BY column_name`);
+      assert.deepEqual(protectionColumns.rows, [
+        { column_name: 'stop_loss_price', data_type: 'numeric', column_default: null },
+        { column_name: 'version', data_type: 'integer', column_default: '1' },
+      ]);
       await client.query('CREATE TABLE desktop_persistence_probe (value text NOT NULL)');
       await client.query("INSERT INTO desktop_persistence_probe (value) VALUES ('saved')");
       await client.query(`WITH profile AS (
@@ -146,6 +159,9 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
         (owner, session_id, version, revision, decision, summary, dissent, next_review_condition, evidence, engine)
         SELECT 'desktop-native-probe', id, 1, 1, 'wait', 'Fixture report', '[]', 'Fixture review', '[]', 'local'
         FROM session`);
+      await client.query(`INSERT INTO strategy_outbox (owner, profile_id, event_key, payload, delivered_channel_ids)
+        SELECT 'desktop-native-probe', id, 'desktop-migration-16-probe', '{"event":"strategy_error"}', '["fixture-channel"]'
+        FROM builder_profiles WHERE owner = 'desktop-native-probe'`);
     } finally {
       await client.end();
     }
@@ -167,8 +183,13 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
       // The backend also reapplies additive migrations at startup.
       await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '14_a2a_agents.sql'), 'utf8'));
       await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '15_native_agents.sql'), 'utf8'));
+      await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '16_daily_strategy.sql'), 'utf8'));
       const report = await reopened.query("SELECT engine FROM council_reports WHERE owner = 'desktop-native-probe'");
       assert.equal(report.rows[0].engine, 'local');
+      const delivery = await reopened.query(`SELECT state, attempts, payload, delivered_channel_ids
+        FROM strategy_outbox WHERE event_key = 'desktop-migration-16-probe'`);
+      assert.deepEqual(delivery.rows, [{ state: 'pending', attempts: 0,
+        payload: { event: 'strategy_error' }, delivered_channel_ids: ['fixture-channel'] }]);
     } finally {
       await reopened.end();
     }
@@ -180,6 +201,9 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
     try {
       const report = await restarted.query("SELECT engine FROM council_reports WHERE owner = 'desktop-native-probe'");
       assert.equal(report.rows[0].engine, 'local');
+      const delivery = await restarted.query(`SELECT delivered_channel_ids FROM strategy_outbox
+        WHERE event_key = 'desktop-migration-16-probe'`);
+      assert.deepEqual(delivery.rows, [{ delivered_channel_ids: ['fixture-channel'] }]);
     } finally { await restarted.end(); }
   } finally {
     await second?.stop();
@@ -226,7 +250,7 @@ test('desktop recovers a private PostgreSQL cluster after its owner is force kil
     await client.connect();
     try {
       const version = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(version.rows[0].version, 15);
+      assert.equal(version.rows[0].version, 18);
     } finally {
       await client.end();
     }
@@ -269,7 +293,7 @@ test('desktop reclaims an active private PostgreSQL cluster before starting anot
     await client.connect();
     try {
       const version = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(version.rows[0].version, 15);
+      assert.equal(version.rows[0].version, 18);
     } finally {
       await client.end();
     }

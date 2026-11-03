@@ -6,6 +6,8 @@ import { PgDialect, type PgTable } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from '../../common/platform';
 import type { QuoteService } from '../quote/quote.service';
 import type { EvidenceService, EvidenceInput } from '../multi-agent/evidence.service';
+import type { ResearchMemoryService } from '../research-memory/research-memory.service';
+import type { ResearchMemoryRecall } from '../../../shared/research-memory.interface';
 import type { ResearchToolScope, ResearchToolResult } from '../../../shared/research-tools.interface';
 import { ResearchToolsService } from './research-tools.service';
 import { boundedResult, citationUrl } from './research-tools.output';
@@ -26,7 +28,7 @@ function fixture() {
       members: [{ id: 'researcher', name: 'Researcher' }] } },
     checkpoint: { nextTurn: 0, turns: [{ memberId: 'researcher', phase: 'opening' }] },
     evidenceSnapshot: [{ ...fact, id: 'filing', fetchedAt: '2026-10-30T10:00:00.000Z' }] };
-  const rows: Record<string, FixtureRow[]> = { council_sessions: [session], council_messages: [], council_reports: [], deep_report: [] };
+  const rows: Record<string, FixtureRow[]> = { council_sessions: [session], council_messages: [], council_reports: [], deep_report: [], council_research_tasks: [] };
   const queries: Array<{ table: string; sql: string; params: unknown[]; limit: number }> = [];
   const db = { select: () => ({ from: (table: PgTable) => {
     const tableName = getTableName(table);
@@ -36,6 +38,7 @@ function fixture() {
       where: (condition: SQL) => { ({ sql, params } = new PgDialect().sqlToQuery(condition)); return builder; },
       orderBy: () => builder,
       limit: (limit: number) => { maximum = limit; return builder; },
+      for: () => builder,
       then: (resolve: (value: FixtureRow[]) => unknown, reject?: (error: unknown) => unknown) => {
         queries.push({ table: tableName, sql, params, limit: maximum });
         const owner = params[0]; const idOrTicker = params[1];
@@ -52,35 +55,119 @@ function fixture() {
         }).map(row => ({ ...row, ticker: rows.council_sessions.find(item => item.id === row.sessionId)?.ticker }))
           : rows[tableName].filter(row => row.owner === owner &&
           (tableName === 'council_sessions' ? row.id === idOrTicker
-            : tableName === 'council_messages' ? row.sessionId === idOrTicker : row.ticker === idOrTicker));
+            : tableName === 'council_research_tasks' ? row.sessionId === idOrTicker && row.cycleId === params[2]
+              && row.revision === params[3] && row.position === params[4] && row.state === params[5]
+              : tableName === 'council_messages' ? row.sessionId === idOrTicker : row.ticker === idOrTicker));
         return Promise.resolve(result.slice(0, maximum)).then(resolve, reject);
       },
     };
     return builder;
-  } }) };
+  } }),
+  transaction: async (callback: (tx: unknown) => Promise<unknown>): Promise<unknown> => callback(db),
+  update: (table: PgTable) => ({ set: (patch: FixtureRow) => ({ where: async (condition: SQL) => {
+    const { sql, params } = new PgDialect().sqlToQuery(condition);
+    const tableName = getTableName(table);
+    assert.match(sql, new RegExp(`"${tableName}"\\."owner"`));
+    for (const row of rows[tableName]) {
+      if (row.owner === params[0] && row.id === params[1] && row.revision === params[2]) Object.assign(row, patch);
+    }
+  } }) }),
+  };
   let quoteCalls = 0;
   const quotes = { getQuote: async (ticker: string) => { quoteCalls++; assert.equal(ticker, 'AAPL');
     return { symbol: ticker, price: '190.5', change: '1', changePercent: '0.53', currency: 'USD', market: 'US',
       timestamp: 1793700000000, delayed: true }; } };
   const evidence = { collectResearch: async (_ticker: string, _owner: string, _kind: string,
     _language: string, _options: unknown): Promise<EvidenceInput[]> => [fact] };
+  const emptyRecall: ResearchMemoryRecall = { items: [], context: '', preferences: { recallEnabled: true, autoArchive: true } };
+  const memory = { recall: async (_owner: string, _query: unknown): Promise<ResearchMemoryRecall> => emptyRecall,
+    refreshRecall: async (_owner: string, _frozen: ResearchMemoryRecall): Promise<ResearchMemoryRecall> => emptyRecall,
+    getPreferences: async (_owner: string) => emptyRecall.preferences };
   const service = new ResearchToolsService(db as unknown as PostgresJsDatabase,
-    quotes as unknown as QuoteService, evidence as unknown as EvidenceService);
+    quotes as unknown as QuoteService, evidence as unknown as EvidenceService, memory as unknown as ResearchMemoryService);
   const call = (name: string, args: Record<string, unknown> = {}, options = {}) =>
     service.call('alice', bound, { callId: 'call-1', name, arguments: args }, options);
-  return { service, session, rows, queries, quotes, evidence, bound, call, quoteCalls: () => quoteCalls };
+  return { service, session, rows, queries, quotes, evidence, memory, bound, call, quoteCalls: () => quoteCalls };
 }
 
-test('registry offers six schema-bounded read-only tools and no mutation or scope arguments', () => {
+test('registry offers nine schema-bounded read-only tools and no mutation or scope arguments', () => {
   const { service } = fixture(); const descriptors = service.descriptors();
   assert.deepEqual(descriptors.map(item => item.name), ['get_quotes', 'get_financials', 'get_valuation',
-    'get_news', 'get_research_report', 'get_discussion_context']);
+    'get_news', 'get_research_report', 'get_discussion_context', 'get_research_memory',
+    'get_peer_comparison', 'get_valuation_scenarios']);
   for (const item of descriptors) {
     assert.equal(item.inputSchema.additionalProperties, false);
     assert.ok(item.outputSchema); assert.equal(item.annotations.readOnlyHint, true);
     assert.equal(item.annotations.destructiveHint, false);
     assert.ok(!/ticker|owner|sessionId|url/.test(JSON.stringify(item.inputSchema)));
   }
+});
+
+function workflowFixture() {
+  const f = fixture();
+  f.session.checkpoint = { cycleId: 'cycle', nextTurn: 99, turns: [], workflow: { goal: 'comprehensive',
+    peers: ['MSFT', 'NVDA'], parallelism: 2, recallEnabled: true,
+    memory: { items: [], context: 'Frozen text must never be blindly replayed', preferences: { recallEnabled: true, autoArchive: true } } } };
+  f.rows.council_research_tasks = [{ owner: 'alice', sessionId: f.bound.sessionId, cycleId: 'cycle', revision: 3,
+    position: 0, memberId: 'researcher', state: 'running', attempts: [{ kind: 'work', state: 'running', revision: 3 }] }];
+  return f;
+}
+
+test('workflow tool authority follows durable running work/review attempts rather than sequential nextTurn', async () => {
+  const { service, bound, rows, session } = workflowFixture();
+  assert.equal(await service.isCurrent('alice', bound), true);
+  assert.equal(await service.isCurrent('bob', bound), false);
+  rows.council_research_tasks[0].state = 'accepted';
+  assert.equal(await service.isCurrent('alice', bound), false);
+  rows.council_research_tasks[0].state = 'running';
+  rows.council_research_tasks[0].attempts = [{ kind: 'review', state: 'running', revision: 3 }];
+  session.profileSnapshot = { council: { webResearch: false, members: [{ id: 'researcher', role: 'researcher' }, { id: 'manager', role: 'manager' }] } };
+  assert.equal(await service.isCurrent('alice', bound), false);
+  assert.equal(await service.isCurrent('alice', { ...bound, memberId: 'manager' }), true);
+});
+
+test('peer comparison obtains only persisted allowed symbols and rejects caller scope expansion', async () => {
+  const { call, evidence, quotes, bound, session } = workflowFixture();
+  const requested: string[] = [];
+  quotes.getQuote = async ticker => { requested.push(`quote:${ticker}`); return { symbol: ticker, price: '100',
+    currency: 'USD', market: 'US', change: '0', changePercent: '0', timestamp: Date.now(), delayed: false }; };
+  evidence.collectResearch = async (ticker, owner) => { requested.push(`evidence:${ticker}`); assert.equal(owner, 'alice'); return [fact]; };
+  Object.assign(bound, { peers: ['UNAUTHORIZED'] });
+  const result = await call('get_peer_comparison');
+  assert.equal(result.status, 'succeeded');
+  assert.deepEqual(new Set(requested), new Set(['quote:AAPL', 'quote:MSFT', 'quote:NVDA', 'evidence:AAPL', 'evidence:MSFT', 'evidence:NVDA']));
+  assert.match(JSON.stringify(result.data), /comparab|currency|period/i);
+  assert.equal((await call('get_peer_comparison', { peers: ['BAD'] })).errorCode, 'RESEARCH_INVALID_ARGUMENTS');
+  (session.checkpoint as { workflow: { peers: string[] } }).workflow.peers = ['MSFT', 'NVDA', 'GOOG', 'AMD'];
+  requested.length = 0;
+  assert.equal((await call('get_peer_comparison')).errorCode, 'RESEARCH_INVALID_PEERS');
+  assert.equal(requested.length, 0);
+});
+
+test('memory tool and snapshot refresh pinned references with owner isolation and live recall preferences', async () => {
+  const { call, service, bound, memory, session, quoteCalls } = workflowFixture();
+  let refreshes = 0;
+  memory.refreshRecall = async (owner, frozen) => { assert.equal(owner, 'alice');
+    assert.match(frozen.context, /Frozen text/); refreshes++;
+    return { items: [], context: '', preferences: { recallEnabled: false, autoArchive: true } }; };
+  const result = await call('get_research_memory');
+  assert.equal(result.status, 'unavailable'); assert.match(JSON.stringify(result.data), /recallEnabled/);
+  const bundle = await service.bundle('alice', bound);
+  assert.ok(!bundle.snapshot.includes('Frozen text')); assert.equal(refreshes, 2); assert.equal(quoteCalls(), 0);
+  assert.match(bundle.snapshot, /MSFT/); assert.ok(Buffer.byteLength(bundle.snapshot) <= 24_000);
+  (session.checkpoint as { workflow: { recallEnabled: boolean } }).workflow.recallEnabled = false;
+  await call('get_research_memory'); assert.equal(refreshes, 2);
+});
+
+test('valuation tool obtains source denominators itself and rejects unsourced numeric inputs', async () => {
+  const { call, evidence } = fixture();
+  evidence.collectResearch = async (_ticker, _owner, kind) => { assert.equal(kind, 'financials');
+    return [{ ...fact, content: 'Period: 2025-01-01 to 2025-12-31. Net income: USD 100. Form: 10-K.' }]; };
+  const args = { metric: 'earnings', multiples: { bear: 10, base: 15, bull: 20 } };
+  const result = await call('get_valuation_scenarios', args);
+  assert.equal(result.status, 'partial'); assert.match(JSON.stringify(result.data), /1500/);
+  assert.equal((await call('get_valuation_scenarios', { ...args, earnings: 999 })).errorCode, 'RESEARCH_INVALID_ARGUMENTS');
+  assert.equal((await call('get_valuation_scenarios', { ...args, multiples: { bear: 20, base: 10, bull: 15 } })).errorCode, 'RESEARCH_INVALID_ARGUMENTS');
 });
 
 test('scope rejects another owner, stale revision, expired scope, wrong ticker, turn and member', async () => {

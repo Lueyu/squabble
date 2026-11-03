@@ -114,7 +114,8 @@ export async function researchInvocation(provider: LocalAgentProvider, prompt: s
     env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: permissions, agent: { 'squabble-research': {
       description: 'Read-only research', mode: 'primary', prompt: RESEARCH_INSTRUCTIONS, permission: permissions,
     } } });
-    return { env, input: prompt, args: ['run', '--format', 'json', '--agent', 'squabble-research', ...modelArgs, ...(effort ? ['--variant', effort] : [])] };
+    return { env, input: prompt, args: ['run', '--format', 'json', '--print-logs', '--log-level', 'ERROR',
+      '--agent', 'squabble-research', ...modelArgs, ...(effort ? ['--variant', effort] : [])] };
   }
   if (provider === 'kimi') {
     const doctor: NativeProcessResult = await probe(['doctor', 'config']);

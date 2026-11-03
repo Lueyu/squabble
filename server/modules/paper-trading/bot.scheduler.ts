@@ -15,7 +15,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import { paperAccounts } from '../../database/schema';
+import { paperAccounts, builderProfiles } from '../../database/schema';
 import { anyMarketOpen } from '../../common/market-clock';
 import { PaperTradingService } from './paper-trading.service';
 
@@ -61,6 +61,9 @@ export class BotScheduler implements OnModuleInit, OnModuleDestroy {
       .where(eq(paperAccounts.botEnabled, true));
     for (const account of accounts) {
       try {
+        const profiles = await this.db.select().from(builderProfiles).where(eq(builderProfiles.owner, account.owner));
+        if (profiles.some((item) => item.status === 'active'
+          && (item.config as { automation?: { enabled: boolean } }).automation?.enabled)) continue;
         await this.paper.runBotScan(account.owner);
       } catch (error) {
         this.logger.warn(`bot scan failed for account ${account.id}: ${String(error)}`);
