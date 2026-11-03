@@ -6,7 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, builderProposals } from '../../database/schema';
 import { LlmService } from '../multi-agent/llm.service';
@@ -24,6 +24,7 @@ import { normalizeBuilderConfig, validateManualFill } from './agent-builder.rule
 import { LocalAgentsService } from '../local-agents/local-agents.service';
 import { LocalAgentError } from '../local-agents/local-agents.types';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
+import { strategyOutbox } from '../../database/strategy.schema';
 
 @Injectable()
 export class AgentBuilderService {
@@ -88,8 +89,11 @@ export class AgentBuilderService {
     const current = await this.getProfile(userId, id);
     await this.assertCanActivate(userId, current.config);
     const row = await this.db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.id, id), eq(builderProfiles.owner, userId))).for('update');
+      if (!locked || locked.version !== current.version) throw new BadRequestException('Agent changed during activation; reload and retry');
+      if (locked.status === 'active') return locked;
       await tx.update(builderProfiles)
-        .set({ status: 'paused', updatedAt: new Date() })
+        .set({ status: 'paused', version: sql`${builderProfiles.version} + 1`, updatedAt: new Date() })
         .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.status, 'active')));
       const [updated] = await tx.update(builderProfiles)
         .set({ status: 'active', updatedAt: new Date() })
@@ -102,6 +106,20 @@ export class AgentBuilderService {
   }
 
   async assertCanActivate(userId: string, config: BuilderConfig): Promise<void> {
+    if (config.automation?.enabled) {
+      if (!config.council?.enabled) throw new BadRequestException('Daily automation requires a research council');
+      const reviewer = config.automation.fastReviewer;
+      if (reviewer?.executionMode === 'local') {
+        if (!this.localAgents || !reviewer.agentId) throw new BadRequestException('Fast reviewer unavailable');
+        try { await this.localAgents.validate(userId, reviewer.agentId, reviewer.agentSettings); }
+        catch { throw new BadRequestException('Connect the selected fast reviewer before activating'); }
+      } else {
+        await this.llm.validateConnectionIds(userId, reviewer?.connectionId ? [reviewer.connectionId] : []);
+        if (!await this.llm.isConfigured(userId, reviewer?.connectionId)) {
+          throw new BadRequestException('Configure a fast model or select a connected native fast reviewer');
+        }
+      }
+    }
     if (config.council?.enabled) {
       const members = config.council.members;
       for (const member of members.filter((item) => item.executionMode === 'local')) {
@@ -121,10 +139,22 @@ export class AgentBuilderService {
   }
 
   async pauseProfile(userId: string, id: string): Promise<BuilderProfile> {
-    const [row] = await this.db.update(builderProfiles)
-      .set({ status: 'paused', updatedAt: new Date() })
-      .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.id, id)))
-      .returning();
+    const row = await this.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.id, id))).for('update');
+      if (!current) return undefined;
+      if (current.status === 'paused') return current;
+      const [updated] = await tx.update(builderProfiles).set({ status: 'paused',
+        version: current.status === 'active' ? current.version + 1 : current.version, updatedAt: new Date() })
+        .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.id, id))).returning();
+      if (!updated) return undefined;
+      const config = updated.config as BuilderConfig;
+      if (config.automation?.enabled && config.notifyOnProposal) await tx.insert(strategyOutbox).values({
+        owner: userId, profileId: id, eventKey: `strategy-paused:${id}:${updated.updatedAt.toISOString()}`,
+        payload: { event: 'strategy_stopped', title: config.language === 'en' ? 'Automatic PAPER strategy paused' : '自动模拟策略已暂停',
+          body: config.language === 'en' ? 'Monitoring stopped. No new automatic paper orders will be placed.' : '策略监控已停止，不再提交新的模拟订单。' },
+      }).onConflictDoNothing();
+      return updated;
+    });
     if (!row) throw new NotFoundException('Agent profile not found');
     return this.mapProfile(row);
   }
@@ -132,6 +162,25 @@ export class AgentBuilderService {
   preview(input: BuilderConfig): BuilderPreview {
     const config = this.validateConfig(input);
     const canBuy = config.template !== 'guard';
+    if (config.automation?.enabled) {
+      const english = config.language === 'en';
+      return { scenarios: [
+        { key: 'daily-plan-trigger', result: canBuy ? 'paper' : 'block', explanation: english
+          ? canBuy ? 'A validated daily plan can trigger a paper order after measured indicators, fast review and final hard risk checks pass.'
+            : 'The guard template protects existing paper positions and never opens a new position.'
+          : canBuy ? '已校验的每日策略触发后，真实指标、快速审核和最终硬风控均通过，才会执行模拟订单。'
+            : '守护模板仅保护已有模拟持仓，不会新开仓。' },
+        { key: 'review-wait', result: 'wait', explanation: english
+          ? 'A fast-review wait or veto does not place an order. A wait can be reconsidered only within bounded retries using a newer quote.'
+          : '快速审核等待或否决时不会下单；等待结果只有在更新报价和有限重试条件满足后才会重新审核。' },
+        { key: 'protective-stop', result: 'paper', explanation: english
+          ? 'A persisted position stop can exit without model review, while valid quotes, market sessions and sellable-share checks still apply.'
+          : '已保存的持仓止损可跳过模型审核，但仍须通过有效报价、交易时段和可卖数量检查。' },
+        { key: 'invalid-data', result: 'wait', explanation: english
+          ? 'Missing or stale quotes, unverified calendars or unavailable entry indicators prevent new entries.'
+          : '报价缺失或过期、交易日历未验证或开仓指标不可用时，系统等待，不会新开仓。' },
+      ] };
+    }
     return {
       scenarios: [
         ...(config.priceRules?.length ? [{

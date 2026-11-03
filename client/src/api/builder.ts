@@ -1,4 +1,5 @@
 import http from './http';
+import type { StrategyRuntime } from '@shared/strategy.interface';
 import type {
   BuilderConfig,
   BuilderPreview,
@@ -10,6 +11,8 @@ import type {
 export type { BuilderConfig, BuilderPreview, BuilderProfile, BuilderProposal } from '@shared/api.interface';
 
 export interface BuilderRunResult {
+  automation?: boolean;
+  runtime?: StrategyRuntime;
   scanned: number;
   signals: Array<{ ticker: string; side: 'buy' | 'sell'; reason: string }>;
   placed: number;
@@ -17,6 +20,11 @@ export interface BuilderRunResult {
 }
 
 const BASE_URL = '/api/agent-builder';
+
+export async function fetchStrategyRuntime(id: string): Promise<StrategyRuntime> {
+  const response = await http.get<StrategyRuntime>(`${BASE_URL}/profiles/${encodeURIComponent(id)}/automation`);
+  return response.data;
+}
 
 export async function fetchBuilderProfiles(): Promise<BuilderProfile[]> {
   const response = await http.get<{ items: BuilderProfile[] }>(`${BASE_URL}/profiles`);

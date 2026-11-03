@@ -127,6 +127,22 @@ export class NotificationService {
   }
 
   /** Deliver through a single channel; throws on failure (callers decide). */
+  async deliverWithAcknowledgment(userId: string, payload: NotificationPayload, previous: string[] = []): Promise<{
+    ok: boolean; deliveredChannelIds: string[];
+  }> {
+    const rows = await this.db.select().from(notificationChannels).where(and(
+      eq(notificationChannels.owner, userId), eq(notificationChannels.enabled, true)));
+    const delivered = new Set(previous);
+    const results = await Promise.allSettled(rows.filter((row) => !delivered.has(row.id)).map(async (row) => {
+      await this.deliver(row.channelType as NotificationChannelType, (row.config as Record<string, unknown>) ?? {}, payload);
+      delivered.add(row.id);
+    }));
+    // No configured destination remains visible as undelivered and can be retried after setup.
+    return { ok: rows.length > 0 && results.every((result) => result.status === 'fulfilled'),
+      deliveredChannelIds: [...delivered] };
+  }
+
+  /** Deliver through a single channel; throws on failure (callers decide). */
   private async deliver(
     channelType: NotificationChannelType,
     config: Record<string, unknown>,

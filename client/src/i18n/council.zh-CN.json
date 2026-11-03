@@ -180,10 +180,13 @@
     "modelTier": { "fast": "快速模型", "slow": "深度模型" }
   },
   "chat": {
+    "evidencePoints": "证据与依据", "risks": "风险与不确定性", "nextChecks": "下一步核实", "details": "完整分析",
     "replyTo": "回应 {{name}}", "basis": "判断依据", "sources": "参考资料 · {{count}}",
     "sourcePending": "资料 {{index}} 已被引用，详细来源将在本轮研报保存后显示。"
   },
   "progress": {
+    "researching": "正在研究",
+    "sourceGaps": "资料缺口 · {{count}}",
     "taskStates": { "queued": "等待中", "running": "进行中", "succeeded": "已完成", "failed": "失败", "cancelled": "已取消", "interrupted": "已中断", "unavailable": "暂不可用" },
     "activityKinds": { "tool": "研究工具", "summary": "活动更新", "capability": "研究资料获取方式" },
     "toolNames": { "get_quotes": "获取行情", "get_financials": "获取财务资料", "get_valuation": "获取估值资料", "get_news": "获取公司新闻", "get_research_report": "读取历史研究报告", "get_discussion_context": "读取讨论上下文", "search_research_web": "搜索公开研究资料" },

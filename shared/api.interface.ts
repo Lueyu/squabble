@@ -1130,6 +1130,7 @@ export interface BuilderConfig {
   /** Omitted legacy configurations use basic rules and conservative cadence. */
   council?: import('./council.interface').CouncilConfig;
   cadence?: import('./council.interface').TradingCadence;
+  automation?: import('./strategy.interface').StrategyAutomationConfig;
 }
 
 export interface BuilderProfile {

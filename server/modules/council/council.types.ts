@@ -16,7 +16,7 @@ export interface CouncilCheckpoint {
     turn: number; revision: number; dispatchStarted: boolean; awaitingInput?: boolean; lastUserMessageId?: string };
 }
 export interface CouncilMessageMetadata extends Pick<CouncilMessage,
-  'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown'> {
+  'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown' | 'response'> {
   cycleId?: string;
   researchEvent?: ResearchEvent;
   turn?: number;

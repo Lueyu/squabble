@@ -384,11 +384,12 @@ export class CouncilService implements OnModuleInit {
         metadata: { cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
           taskId: output.taskId,
           replyToMessageId: output.replyToMessageId, evidenceIds: contribution.evidenceIds,
-          reasoningSummary: contribution.reasoningSummary, questions: contribution.questions } });
+          reasoningSummary: contribution.reasoningSummary, questions: contribution.questions, response: contribution.response } });
       if (output.member.executionMode === 'local') await tx.update(councilMessages).set({ metadata: {
         cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
         replyToMessageId: output.replyToMessageId, evidenceIds: contribution.evidenceIds, reasoningSummary: contribution.reasoningSummary,
-        questions: contribution.questions, externalAgent: true, externalUsageUnknown: output.externalUsageUnknown, taskId: output.taskId,
+        questions: contribution.questions, response: contribution.response,
+        externalAgent: true, externalUsageUnknown: output.externalUsageUnknown, taskId: output.taskId,
       } }).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id),
         sql`${councilMessages.metadata}->>'cycleId' = ${checkpoint.cycleId}`, sql`(${councilMessages.metadata}->>'turn')::int = ${checkpoint.nextTurn}`));
       await tx.update(councilSessions).set({ updatedAt: new Date(),
@@ -416,7 +417,8 @@ export class CouncilService implements OnModuleInit {
     });
     const prompt = [{ role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: JSON.stringify(data) }];
-    const options = { taskId: row.taskId, purpose: `council:${turn.phase}:${member.id}`, maxOutputTokens: 900,
+    const options = { taskId: row.taskId, purpose: `council:${turn.phase}:${member.id}`,
+      maxOutputTokens: turn.phase === 'summary' ? 2400 : 1800,
       retryPolicy: 'none' as const, timeoutMs: 120_000,
       connectionId: member.connectionId, shouldContinue: async () => {
         const latest = await this.requireSession(userId, row.id);
@@ -463,10 +465,15 @@ export class CouncilService implements OnModuleInit {
 
   private async recordAcquisition(userId: string, row: SessionRow, acquisition: ResearchAcquisition): Promise<void> {
     if (!row.checkpoint) return;
-    const taskId = `evidence:${row.checkpoint.cycleId}:${row.revision}`;
+    const turn = row.checkpoint.turns[row.checkpoint.nextTurn];
+    const member = this.members(row.profileSnapshot).find(item => item.id === turn?.memberId);
+    const modelMember = member?.executionMode !== 'local' ? member : undefined;
+    const taskId = modelMember ? `model:${row.checkpoint.cycleId}:${row.checkpoint.nextTurn}:${row.revision}`
+      : `evidence:${row.checkpoint.cycleId}:${row.revision}`;
     const callId = createHash('sha256').update(`${acquisition.source}:${acquisition.kind ?? 'initial'}`).digest('hex').slice(0, 24);
     await this.recordActivity(userId, row, { id: randomUUID(), kind: 'tool', taskId, callId, sequence: 0,
-      sessionId: row.id, revision: row.revision, memberId: 'research-tools', memberName: row.language === 'en' ? 'Research tools' : '资料检索',
+      sessionId: row.id, revision: row.revision, memberId: modelMember?.id ?? 'research-tools',
+      memberName: modelMember?.name ?? (row.language === 'en' ? 'Research tools' : '资料检索'),
       turn: row.checkpoint.nextTurn, toolName: acquisition.kind ?? 'research', at: new Date().toISOString(),
       status: acquisition.status === 'started' ? 'running' : acquisition.status === 'failed' ? 'failed'
         : acquisition.status === 'skipped' ? 'unavailable' : 'succeeded',
@@ -746,6 +753,7 @@ export class CouncilService implements OnModuleInit {
       messages: messages.map(({ id, role, memberName, content, revision, tokensUsed, createdAt, metadata }) => ({
         id, role, memberName, content, revision, tokensUsed, createdAt: createdAt.toISOString(),
         ...(metadata ? { memberId: metadata.memberId, phase: metadata.phase, replyToMessageId: metadata.replyToMessageId,
+          turn: metadata.turn, cycleId: metadata.cycleId, response: metadata.response, researchEventId: metadata.researchEvent?.id,
           evidenceIds: metadata.evidenceIds, reasoningSummary: metadata.reasoningSummary, questions: metadata.questions,
           acquisition: metadata.acquisition, externalAgent: metadata.externalAgent, externalUsageUnknown: metadata.externalUsageUnknown, taskId: metadata.taskId } : {}),
       })), reports: reports.map((report) => ({ ...this.mapReport(report), externalUsageUnknown: messages.some((message) =>

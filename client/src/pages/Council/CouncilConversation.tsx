@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
 import { shouldSendCouncilMessage, shouldStartCouncilAfterMessage } from '@/utils/council-state';
-import { researchTimeline } from '@/utils/research-events';
+import { researchConversation } from '@/utils/research-events';
 import CouncilChatMessage from './CouncilChatMessage';
 import CouncilResearchProgress from './CouncilResearchProgress';
 
@@ -31,7 +31,8 @@ export default function CouncilConversation({ session, actions, profileChanged }
   const sending = useRef(false);
   const composing = useRef(false);
   const lastMessageId = session.messages.at(-1)?.id;
-  const researchCursor = researchTimeline(session).cursor;
+  const conversation = researchConversation(session);
+  const researchCursor = conversation.cursor;
   const hasCurrentResearchEvents = session.researchEvents?.some(event => event.revision === session.revision);
   const messageLimitReached = session.messages.filter((message: CouncilMessage) => message.role === 'user').length >= 30;
 
@@ -88,11 +89,13 @@ export default function CouncilConversation({ session, actions, profileChanged }
           <p className="text-sm leading-6">{t(session.status === 'running' ? 'council.startingHint'
             : session.reports.some((report) => report.engine === 'basic') ? 'council.noMessagesBasic' : 'council.noMessages')}</p>
         </div>}
-        {session.messages.map((message: CouncilMessage) => <CouncilChatMessage key={message.id} message={message} session={session} onQuestion={(question: string) => {
+        {conversation.entries.map((entry) => entry.legacyActivity
+          ? <CouncilResearchProgress key={entry.key} message={entry.legacyActivity} />
+          : <CouncilChatMessage key={entry.key} message={entry.message} task={entry.task} session={session} onQuestion={(question: string) => {
           setContent((current) => current ? `${current}\n${question}`.slice(0, 2000) : question.slice(0, 2000)); inputRef.current?.focus();
         }} />)}
-        <CouncilResearchProgress session={session} />
-        {session.status === 'running' && !session.progress && !hasCurrentResearchEvents && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
+        {conversation.truncated && <p className="text-xs leading-5 text-muted-foreground">{t('council.progress.truncated')}</p>}
+        {session.status === 'running' && !hasCurrentResearchEvents && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card"><Loader2 className="size-4 animate-spin text-primary" /></span>
           {t('council.runningHint')}
         </div>}

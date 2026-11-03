@@ -4,6 +4,7 @@ import { NeedLogin } from '../../common/platform/need-login.decorator';
 import type { BuilderConfig, RecordBuilderFillDto } from '@shared/api.interface';
 import { AgentBuilderService } from './agent-builder.service';
 import { PaperTradingService } from './paper-trading.service';
+import { StrategyService } from './strategy.service';
 
 /** Beginner-facing agent configuration and human execution ledger. */
 @Controller('api/agent-builder')
@@ -11,6 +12,7 @@ export class AgentBuilderController {
   constructor(
     private readonly builder: AgentBuilderService,
     private readonly paper: PaperTradingService,
+    private readonly strategy: StrategyService,
   ) {}
 
   @NeedLogin()
@@ -72,7 +74,15 @@ export class AgentBuilderController {
     if (!active || active.id !== id) {
       throw new BadRequestException('Activate this agent before running a scan');
     }
+    if (active.config.automation?.enabled) return { automation: true, runtime: await this.strategy.tick(userId),
+      scanned: 0, signals: [], placed: 0, rejected: 0 };
     return this.paper.runBotScan(userId);
+  }
+
+  @NeedLogin()
+  @Get('profiles/:id/automation')
+  automation(@Req() req: Request, @Param('id') id: string) {
+    return this.strategy.status(req.userContext.userId, id);
   }
 
   @NeedLogin()

@@ -78,8 +78,21 @@ export interface CouncilCandidate {
   price: number;
   reason: string;
 }
+/** Reader-facing findings and supporting reasons, never private model reasoning. */
+export interface CouncilResponse {
+  thesis: string;
+  evidencePoints: string[];
+  risks: string[];
+  nextChecks: string[];
+  /** Optional complete supporting analysis; displayed on demand without truncation. */
+  details?: string;
+}
 export interface CouncilMessage {
   taskId?: string;
+  cycleId?: string;
+  /** Zero-based turn within a discussion cycle. Older messages may omit it. */
+  turn?: number;
+  response?: CouncilResponse;
   externalAgent?: boolean;
   externalUsageUnknown?: boolean;
   id: string;
@@ -97,6 +110,8 @@ export interface CouncilMessage {
   reasoningSummary?: string[];
   questions?: string[];
   acquisition?: ResearchAcquisition | null;
+  /** Identifies a progress message already represented by the public event stream. */
+  researchEventId?: string;
 }
 export interface CouncilReport {
   id: string;
