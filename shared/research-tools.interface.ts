@@ -19,3 +19,13 @@ export interface ResearchToolBundle { descriptors: ResearchToolDescriptor[]; sna
 export interface ResearchToolCapability {
   mode: 'mcp' | 'snapshot'; reason: 'supported' | 'version_unsupported' | 'runtime_unsupported';
 }
+export type ResearchValuationMetric = 'earnings' | 'revenue' | 'book_value';
+export interface ResearchValuationRequest {
+  metric: ResearchValuationMetric;
+  multiples: { bear: number; base: number; bull: number };
+}
+export interface ResearchValuationInput {
+  metric: ResearchValuationMetric; value: number; currency: string; units: 'currency';
+  periodStart: string | null; periodEnd: string; annual: boolean; source: ResearchSource;
+}
+export interface ResearchValuationQuote { price: number; currency: string; asOf: string }

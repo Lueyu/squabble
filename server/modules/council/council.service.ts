@@ -6,6 +6,7 @@ import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperOrders } from '../../database/schema';
 import { councilMessages, councilReports, councilSessions } from '../../database/council.schema';
+import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { llmBudgetUsage } from '../../database/llm-budget.schema';
 import { LlmService } from '../multi-agent/llm.service';
 import { EvidenceService } from '../multi-agent/evidence.service';
@@ -31,6 +32,12 @@ import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { agentAssignment, agentContribution, agentErrorMessage } from './council.native';
 import type { ResearchEvent } from '../../../shared/research-events.interface';
 import { publicText } from '../local-agents/research-journal';
+import { ResearchMemoryService } from '../research-memory/research-memory.service';
+import { CouncilWorkflow } from './council.workflow';
+import { dependentTaskKeys, planResearchTasks, validateWorkflowInput } from './council.tasks';
+import type { ResearchCoverage, ResearchTaskKind } from '../../../shared/research-workflow.interface';
+import { pinResearchSkills } from '../research-skills/research-skills.registry';
+import { ResearchToolsService } from '../research-tools/research-tools.service';
 
 type SessionRow = typeof councilSessions.$inferSelect;
 type ReportRow = typeof councilReports.$inferSelect;
@@ -43,6 +50,7 @@ export class CouncilService implements OnModuleInit {
   private readonly logger = new Logger(CouncilService.name);
   private readonly jobs = new Map<string, Promise<void>>();
   private readonly candidateJobs = new Map<string, Promise<CouncilReviewResult>>();
+  private readonly workflow: CouncilWorkflow;
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
@@ -52,9 +60,20 @@ export class CouncilService implements OnModuleInit {
     private readonly research: MultiAgentService,
     @Optional() private readonly localAgents?: LocalAgentsService,
     @Optional() private readonly budgets?: LlmBudgetService,
-  ) {}
+    @Optional() private readonly memory?: ResearchMemoryService,
+    @Optional() private readonly researchTools?: ResearchToolsService,
+  ) {
+    this.workflow = new CouncilWorkflow(db, { llm, localAgents, memory, tools: researchTools,
+      activity: (row, event, acquisition) => this.recordActivity(row.owner, row, event, acquisition) }, {
+      get: (owner, id) => this.requireSession(owner, id), members: row => this.members(row.profileSnapshot),
+      snapshot: row => this.collectSnapshot(row.owner, row.ticker, row.language, row.profileSnapshot, null, true, row),
+      pin: pinResearchSkills,
+      publish: (row, opinion, coverage, stance) => this.publish(row.owner, row, opinion, this.executionEngine(this.members(row.profileSnapshot)), null, stance ?? 'balanced', coverage),
+    });
+  }
 
   async onModuleInit(): Promise<void> {
+    await this.workflow.store.recover();
     // Recovery changes lifecycle only. It never resumes model calls or touches order execution.
     await this.db.update(councilSessions).set({ status: 'paused', revision: sql`${councilSessions.revision} + 1`,
       checkpoint: sql`${councilSessions.checkpoint} - 'inflight'`,
@@ -71,6 +90,7 @@ export class CouncilService implements OnModuleInit {
   async createSession(userId: string, input: CreateCouncilSession): Promise<CouncilSession> {
     if (!input || typeof input !== 'object') throw new BadRequestException('Council input is required');
     const ticker = this.validateTicker(input.ticker);
+    const workflow = validateWorkflowInput(input, ticker);
     if (input.language !== undefined && input.language !== 'en' && input.language !== 'zh-CN') {
       throw new BadRequestException('Language must be zh-CN or en');
     }
@@ -87,7 +107,12 @@ export class CouncilService implements OnModuleInit {
       priceRules: [], language: input.language ?? 'zh-CN', council: team,
     });
     const profile = { id: source?.id ?? null, version: source?.version ?? 1, config };
-    const row = await this.insertSession(userId, profile, ticker, input.language ?? 'zh-CN');
+    if (workflow?.recallEnabled && this.memory) workflow.memory = await this.memory.recall(userId, { ticker, topic: workflow.goal });
+    let row = await this.insertSession(userId, profile, ticker, input.language ?? 'zh-CN');
+    if (workflow) {
+      [row] = await this.db.update(councilSessions).set({ checkpoint: { ...newCheckpoint(team.members), workflow } })
+        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).returning();
+    }
     return this.hydrate(userId, row);
   }
 
@@ -112,6 +137,7 @@ export class CouncilService implements OnModuleInit {
         content: content.trim(), revision, tokensUsed: 0 });
       const held = current.status === 'failed' || current.status === 'paused';
       await tx.update(councilSessions).set({ revision, updatedAt: new Date(), error: held ? current.error : null,
+        ...(current.checkpoint?.workflow ? { checkpoint: { ...newCheckpoint(this.members(current.profileSnapshot)), workflow: current.checkpoint.workflow } } : {}),
         status: current.status === 'running' || held ? current.status : 'idle' })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
     });
@@ -127,12 +153,13 @@ export class CouncilService implements OnModuleInit {
     return this.hydrate(userId, row);
   }
 
-  async runSession(userId: string, id: string): Promise<CouncilSession> {
+  async runSession(userId: string, id: string, retryKeys?: ResearchTaskKind[]): Promise<CouncilSession> {
     this.assertId(id);
     const previous = await this.requireSession(userId, id);
     if (previous.status === 'running') return this.hydrate(userId, previous);
     const members = this.members(previous.profileSnapshot);
     await this.validateMembers(userId, members);
+    await this.preflightWorkflowBudget(previous, retryKeys);
     if (members.some((member) => member.connectionId || member.executionMode === 'local')) {
       const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId)));
       if (configured.some((value) => !value)) throw new BadRequestException('Configure a model connection for every team member before starting');
@@ -142,11 +169,12 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
       if (current.status === 'running') return { row: current, started: false };
-      const resume = current.checkpoint && current.checkpoint.nextTurn < current.checkpoint.turns.length;
+      const resume = current.checkpoint && (retryKeys || current.checkpoint.nextTurn < current.checkpoint.turns.length);
       // The task budget is deliberately retained across resumes and user revisions.
       const [started] = await tx.update(councilSessions).set({ status: 'running',
         revision: current.revision + 1, error: null, updatedAt: new Date(),
-        checkpoint: resume ? current.checkpoint : newCheckpoint(this.members(current.profileSnapshot)),
+        checkpoint: resume ? current.checkpoint : { ...newCheckpoint(this.members(current.profileSnapshot)),
+          ...(current.checkpoint?.workflow ? { workflow: current.checkpoint.workflow } : {}) },
         // Explicit follow-ups use current credentials/data, without erasing old reports or budget usage.
         ...(!resume && (!current.candidate || current.revision > 1)
           ? { evidenceSnapshot: [], sourceRunId: null, cacheKey: null } : {}) })
@@ -154,6 +182,7 @@ export class CouncilService implements OnModuleInit {
       return { row: started, started: true };
     });
     if (!started) return this.hydrate(userId, row);
+    if (row.checkpoint?.workflow) await this.workflow.store.rebase(userId, row, retryKeys);
     const active = this.jobs.get(`${userId}:${id}`);
     if (active) {
       // A resume can arrive while a paused provider request is still draining.
@@ -164,6 +193,48 @@ export class CouncilService implements OnModuleInit {
       }).catch(() => this.logger.error(`Council session ${id} could not resume`));
     } else this.launch(userId, row.id);
     return this.hydrate(userId, row);
+  }
+
+  private async preflightWorkflowBudget(row: SessionRow, retryKeys?: ResearchTaskKind[]): Promise<void> {
+    const config = row.checkpoint?.workflow;
+    if (!config || !this.budgets) return;
+    const settings = await this.budgets.getSettings(row.owner);
+    if (!settings.enabled) return;
+    const members = this.members(row.profileSnapshot);
+    const manager = members.find(m => m.role === 'manager')!;
+    const tasks = await this.workflow.store.list(row.owner, row.id, row.checkpoint!.cycleId);
+    const fresh = row.status === 'completed' && !retryKeys;
+    let required = 0;
+    const reviewKeys: ResearchTaskKind[] = [];
+    for (const plan of planResearchTasks(config.goal, members)) {
+      const task = tasks.find(t => t.key === plan.key);
+      if (!fresh && task && (retryKeys ? !retryKeys.includes(task.key) : task.state === 'accepted')) continue;
+      const reviewOnly = !fresh && task?.delivery && task.attempts.at(-1)?.kind === 'review';
+      if (!reviewOnly && members.find(m => m.id === plan.memberId)?.executionMode !== 'local') required++;
+      if (plan.key !== 'summary' && manager.executionMode !== 'local') { required++; reviewKeys.push(plan.key); }
+    }
+    if (reviewKeys.includes('financials') && reviewKeys.includes('business')) required--;
+    const [usage] = await this.db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(llmBudgetUsage)
+      .where(and(eq(llmBudgetUsage.owner, row.owner), eq(llmBudgetUsage.taskId, row.taskId)));
+    const remaining = Math.max(0, settings.maxCallsPerTask - usage.count);
+    if (required > remaining) {
+      const message = row.language === 'en'
+      ? `Research requires at least ${required} more model API calls, but this task budget has ${remaining} remaining. No calls were started. Choose a smaller research goal or adjust Research budget before continuing; rework may add usage.`
+      : `本次研究至少还需要 ${required} 次模型 API 调用，当前任务额度只剩 ${remaining} 次。尚未发起调用。请选择较小的研究目标，或在研究预算中调整后继续；返工可能增加用量。`;
+      await this.db.update(councilSessions).set({ error: message, updatedAt: new Date() }).where(and(eq(councilSessions.owner, row.owner),
+        eq(councilSessions.id, row.id), eq(councilSessions.revision, row.revision)));
+      throw new BadRequestException(message);
+    }
+  }
+
+  async retryTask(userId: string, id: string, taskId: string): Promise<CouncilSession> {
+    this.assertId(taskId);
+    const row = await this.requireSession(userId, id);
+    if (!row.checkpoint?.workflow || row.status === 'running') throw new BadRequestException('Pause the workflow before retrying a task');
+    const tasks = await this.workflow.store.list(userId, id, row.checkpoint.cycleId);
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || !['failed', 'blocked', 'cancelled', 'uncertain'].includes(task.state)) throw new BadRequestException('Only an interrupted task can be retried');
+    return this.runSession(userId, id, dependentTaskKeys(tasks, [task.key]));
   }
 
   async reviewCandidate(userId: string, profile: BuilderProfile, input: CouncilCandidate): Promise<CouncilReviewResult> {
@@ -259,6 +330,15 @@ export class CouncilService implements OnModuleInit {
   }
 
   private async execute(userId: string, id: string): Promise<void> {
+    for (let revision = 0; revision < 8; revision++) {
+      const row = await this.requireSession(userId, id);
+      if (!row.checkpoint?.workflow) break;
+      if (row.status !== 'running') return;
+      await this.workflow.execute(userId, id);
+      const current = await this.requireSession(userId, id);
+      if (current.revision === row.revision || current.status !== 'running') return;
+      if (revision === 7) { await this.pauseSession(userId, id); return; }
+    }
     // A fixed turn plan, plus bounded retries of a superseded summary. No whole-round replay.
     for (let attempt = 0; attempt < 12; attempt++) {
       let row = await this.requireSession(userId, id);
@@ -611,8 +691,8 @@ export class CouncilService implements OnModuleInit {
   }
 
   private async publish(userId: string, row: SessionRow, opinion: CouncilOpinion, engine: CouncilReport['engine'], error: string | null,
-    researchStance: CouncilReport['researchStance'] = null): Promise<boolean> {
-    return this.db.transaction(async (tx) => {
+    researchStance: CouncilReport['researchStance'] = null, coverage?: ResearchCoverage): Promise<boolean> {
+    const published = await this.db.transaction(async (tx) => {
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       if (!current || current.status !== 'running' || current.revision !== row.revision) return false;
@@ -623,12 +703,17 @@ export class CouncilService implements OnModuleInit {
         .from(llmBudgetUsage).where(and(eq(llmBudgetUsage.owner, userId), eq(llmBudgetUsage.taskId, row.taskId)));
       const [external] = await tx.select({ total: sql<number>`coalesce(sum(${councilMessages.tokensUsed}), 0)` }).from(councilMessages)
         .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id), sql`${councilMessages.metadata}->>'externalAgent' = 'true'`));
+      const workflowTasks = row.checkpoint?.workflow ? await tx.select({ attempts: councilResearchTasks.attempts }).from(councilResearchTasks)
+        .where(and(eq(councilResearchTasks.owner, userId), eq(councilResearchTasks.sessionId, row.id))) : [];
+      const externalTokens = row.checkpoint?.workflow ? workflowTasks.flatMap(t => t.attempts)
+        .reduce((sum, attempt) => sum + (attempt.externalAgent ? attempt.tokens ?? 0 : 0), 0) : Number(external?.total ?? 0);
       const historical = (current.checkpoint?.evidenceArchive ?? []).filter((item) => !row.evidenceSnapshot.some((fact) => fact.id === item.id))
         .map((item) => ({ ...item, title: (row.language === 'en' ? 'Earlier source: ' : '本轮较早资料：') + item.title }));
       await tx.insert(councilReports).values({ owner: userId, sessionId: row.id, version: (latest?.version ?? 0) + 1,
+        coverage,
         revision: row.revision, decision: opinion.decision, summary: opinion.summary, dissent: opinion.dissent,
         nextReviewCondition: opinion.nextReviewCondition, sourceRunId: row.sourceRunId,
-        candidate: row.candidate, engine, researchStance, tokensUsed: Math.min(2_147_483_647, Number(usage?.total ?? 0) + Number(external?.total ?? 0)),
+        candidate: row.candidate, engine, researchStance, tokensUsed: Math.min(2_147_483_647, Number(usage?.total ?? 0) + externalTokens),
         evidence: [...row.evidenceSnapshot, ...historical].map(({ id, title, content, sourceUrl, fetchedAt }) => ({ id, title, content, sourceUrl, fetchedAt })) });
       await tx.update(councilSessions).set({ status: error ? 'failed' : 'completed', error, updatedAt: new Date(),
         ...(error || !current.checkpoint ? {} : { checkpoint: { ...current.checkpoint,
@@ -636,6 +721,15 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return true;
     });
+    if (published && !error && engine !== 'basic' && this.memory) {
+      const [report] = await this.db.select().from(councilReports).where(and(eq(councilReports.owner, userId), eq(councilReports.sessionId, row.id)))
+        .orderBy(desc(councilReports.version)).limit(1);
+      if (report) try { await this.memory.archiveReport(userId, { sessionId: row.id, ticker: row.ticker, language: row.language,
+        report: this.mapReport(report), topic: row.checkpoint?.workflow?.goal ?? 'comprehensive',
+        ...(coverage && !coverage.complete ? { thesisCandidates: [] } : {}) }); }
+      catch { this.logger.warn(`Report ${report.id} could not be archived to research memory`); }
+    }
+    return published;
   }
 
   private async collectSnapshot(userId: string, ticker: string, language: 'zh-CN' | 'en',
@@ -745,9 +839,22 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilReports.owner, userId), eq(councilReports.sessionId, row.id))).orderBy(councilReports.version),
     ]);
     const activity = this.localAgents?.store ? await this.localAgents.store.eventsForSession(userId, row.id) : undefined;
+    const workflowTasks = row.checkpoint?.workflow ? await this.db.select().from(councilResearchTasks)
+      .where(and(eq(councilResearchTasks.owner, userId), eq(councilResearchTasks.sessionId, row.id))).orderBy(councilResearchTasks.position) : [];
+    const remoteAliases = new Map(workflowTasks.flatMap(task => task.attempts.flatMap(attempt => attempt.remoteTaskId ? [[attempt.remoteTaskId, attempt.id] as const] : [])));
+    const sequences = new Map<string, number>();
     const events = [...(activity?.events ?? []), ...messages.flatMap(message => message.metadata?.researchEvent ? [message.metadata.researchEvent] : [])]
       .sort((a, b) => a.at.localeCompare(b.at) || a.sequence - b.sequence);
+    if (row.checkpoint?.workflow) for (const event of events) {
+      event.taskId = remoteAliases.get(event.taskId) ?? event.taskId;
+      const key = `${event.revision}:${event.taskId}:${event.turn}`;
+      event.sequence = (sequences.get(key) ?? 0) + 1; sequences.set(key, event.sequence);
+    }
     return { id: row.id, profileId: row.profileId, profileVersion: row.profileVersion,
+      ...(row.checkpoint?.workflow ? { workflow: { goal: row.checkpoint.workflow.goal, peers: row.checkpoint.workflow.peers,
+        parallelism: row.checkpoint.workflow.parallelism, recallEnabled: row.checkpoint.workflow.recallEnabled,
+        memoryCount: row.checkpoint.workflow.memory?.items.length ?? 0,
+        tasks: workflowTasks.filter(task => task.cycleId === row.checkpoint!.cycleId).map(task => ({ ...task, updatedAt: task.updatedAt.toISOString() })) } } : {}),
       researchEvents: events.slice(-2048), researchEventsTruncated: activity?.truncated || events.length > 2048,
       ticker: row.ticker, language: row.language, status: row.status, revision: row.revision,
       messages: messages.map(({ id, role, memberName, content, revision, tokensUsed, createdAt, metadata }) => ({
@@ -757,9 +864,10 @@ export class CouncilService implements OnModuleInit {
           evidenceIds: metadata.evidenceIds, reasoningSummary: metadata.reasoningSummary, questions: metadata.questions,
           acquisition: metadata.acquisition, externalAgent: metadata.externalAgent, externalUsageUnknown: metadata.externalUsageUnknown, taskId: metadata.taskId } : {}),
       })), reports: reports.map((report) => ({ ...this.mapReport(report), externalUsageUnknown: messages.some((message) =>
-        message.createdAt <= report.createdAt && message.metadata?.externalUsageUnknown === true) })), error: row.error,
+        message.createdAt <= report.createdAt && message.metadata?.externalUsageUnknown === true) || workflowTasks.some(task =>
+          task.attempts.some(attempt => Date.parse(attempt.startedAt) <= report.createdAt.getTime() && attempt.externalUsageUnknown === true)) })), error: row.error,
       members: this.members(row.profileSnapshot), webResearch: row.profileSnapshot.council?.webResearch ?? false,
-      progress: row.checkpoint && row.checkpoint.nextTurn < row.checkpoint.turns.length ? {
+      progress: row.checkpoint && !row.checkpoint.workflow && row.checkpoint.nextTurn < row.checkpoint.turns.length ? {
         phase: row.checkpoint.turns[row.checkpoint.nextTurn].phase, memberId: row.checkpoint.turns[row.checkpoint.nextTurn].memberId,
         turn: row.checkpoint.nextTurn + 1, totalTurns: row.checkpoint.turns.length,
       } : null,
@@ -768,6 +876,7 @@ export class CouncilService implements OnModuleInit {
 
   private mapReport(row: ReportRow): CouncilReport {
     return { id: row.id, version: row.version, revision: row.revision, decision: row.decision, summary: row.summary,
+      coverage: row.coverage,
       dissent: row.dissent, nextReviewCondition: row.nextReviewCondition, evidence: row.evidence,
       sourceRunId: row.sourceRunId, candidate: row.candidate, paperOrderId: row.paperOrderId,
       tokensUsed: row.tokensUsed, engine: row.engine, createdAt: row.createdAt.toISOString(), researchStance: row.researchStance };

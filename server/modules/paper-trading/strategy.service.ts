@@ -173,6 +173,7 @@ export class StrategyService {
       for (const ticker of tickers) {
         if (!await this.stillActive(owner, profile)) throw new Error('Profile stopped');
         const session = await this.council.createSession(owner, { profileId: profile.id, ticker,
+          goal: 'comprehensive',
           language: profile.config.language, members: profile.config.council?.members, webResearch: profile.config.council?.webResearch });
         ids.push(session.id);
         await this.store.updateTask(task.id, 'claimed', null, ids);
@@ -211,6 +212,10 @@ export class StrategyService {
       const reports = selectedSessions.map((session) => session.reports.filter((report) => report.revision === session.revision).at(-1))
         .filter((report): report is CouncilReport => Boolean(report));
       if (!selectedSessions.length || reports.length !== selectedSessions.length || reports.some((report) => !report.evidence.length)) throw new Error('Incomplete research evidence');
+      if (selectedSessions.some((session, index) => session.workflow && (!reports[index].coverage?.complete
+        || reports[index].coverage?.revision !== session.revision || reports[index].coverage?.tasks.some(t => t.state !== 'accepted' || !t.acceptedAttemptId)))) {
+        throw new Error('Research tasks have not all passed review; no new strategy can be generated');
+      }
       const snapshots = await Promise.all(selectedSessions.map(async (session) => ({ ...await this.market.getSnapshot(session.ticker), ticker: session.ticker })));
       const packed = strategyPlanPrompt(profile, reports, snapshots, schedule.closesAt!);
       const output = await this.model.json(owner, profile.config.council?.members.find((member) => member.role === 'manager'), task.id,
@@ -224,7 +229,9 @@ export class StrategyService {
         expiresAt: new Date(schedule.closesAt!), now: new Date(), maxPositionPct: profile.config.maxOrderPct });
       if (profile.config.template === 'guard' && rules.some((rule) => rule.side === 'buy')) throw new Error('Guard cannot open positions');
       if (typeof data.summary !== 'string' || !data.summary.trim()) throw new Error('Strategy summary missing');
-      await this.store.publish(task, rules, reports.map((report) => report.id), data.summary, new Date(schedule.closesAt!));
+      await this.store.publish(task, rules, reports.map((report) => report.id), data.summary, new Date(schedule.closesAt!),
+        selectedSessions.flatMap((session, index) => session.workflow ? [{ sessionId: session.id, reportId: reports[index].id,
+          revision: session.revision, cycleId: reports[index].coverage!.cycleId }] : []));
     } catch {
       await this.store.updateTask(task.id, 'failed', 'Strategy generation failed validation; previous valid plan retained');
       if (profile.config.notifyOnProposal) await this.store.enqueue(owner, profile.id, `strategy-task-failed:${task.id}`, { event: 'strategy_error',

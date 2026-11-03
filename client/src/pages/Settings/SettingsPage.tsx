@@ -55,6 +55,7 @@ import ModelConnectionsPanel from './ModelConnectionsPanel';
 import BudgetPanel from './BudgetPanel';
 import LocalAgentsPanel from './LocalAgentsPanel';
 import SystemUpdateCard from './SystemUpdateCard';
+import ResearchMemorySettings from './ResearchMemorySettings';
 
 interface LlmDraft {
   baseUrl: string;
@@ -295,6 +296,7 @@ export default function SettingsPage() {
       <SystemUpdateCard />
       <ModelConnectionsPanel />
       <BudgetPanel />
+      <ResearchMemorySettings />
       <LocalAgentsPanel />
 
       {llm?.engine === 'basic' && (

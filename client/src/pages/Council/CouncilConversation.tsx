@@ -14,6 +14,7 @@ import { shouldSendCouncilMessage, shouldStartCouncilAfterMessage } from '@/util
 import { researchConversation } from '@/utils/research-events';
 import CouncilChatMessage from './CouncilChatMessage';
 import CouncilResearchProgress from './CouncilResearchProgress';
+import CouncilWorkflowPanel from './CouncilWorkflowPanel';
 
 interface CouncilConversationProps {
   session: CouncilSession;
@@ -72,6 +73,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
   };
 
   return <>
+    <CouncilWorkflowPanel session={session} actions={actions} />
     <div className="relative flex min-h-0 flex-1 flex-col bg-muted/25">
       <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions" aria-label={t('council.conversation')}
         className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 py-5 sm:px-6"

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gt, lte, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperAccounts, paperPositions } from '../../database/schema';
 import { strategyOutbox, strategyPlans, strategyProtections, strategyRuntime, strategySignals, strategyTasks } from '../../database/strategy.schema';
@@ -7,9 +7,12 @@ import type { BuilderProfile, Market } from '../../../shared/api.interface';
 import type { DailyStrategyPlan, StrategyCandidate, StrategyMarketRuntime, StrategyRule, StrategyRuntime } from '../../../shared/strategy.interface';
 import type { NotificationPayload } from '../notifications/notification.service';
 import { strategyReason } from './strategy.messages';
+import { councilReports, councilSessions } from '../../database/council.schema';
+import { councilResearchTasks } from '../../database/research-workflow.schema';
 
 export type StrategyTaskRow = typeof strategyTasks.$inferSelect;
 export type StrategyPlanRow = typeof strategyPlans.$inferSelect;
+export interface StrategyResearchFence { sessionId: string; reportId: string; revision: number; cycleId: string }
 export const mapStrategyPlan = (row: StrategyPlanRow): DailyStrategyPlan => ({
   id: row.id, profileId: row.profileId, profileVersion: row.profileVersion, version: row.version,
   market: row.market as Market, marketDate: row.marketDate, status: row.status as DailyStrategyPlan['status'],
@@ -50,8 +53,26 @@ export class StrategyStore {
     return row ?? null;
   }
   async publish(task: StrategyTaskRow, rules: StrategyRule[], reportIds: string[], summary: string,
-    expiresAt: Date): Promise<StrategyPlanRow> {
+    expiresAt: Date, researchFence: StrategyResearchFence[] = []): Promise<StrategyPlanRow> {
     return this.db.transaction(async (tx) => {
+      if (researchFence.length) {
+        const sessions = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, task.owner),
+          inArray(councilSessions.id, researchFence.map(f => f.sessionId)))).orderBy(councilSessions.id).for('update');
+        for (const fence of researchFence) {
+          const session = sessions.find(s => s.id === fence.sessionId);
+          if (!session || session.status !== 'completed' || session.revision !== fence.revision
+            || session.checkpoint?.cycleId !== fence.cycleId || !task.sessionIds.includes(session.id) || !reportIds.includes(fence.reportId)) throw new Error('Research changed; plan discarded');
+          const [report] = await tx.select().from(councilReports).where(and(eq(councilReports.owner, task.owner),
+            eq(councilReports.id, fence.reportId), eq(councilReports.sessionId, fence.sessionId), eq(councilReports.revision, fence.revision)));
+          const tasks = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, task.owner),
+            eq(councilResearchTasks.sessionId, fence.sessionId), eq(councilResearchTasks.cycleId, fence.cycleId)));
+          if (!report?.coverage?.complete || report.coverage.revision !== fence.revision || report.coverage.cycleId !== fence.cycleId
+            || !tasks.length || tasks.length !== report.coverage.tasks.length || tasks.some(t => t.revision !== fence.revision
+              || t.state !== 'accepted' || !t.acceptedAttemptId || !report.coverage!.tasks.some(c => c.id === t.id && c.acceptedAttemptId === t.acceptedAttemptId && c.state === 'accepted'))) {
+            throw new Error('Research is not accepted; plan discarded');
+          }
+        }
+      }
       const [profile] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.owner, task.owner),
         eq(builderProfiles.id, task.profileId))).for('update');
       if (profile?.status !== 'active' || profile.version !== task.profileVersion

@@ -1,19 +1,29 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { and, desc, eq, lte, ne, or } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { councilMessages, councilReports, councilSessions } from '../../database/council.schema';
+import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { deepReport } from '../../database/schema';
 import { QuoteService } from '../quote/quote.service';
 import { EvidenceService, type EvidenceInput } from '../multi-agent/evidence.service';
+import { ResearchMemoryService } from '../research-memory/research-memory.service';
+import type { CouncilEvidence } from '../council/council.rules';
 import type { QuoteResponse } from '@shared/api.interface';
 import type { ResearchSource, ResearchToolBundle, ResearchToolDescriptor, ResearchToolRequest,
-  ResearchToolResult, ResearchToolScope } from '@shared/research-tools.interface';
+  ResearchToolResult, ResearchToolScope, ResearchValuationRequest, ResearchValuationQuote } from '@shared/research-tools.interface';
+import type { ResearchMemoryRecall } from '@shared/research-memory.interface';
 import { RESEARCH_TOOLS, toolDescriptor, validRequest, type ResearchToolDefinition } from './research-tools.registry';
 import { boundedResult, clipped, isoDate, researchFailure, researchSource } from './research-tools.output';
+import { extractValuationInputs, frozenPeerTickers, valuationScenarios } from './research-valuation';
 
 type SessionRow = typeof councilSessions.$inferSelect;
+interface ScopedSession { session: SessionRow; authority: string }
+type ScopeDatabase = Pick<PostgresJsDatabase, 'select'>;
+const ARCHIVED_TOOLS = new Set(['get_quotes', 'get_financials', 'get_news', 'get_valuation',
+  'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web']);
 interface CallOptions { signal?: AbortSignal; shouldContinue?: () => Promise<boolean> }
-interface HandlerInput { limit?: number; query?: string }
+interface HandlerInput extends Partial<ResearchValuationRequest> { limit?: number; query?: string }
 interface SavedReport {
   savedAt: number; data: Record<string, unknown>; source: ResearchSource; truncated: boolean;
 }
@@ -25,6 +35,7 @@ export class ResearchToolsService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly quotes: QuoteService,
     private readonly evidence: EvidenceService,
+    private readonly memory: ResearchMemoryService,
   ) {}
 
   descriptors(): ResearchToolDescriptor[] {
@@ -57,13 +68,19 @@ export class ResearchToolsService {
     let started: boolean = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
+    let authority: string | undefined;
+    const assertActive = (): void => {
+      if (!active || options.signal?.aborted || scope.expiresAt <= Date.now()) throw new ScopeEnded();
+    };
     const guard = async (): Promise<SessionRow> => {
-      if (!active || options.signal?.aborted) throw new ScopeEnded();
+      assertActive();
       if (options.shouldContinue && !(await options.shouldContinue())) throw new ScopeEnded();
-      if (!active || options.signal?.aborted) throw new ScopeEnded();
-      const session: SessionRow | null = await this.currentSession(owner, scope);
-      if (!session || !active || options.signal?.aborted) throw new ScopeEnded();
-      return session;
+      assertActive();
+      const current = await this.currentSession(owner, scope);
+      if (!current || authority && current.authority !== authority) throw new ScopeEnded();
+      authority ??= current.authority;
+      assertActive();
+      return current.session;
     };
     const operation = async (): Promise<ResearchToolResult> => {
       try {
@@ -72,12 +89,14 @@ export class ResearchToolsService {
         const result: ResearchToolResult = await this.handle(tool, owner, scope, session,
           parsed.data as HandlerInput, guard);
         await guard();
-        return boundedResult(result);
+        const archived = await this.archiveProviderResult(tool, owner, scope, boundedResult(result), authority!, assertActive);
+        await guard();
+        return archived;
       } catch (error) {
         if (error instanceof ScopeEnded || !active || options.signal?.aborted) {
           return researchFailure('cancelled', options.signal?.aborted ? 'RESEARCH_CANCELLED' : 'RESEARCH_SCOPE_EXPIRED', started);
         }
-        const code: string = error instanceof Error && /^RESEARCH_(TASK_LIMIT|DAILY_LIMIT|BUDGET_UNAVAILABLE)$/.test(error.message)
+        const code: string = error instanceof Error && /^RESEARCH_(TASK_LIMIT|DAILY_LIMIT|BUDGET_UNAVAILABLE|INVALID_PEERS)$/.test(error.message)
           ? error.message : 'RESEARCH_PROVIDER_ERROR';
         return researchFailure('failed', code);
       }
@@ -95,20 +114,65 @@ export class ResearchToolsService {
     }
   }
 
-  private async currentSession(owner: string, scope: ResearchToolScope): Promise<SessionRow | null> {
+  private async currentSession(owner: string, scope: ResearchToolScope,
+    database: ScopeDatabase = this.db, lock = false): Promise<ScopedSession | null> {
     if (!owner || !scope || !Number.isFinite(scope.expiresAt) || scope.expiresAt <= Date.now()
       || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu.test(scope.sessionId)
       || !Number.isInteger(scope.revision) || scope.revision < 1 || !Number.isInteger(scope.turn) || scope.turn < 0
       || !/^[A-Z0-9][A-Z0-9.^-]{0,19}$/u.test(scope.ticker)) return null;
-    const [row]: SessionRow[] = await this.db.select().from(councilSessions)
+    const sessionQuery = database.select().from(councilSessions)
       .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, scope.sessionId))).limit(1);
+    const [row]: SessionRow[] = await (lock ? sessionQuery.for('update') : sessionQuery);
     if (!row || scope.expiresAt <= Date.now() || row.status !== 'running' || row.revision !== scope.revision
-      || row.ticker !== scope.ticker || row.language !== scope.language || row.checkpoint?.nextTurn !== scope.turn
-      || row.checkpoint.turns[scope.turn]?.memberId !== scope.memberId
+      || row.ticker !== scope.ticker || row.language !== scope.language || !row.checkpoint
       || (scope.webResearch && !row.profileSnapshot.council?.webResearch)) return null;
     const memberIds: string[] = row.profileSnapshot.council?.members.map((member) => member.id)
       ?? ['researcher', 'challenger', 'manager'];
-    return memberIds.includes(scope.memberId) ? row : null;
+    if (!memberIds.includes(scope.memberId)) return null;
+    if (!row.checkpoint.workflow) {
+      return row.checkpoint.nextTurn === scope.turn && row.checkpoint.turns[scope.turn]?.memberId === scope.memberId
+        ? { session: row, authority: JSON.stringify([row.checkpoint.cycleId, row.checkpoint.inflight?.id, scope.turn]) } : null;
+    }
+    const taskQuery = database.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner),
+      eq(councilResearchTasks.sessionId, row.id), eq(councilResearchTasks.cycleId, row.checkpoint.cycleId),
+      eq(councilResearchTasks.revision, scope.revision), eq(councilResearchTasks.position, scope.turn),
+      eq(councilResearchTasks.state, 'running'))).limit(1);
+    const [task] = await (lock ? taskQuery.for('update') : taskQuery);
+    const attempt = task?.attempts.at(-1);
+    if (!task || !attempt || attempt.state !== 'running' || attempt.revision !== scope.revision) return null;
+    const assigned = attempt.kind === 'review'
+      ? row.profileSnapshot.council?.members.find(member => member.role === 'manager')?.id : task.memberId;
+    return assigned === scope.memberId && scope.expiresAt > Date.now()
+      ? { session: row, authority: JSON.stringify([row.checkpoint.cycleId, task.id, attempt.id]) } : null;
+  }
+
+  /** Read-only tools may archive their server-produced results, never caller-supplied facts or live memory/report copies. */
+  private async archiveProviderResult(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
+    result: ResearchToolResult, authority: string, assertActive: () => void): Promise<ResearchToolResult> {
+    if (!ARCHIVED_TOOLS.has(tool.name) || !['succeeded', 'partial'].includes(result.status)
+      || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return result;
+    const id = randomUUID();
+    const bounded = boundedResult({ ...result, data: { evidenceId: id, ...result.data } });
+    if (!bounded.data || typeof bounded.data !== 'object' || !('evidenceId' in bounded.data)
+      || bounded.data.evidenceId !== id) return bounded;
+    const evidence: CouncilEvidence = { id, role: tool.kind === 'news' || tool.kind === 'web' ? 'sentiment' : 'fundamental',
+      evidenceType: 'tool_result', title: `${tool.kind === 'web' ? '[Web source · unverified] ' : ''}${tool.name} (${scope.ticker})`, content: JSON.stringify(bounded),
+      sourceUrl: bounded.sources[0]?.url ?? null,
+      sourceName: tool.kind === 'web' ? `${tool.source} (unverified)` : tool.source,
+      fetchedAt: bounded.asOf, relevanceScore: tool.kind === 'web' ? 0 : 1,
+      ...(tool.kind ? { researchKind: tool.kind } : {}) };
+    await this.db.transaction(async tx => {
+      // Match the workflow store's lock order; reload under lock so concurrent
+      // results append to the current snapshot instead of replacing each other.
+      const current = await this.currentSession(owner, scope, tx, true);
+      if (!current || current.authority !== authority) throw new ScopeEnded();
+      assertActive();
+      await tx.update(councilSessions).set({ evidenceSnapshot: [...current.session.evidenceSnapshot, evidence], updatedAt: new Date() })
+        .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, scope.sessionId),
+          eq(councilSessions.revision, scope.revision)));
+      assertActive();
+    });
+    return bounded;
   }
 
   private async handle(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
@@ -116,12 +180,94 @@ export class ResearchToolsService {
     if (tool.name === 'get_quotes') return this.quote(scope, tool.source);
     if (tool.name === 'get_research_report') return this.reports(owner, scope, input.limit ?? 1);
     if (tool.name === 'get_discussion_context') return this.context(owner, scope, session, input.limit ?? 8);
+    if (tool.name === 'get_research_memory') return this.researchMemory(owner, scope, session);
+    if (tool.name === 'get_peer_comparison') return this.peerComparison(owner, scope, session, guard);
+    if (tool.name === 'get_valuation_scenarios') {
+      if (!input.metric || !input.multiples) return researchFailure('failed', 'RESEARCH_INVALID_ARGUMENTS');
+      return this.scenarios(owner, scope, session, { metric: input.metric, multiples: input.multiples }, guard);
+    }
     if (!tool.kind) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
     const items: EvidenceInput[] = await this.evidence.collectResearch(scope.ticker, owner, tool.kind, scope.language,
       { taskId: session.taskId, webResearch: scope.webResearch, query: input.query,
         shouldContinue: async () => { try { await guard(); return true; } catch { return false; } } });
     const now: string = new Date().toISOString();
     return this.evidenceResult(items, scope.ticker, now, input.limit ?? 10);
+  }
+
+  private async researchMemory(owner: string, scope: ResearchToolScope, session: SessionRow): Promise<ResearchToolResult> {
+    const workflow = session.checkpoint?.workflow;
+    let recall: ResearchMemoryRecall;
+    if (workflow?.recallEnabled === false || workflow && !workflow.memory) {
+      recall = { items: [], context: '', preferences: await this.memory.getPreferences(owner) };
+    } else if (workflow?.memory) recall = await this.memory.refreshRecall(owner, workflow.memory);
+    else recall = await this.memory.recall(owner, { ticker: scope.ticker });
+    const now = new Date().toISOString();
+    const enabled = workflow?.recallEnabled !== false && recall.preferences.recallEnabled;
+    return { status: recall.items.length ? 'succeeded' : 'unavailable', asOf: now, truncated: false,
+      ...(!recall.items.length ? { errorCode: enabled ? 'RESEARCH_NO_DATA' : 'RESEARCH_RECALL_DISABLED' } : {}),
+      sources: recall.items.flatMap(item => item.citations.map(citation =>
+        researchSource(citation.title, citation.sourceUrl, isoDate(citation.fetchedAt) ?? now))).slice(0, 12),
+      data: { ticker: scope.ticker, enabled, preferences: recall.preferences, items: recall.items,
+        limitations: ['Historical memory contains opinion, not verified current financial facts.',
+          'Pinned references are refreshed against live owner-owned sources; disabled, deleted and excluded data is omitted.'] } };
+  }
+
+  private async financialEvidence(owner: string, scope: ResearchToolScope, session: SessionRow,
+    guard: () => Promise<SessionRow>): Promise<EvidenceInput[]> {
+    await guard();
+    return this.evidence.collectResearch(scope.ticker, owner, 'financials', scope.language,
+      { taskId: session.taskId, webResearch: false,
+        shouldContinue: async () => { try { await guard(); return true; } catch { return false; } } });
+  }
+
+  private async peerComparison(owner: string, scope: ResearchToolScope, session: SessionRow,
+    guard: () => Promise<SessionRow>): Promise<ResearchToolResult> {
+    const tickers = frozenPeerTickers(scope.ticker, session.checkpoint?.workflow?.peers ?? []);
+    const now = new Date().toISOString();
+    const results = await Promise.all(tickers.map(async ticker => {
+      await guard();
+      const peerScope = { ...scope, ticker };
+      const [quote, evidence] = await Promise.allSettled([
+        this.quote(peerScope, 'Configured market-data provider (exact provider is not reported)'),
+        this.financialEvidence(owner, peerScope, session, guard),
+      ]);
+      const quoteResult = quote.status === 'fulfilled' ? quote.value : researchFailure('unavailable', 'RESEARCH_PROVIDER_ERROR');
+      const items = evidence.status === 'fulfilled' ? evidence.value : [];
+      const financials = this.evidenceResult(items, ticker, now, 4);
+      return { ticker, quote: quoteResult, financials, valuationInputs: extractValuationInputs(items, now) };
+    }));
+    const available = results.some(row => row.quote.status === 'succeeded' || row.quote.status === 'partial'
+      || row.financials.status === 'succeeded' || row.financials.status === 'partial');
+    const complete = results.every(row => row.quote.status === 'succeeded' && row.financials.status === 'succeeded');
+    return { status: !available ? 'unavailable' : complete ? 'succeeded' : 'partial', asOf: now, truncated: false,
+      sources: results.flatMap(row => [...row.quote.sources, ...row.financials.sources]),
+      data: { primary: scope.ticker, frozenPeers: tickers.slice(1), companies: results.map(row => ({ ticker: row.ticker,
+        quote: { status: row.quote.status, data: row.quote.data },
+        financials: { status: row.financials.status, data: row.financials.data }, valuationInputs: row.valuationInputs })),
+        comparability: ['Peer membership is frozen by the session and does not establish business comparability.',
+          'Currency and reporting periods must match before monetary comparison; no FX conversion or annualization is performed.',
+          'Missing or incompatible data is not zero and must remain a gap.'] } };
+  }
+
+  private async scenarios(owner: string, scope: ResearchToolScope, session: SessionRow,
+    input: ResearchValuationRequest, guard: () => Promise<SessionRow>): Promise<ResearchToolResult> {
+    if (input.multiples.bear > input.multiples.base || input.multiples.base > input.multiples.bull) {
+      return researchFailure('failed', 'RESEARCH_INVALID_ARGUMENTS');
+    }
+    await guard();
+    const [financials, price] = await Promise.allSettled([
+      this.financialEvidence(owner, scope, session, guard), this.quotes.getQuote(scope.ticker),
+    ]);
+    const now = new Date().toISOString();
+    const quote = price.status === 'fulfilled' ? price.value : null;
+    const stamp = isoDate(quote?.timestamp);
+    const sourcedQuote: ResearchValuationQuote | null = quote && Number(quote.price) > 0 && Number.isFinite(Number(quote.price))
+      && typeof quote.currency === 'string' && /^[A-Z]{3}$/u.test(quote.currency) && stamp
+      ? { price: Number(quote.price), currency: quote.currency, asOf: stamp } : null;
+    const result = valuationScenarios(scope.ticker,
+      extractValuationInputs(financials.status === 'fulfilled' ? financials.value : [], now), input, sourcedQuote, now);
+    if (sourcedQuote) result.sources.push(researchSource('Configured market-data provider (retrieval time; exact provider not reported)', undefined, sourcedQuote.asOf));
+    return result;
   }
 
   private async quote(scope: ResearchToolScope, sourceTitle: string): Promise<ResearchToolResult> {
@@ -214,10 +360,16 @@ export class ResearchToolsService {
     const gaps = session.evidenceSnapshot.filter((item) => item.sourceName === 'Data Unavailable' || item.relevanceScore <= 0);
     const facts = session.evidenceSnapshot.filter((item) => !gaps.includes(item));
     const evidence = [...gaps.slice(0, 6), ...facts].slice(0, 12);
+    const workflow = session.checkpoint?.workflow;
+    const memory = workflow ? await this.researchMemory(owner, scope, session) : null;
     return { status: 'succeeded', asOf: now, truncated: rows.length > limit || session.evidenceSnapshot.length > evidence.length,
       sources: [researchSource('Assigned discussion session', undefined, now)],
       data: { ticker: scope.ticker, sessionId: scope.sessionId, revision: scope.revision, memberId: scope.memberId,
         turn: scope.turn, capturedAt: now,
+        ...(workflow ? { workflow: { goal: workflow.goal,
+          frozenPeers: frozenPeerTickers(scope.ticker, workflow.peers).slice(1), memory: memory?.data,
+          valuationInputs: extractValuationInputs(facts, now),
+          valuationAssumptions: 'No scenario multiples have been supplied in this snapshot; live calculation requires explicit assumptions.' } } : {}),
         omittedEvidenceCount: session.evidenceSnapshot.length - evidence.length,
         omittedDataGapCount: Math.max(0, gaps.length - 6),
         evidence: evidence.map((item) => ({ id: item.id, title: item.title, content: item.content,

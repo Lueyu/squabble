@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CouncilSession } from '@shared/council.interface';
 import {
   createCouncilSession, fetchCouncilSession, fetchCouncilSessions, pauseCouncilSession,
-  postCouncilMessage, runCouncilSession,
+  postCouncilMessage, runCouncilSession, retryCouncilTask,
 } from '@/api/council';
 
 export function useCouncilSessions() {
@@ -33,5 +33,6 @@ export function useCouncilActions() {
   });
   const run = useMutation({ mutationFn: runCouncilSession, retry: false, onSuccess: update });
   const pause = useMutation({ mutationFn: pauseCouncilSession, retry: false, onSuccess: update });
-  return { create, send, run, pause };
+  const retry = useMutation({ mutationFn: ({ id, taskId }: { id: string; taskId: string }) => retryCouncilTask(id, taskId), retry: false, onSuccess: update });
+  return { create, send, run, pause, retry };
 }

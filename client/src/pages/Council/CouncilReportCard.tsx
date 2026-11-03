@@ -5,6 +5,7 @@ import type { CouncilReport, CouncilSession } from '@shared/council.interface';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { isCurrentCouncilReport } from '@/utils/council-state';
+import { workflowCopy } from './workflow-copy';
 
 function safeSourceUrl(value: string | null): string | null {
   if (!value) return null;
@@ -19,7 +20,8 @@ export default function CouncilReportCard({ report, session, profileVersion }: {
 }) {
   const { t, i18n } = useTranslation();
   const current = isCurrentCouncilReport(report, session, profileVersion);
-  return <Card className={`min-w-0 ${current ? 'border-primary/30' : 'border-border'}`}>
+  const copy = workflowCopy[i18n.language.startsWith('zh') ? 'zh-CN' : 'en'];
+  return <Card id={`report-${report.id}-v${report.version}`} className={`min-w-0 ${current ? 'border-primary/30' : 'border-border'}`}>
     <CardHeader>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <CardTitle className="flex items-center gap-2 font-serif text-lg"><FileCheck2 className="size-5 text-primary" />
@@ -33,6 +35,8 @@ export default function CouncilReportCard({ report, session, profileVersion }: {
       </div>
     </CardHeader>
     <CardContent className="space-y-4">
+      {report.coverage && <p className={`rounded-lg border p-3 text-sm ${report.coverage.complete ? 'border-border' : 'border-destructive/30 text-destructive'}`}>
+        {report.coverage.complete ? copy.complete : copy.incomplete}</p>}
       {!current && <p className="rounded-lg bg-muted p-3 text-xs leading-5 text-muted-foreground">{t('council.report.obsoleteHint')}</p>}
       <p className="whitespace-pre-wrap break-words text-sm leading-7">{report.summary}</p>
       {report.candidate && <div className="rounded-lg border border-border p-3 text-sm">

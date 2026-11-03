@@ -32,6 +32,9 @@ export async function pauseCouncilSession(id: string): Promise<CouncilSession> {
   const response = await http.post<CouncilSession>(`/api/council/sessions/${encodeURIComponent(id)}/pause`);
   return response.data;
 }
+export async function retryCouncilTask(id: string, taskId: string): Promise<CouncilSession> {
+  return (await http.post<CouncilSession>(`/api/council/sessions/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/retry`)).data;
+}
 
 export async function fetchLlmBudget(): Promise<LlmBudgetSettings> {
   const response = await http.get<LlmBudgetSettings>('/api/llm-budget');

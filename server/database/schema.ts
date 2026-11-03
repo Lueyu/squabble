@@ -892,3 +892,5 @@ export const userApiSettings = pgTable("user_api_settings", {
   createdAt: customTimestamptz("created_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: customTimestamptz("updated_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
+export * from './research-memory.schema';
+export * from './research-workflow.schema';

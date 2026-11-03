@@ -1,10 +1,12 @@
 import type { CouncilMessage, CouncilPhase, CouncilResearchKind } from '@shared/council.interface';
 import type { CouncilEvidence } from './council.rules';
 import type { ResearchEvent } from '../../../shared/research-events.interface';
+import type { ResearchWorkflowConfig } from '../../../shared/research-workflow.interface';
 
 export interface DialogueTurn { memberId: string; phase: Exclude<CouncilPhase, 'progress'> }
 export interface ResearchRequest { kind: CouncilResearchKind; query?: string }
 export interface CouncilCheckpoint {
+  workflow?: ResearchWorkflowConfig;
   cycleId: string;
   turns: DialogueTurn[];
   nextTurn: number;

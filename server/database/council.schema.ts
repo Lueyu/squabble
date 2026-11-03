@@ -41,6 +41,7 @@ export const councilMessages = pgTable('council_messages', {
 }, (table) => [index('council_messages_session_idx').on(table.owner, table.sessionId, table.createdAt)]);
 
 export const councilReports = pgTable('council_reports', {
+  coverage: jsonb('coverage').$type<CouncilReport['coverage']>(),
   id: uuid('id').primaryKey().defaultRandom(),
   owner: text('owner').notNull(),
   sessionId: uuid('session_id').notNull().references(() => councilSessions.id, { onDelete: 'cascade' }),

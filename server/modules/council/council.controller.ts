@@ -39,6 +39,12 @@ export class CouncilController {
   }
 
   @NeedLogin()
+  @Post(':id/tasks/:taskId/retry')
+  retry(@Req() request: Request, @Param('id') id: string, @Param('taskId') taskId: string) {
+    return this.council.retryTask(request.userContext.userId, id, taskId);
+  }
+
+  @NeedLogin()
   @Post(':id/pause')
   pause(@Req() request: Request, @Param('id') id: string) {
     return this.council.pauseSession(request.userContext.userId, id);

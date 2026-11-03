@@ -132,7 +132,7 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
       const users = await client.query('SELECT count(*)::int AS count FROM users');
       assert.equal(users.rows[0].count, 0);
       const migration = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(migration.rows[0].version, 16);
+      assert.equal(migration.rows[0].version, 18);
       const latestColumn = await client.query("SELECT enabled FROM llm_budget_settings LIMIT 0");
       assert.deepEqual(latestColumn.rows, []);
       const strategyTables = await client.query(`SELECT table_name FROM information_schema.tables
@@ -250,7 +250,7 @@ test('desktop recovers a private PostgreSQL cluster after its owner is force kil
     await client.connect();
     try {
       const version = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(version.rows[0].version, 16);
+      assert.equal(version.rows[0].version, 18);
     } finally {
       await client.end();
     }
@@ -293,7 +293,7 @@ test('desktop reclaims an active private PostgreSQL cluster before starting anot
     await client.connect();
     try {
       const version = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(version.rows[0].version, 16);
+      assert.equal(version.rows[0].version, 18);
     } finally {
       await client.end();
     }
