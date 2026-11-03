@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import type { Market } from '@shared/api.interface';
 import type { ResearchMemoryPreferences, ResearchMemoryRecall, ResearchMemoryRecallItem } from '@shared/research-memory.interface';
 import { packMemoryContext } from './research-memory.context';
+export { compareEvidence, evidenceVisibleAt, thesisFreshness } from './research-memory.temporal';
 
 export function canonicalMemorySymbol(ticker: string, market: Market | undefined,
   detect: (ticker: string) => { market: Market; displaySymbol: string; symbolNative: string }): { ticker: string; market: Market } {
@@ -22,7 +23,6 @@ export function canonicalMemorySymbol(ticker: string, market: Market | undefined
   return { market: 'US', ticker: resolved.displaySymbol };
 }
 
-export const MEMORY_STALE_MS = 30 * 86_400_000;
 export const MEMORY_CONTEXT_LIMIT = 6000;
 export function normalizedTopic(topic?: string): string { return (topic?.trim().toLowerCase() || 'general').slice(0, 120); }
 

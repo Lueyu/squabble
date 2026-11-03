@@ -17,6 +17,7 @@ import { RESEARCH_TOOLS, toolDescriptor, validRequest, type ResearchToolDefiniti
 import { boundedResult, clipped, isoDate, researchFailure, researchSource } from './research-tools.output';
 import { extractValuationInputs, frozenPeerTickers, valuationScenarios } from './research-valuation';
 import { memoryReference, memoryToolData } from '../research-memory/research-memory.context';
+import { compactToolEvidence, toolEvidenceMetadata } from './research-tools.evidence';
 
 type SessionRow = typeof councilSessions.$inferSelect;
 interface ScopedSession { session: SessionRow; authority: string; review?: boolean }
@@ -24,7 +25,7 @@ type ScopeDatabase = Pick<PostgresJsDatabase, 'select'>;
 const ARCHIVED_TOOLS = new Set(['get_quotes', 'get_financials', 'get_news', 'get_valuation',
   'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web']);
 interface CallOptions { signal?: AbortSignal; shouldContinue?: () => Promise<boolean> }
-interface HandlerInput extends Partial<ResearchValuationRequest> { limit?: number; query?: string }
+interface HandlerInput extends Partial<ResearchValuationRequest> { limit?: number; query?: string; asOf?: string }
 interface SavedReport {
   savedAt: number; data: Record<string, unknown>; source: ResearchSource; truncated: boolean;
 }
@@ -92,7 +93,7 @@ export class ResearchToolsService {
         const result: ResearchToolResult = await this.handle(tool, owner, scope, session,
           parsed.data as HandlerInput, guard, review);
         await guard();
-        const archived = await this.archiveProviderResult(tool, owner, scope, boundedResult(result), authority!, assertActive);
+        const archived = await this.archiveProviderResult(tool, owner, scope, result, authority!, assertActive);
         await guard();
         return archived;
       } catch (error) {
@@ -153,9 +154,10 @@ export class ResearchToolsService {
   private async archiveProviderResult(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
     result: ResearchToolResult, authority: string, assertActive: () => void): Promise<ResearchToolResult> {
     if (!ARCHIVED_TOOLS.has(tool.name) || !['succeeded', 'partial'].includes(result.status)
-      || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return result;
+      || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return boundedResult(result);
     const id = randomUUID();
-    const bounded = boundedResult({ ...result, data: { evidenceId: id, ...result.data } });
+    const metadata = toolEvidenceMetadata(result.data, tool.name);
+    const bounded = boundedResult({ ...result, data: compactToolEvidence({ evidenceId: id, ...result.data }) });
     if (!bounded.data || typeof bounded.data !== 'object' || !('evidenceId' in bounded.data)
       || bounded.data.evidenceId !== id) return bounded;
     const evidence: CouncilEvidence = { id, role: tool.kind === 'news' || tool.kind === 'web' ? 'sentiment' : 'fundamental',
@@ -163,6 +165,7 @@ export class ResearchToolsService {
       sourceUrl: bounded.sources[0]?.url ?? null,
       sourceName: tool.kind === 'web' ? `${tool.source} (unverified)` : tool.source,
       fetchedAt: bounded.asOf, relevanceScore: tool.kind === 'web' ? 0 : 1,
+      ...(metadata.sources.length ? { metadata } : {}),
       ...(tool.kind ? { researchKind: tool.kind } : {}) };
     await this.db.transaction(async tx => {
       // Match the workflow store's lock order; reload under lock so concurrent
@@ -183,7 +186,7 @@ export class ResearchToolsService {
     if (tool.name === 'get_quotes') return this.quote(scope, tool.source);
     if (tool.name === 'get_research_report') return this.reports(owner, scope, input.limit ?? 1);
     if (tool.name === 'get_discussion_context') return this.context(owner, scope, session, input.limit ?? 8, review);
-    if (tool.name === 'get_research_memory') return this.researchMemory(owner, scope, session, review);
+    if (tool.name === 'get_research_memory') return this.researchMemory(owner, scope, session, review, input.asOf);
     if (tool.name === 'get_peer_comparison') return this.peerComparison(owner, scope, session, guard);
     if (tool.name === 'get_valuation_scenarios') {
       if (!input.metric || !input.multiples) return researchFailure('failed', 'RESEARCH_INVALID_ARGUMENTS');
@@ -197,7 +200,7 @@ export class ResearchToolsService {
     return this.evidenceResult(items, scope.ticker, now, input.limit ?? 10);
   }
 
-  private async researchMemory(owner: string, scope: ResearchToolScope, session: SessionRow, review = false): Promise<ResearchToolResult> {
+  private async researchMemory(owner: string, scope: ResearchToolScope, session: SessionRow, review = false, asOf?: string): Promise<ResearchToolResult> {
     const workflow = session.checkpoint?.workflow;
     let recall: ResearchMemoryRecall;
     if (review || scope.memoryReferences?.length === 0) {
@@ -206,8 +209,8 @@ export class ResearchToolsService {
       const requested = workflow.memory?.items.slice(0, 3).map(memoryReference) ?? [];
       recall = { items: [], context: '', preferences: await this.memory.getPreferences(owner), requested,
         omissions: requested.map(item => ({ ...item, reason: 'disabled' })) };
-    } else if (workflow?.memory) recall = await this.memory.refreshRecall(owner, workflow.memory, { ticker: scope.ticker });
-    else recall = await this.memory.recall(owner, { ticker: scope.ticker });
+    } else if (workflow?.memory) recall = await this.memory.refreshRecall(owner, workflow.memory, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) });
+    else recall = await this.memory.recall(owner, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) });
     const now = new Date().toISOString();
     if (!review && scope.memoryReferences) {
       const permitted = (item: { id: string; kind: string; version: number }) => scope.memoryReferences!.some(ref =>
@@ -217,7 +220,7 @@ export class ResearchToolsService {
     }
     const enabled = !review && workflow?.recallEnabled !== false && recall.preferences.recallEnabled;
     const data = { ...memoryToolData(recall), enabled };
-    return { status: data.items.length ? 'succeeded' : 'unavailable', asOf: now,
+    return { status: data.items.length ? 'succeeded' : 'unavailable', asOf: recall.asOf ?? asOf ?? now,
       truncated: data.inventory.omissions.length > 0,
       ...(!data.items.length ? { errorCode: enabled ? 'RESEARCH_NO_DATA' : 'RESEARCH_RECALL_DISABLED' } : {}),
       // Full citations are protected inside each unit; the display envelope need not duplicate them.
@@ -311,11 +314,12 @@ export class ResearchToolsService {
       truncated: facts.length > selected.length || gaps.length > 10,
       ...(!facts.length ? { errorCode: 'RESEARCH_NO_DATA' } : {}),
       data: { ticker, evidence: selected.map((item: EvidenceInput) => ({ title: clipped(item.title, 200),
-        content: item.content, evidenceType: item.evidenceType, source: researchSource(item.sourceName, item.sourceUrl, asOf) })),
+        content: item.content, evidenceType: item.evidenceType, source: researchSource(item.sourceName, item.sourceUrl, asOf),
+        ...(item.metadata ? { metadata: { sources: item.metadata.sources.map(source => ({ ...source,
+          observedAt: source.observedAt ?? asOf, observationBasis: 'server' as const })) } } : {}) })),
       gaps: gaps.slice(0, 10).map((item: EvidenceInput) => ({ title: clipped(item.title, 200), content: item.content })),
       ...(!items.length ? { availability: 'No verified data was returned.' } : {}),
-      currencyAndUnits: 'Only currencies, units and reporting periods explicitly stated in each source are known.',
-      timing: 'asOf is acquisition time; financial reporting periods and publication dates remain in source excerpts.' } };
+      timing: 'asOf is acquisition; unstated dates and units are unknown.' } };
   }
 
   private async reports(owner: string, scope: ResearchToolScope, limit: number): Promise<ResearchToolResult> {

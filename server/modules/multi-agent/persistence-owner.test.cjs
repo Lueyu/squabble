@@ -83,3 +83,21 @@ test('retry cleanup stays scoped to failed owner/run and refuses an already publ
   await assert.rejects(service.resetFailedRunArtifacts('alice', 'failed-run'), /report already exists/);
   assert.equal(removed.length, 5);
 });
+
+test('public evidence cannot assert provider verification, while internal provider persistence keeps metadata', async () => {
+  const written = [];
+  const db = { insert: () => ({ values: rows => { written.push(...rows); return { returning: async () => rows }; } }) };
+  const { MultiAgentService } = load('multi-agent.service.ts');
+  const service = new MultiAgentService(db);
+  service.ensureRunOwner = async () => undefined;
+  service.mapEvidence = value => value;
+  const metadata = { sources: [{ origin: 'provider', verification: 'server-verified', facts: [{ value: 100 }] }] };
+  const evidence = { role: 'fundamental', evidenceType: 'financial', title: 'Filing', content: 'Revenue',
+    sourceUrl: 'https://example.test/filing', fetchedAt: new Date().toISOString(), metadata };
+  await service.addEvidence('alice', 'run', [evidence]);
+  assert.equal(written[0].metadata?.sources[0].verification, 'unverified');
+  assert.deepEqual(written[0].metadata.sources[0].facts, []);
+  assert.equal(typeof service.addProviderEvidence, 'function');
+  await service.addProviderEvidence('alice', 'run', [evidence]);
+  assert.deepEqual(written[1].metadata, metadata);
+});

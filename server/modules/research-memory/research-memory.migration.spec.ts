@@ -25,6 +25,7 @@ test('atomic thesis migration upgrades populated legacy tables and reapplies wit
     for (const file of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql', '08_investment_council.sql',
       '12_council_dialogue.sql', '14_a2a_agents.sql', '17_research_memory.sql', '18_research_workflow.sql']) {
       const legacy = readFileSync(`scripts/db/${file}`, 'utf8').replace('  thesis_candidates JSONB,', '')
+        .replace('  "metadata" jsonb,', '')
         .replaceAll("'candidate','accepted','confirmed'", "'candidate','confirmed'")
         .replaceAll("'candidate','accept','confirm'", "'candidate','confirm'");
       await client.unsafe(legacy);
@@ -39,16 +40,32 @@ test('atomic thesis migration upgrades populated legacy tables and reapplies wit
       VALUES ('migration-owner', 'AAPL', 'US', 'general', 'en', ${session.id}, ${report.id}, 1, 1, now(), 'Legacy report summary', 'wait') RETURNING id`;
     const [thesis] = await client`INSERT INTO research_theses (owner, memory_id, content)
       VALUES ('migration-owner', ${memory.id}, '{"claim":"Legacy opinion"}') RETURNING id`;
+    const [run] = await client`INSERT INTO agent_runs (owner, ticker, trigger_type) VALUES ('migration-owner', 'AAPL', 'manual') RETURNING id`;
+    const [oldEvidence] = await client`INSERT INTO agent_evidence (owner, run_id, role, evidence_type, title, content, fetched_at)
+      VALUES ('migration-owner', ${run.id}, 'fundamental', 'financial', 'Legacy source', 'Existing body', '2026-05-01') RETURNING id`;
     // Use the production startup loader, including its statement splitting.
     await startDatabase(namespace);
     await startDatabase(namespace);
+    const [temporal] = await client`SELECT to_regclass('research_memory_evidence')::text AS name`;
+    assert.equal(temporal.name, 'research_memory_evidence');
     const [after] = await client`SELECT summary, thesis_candidates FROM council_reports WHERE id = ${report.id}`;
     assert.deepEqual(after, { summary: 'Legacy report summary', thesis_candidates: null });
     const [legacy] = await client`SELECT content, status, version FROM research_theses WHERE id = ${thesis.id}`;
     assert.deepEqual(legacy, { content: { claim: 'Legacy opinion' }, status: 'candidate', version: 1 });
+    assert.deepEqual((await client`SELECT content, metadata FROM agent_evidence WHERE id = ${oldEvidence.id}`)[0],
+      { content: 'Existing body', metadata: null });
     await client`UPDATE research_theses SET status = 'accepted' WHERE id = ${thesis.id}`;
-    await client`INSERT INTO research_thesis_versions (owner, thesis_id, version, content, status, action, excluded)
-      VALUES ('migration-owner', ${thesis.id}, 1, '{"claim":"Explicit agent claim"}', 'accepted', 'accept', false)`;
+    const [version] = await client`INSERT INTO research_thesis_versions (owner, thesis_id, version, content, status, action, excluded, change_reason)
+      VALUES ('migration-owner', ${thesis.id}, 1, '{"claim":"Explicit agent claim"}', 'accepted', 'accept', false, 'Reviewed source') RETURNING id`;
+    const [evidence] = await client`INSERT INTO research_memory_evidence
+      (owner, memory_id, report_id, report_version, report_revision, evidence_id, metadata)
+      VALUES ('migration-owner', ${memory.id}, ${report.id}, 1, 1, 'filing', '{"sources":[]}') RETURNING id, ingested_at`;
+    await client`INSERT INTO research_thesis_evidence(owner, version_id, evidence_record_id, role)
+      VALUES ('migration-owner', ${version.id}, ${evidence.id}, 'qualify')`;
+    await startDatabase(namespace);
+    assert.deepEqual((await client`SELECT id, ingested_at FROM research_memory_evidence`)[0], evidence);
+    assert.equal((await client`SELECT change_reason FROM research_thesis_versions WHERE id = ${version.id}`)[0].change_reason, 'Reviewed source');
+    assert.equal((await client`SELECT role FROM research_thesis_evidence`)[0].role, 'qualify');
   } finally { await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
 });
 
@@ -62,6 +79,8 @@ test('production startup loader applies atomic thesis schema on a fresh base ins
   try {
     await client.unsafe(readFileSync('scripts/db/01_schema.sql', 'utf8'));
     await startDatabase(namespace);
+    const [temporal] = await client`SELECT to_regclass('research_thesis_evidence')::text AS name`;
+    assert.equal(temporal.name, 'research_thesis_evidence');
     assert.equal((await client`SELECT thesis_candidates FROM council_reports`).length, 0);
     const [constraint] = await client`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
       WHERE conrelid = 'research_theses'::regclass AND conname = 'research_theses_status_check'`;

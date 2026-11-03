@@ -714,7 +714,8 @@ export class CouncilService implements OnModuleInit {
         revision: row.revision, decision: opinion.decision, summary: opinion.summary, dissent: opinion.dissent,
         nextReviewCondition: opinion.nextReviewCondition, sourceRunId: row.sourceRunId,
         candidate: row.candidate, engine, researchStance, tokensUsed: Math.min(2_147_483_647, Number(usage?.total ?? 0) + externalTokens),
-        evidence: [...row.evidenceSnapshot, ...historical].map(({ id, title, content, sourceUrl, fetchedAt }) => ({ id, title, content, sourceUrl, fetchedAt })) });
+        evidence: [...row.evidenceSnapshot, ...historical].map(({ id, title, content, sourceUrl, fetchedAt, metadata }) => ({
+          id, title, content, sourceUrl, fetchedAt, ...(metadata ? { metadata } : {}) })) });
       await tx.update(councilSessions).set({ status: error ? 'failed' : 'completed', error, updatedAt: new Date(),
         ...(error || !current.checkpoint ? {} : { checkpoint: { ...current.checkpoint,
           nextTurn: current.checkpoint.turns.length, pendingResearch: [], inflight: undefined } }) })
@@ -745,7 +746,7 @@ export class CouncilService implements OnModuleInit {
         const saved = await this.research.getEvidence(userId, latest.id);
         if (saved.length && !saved.some((item) => item.sourceName === 'Data Unavailable')) {
           sourceRunId = latest.id;
-          evidence.push(...saved.map((item) => ({ ...item, relevanceScore: Number(item.relevanceScore ?? 0) })));
+          evidence.push(...saved.map((item) => ({ ...item, metadata: item.metadata ?? undefined, relevanceScore: Number(item.relevanceScore ?? 0) })));
         }
       }
     } catch {

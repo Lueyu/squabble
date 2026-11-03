@@ -69,7 +69,7 @@ export const CouncilMemoryPanel: FC<CouncilMemoryPanelProps> = ({ ticker, market
           {memory.source && <span>{copy.version} {memory.source.reportVersion} · {date(memory.source.reportCreatedAt, locale)}</span>}
           {memory.flags.map(flag => <Badge key={flag} variant="outline">{copy[flag]}</Badge>)}
         </div>
-        <p className="whitespace-pre-wrap break-words text-sm">{memory.sourceStatus === 'source-deleted' ? copy.sourceDeleted : memory.summary}</p>
+        <p className="whitespace-pre-wrap break-words text-sm">{memory.sourceStatus === 'source-deleted' ? copy.sourceDeleted : memory.sourceStatus === 'not-yet-known' ? copy.sourcePending : memory.summary}</p>
         {memory.source && <Link className="text-sm text-primary underline" to={memory.source.url}>{copy.source}</Link>}
         <div className="flex flex-wrap items-center gap-3">
           <Label className="gap-2"><Checkbox checked={!memory.excluded} disabled={busy || !memory.source} aria-label={`${copy.included}: ${memory.ticker} ${memory.id}`}
@@ -94,7 +94,7 @@ export const CouncilMemoryPanel: FC<CouncilMemoryPanelProps> = ({ ticker, market
               <ul className="ml-4 list-disc">{thesis[field].map((line, index) => <li className="break-words" key={index}>{line}</li>)}</ul></div>)}
           </details>
           <Link className="text-sm text-primary underline" to={thesis.source.url}>{copy.source} · {copy.version} {thesis.source.reportVersion}</Link>
-        </> : <p className="text-sm text-muted-foreground">{copy.sourceDeleted}</p>}
+        </> : <p className="text-sm text-muted-foreground">{thesis.sourceStatus === 'not-yet-known' ? copy.sourcePending : copy.sourceDeleted}</p>}
         <div className="flex flex-wrap items-center gap-2">
           {thesis.source && <>
             {thesis.status !== 'confirmed' && <Button size="sm" disabled={busy} onClick={() => update(thesis, 'confirm')}>{copy.confirm}</Button>}

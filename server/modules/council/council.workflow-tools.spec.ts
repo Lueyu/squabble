@@ -8,6 +8,8 @@ import { workflowReviewPrompt } from './council.workflow-review';
 test('tool excerpts preserve numeric values and identify omitted text', () => {
   assert.deepEqual(excerptToolData({ price: 123.456, units: 'USD', details: 'long text' }, 4),
     { price: 123.456, units: 'USD', details: 'long [excerpt]' });
+  assert.equal(excerptToolData(null, 60, 8), null, 'unknown metadata remains null at the excerpt depth boundary');
+  assert.equal(excerptToolData(123.456, 60, 8), 123.456, 'a nested numeric fact must not become an excerpt marker');
 });
 test('peer field factoring retains exact sources, numeric values and all caveats', () => {
   const source = { url: 'https://example.test/annual', fetchedAt: '2026-11-03T00:00:00.000Z', title: 'Annual audited filing' };

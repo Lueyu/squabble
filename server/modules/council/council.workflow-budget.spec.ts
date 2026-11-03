@@ -12,8 +12,14 @@ import { jsonChatMessages, type ChatMessage, type LlmCallOptions } from '../mult
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { reviewDelivery, workflowReviewPrompt } from './council.workflow-review';
 import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../../shared/research-workflow.interface';
+import { parseFinnhubFinancials } from '../multi-agent/finnhub-financials';
 
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
+const providerEvidence = (ticker: string) => parseFinnhubFinancials({ symbol: ticker, data: [{ symbol: ticker, cik: '123',
+  startDate: '2025-01-01', endDate: '2025-12-31', filedDate: '2026-02-01', accessNumber: '0000000123-26-000001', form: '10-K',
+  report: { ic: [{ concept: 'Revenues', value: 1000, unit: 'USD' }, { concept: 'NetIncomeLoss', value: 100, unit: 'USD' }],
+    cf: [{ concept: 'NetCashProvidedByUsedInOperatingActivities', value: 140, unit: 'USD' }],
+    bs: [{ concept: 'Liabilities', value: 200, unit: 'USD' }] } }] }, ticker, 'annual').items;
 const response = (english: boolean) => english ? {
   thesis: 'Reported growth supports a balanced view, but cash conversion and dilution still need verification before the valuation can support a stronger conclusion.',
   evidencePoints: [
@@ -57,7 +63,10 @@ test('ordinary Chinese and English workflows fit default request budgets with re
         const data = input.submitted ? Array.isArray(input.submitted)
           ? { reviews: input.submitted.map((item: { taskId: string; submittedAttemptId: string }) => ({ ...item, delivery: undefined, requirement: undefined, accepted: true, feedback: 'Source period and scope checked.' })) }
           : { accepted: true, feedback: 'Source period and scope checked.' }
-          : { conclusion: content.thesis, response: content, evidenceIds: input.evidence.slice(0, 1).map((e: { id: string }) => e.id),
+          : { conclusion: content.thesis, response: content, evidenceIds: [
+            ...input.readOnlyToolResults.map((item: { data: { evidenceId?: string } }) => item.data.evidenceId).filter(Boolean),
+            ...input.handoffs.flatMap((item: { evidenceIds: string[] }) => item.evidenceIds),
+            ...input.evidence.map((e: { id: string }) => e.id)].slice(0, 1),
             asOf: '2026-11-03', currency: 'USD', units: 'USD million', assumptions: [], gaps: [],
             skillVersions: input.skills.map(({ id, version, hash }: { id: string; version: string; hash: string }) => ({ id, version, hash })),
             ...(input.task.key === 'valuation' ? { valuationScenario: { metric: 'earnings', multiples: { bear: 10, base: 15, bull: 20 } } } : {}) };
@@ -67,14 +76,14 @@ test('ordinary Chinese and English workflows fit default request budgets with re
       };
       const tools = new ResearchToolsService(db, { getQuote: async (ticker: string) => ({ symbol: ticker,
         price: '100', currency: 'USD', market: 'US', timestamp: Date.now() }) } as never,
-      { collectResearch: async () => [{ role: 'fundamental', evidenceType: 'financial', title: 'Annual financials',
-        content: 'Period: 2025-01-01 to 2025-12-31. Net income: USD 100; Revenue: USD 1000;',
-        sourceName: 'SEC EDGAR', sourceUrl: 'https://www.sec.gov/Archives/fixture', relevanceScore: 1 }] } as never, {} as never);
+      { collectResearch: async (ticker: string, _owner: string, kind: string) => kind === 'financials' ? providerEvidence(ticker)
+        : [{ role: kind === 'news' ? 'news' : 'fundamental', evidenceType: kind === 'news' ? 'news' : 'financial',
+          title: kind === 'news' ? 'Company update' : 'Reported valuation ratios',
+          content: kind === 'news' ? 'The company announced its annual results.' : 'Trailing PE: 15; price/book: 2. Verify calculation periods.',
+          sourceName: 'Finnhub API', sourceUrl: 'https://example.test/provider', relevanceScore: 1 }] } as never, {} as never);
       const service = new CouncilService(db, { validateConnectionIds: async () => undefined, isConfigured: async () => true,
         chatFastJSON: model, chatSlowJSON: model } as never,
-      { collectEvidence: async () => [{ role: 'fundamental', evidenceType: 'other', title: 'Annual filing',
-        content: 'Annual revenue 100 USD million; net income 10 USD million. Full year ended 2025-12-31.',
-        sourceName: 'Filing', sourceUrl: 'https://example.test/filing', relevanceScore: 1 }] } as never,
+      { collectEvidence: async () => providerEvidence('AAPL') } as never,
       { getPortfolioContext: async () => ({ totalValue: 1000, holdings: [], cash: 1000 }) } as never,
       { listRuns: async () => ({ items: [] }) } as never, undefined, budget, undefined, tools);
       const session = await service.createSession(owner, { ticker: 'AAPL', language, goal: 'comprehensive', recallEnabled: false });

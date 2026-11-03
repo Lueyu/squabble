@@ -17,6 +17,7 @@ CREATE TABLE "agent_audit_log" (
 );
 
 CREATE TABLE "agent_evidence" (
+  "metadata" jsonb,
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"run_id" uuid NOT NULL,
 	"role" varchar(30) NOT NULL,

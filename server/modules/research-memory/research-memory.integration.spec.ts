@@ -24,7 +24,7 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
     for (const file of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql',
-      '08_investment_council.sql', '12_council_dialogue.sql', '14_a2a_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql']) {
+      '08_investment_council.sql', '12_council_dialogue.sql', '14_a2a_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql', '20_research_memory_temporal.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     const db = drizzle(client);
@@ -88,8 +88,8 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
     await service.archiveReport(owner, positive.input);
     const pinnedStance = await service.recall(owner, { ticker: 'META' });
     await service.archiveReport(owner, cautious.input);
-    assert.ok((await service.list(owner, { ticker: 'META' })).memories.every(m => m.flags.includes('contradictory')));
-    assert.ok((await service.refreshRecall(owner, pinnedStance)).items.every(m => m.flags.includes('contradictory')));
+    assert.ok((await service.list(owner, { ticker: 'META' })).memories.every(m => !m.flags.includes('contradictory')));
+    assert.ok((await service.refreshRecall(owner, pinnedStance)).items.every(m => !m.flags.includes('contradictory')));
     for (const m of (await service.list(owner, { ticker: 'META' })).memories) await service.deleteMemory(owner, m.id);
 
     const native = await seed('ORCL');
@@ -120,7 +120,7 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
         .where(eq(councilReports.id, mixed.report.id));
       const archive = await service.archiveReport(owner, { ...mixed.input, thesisCandidates: [{ claim: 'Supported by the fresh source',
         supportingEvidence: [{ evidenceId: 'e1' }], opposingEvidence: [], assumptions: [], indicators: [], invalidationConditions: [] }] });
-      assert.ok(archive!.flags.includes(variant));
+      assert.equal(archive!.flags.includes(variant), variant === 'unverified');
       const selected = (await service.list(owner, { ticker })).theses[0];
       await service.updateThesis(owner, selected.id, { action: 'confirm', expectedVersion: 1 });
       assert.ok((await service.recall(owner, { ticker })).items.some(i => i.kind === 'thesis'), 'unrelated evidence must not disqualify selected valid sources');
@@ -167,7 +167,7 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
     const opposing = await seed('700.HK', owner, 'Opposing view', true, new Date(), 'reject');
     const opposingMemory = await service.archiveReport(owner, opposing.input);
     const refreshed = await service.refreshRecall(owner, frozen);
-    assert.ok(refreshed.items.every(item => item.flags.includes('contradictory')), 'pinned recall rechecks current contradictions');
+    assert.ok(refreshed.items.every(item => !item.flags.includes('contradictory')), 'opposite decision labels alone are not evidence conflicts');
     await service.deleteMemory(owner, opposingMemory!.id);
     const edited = await service.updateThesis(owner, thesis.id, { action: 'edit', expectedVersion: current.version,
       content: { claim: 'User edited claim', supportingEvidence: current.supportingEvidence,
@@ -194,10 +194,10 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
 
     const stale = await service.archiveReport(owner, (await seed('NVDA', owner, 'Old earnings view', true,
       new Date(Date.now() - 60 * 86_400_000))).input);
-    assert.ok(stale!.flags.includes('stale'));
+    assert.ok(!stale!.flags.includes('stale'));
     const staleThesis = (await service.list(owner, { ticker: 'NVDA' })).theses[0];
     await service.updateThesis(owner, staleThesis.id, { action: 'confirm', expectedVersion: 1 });
-    assert.ok(!(await service.recall(owner, { ticker: 'NVDA' })).items.some(item => item.kind === 'thesis'));
+    assert.ok((await service.recall(owner, { ticker: 'NVDA' })).items.some(item => item.kind === 'thesis'));
     const expiring = await service.archiveReport(owner, (await seed('AMD')).input);
     const expiredThesis = (await service.list(owner, { ticker: 'AMD' })).theses[0];
     const confirmed = await service.updateThesis(owner, expiredThesis.id, { action: 'confirm', expectedVersion: 1 });

@@ -30,6 +30,7 @@ import { researchSnapshotPrompt } from '../../local-agents/tool-config';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import type { MemoryToolData } from '../research-memory/research-memory.context';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
+import { financialMetadata } from '../multi-agent/financial-evidence-metadata';
 
 test('real executor submissions match durable inventories across languages, refresh, API failures, reviews and native callbacks', {
   skip: !process.env.COUNCIL_TEST_DATABASE_URL,
@@ -47,7 +48,7 @@ test('real executor submissions match durable inventories across languages, refr
   try {
     for (const name of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql', '08_investment_council.sql',
       '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '17_research_memory.sql',
-      '18_research_workflow.sql', '19_atomic_research_theses.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
+      '18_research_workflow.sql', '19_atomic_research_theses.sql', '20_research_memory_temporal.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     const db = drizzle(client), budgets = new LlmBudgetService(db), store = new CouncilWorkflowStore(db);
     const memory = new ResearchMemoryService(db, new QuoteService(db, undefined as never));
     const llm = new LlmService({ getLlmConfig: async () => ({ source: 'server', baseUrl: 'https://fixture.invalid',
@@ -61,6 +62,9 @@ test('real executor submissions match durable inventories across languages, refr
       const [report] = await db.insert(councilReports).values({ owner, sessionId: source.id, version: 1, revision: 1,
         decision: 'wait', summary: 'A report summary is history. '.repeat(100), dissent: [], nextReviewCondition: 'Next filing', engine: 'llm',
         evidence: [{ id: 'filing', title: 'Annual filing', content: 'Annual revenue 100 USD million.', sourceUrl: 'https://example.test/filing',
+          metadata: financialMetadata({ ticker: 'AAPL', provider: 'SEC EDGAR', sourceUrl: 'https://example.test/filing',
+            accession: '0000000123-26-000001', filed: '2026-02-01', end: '2025-12-31',
+            facts: [{ concept: 'Revenues', value: 100000000, unit: 'USD', start: '2025-01-01' }] }),
           fetchedAt: new Date().toISOString() }] }).returning();
       await memory.archiveReport(owner, { sessionId: source.id, ticker: 'AAPL', language,
         report: { ...report, createdAt: report.createdAt.toISOString() } as CouncilReport,

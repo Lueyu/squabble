@@ -458,6 +458,7 @@ export interface AgentRun {
 }
 
 export interface AgentEvidence {
+  metadata?: import('./research-evidence.interface').EvidenceMetadata | null;
   id: string;
   runId: string;
   role: EvidenceRole;

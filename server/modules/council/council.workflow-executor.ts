@@ -1,3 +1,4 @@
+import { unverifiedAgentMetadata } from '../research-memory/research-memory.temporal';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
@@ -54,7 +55,7 @@ export function nativeWorkflowSources(raw: Record<string, unknown>, attemptId: s
     aliases.set(s.id, id);
     sources.push({ id, title: `${language === 'en' ? '[Agent source · unverified]' : '[Agent 来源 · 未独立核验]'} ${s.title.slice(0, 170)}`,
       content: s.content.slice(0, 2000), sourceUrl: url.href, fetchedAt: new Date().toISOString(),
-      sourceName: 'Native agent · unverified', role: 'news', evidenceType: 'other', relevanceScore: 0 });
+      metadata: unverifiedAgentMetadata(url.href, new Date().toISOString()), sourceName: 'Native agent · unverified', role: 'news', evidenceType: 'other', relevanceScore: 0 });
   }
   const rewrite = (refs: unknown) => Array.isArray(refs) ? refs.map(ref => ref && typeof ref === 'object' && !Array.isArray(ref)
     ? { ...ref, evidenceId: typeof ref.evidenceId === 'string' ? aliases.get(ref.evidenceId) ?? ref.evidenceId : ref.evidenceId } : ref) : refs;
@@ -162,6 +163,11 @@ export class CouncilWorkflowExecutor {
     // Reserve whole memory before optional prose, while retaining current figures, citations and dependency handoffs.
     // Task-essential context, latest steering and review deliverables can still cause a safe no-fit rejection.
     const essential = { ...input, ...compact(60) };
+    if (requestSize(system, essential) > packingTarget) {
+      essential.evidence = [];
+      essential.handoffs = essential.handoffs.map(handoff => ({ ...handoff,
+        conclusion: byteExcerpt(handoff.conclusion, 40), evidencePoints: [] }));
+    }
     const baseTokens = requestSize(system, essential);
     const packed = packMemoryContext(recall?.items ?? [], Math.max(0, packingTarget - baseTokens), {
       basis: 'conservative-utf8', count: context => requestSize(system, { ...essential, memory: context }) - baseTokens,
@@ -170,6 +176,12 @@ export class CouncilWorkflowExecutor {
     for (const length of [350, 200, 100, 60]) {
       if (requestSize(system, input) <= packingTarget) break;
       Object.assign(input, compact(length));
+    }
+    if (!review && requestSize(system, input) > packingTarget) {
+      // Current tool sources retain their complete date/provenance metadata. Earlier optional excerpts and
+      // duplicate handoff prose yield first; conclusions, source IDs, assumptions, gaps and atomic theses stay.
+      input.evidence = essential.evidence;
+      input.handoffs = essential.handoffs;
     }
     const promptContext = review ? workflowReviewPrompt(task, attempt, batch, instructions, row.ticker, row.language,
       messages.slice(-1).map(message => message.content), row.evidenceSnapshot, member.instructions, packingTarget) : { system, input };

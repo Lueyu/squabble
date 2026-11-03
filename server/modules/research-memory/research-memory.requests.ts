@@ -15,11 +15,13 @@ export const thesisContentSchema = z.object({
 }).strict();
 export const thesisCandidateSchema = thesisContentSchema.extend({ expiresAt: z.iso.datetime().nullable().optional() });
 export const memoryQuerySchema = z.object({ ticker: z.string().trim().min(1).max(20),
-  market: z.enum(['US', 'HK', 'CN']).optional(), topic: z.string().trim().max(120).optional() }).strict();
+  market: z.enum(['US', 'HK', 'CN']).optional(), topic: z.string().trim().max(120).optional(),
+  asOf: z.iso.datetime({ offset: true }).optional() }).strict();
 export const memoryPreferencesSchema = z.object({ autoArchive: z.boolean(), recallEnabled: z.boolean() }).strict();
 export const memoryUpdateSchema = z.object({ excluded: z.boolean() }).strict();
 export const thesisDeleteSchema = z.object({ expectedVersion: z.number().int().min(1) }).strict();
 export const thesisUpdateSchema = z.object({
+  changeReason: z.string().trim().min(1).max(1500).nullable().optional(),
   expectedVersion: z.number().int().min(1), action: z.enum(['confirm', 'edit', 'dismiss', 'expire', 'exclude']),
   content: thesisContentSchema.optional(), expiresAt: z.iso.datetime().nullable().optional(), excluded: z.boolean().optional(),
 }).strict().superRefine((value, ctx) => {

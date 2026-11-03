@@ -1,5 +1,6 @@
 import type { FinnhubFinancialsResult } from './finnhub-financials';
 import { finiteFinnhubNumber } from './finnhub-financials';
+import { financialMetadata } from './financial-evidence-metadata';
 
 interface Filing {
   accession: string;
@@ -137,7 +138,10 @@ function supplementalItems(facts: SupplementalFacts, operatingCashFlow: Financia
       title: `${ticker.toUpperCase()} SEC supplemental ${label}`,
       content: `${content} Form: ${filing.form}. Filed: ${filing.filed}. Accession: ${filing.accession}. Source concepts: ${sourceFacts
         .filter((fact: FinancialFact | undefined): fact is FinancialFact => !!fact).map((fact: FinancialFact) => fact.concept).join('; ')}.`,
-      sourceName: 'SEC EDGAR', sourceUrl });
+      sourceName: 'SEC EDGAR', sourceUrl,
+      metadata: financialMetadata({ ticker, provider: 'SEC EDGAR', sourceUrl, accession: filing.accession,
+        filed: filing.filed, end: filing.end, amended: filing.form.endsWith('/A'),
+        facts: sourceFacts.filter((fact): fact is FinancialFact => Boolean(fact)) }) });
   };
   if (facts.capex) {
     add('cash flow', [period,
@@ -236,6 +240,10 @@ export function parseSecFinancials(
           .map((fact: FinancialFact) => fact.concept).join('; ')}.`,
       ].join(' '),
       sourceName: 'SEC EDGAR', sourceUrl,
+      metadata: financialMetadata({ ticker, provider: 'SEC EDGAR', sourceUrl, accession: filing.accession,
+        filed: filing.filed, end: filing.end, amended: filing.form.endsWith('/A'),
+        facts: [...best, supplemental.capex, supplemental.cash, supplemental.equity, supplemental.assets]
+          .filter((fact): fact is FinancialFact => Boolean(fact)) }),
     }, ...supplementalItems(supplemental, best[2], ticker, filing, bestStart, bestUnit, sourceUrl)],
   };
 }

@@ -137,7 +137,7 @@ export class PipelineService {
       const evidence = await this.evidenceService.collectEvidence(ticker, userId, portfolio, language);
 
       // Persist facts and explicit gaps. Debate citations use only returned IDs.
-      const savedEvidence = await this.multiAgentService.addEvidence(
+      const savedEvidence = await this.multiAgentService.addProviderEvidence(
         userId,
         runId,
         evidence.map((e) => ({
@@ -149,6 +149,7 @@ export class PipelineService {
           sourceName: e.sourceName,
           fetchedAt: new Date().toISOString(),
           relevanceScore: e.relevanceScore,
+          metadata: e.metadata,
         })),
       );
 

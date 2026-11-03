@@ -20,19 +20,24 @@ import { QuoteService } from '../quote/quote.service';
 
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-interface Input { task: { key: ResearchTaskKind; id: string }; submitted?: unknown; handoffs?: unknown; skills: { id: string; version: string; hash: string }[];
+interface Input { task: { key: ResearchTaskKind; id: string }; submitted?: unknown; handoffs?: { evidenceIds: string[] }[];
+  readOnlyToolResults?: { data?: { evidenceId?: string } }[]; skills: { id: string; version: string; hash: string }[];
   evidence: { id: string }[]; steering: string[] }
+const sourceIds = (input: Input): string[] => [...new Set([
+  ...(input.readOnlyToolResults ?? []).flatMap(item => item.data?.evidenceId ? [item.data.evidenceId] : []),
+  ...(input.handoffs ?? []).flatMap(item => item.evidenceIds), ...input.evidence.map(e => e.id),
+])];
 const output = (input: Input) => input.submitted ? Array.isArray(input.submitted)
   ? { reviews: input.submitted.map(s => ({ taskId: s.taskId, submittedAttemptId: s.submittedAttemptId, accepted: true, feedback: 'Evidence and scope checked.' })) }
   : { accepted: true, feedback: 'Evidence and scope checked.' } : {
-  conclusion: `${input.task.key} finding`, evidenceIds: input.evidence.map(e => e.id).slice(0, 3),
+  conclusion: `${input.task.key} finding`, evidenceIds: sourceIds(input).slice(0, 3),
   asOf: new Date().toISOString(), currency: 'USD', units: 'USD million', assumptions: [], gaps: [],
   skillVersions: input.skills.map(({ id, version, hash }) => ({ id, version, hash })),
   response: { thesis: `${input.task.key} finding`, evidencePoints: ['Supported observation'], risks: ['Demand risk'], nextChecks: ['Next filing'] },
   ...(input.task.key === 'summary' ? { thesisCandidates: [{ claim: 'Cash conversion remains resilient',
-    supportingEvidence: input.evidence.slice(0, 1).map(e => ({ evidenceId: e.id })), opposingEvidence: ['Demand risk'],
+    supportingEvidence: sourceIds(input).slice(0, 1).map(evidenceId => ({ evidenceId })), opposingEvidence: ['Demand risk'],
     assumptions: [], indicators: ['Operating cash flow'], invalidationConditions: ['Two negative quarters'], boundaryOrigin: 'proposed',
-    horizon: { reviewAt: '2027-02-01T00:00:00.000Z' }, evidenceRelations: input.evidence.slice(0, 1).map(e => ({ evidenceId: e.id, role: 'support' })) }] } : {}),
+    horizon: { reviewAt: '2027-02-01T00:00:00.000Z' }, evidenceRelations: sourceIds(input).slice(0, 1).map(evidenceId => ({ evidenceId, role: 'support' })) }] } : {}),
   ...(input.task.key === 'valuation' ? { valuationScenario: { metric: 'earnings', multiples: { bear: 10, base: 15, bull: 20 } } } : {}),
 };
 
@@ -43,7 +48,7 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
     for (const name of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql', '08_investment_council.sql',
-      '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
+      '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql', '20_research_memory_temporal.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     const db = drizzle(client);
     const memory = new ResearchMemoryService(db, new QuoteService(db, undefined as never));
     const owner = randomUUID();

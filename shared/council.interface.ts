@@ -130,7 +130,8 @@ export interface CouncilReport {
   summary: string;
   dissent: string[];
   nextReviewCondition: string;
-  evidence: Array<{ id: string; title: string; content: string; sourceUrl: string | null; fetchedAt: string }>;
+  evidence: Array<{ id: string; title: string; content: string; sourceUrl: string | null; fetchedAt: string;
+    metadata?: import('./research-evidence.interface').EvidenceMetadata }>;
   sourceRunId: string | null;
   candidate: CouncilCandidate | null;
   paperOrderId: string | null;

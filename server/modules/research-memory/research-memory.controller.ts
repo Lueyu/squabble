@@ -38,6 +38,9 @@ export class ResearchMemoryController {
   @Get('theses/:id') thesis(@Req() request: Request, @Param('id') id: string) {
     return this.memory.getThesis(request.userContext.userId, parse(memoryIdSchema, id));
   }
+  @Get('memories/:id/evidence') evidence(@Req() request: Request, @Param('id') id: string) {
+    return this.memory.evidenceGraph(request.userContext.userId, parse(memoryIdSchema, id));
+  }
   @Get('theses/:id/versions') versions(@Req() request: Request, @Param('id') id: string) {
     return this.memory.thesisVersions(request.userContext.userId, parse(memoryIdSchema, id));
   }

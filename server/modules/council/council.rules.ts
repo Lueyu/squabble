@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { BuilderConfig } from '@shared/api.interface';
 import type { CouncilCandidate, CouncilMember, CouncilRole, CouncilResearchKind } from '@shared/council.interface';
+import { evidencePromptMetadata } from '../research-memory/research-memory.temporal';
 
 export interface CouncilEvidence {
+  metadata?: import('@shared/research-evidence.interface').EvidenceMetadata;
   id: string;
   role: string;
   evidenceType: string;
@@ -101,7 +103,7 @@ export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
       const excerpt = { id: item.id, title: byteExcerpt(item.title, compact ? 60 : 90),
         content: byteExcerpt(item.content, item.evidenceType === 'financial' ? compact ? 350 : 600 : compact ? 160 : 300),
         source: byteExcerpt(item.sourceName ?? '', compact ? 32 : 50),
-        fetchedAt: item.fetchedAt };
+        fetchedAt: item.fetchedAt, ...(item.metadata ? { metadata: evidencePromptMetadata(item.metadata) } : {}) };
       const bytes = Buffer.byteLength(JSON.stringify(excerpt), 'utf8');
       if (bytes > remaining) return [];
       remaining -= bytes;

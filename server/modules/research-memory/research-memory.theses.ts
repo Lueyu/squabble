@@ -18,7 +18,9 @@ export function validateThesisReferences(content: ThesisContent, validIds: Set<s
     && thesisEvidenceIds(content).every(id => validIds.has(id));
 }
 
-export function isUnverifiedCitation(citation: { title: string; sourceUrl: string | null; fetchedAt: string }): boolean {
+export function isUnverifiedCitation(citation: { title: string; sourceUrl: string | null; fetchedAt: string;
+  metadata?: { sources: Array<{ verification: string; origin: string }> } }): boolean {
+  if (citation.metadata?.sources.some(source => source.verification === 'unverified' || source.origin === 'agent')) return true;
   if (/unverified|未(?:独立)?核验|未经核实/iu.test(citation.title) || !Number.isFinite(Date.parse(citation.fetchedAt))
     || Date.parse(citation.fetchedAt) > Date.now() + 300_000) return true;
   try { const url = new URL(citation.sourceUrl ?? ''); return !['http:', 'https:'].includes(url.protocol) || Boolean(url.username || url.password); }
