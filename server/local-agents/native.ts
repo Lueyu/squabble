@@ -5,6 +5,7 @@ import { nativeChildEnv } from './environment';
 import { NativeEventCollector } from './events';
 import { launchNativeLogin } from './login';
 import { executeNativeProcess, type NativeProcessResult } from './process';
+import { readOpenCodeDiagnostic } from './failures';
 import { resolveNativeCommand, type NativeLaunch, type NativeResolverOptions } from './resolver';
 import { createNativeWorkspace } from './workspace';
 import { authenticationState, configuredModels, defaultCapabilities, geminiMetadata, kimiCredentialEnv, kimiMetadata, parseModels, supportsAntigravity } from './metadata';
@@ -124,7 +125,8 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
           timeoutMs: options.runTimeoutMs ?? 10 * 60 * 1000, maxOutputBytes: options.maxOutputBytes ?? 4 * 1024 * 1024 };
         if (provider === 'doubao') return await runDoubao(launch, invocation.args, processOptions, run.root, run.onProgress, run.onEvent);
         const collector: NativeEventCollector = new NativeEventCollector(provider, run.onProgress, run.onEvent);
-        const result = await executeNativeProcess(launch, invocation.args, { ...processOptions, onLine: (line: string) => collector.read(line) });
+        const result = await executeNativeProcess(launch, invocation.args, { ...processOptions, onLine: (line: string) => collector.read(line),
+          ...(provider === 'opencode' ? { onStderrLine: readOpenCodeDiagnostic } : {}) });
         if (result.code !== 0) throw new Error('NATIVE_AGENT_FAILED');
         collector.completeProcess();
         return collector.result();

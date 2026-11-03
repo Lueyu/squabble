@@ -87,6 +87,11 @@ Docker 使用同一台电脑上的吵股桌面应用作为助手：
   本地运行不代表离线推理，研究内容仍会发送给所选服务商。
 - CLI 用量由服务商账号管理。吵股无法确认的用量显示为未知。连接 CLI 不会改变全局预算；
   使用模型 API 的团队成员继续受原有预算约束。
+- 当 CLI 明确报告额度耗尽、余额不足或请求限流时，讨论会暂停，并在角色研究记录与聊天提示中说明原因。
+  OpenCode 的主研究流错误也会从调用日志中识别，避免已报额度错误却一直等待到超时。
+  请查看供应商账户的额度与重置时间，或调整角色模型；限流时可稍后再新建讨论。
+  系统不会自动重试或切换付费模型。原始日志、密钥及私人推理不会显示。
+  Docker 网页使用者应同时更新服务端和桌面助手，才能看到完整的分类提示；旧服务端仍可接收失败状态。
 - 报告中的观点和来源仍需核查，模拟交易风控和审批保持生效。
 - 桌面配对凭证保存在系统的吵股应用数据目录中。Docker 的配对和任务状态保存在
   `local-agents-data` 卷中；更新应用时应保留此卷。
@@ -155,6 +160,17 @@ limits are managed by the provider. Unknown token usage remains unknown. Connect
 CLI does not change the global budget, and API model members retain their existing
 budget controls. Local execution still sends research content to the selected provider.
 Reports require independent verification and existing paper-trading controls remain.
+
+When the CLI explicitly reports exhausted usage, insufficient balance or rate limiting,
+the discussion pauses with an actionable message in the member's research history and
+chat. OpenCode primary-stream diagnostics are also checked so a reported quota failure
+does not wait for the research timeout. Check the provider account for usage/reset time,
+or change the member's model; try a new discussion later for rate limits. Tasks are not
+automatically retried and paid models are not selected automatically. Raw diagnostics,
+credentials and private reasoning are never displayed. Unknown failures keep a generic
+error; remaining provider quota and reset times are not estimated by Squabble.
+For Docker web use, update both the server and desktop companion for full categorized
+messages. Older servers can still acknowledge the failed task without losing heartbeats.
 
 The desktop stores its pairing privately in its application data directory. Docker
 persists pairing and task state in the `local-agents-data` volume; preserve it during

@@ -30,12 +30,14 @@ else if (provider === 'doubao' && args.includes('models')) { emit({models:[{id:'
 else if (provider === 'doubao' && args.includes('status') && !args.includes('sessions')) { emit({platform:'headless',loggedIn:mode!=='logged-out',loginRequired:mode==='logged-out'}); }
 else if (provider === 'doubao' && args.includes('create')) {
   fs.writeFileSync(path.join(root,'capture-'+provider),JSON.stringify({args,env:process.env,cwd:process.cwd()}));
-  if(mode==='missing-receipt') emit({status:'running',accepted:true,reply:null});
+  if(mode==='quota-rejected') { emit({status:'failed',accepted:false,error:{code:'insufficient_quota'}}); process.exitCode=1; }
+  else if(mode==='missing-receipt') emit({status:'running',accepted:true,reply:null});
   else emit({conversationId:'conversation-1',runId:'run-1',status:'running',accepted:true,reply:null});
 }
 else if (provider === 'doubao' && args.includes('stop')) { emit({stopped:mode!=='stop-failure',status:'cancelled'}); }
 else if (provider === 'doubao' && args.includes('wait')) {
   if(mode==='hang'||mode==='stop-failure') setInterval(()=>{},1000);
+  else if(mode==='quota-completion') emit({conversationId:'conversation-1',runId:'run-1',status:'failed',error:{message:'insufficient_quota'}});
   else emit({conversationId:'conversation-1',runId:'run-1',status:mode==='waiting-input'?'waiting_input':'completed',reply:{role:'assistant',text:'Research complete'}});
 }
 else {
@@ -47,6 +49,13 @@ else {
     fs.writeFileSync(path.join(root,'capture-'+provider),JSON.stringify({args,input,env:process.env,cwd:process.cwd(),files}));
     if(mode==='hang') { setInterval(()=>{},1000); return; }
     if(mode==='failure') { console.error('private credential'); process.exitCode=1; return; }
+    if(mode==='quota-stderr-hang' && provider==='opencode') {
+      if(args.includes('--print-logs')) {
+        process.stderr.write('timestamp=2026-11-03T07:17:21Z level=ERROR message="stream error" small=false agent=squabble-research error.error="AI_APICallError: Free usage ');
+        setTimeout(()=>process.stderr.write('limit reached. private-token"\\n'),20);
+      }
+      setInterval(()=>{},1000); return;
+    }
     if(provider==='codex') { emit({type:'item.completed',item:{type:'agent_message',text:'Research complete'}}); emit({type:'turn.completed',usage:{input_tokens:2,output_tokens:3}}); }
     if(provider==='claude') emit({type:'result',subtype:'success',result:'Research complete',usage:{input_tokens:2,output_tokens:3}});
     if(provider==='gemini') { emit({type:'tool_use',tool_name:'google_web_search'}); emit({type:'message',role:'assistant',content:'Research complete',delta:true}); emit({type:'result',status:'success',stats:{input_tokens:2,output_tokens:3,total_tokens:5}}); }
@@ -72,6 +81,30 @@ async function fixture(run: (value: {root:string; runtime:ReturnType<typeof crea
     await run({root,runtime});
   } finally { await rm(root,{recursive:true,force:true}); }
 }
+
+test('OpenCode quota diagnostics stop a hung process before the research timeout', async () => {
+  await fixture(async ({ root, runtime }) => {
+    await writeFile(join(root, 'mode'), 'quota-stderr-hang');
+    await assert.rejects(runtime.runNativeAgent('opencode', 'Research TEST', {
+      root: join(root, 'tasks'), signal: new AbortController().signal, onProgress: () => undefined,
+    }), { message: 'NATIVE_AGENT_USAGE_LIMIT' });
+    const calls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(calls.filter(call => call.args.includes('run')).length, 1);
+    await assert.rejects(readdir(join(root, 'tasks')));
+  });
+});
+
+for (const mode of ['quota-rejected', 'quota-completion']) test(`Doubao ${mode} reports usage limits without a second submission`, async () => {
+  await fixture(async ({ root, runtime }) => {
+    await writeFile(join(root, 'mode'), mode);
+    await assert.rejects(runtime.runNativeAgent('doubao', 'Research TEST', {
+      root: join(root, 'tasks'), signal: new AbortController().signal, onProgress: () => undefined,
+    }), { message: 'NATIVE_AGENT_USAGE_LIMIT' });
+    const calls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(calls.filter(call => call.args.includes('create')).length, 1);
+    assert.equal(calls.filter(call => call.args.includes('stop')).length, 0);
+  });
+});
 
 test('seven native agents expose bounded model/effort metadata without running paid prompts',async()=>{
   await fixture(async({root,runtime})=>{

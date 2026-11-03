@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { localAgentLimitMessage } from '../../../shared/local-agent-errors';
 import type { CouncilCandidate, CouncilMember } from '@shared/council.interface';
 import { parseContribution, responseGuidance } from './council.dialogue';
 import type { CouncilEvidence } from './council.rules';
@@ -47,6 +48,8 @@ export function agentContribution(result: { data?: unknown; text: string }, evid
 }
 
 export function agentErrorMessage(code: string, language: string): string {
+  const limit = localAgentLimitMessage(code, language);
+  if (limit) return limit;
   const messages: Record<string, [string, string]> = {
     LOCAL_TOOL_ISOLATION_FAILED: ['无法隔离本地助手的工具配置，任务已停止。请升级助手并在设置中重新检查连接。', 'The native agent tool configuration could not be isolated. The task was stopped. Update the agent and check its connection in Settings.'],
     LOCAL_LOGIN_REQUIRED: ['本地 Agent 需要重新登录。请在设置中完成登录后新建讨论。', 'The local agent requires sign-in. Sign in from Settings and start a new discussion.'],

@@ -1,5 +1,6 @@
 import type { ResearchActivity, ResearchEvent, ResearchEventStatus } from '../../../shared/research-events.interface';
 import type { AgentTask } from './local-agents.store';
+import { localAgentLimitMessage } from '../../../shared/local-agent-errors';
 
 const MAX_EVENTS = 256;
 const MAX_EVENT_IDS = 2048;
@@ -83,6 +84,7 @@ export function recordTaskLifecycle(task: AgentTask, previousState?: AgentTask['
     }
   }
   appendResearchEvents(task, [{ id: `task:${task.id}:${status}`, kind: 'task', status,
-    at: new Date(task.updatedAt).toISOString(), summary: text[status][en ? 1 : 0],
+    at: new Date(task.updatedAt).toISOString(),
+    summary: (status === 'failed' ? localAgentLimitMessage(task.error, task.researchScope.language) : undefined) ?? text[status][en ? 1 : 0],
     ...(['succeeded', 'failed', 'cancelled', 'interrupted'].includes(status) ? { durationMs: task.updatedAt - task.createdAt } : {}) }], true);
 }
