@@ -25,6 +25,8 @@ import updatesZhCN from './updates.zh-CN.json';
 import updatesEn from './updates.en.json';
 import strategyZhCN from './strategy.zh-CN.json';
 import strategyEn from './strategy.en.json';
+import settingsNavZhCN from './settings-nav.zh-CN.json';
+import settingsNavEn from './settings-nav.en.json';
 
 export const SUPPORTED_LANGS = ['zh-CN', 'en'] as const;
 export type AppLang = (typeof SUPPORTED_LANGS)[number];
@@ -54,13 +56,17 @@ export function setLanguage(lang: AppLang): void {
   } catch {
     // The selected language remains available for the current session.
   }
-  document.documentElement.lang = lang;
 }
+
+// Keep language-sensitive styles correct on first load, reload and every switch.
+i18n.on('languageChanged', (language: string) => {
+  if (typeof document !== 'undefined') document.documentElement.lang = language;
+});
 
 i18n.use(initReactI18next).init({
   resources: {
-    'zh-CN': { translation: { ...zhCN, ui: uiZhCN, appearance: appearanceZhCN, analysisFlow: analysisFlowZhCN, integrations: integrationsZhCN, marketOverview: marketOverviewZhCN, council: councilZhCN, updates: updatesZhCN, strategy: strategyZhCN } },
-    en: { translation: { ...en, ui: uiEn, appearance: appearanceEn, analysisFlow: analysisFlowEn, integrations: integrationsEn, marketOverview: marketOverviewEn, council: councilEn, updates: updatesEn, strategy: strategyEn } },
+    'zh-CN': { translation: { ...zhCN, ui: uiZhCN, appearance: appearanceZhCN, analysisFlow: analysisFlowZhCN, integrations: integrationsZhCN, marketOverview: marketOverviewZhCN, council: councilZhCN, updates: updatesZhCN, strategy: strategyZhCN, settingsNav: settingsNavZhCN } },
+    en: { translation: { ...en, ui: uiEn, appearance: appearanceEn, analysisFlow: analysisFlowEn, integrations: integrationsEn, marketOverview: marketOverviewEn, council: councilEn, updates: updatesEn, strategy: strategyEn, settingsNav: settingsNavEn } },
   },
   lng: detectLang(),
   fallbackLng: 'zh-CN',

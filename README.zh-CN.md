@@ -64,6 +64,11 @@ npm install
 npm run dev
 ```
 
+首次启动前，按 `.env.example` 在 `.env.local` 中配置 PostgreSQL 连接和私有 `JWT_SECRET`。
+看到 `Ready:` 后打开 **http://127.0.0.1:8080**，开发界面从源码加载并支持热更新。
+每次 `npm run dev` 会停止上一次开发会话，清理前后端端口的占用进程树，重新编译后端并刷新 Vite 缓存；按 Ctrl+C 会停止本次会话。
+默认端口为 `SERVER_PORT=3000`、`CLIENT_DEV_PORT=8080`，可在 `.env.local` 中修改。前端端口不会自动递增，避免访问到旧实例。
+
 ## 它能干什么
 
 | 功能 | 说明 |

@@ -49,7 +49,20 @@ export default function SystemUpdateCard() {
     if (requestedVersion && status.data?.phase === 'failed') setRequestedVersion(null);
   }, [requestedVersion, status.data?.phase]);
 
-  if (!status.data?.enabled) return null;
+  if (status.isPending) return <Card><CardContent className="flex items-center gap-2 pt-6" role="status">
+    <LoaderCircle className="size-4 animate-spin" />{t('ui.settings.loading')}
+  </CardContent></Card>;
+  if (status.isError) return <Card><CardContent className="flex flex-wrap items-center gap-3 pt-6">
+    <p role="alert" className="text-sm text-destructive">{t('settingsNav.updateLoadFailed')}</p>
+    <Button variant="outline" size="sm" onClick={() => void status.refetch()}>{t('ui.settings.retry')}</Button>
+  </CardContent></Card>;
+  if (!status.data?.enabled) return <Card>
+    <CardHeader><CardTitle>{t('updates.title')}</CardTitle></CardHeader>
+    <CardContent className="space-y-3 text-sm leading-7">
+      {status.data?.currentVersion && <p>{t('updates.current', { version: status.data.currentVersion })}</p>}
+      <p className="max-w-2xl text-muted-foreground">{t('settingsNav.updateUnavailable')}</p>
+    </CardContent>
+  </Card>;
   const { currentVersion, available, phase, error } = status.data;
   const busy = start.isPending || phase === 'backingUp' || phase === 'updating' || !!requestedVersion;
 

@@ -179,7 +179,7 @@ export default function CouncilMemberEditor({ member, webResearch, modelOptions,
               </div>}
             </div>
             <p className="text-xs leading-5 text-muted-foreground">{t('council.localAgents.budgetHint')}</p>
-            <Link to="/settings#local-agents" className="inline-block text-xs text-primary hover:underline">{t('council.localAgents.manage')}</Link>
+            <Link to="/settings/agents" className="inline-block text-xs text-primary hover:underline">{t('council.localAgents.manage')}</Link>
           </div> : <div className="space-y-2"><Label htmlFor="member-editor-model">{t('council.model')}</Label>
             <select id="member-editor-model" className={selectClass} value={councilModelValue(draft)} onChange={(event) => {
               const option = modelOptions.find((item: CouncilModelOption) => item.value === event.target.value);

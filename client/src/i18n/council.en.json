@@ -273,5 +273,28 @@
     "fields": { "dailyTokenLimit": "Daily tokens", "monthlyTokenLimit": "Monthly tokens", "perTaskTokenLimit": "Tokens per task", "maxInputTokens": "Input tokens per call", "maxOutputTokens": "Output tokens per call", "maxCallsPerTask": "Calls per task", "dailyCallLimit": "Calls per day", "inputUsdPerMillion": "Input price · USD / 1M", "outputUsdPerMillion": "Output price · USD / 1M" },
     "status": { "reserved": "Reserved", "completed": "Provider-reported", "estimated": "Estimated", "failed_unknown": "Failed · usage unknown", "failed": "Failed", "released": "Released", "settled": "Settled" },
     "purposes": { "council": "Council research", "analysis": "Investment analysis", "builder": "Builder review", "builder-review": "Builder review", "connection-test": "Connection test", "council:researcher": "Council · researcher", "council:challenger": "Council · challenger", "council:manager": "Council · manager", "analysis-bull-opening": "Bull case", "analysis-bear-opening": "Bear case", "analysis-bull-rebuttal": "Bull rebuttal", "analysis-bear-rebuttal": "Bear rebuttal", "analysis-critique": "Research critique", "analysis-rating": "Investment rating" }
+  },
+  "studio": {
+    "yourCall": "Different perspectives. Your decision.",
+    "followUp": "Ask a follow-up",
+    "copy": "Copy response",
+    "copied": "Copied",
+    "copyFailed": "Could not copy. Select the text and copy it manually.",
+    "replyingTo": "Following up with {{name}}",
+    "cancelReply": "Remove reference",
+    "replyPrefix": "Regarding {{name}}’s point “{{excerpt}}”:",
+    "tooLong": "The reference and message must fit within 2,000 characters. Shorten your message.",
+    "join": "Bring your perspective to the table",
+    "prompts": "Choose a discussion prompt",
+    "promptLabels": {
+      "upside": "Explore the upside",
+      "downside": "Test the downside",
+      "evidence": "What evidence is missing?"
+    },
+    "promptText": {
+      "upside": "Where could this company’s growth come from? Please support the case with evidence.",
+      "downside": "If the most optimistic assumption fails, what are the main downside risks?",
+      "evidence": "Which conclusions still need evidence, and what should we verify next?"
+    }
   }
 }

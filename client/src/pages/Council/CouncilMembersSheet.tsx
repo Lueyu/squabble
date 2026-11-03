@@ -4,6 +4,7 @@ import type { CouncilMember, CouncilSession } from '@shared/council.interface';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import CouncilMemberAvatar from './CouncilMemberAvatar';
+import { councilPersona } from './council-persona';
 import { useCouncilModels } from './useCouncilModels';
 
 export default function CouncilMembersSheet({ session, onClose, onUseTeam }: {
@@ -20,7 +21,7 @@ export default function CouncilMembersSheet({ session, onClose, onUseTeam }: {
       </SheetHeader>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
         {members.length === 0 && <p className="text-sm text-muted-foreground">{t('council.members.legacySnapshot')}</p>}
-        {members.map((member: CouncilMember) => <article key={member.id} className="rounded-xl border border-border p-4">
+        {members.map((member: CouncilMember) => <article key={member.id} data-persona={councilPersona(member.avatar, member.role)} className="council-member-card rounded-xl border border-border p-4">
           <div className="flex items-center gap-3"><CouncilMemberAvatar role={member.role} avatar={member.avatar} />
             <div className="min-w-0"><h3 className="break-words text-sm font-semibold">{member.name}</h3>
               <p className="break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">{member.roleTitle || t(`council.roles.${member.role}`)}

@@ -14,6 +14,7 @@ function load(filename) {
   const module = { exports: {} };
   cache.set(filename, module);
   const requireModule = id => {
+    if (id.endsWith('.css')) return {};
     if (id === 'react-i18next') return { useTranslation: () => ({ i18n: { language: 'en' }, t: (key, values = {}) => {
       const value = key.replace(/^council\./, '').split('.').reduce((item, part) => item?.[part], translations) ?? key;
       return String(value).replace(/\{\{(\w+)\}\}/gu, (_match, name) => String(values[name] ?? ''));
@@ -42,6 +43,29 @@ const session = { id: 's1', revision: 1, status: 'running', messages: [], report
 const task = { key: 'task-turn', taskId: 't1', revision: 1, memberId: 'm1', memberName: 'Analyst', turn: 0,
   status: 'running', startedAt: base.createdAt, activities: [], sourceCount: 0, isStale: false, truncated: false };
 const render = props => renderToStaticMarkup(React.createElement(ChatMessage, { session, onQuestion: () => {}, ...props }));
+
+test('all seven template personas retain distinct portraits and match their message palette', () => {
+  const Avatar = load(path.resolve(__dirname, '../pages/Council/CouncilMemberAvatar.tsx')).default;
+  const templates = ['value', 'growth', 'risk', 'technical', 'news', 'macro', 'moderator'];
+  const portraits = templates.map(avatar => renderToStaticMarkup(React.createElement(Avatar, { avatar, role: 'researcher' })));
+  assert.equal(new Set(portraits.map(html => html.slice(html.indexOf('<svg')))).size, 7);
+  for (const avatar of templates) {
+    const html = render({ message: base, session: { ...session, members: [{ ...session.members[0], avatar }] } });
+    assert.ok(html.includes(`data-persona="${avatar}"`));
+  }
+  assert.match(render({ message: { ...base, role: 'user' } }), /data-persona="user"/);
+  assert.match(render({ message: { ...base, role: 'manager', memberId: null }, session: { ...session, members: [] } }), /data-persona="moderator"/);
+});
+
+test('copy includes folded public sections and reply excerpts are bounded without hiding the original', () => {
+  const { councilCopyText, councilReplyExcerpt } = load(path.resolve(__dirname, 'council-message-text.ts'));
+  const message = { ...base, response: { thesis: base.content, evidencePoints: ['Evidence'], risks: ['Risk'], nextChecks: ['Check'], details: 'Full detail' }, reasoningSummary: ['Evidence'] };
+  const copy = councilCopyText(message);
+  for (const text of [base.content, 'Evidence', 'Risk', 'Check', 'Full detail']) assert.ok(copy.includes(text));
+  assert.equal(copy.split('Evidence').length, 2);
+  assert.equal(councilReplyExcerpt({ ...base, content: 'A'.repeat(500) }).length, 181);
+  assert.equal(councilCopyText({ ...base, content: 'A'.repeat(500) }).length, 500);
+});
 
 test('research is collapsed above the answer in one role card and failure stays visible while collapsed', () => {
   const html = render({ message: base, task: { ...task, status: 'failed', summary: 'Source disconnected.' } });

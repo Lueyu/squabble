@@ -64,6 +64,11 @@ npm install
 npm run dev
 ```
 
+Before the first launch, configure PostgreSQL and a private `JWT_SECRET` in `.env.local` using `.env.example`.
+After `Ready:` appears, open **http://127.0.0.1:8080** for the source-backed UI with hot reload.
+Each `npm run dev` stops the previous development session, reclaims both configured ports and their process trees, rebuilds the server, and refreshes Vite's cache. Ctrl+C stops the current session.
+Override `SERVER_PORT=3000` and `CLIENT_DEV_PORT=8080` in `.env.local` if needed. The frontend never silently switches to another port.
+
 ## What it does
 
 | Feature | Description |

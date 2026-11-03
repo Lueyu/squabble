@@ -193,7 +193,7 @@ export default function AgentBuilderPage() {
     } });
   };
 
-  if (params.get('tab') === 'budget') return <Navigate to="/settings#research-budget" replace />;
+  if (params.get('tab') === 'budget') return <Navigate to="/settings/budget" replace />;
   return (
     <div className="mx-auto max-w-6xl space-y-8 pb-12">
       <section className="relative overflow-hidden rounded-2xl border border-primary/20 bg-card p-6 md:p-8">

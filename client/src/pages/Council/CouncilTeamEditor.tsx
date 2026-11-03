@@ -12,6 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { validateCouncilSettings } from '@/utils/council-state';
 import CouncilMemberAvatar from './CouncilMemberAvatar';
+import { councilPersona } from './council-persona';
 import CouncilMemberEditor from './CouncilMemberEditor';
 import { assignLocalAgents, useCouncilModels } from './useCouncilModels';
 import { Link } from 'react-router-dom';
@@ -63,7 +64,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
       <span className="text-[11px] text-muted-foreground">{t('council.members.bounds')}</span>
     </div>
     <div className="space-y-2">
-      {value.members.map((member: CouncilMember) => <div key={member.id} className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3">
+      {value.members.map((member: CouncilMember) => <div key={member.id} data-persona={councilPersona(member.avatar, member.role)} className="council-member-card flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3">
         <CouncilMemberAvatar role={member.role} avatar={member.avatar} />
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium"><span className="min-w-0 max-w-full [overflow-wrap:anywhere]">{member.name}</span>
@@ -89,8 +90,8 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
       <div className="flex items-center justify-between"><p className="text-sm font-medium">{t('council.members.chooseTemplate')}</p>
         <Button type="button" size="icon" variant="ghost" className="size-7" aria-label={t('council.close')} onClick={() => setAdding(false)}><X className="size-4" /></Button></div>
       <div className="grid gap-2 sm:grid-cols-2">
-        {COUNCIL_MEMBER_TEMPLATES.map((template: CouncilMemberTemplate) => <button key={template.id} type="button" onClick={() => selectTemplate(template.id)}
-          className="flex items-start gap-2 rounded-lg border border-border bg-card p-2.5 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
+        {COUNCIL_MEMBER_TEMPLATES.map((template: CouncilMemberTemplate) => <button key={template.id} data-persona={template.id} type="button" onClick={() => selectTemplate(template.id)}
+          className="council-member-card flex items-start gap-2 rounded-lg border border-border bg-card p-2.5 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
           <CouncilMemberAvatar role={template.role} avatar={template.id} className="size-8" />
           <span className="min-w-0"><span className="block text-xs font-medium">{template.text[language].roleTitle}</span>
             <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">{template.text[language].description}</span></span>
@@ -104,7 +105,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
     {value.members.some(member => member.executionMode === 'local') && <div className="rounded-xl bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
       <p>{t('council.localAgents.toolsHint')}</p>
       <p className="mt-2">{t('council.localAgents.budgetHint')}{' '}
-        <Link to="/settings#research-budget" className="text-primary hover:underline">{t('council.budget.open')}</Link></p>
+        <Link to="/settings/budget" className="text-primary hover:underline">{t('council.budget.open')}</Link></p>
     </div>}
     {value.members.some(member => member.executionMode !== 'local') && <div className="rounded-xl bg-muted/40 p-3">
       <div className="flex items-center justify-between gap-3"><Label htmlFor={webId} className="text-sm">{t('council.members.webResearch')}</Label>
