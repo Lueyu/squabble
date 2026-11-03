@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
 import { workflowCopy } from './workflow-copy';
+import CouncilMemoryInventory from './CouncilMemoryInventory';
 
 export default function CouncilWorkflowPanel({ session, actions }: { session: CouncilSession; actions: ReturnType<typeof useCouncilActions> }) {
   const { i18n } = useTranslation();
@@ -30,6 +31,7 @@ export default function CouncilWorkflowPanel({ session, actions }: { session: Co
             <time className="ml-2 text-muted-foreground">{new Date(attempt.startedAt).toLocaleTimeString(i18n.language)}</time>
             {attempt.review && <p>{attempt.review.accepted ? copy.states.accepted : copy.states.needs_revision}: {attempt.review.feedback}</p>}
             {attempt.error && <p className="break-words text-destructive">{attempt.error}</p>}
+            <CouncilMemoryInventory inventory={attempt.memory} />
           </li>)}</ol></details>}
         {session.status !== 'running' && ['failed', 'blocked', 'cancelled', 'uncertain'].includes(task.state) && <div className="space-y-1">
           <Button size="sm" variant="outline" disabled={actions.retry.isPending} onClick={() => actions.retry.mutate({ id: session.id, taskId: task.id },

@@ -8,6 +8,7 @@ import CouncilResearchTimeline from './CouncilResearchTimeline';
 import CouncilResponseBody from './CouncilResponseBody';
 import CouncilMessageActions from './CouncilMessageActions';
 import { councilPersona } from './council-persona';
+import CouncilMemoryInventory from './CouncilMemoryInventory';
 
 function safeSourceUrl(value: string | null): string | null {
   if (!value) return null;
@@ -35,6 +36,8 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
   const replyTo = message?.replyToMessageId ? session.messages.find((item) => item.id === message.replyToMessageId) : undefined;
   const evidence = [...session.reports].sort((left, right) => right.version - left.version).flatMap((report) => report.evidence);
   const cited = [...new Set(message?.evidenceIds ?? [])].map((id) => evidence.find((item) => item.id === id));
+  const inventory = message?.memory ?? session.workflow?.tasks.flatMap(item => item.attempts)
+    .find(attempt => attempt.id === (message?.taskId ?? task?.taskId))?.memory;
   return <article id={message ? `council-message-${message.id}` : undefined} tabIndex={-1}
     data-persona={councilPersona(member?.avatar, role)} data-role={role} className="council-message">
     <CouncilMemberAvatar role={role} avatar={member?.avatar} className="council-message-avatar" />
@@ -60,6 +63,7 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
             <span className="mt-1 line-clamp-2 block break-words">{councilMessageDisplayContent(replyTo)}</span></span>
         </button>}
         {message && <CouncilResponseBody message={message} />}
+        {!isUser && <CouncilMemoryInventory inventory={inventory} />}
         {!isUser && cited.length > 0 && <details className="mt-3 text-xs">
           <summary className="cursor-pointer text-muted-foreground"><span className="inline-flex items-center gap-1"><FileText className="size-3" />
             {t('council.chat.sources', { count: cited.length })}</span></summary>

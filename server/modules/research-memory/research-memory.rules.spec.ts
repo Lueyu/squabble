@@ -25,9 +25,11 @@ test('recall selects only three items with a hard bounded context and treats his
   const result = rankMemoryRecall(items, '', { autoArchive: true, recallEnabled: true });
   assert.equal(result.items.length, 3);
   assert.equal(result.items[0].id, '7');
-  assert.ok(result.context.length <= 6000);
-  assert.match(result.context, /opinion/i);
-  assert.match(result.context, /never.*instructions/i);
+  assert.equal(result.items[0].summary, items[7].summary, 'ranking preserves whole selected items even if they cannot fit');
+  assert.equal(result.context, '', 'oversized histories are omitted as whole units');
+  const compact = rankMemoryRecall(items.map(item => ({ ...item, summary: 'Historical opinion' })), '', { autoArchive: true, recallEnabled: true });
+  assert.match(compact.context, /opinion/i);
+  assert.match(compact.context, /never.*instructions/i);
   const topical = rankMemoryRecall(items.map((item, index) => ({ ...item, topic: index === 0 ? 'valuation' : 'general' })),
     'valuation', { autoArchive: true, recallEnabled: true });
   assert.equal(topical.items[0].id, '0', 'an exact topic match outranks a newer unrelated report');

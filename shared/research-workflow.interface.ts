@@ -1,5 +1,5 @@
 import type { CouncilResponse } from './council.interface';
-import type { ResearchMemoryRecall, ThesisCandidateInput } from './research-memory.interface';
+import type { MemoryContextInventory, ResearchMemoryRecall, ThesisCandidateInput } from './research-memory.interface';
 import type { ResearchToolResult } from './research-tools.interface';
 
 export type ResearchGoal = 'comprehensive' | 'financials' | 'peers' | 'valuation';
@@ -20,6 +20,7 @@ export interface ResearchDelivery {
   response: CouncilResponse;
 }
 export interface ResearchTaskAttempt {
+  memory?: MemoryContextInventory;
   id: string; revision: number; kind: 'work' | 'review'; startedAt: string; finishedAt?: string;
   state: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'uncertain';
   messageId: string; dispatched?: boolean; remoteTaskId?: string; remoteContextId?: string;

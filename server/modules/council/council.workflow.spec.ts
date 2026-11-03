@@ -266,7 +266,8 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     const peers = await withTools.createSession(owner, { ticker: 'AAPL', peers: ['MSFT'], goal: 'peers', language: 'en', recallEnabled: false });
     await withTools.runSession(owner, peers.id);
     const compared = await waitFor(peers.id);
-    assert.equal(compared.reports.at(-1)!.coverage?.complete, true);
+    assert.equal(compared.reports.at(-1)!.coverage?.complete, true, JSON.stringify(compared.workflow?.tasks.map(task => ({ key: task.key,
+      reason: task.reason, sizes: task.attempts.map(attempt => attempt.memory?.requestTokens) }))));
     assert.ok(researchedTickers.includes('MSFT'), 'API-only workflow really fetches the frozen peer data');
     assert.ok(compared.reports.at(-1)!.evidence.some(e => e.content.includes('MSFT')));
     const valuation = await withTools.createSession(owner, { ticker: 'AAPL', goal: 'valuation', language: 'en', recallEnabled: false });

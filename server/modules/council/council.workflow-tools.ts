@@ -1,8 +1,10 @@
 import type { ResearchToolResult } from '../../../shared/research-tools.interface';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
+import { isMemoryToolData } from '../research-memory/research-memory.context';
 
 /** Preserve numeric values and field names; text and list omissions are explicitly marked. */
 export function excerptToolData(value: unknown, limit = 300, depth = 0): unknown {
+  if (isMemoryToolData(value)) return value;
   if (typeof value === 'string') return value.length > limit ? `${value.slice(0, limit)} [excerpt]` : value;
   if (depth > 7) return '[nested excerpt]';
   if (Array.isArray(value)) return [...value.slice(0, 5).map(item => excerptToolData(item, limit, depth + 1)),
@@ -10,6 +12,35 @@ export function excerptToolData(value: unknown, limit = 300, depth = 0): unknown
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).slice(0, 40)
     .map(([key, entry]) => [key, excerptToolData(entry, limit, depth + 1)]));
   return value;
+}
+
+/** Only peer envelopes: exact common fields apply to each company; all company-specific facts remain explicit. */
+export function compactPeerComparison(value: unknown): unknown {
+  const record = (item: unknown): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item));
+  if (!record(value) || typeof value.primary !== 'string' || !Array.isArray(value.companies)
+    || value.companies.length < 2 || !value.companies.every(record) || 'commonCompanyFields' in value) return value;
+  const protectedUnit = (item: unknown): boolean => isMemoryToolData(item)
+    || Boolean(item && typeof item === 'object' && Object.values(item).some(protectedUnit));
+  if (protectedUnit(value)) return value;
+  const companies = structuredClone(value.companies) as Record<string, unknown>[];
+  const common = (rows: Record<string, unknown>[]): Record<string, unknown> => {
+    const fields: Record<string, unknown> = {};
+    for (const key of Object.keys(rows[0])) {
+      if (!rows.every(row => Object.hasOwn(row, key))) continue;
+      const values = rows.map(row => row[key]);
+      if (values.every(item => JSON.stringify(item) === JSON.stringify(values[0]))) {
+        fields[key] = values[0]; rows.forEach(row => { delete row[key]; });
+      } else if (values.every(record)) {
+        const nested = common(values);
+        if (Object.keys(nested).length) fields[key] = nested;
+      }
+    }
+    return fields;
+  };
+  const commonCompanyFields = common(companies);
+  const packed = { ...value, commonCompanyFields, companies,
+    fieldInheritance: 'Recursively merge commonCompanyFields into companies; specific leaves win.' };
+  return Buffer.byteLength(JSON.stringify(packed)) < Buffer.byteLength(JSON.stringify(value)) ? packed : value;
 }
 
 export function attachValuation(delivery: ResearchDelivery, result: ResearchToolResult, language: string): void {

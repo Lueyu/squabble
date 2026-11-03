@@ -20,6 +20,7 @@ export interface AgentTask {
   state: 'staged' | 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
   createdAt: number; updatedAt: number; progress?: string; text?: string;
   usageTokens?: number | null; error?: string;
+  commandEmitted?: boolean;
 }
 export interface AgentDevice {
   id: string; owner: string; name: string; tokenHash: string;
@@ -389,6 +390,7 @@ export class LocalAgentStore {
             continue;
           }
           task.state = 'running'; task.updatedAt = now;
+          task.commandEmitted = true;
           commands.push({ id: task.id, kind: task.kind, provider: task.provider,
             ...(task.researchBundle ? { researchTools: task.researchBundle } : {}),
             ...(task.kind === 'run' ? { prompt: task.prompt, ...(task.agentSettings ? { agentSettings: task.agentSettings } : {}) } : {}) });

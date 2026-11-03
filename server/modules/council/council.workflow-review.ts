@@ -2,6 +2,7 @@ import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
 import type { CouncilEvidence } from './council.rules';
 import { thesisEvidenceIds } from '../research-memory/research-memory.theses';
+import { jsonChatMessages } from '../multi-agent/llm.service';
 
 /** Remove only an exact duplicate. Every substantive assertion and all calculation data survive review packing. */
 export function reviewDelivery(delivery: ResearchDelivery | null) {
@@ -11,7 +12,7 @@ export function reviewDelivery(delivery: ResearchDelivery | null) {
 }
 
 export function workflowReviewPrompt(task: ResearchTask, attempt: ResearchTaskAttempt, batch: ResearchTask[],
-  requirements: Record<ResearchTask['key'], string>, ticker: string, language: string, steering: string[], evidence: CouncilEvidence[], moderatorInstructions = '') {
+  requirements: Record<ResearchTask['key'], string>, ticker: string, language: string, steering: string[], evidence: CouncilEvidence[], moderatorInstructions = '', packingTarget = 5500) {
   const submitted = batch.length ? batch : [task];
   const cited = new Set(submitted.flatMap(item => [...(item.delivery?.evidenceIds ?? []),
     ...(item.delivery?.thesisCandidates ?? []).flatMap(thesisEvidenceIds)]));
@@ -34,8 +35,8 @@ export function workflowReviewPrompt(task: ResearchTask, attempt: ResearchTaskAt
       content: item.content.slice(0, 500), sourceUrl: item.sourceUrl, fetchedAt: item.fetchedAt })),
     evidenceExcerpts: true,
   };
-  for (const length of [300, 150]) {
-    if (estimateInputTokens([{ role: 'system', content: system }, { role: 'user', content: JSON.stringify(input) }]) <= 5500) break;
+  for (const length of [300, 150, 60]) {
+    if (estimateInputTokens(jsonChatMessages([{ role: 'system', content: system }, { role: 'user', content: JSON.stringify(input) }])) <= packingTarget) break;
     input.evidence = input.evidence.map(item => ({ ...item, content: item.content.slice(0, length) }));
   }
   // Oversized submissions/instructions still hit the user's real budget. Never silently cut the object being accepted.

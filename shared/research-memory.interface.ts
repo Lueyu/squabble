@@ -56,9 +56,25 @@ export interface ResearchMemoryRecallItem {
   topic?: string;
   summary: string; flags: MemoryFlag[]; source: MemorySource; citations: MemoryCitation[];
   provenance?: ThesisContent['provenance']; endorsement?: 'agent' | 'user';
+  /** Legacy clients may omit these. Never reconstruct an atomic thesis from summary text. */
+  content?: ThesisContent; status?: ThesisStatus; expiresAt?: string | null;
+}
+export interface MemoryReference { kind: ResearchMemoryRecallItem['kind']; id: string; version: number }
+export interface MemoryOmission extends MemoryReference {
+  reason: 'budget' | 'disabled' | 'revoked' | 'version-changed' | 'structure-missing'; currentVersion?: number;
+}
+/** Submission is observable; model use and native private context are not. Contains no prompt bodies. */
+export interface MemoryContextInventory {
+  requested: MemoryReference[]; selected: MemoryReference[]; prepared: MemoryReference[]; submitted: MemoryReference[];
+  counts: { requested: number; selected: number; prepared: number; submitted: number };
+  budgetTokens: number; usedTokens: number; basis: 'conservative-utf8' | 'exact'; omissions: MemoryOmission[];
+  requestTokens?: number; requestBudgetTokens?: number; submission?: 'api' | 'agent';
+  requestScope?: 'api-messages' | 'application-prompt' | 'application-prompt-and-snapshot'; sharedRequestAttemptId?: string;
+  nativeDelivery?: 'runtime' | 'companion-command';
 }
 export interface ResearchMemoryRecall {
   items: ResearchMemoryRecallItem[]; context: string; preferences: ResearchMemoryPreferences;
+  requested?: MemoryReference[]; omissions?: MemoryOmission[];
 }
 export interface ArchiveResearchReport {
   sessionId: string; ticker: string; language: 'zh-CN' | 'en'; report: CouncilReport;

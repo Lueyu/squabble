@@ -1,5 +1,6 @@
 import type { ResearchSource, ResearchToolResult } from '@shared/research-tools.interface';
 import { RESULT_LIMIT_BYTES, validOutput } from './research-tools.registry';
+import { boundMemoryToolData, isMemoryToolData } from '../research-memory/research-memory.context';
 
 export function clipped(value: unknown, maximum: number): string {
   return typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/gu, ' ').slice(0, maximum) : '';
@@ -37,6 +38,7 @@ export function researchFailure(status: ResearchToolResult['status'], errorCode:
 export function boundedResult(result: ResearchToolResult): ResearchToolResult {
   let shortened: boolean = result.truncated;
   const clean = (value: unknown, depth = 0, stringLimit = 3000): unknown => {
+    if (isMemoryToolData(value)) return value;
     if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
     if (typeof value === 'string') {
       if (value.length > stringLimit) shortened = true;
@@ -62,6 +64,17 @@ export function boundedResult(result: ResearchToolResult): ResearchToolResult {
     if (Buffer.byteLength(JSON.stringify(bounded)) <= RESULT_LIMIT_BYTES) break;
     data = clean(data, 0, maximum);
     bounded = { ...bounded, data, truncated: true };
+  }
+  const boundMemory = (value: unknown, budget: number): unknown => {
+    if (isMemoryToolData(value)) return boundMemoryToolData(value, budget);
+    if (Array.isArray(value)) return value.map(item => boundMemory(item, budget));
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
+      .map(([key, item]) => [key, boundMemory(item, budget)]));
+    return value;
+  };
+  for (const budget of [12_000, 6000, 0]) {
+    if (Buffer.byteLength(JSON.stringify(bounded)) <= RESULT_LIMIT_BYTES) break;
+    bounded = { ...bounded, data: boundMemory(bounded.data, budget), truncated: true };
   }
   if (Buffer.byteLength(JSON.stringify(bounded)) > RESULT_LIMIT_BYTES) {
     return { ...researchFailure('partial', 'RESEARCH_RESULT_LIMIT'), truncated: true };

@@ -11,7 +11,9 @@ export interface LocalAgentExecution {
   remoteTaskId?: string;
   contextId?: string;
   resumeInput?: boolean;
-  onDispatch?(): Promise<void>;
+  onDispatch?(submission?: { inputBytes: number }): Promise<void>;
+  /** Queue acceptance alone is not delivery. Companion receipt means emitted command, not private model use. */
+  onSubmitted?(delivery: 'runtime' | 'companion-command'): Promise<void>;
   onTask(ref: LocalAgentTaskRef): Promise<void>;
   onProgress(text: string): Promise<void>;
   shouldContinue(): Promise<boolean>;

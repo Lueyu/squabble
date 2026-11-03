@@ -12,6 +12,7 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import type { ResearchToolRequest, ResearchToolResult } from '../../../shared/research-tools.interface';
 import { researchFailure } from '../research-tools/research-tools.output';
 import { createHash } from 'node:crypto';
+import { researchSnapshotPrompt } from '../../local-agents/tool-config';
 
 interface Runtime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -102,12 +103,13 @@ export class LocalAgentsService implements OnModuleDestroy {
     return this.store.createPairing(owner);
   }
 
-  private async launch(task: AgentTask): Promise<void> {
+  private async launch(task: AgentTask, onSubmitted?: () => Promise<void>): Promise<void> {
     if (this.stopping || this.running.has(task.id) || !await this.store.takeNative(task.owner, task.id)) return;
     const abort = new AbortController();
     let progressWrites: Promise<void> = Promise.resolve();
     const done = (async () => {
       try {
+        await onSubmitted?.();
         const result = await this.runtime.runNativeAgent(task.provider, task.prompt, { root: join(this.store.root, 'workspaces', task.id), signal: abort.signal,
           agentSettings: task.agentSettings,
           ...(task.researchBundle ? { researchTools: { ...task.researchBundle,
@@ -151,19 +153,26 @@ export class LocalAgentsService implements OnModuleDestroy {
       task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research);
       try {
         await options.onTask({ taskId: task.id, contextId: task.id });
-        await options.onDispatch?.();
+        await options.onDispatch?.({ inputBytes: Buffer.byteLength(researchSnapshotPrompt(options.prompt, research?.bundle.snapshot ?? ''), 'utf8') });
         await this.store.activate(owner, task.id);
       } catch (error) { await this.store.cancel(owner, task.id); throw error; }
     }
-    if (!task.deviceId) await this.launch(task);
+    let submitted = false;
+    const recordSubmission = async (delivery: 'runtime' | 'companion-command') => {
+      if (submitted) return;
+      await options.onSubmitted?.(delivery); submitted = true;
+    };
+    if (!task.deviceId) await this.launch(task, () => recordSubmission('runtime'));
     let progress = '';
     for (;;) {
       task = await this.store.task(owner, task.id);
+      if (task.commandEmitted) await recordSubmission('companion-command');
       if (task.state === 'completed') return { taskId: task.id, contextId: task.id, text: task.text || '', usageTokens: task.usageTokens ?? null };
       if (task.state === 'failed' || task.state === 'cancelled') throw new LocalAgentError(task.error || 'LOCAL_TASK_FAILED', task.id, task.id);
       if (task.state === 'staged') throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
       if (!await options.shouldContinue()) {
         const cancellation = await this.store.cancel(owner, task.id);
+        if ((await this.store.task(owner, task.id)).commandEmitted) await recordSubmission('companion-command');
         this.running.get(task.id)?.abort.abort();
         // A running upstream task must acknowledge its stop before the council
         // clears this task reference and permits a new assignment.

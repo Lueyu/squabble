@@ -170,6 +170,28 @@ test('valuation tool obtains source denominators itself and rejects unsourced nu
   assert.equal((await call('get_valuation_scenarios', { ...args, multiples: { bear: 20, base: 10, bull: 15 } })).errorCode, 'RESEARCH_INVALID_ARGUMENTS');
 });
 
+test('memory tool and native bundle retain long atomic boundaries and citations through generic envelope clipping', async () => {
+  const { call, service, bound, memory, rows } = workflowFixture();
+  const content = { claim: 'Complete atomic claim', supportingEvidence: [{ evidenceId: 'filing' }], assumptions: [], indicators: [],
+    opposingEvidence: ['Material counterevidence'], invalidationConditions: ['长期失效条件'.repeat(300)], boundaryOrigin: 'stated' as const };
+  const citations = [{ evidenceId: 'filing', title: 'Source '.repeat(100), sourceUrl: 'https://example.test/' + 's'.repeat(3500), fetchedAt: '2026-11-03' }];
+  memory.refreshRecall = async () => ({ items: [{ kind: 'thesis', id: 'thesis', memoryId: 'history', version: 2, summary: content.claim,
+    content, status: 'confirmed', flags: ['opinion'], citations,
+    source: { sessionId: 's', reportId: 'r', reportVersion: 1, reportRevision: 1, reportCreatedAt: '2026-11-03', url: '/council' } }],
+  context: '', preferences: { autoArchive: true, recallEnabled: true } });
+  rows.council_messages.push(...Array.from({ length: 6 }, (_, index) => ({ id: `m${index}`, owner: 'alice',
+    sessionId: bound.sessionId, revision: 3, role: 'researcher', memberName: 'Researcher', content: 'Optional prose '.repeat(2000), createdAt: new Date() })));
+  const direct = await call('get_research_memory');
+  const bundle = await service.bundle('alice', bound);
+  const nested = JSON.parse(bundle.snapshot).data.workflow.memory;
+  for (const data of [direct.data, nested] as Array<{ items: Array<{ content: unknown; citations: unknown }>; inventory: { counts: { prepared: number } } }>) {
+    assert.equal(data.items.length, 1);
+    assert.deepEqual(data.items[0].content, content); assert.deepEqual(data.items[0].citations, citations);
+    assert.equal(data.inventory.counts.prepared, 1);
+  }
+  assert.ok(Buffer.byteLength(bundle.snapshot) <= 24_000);
+});
+
 test('scope rejects another owner, stale revision, expired scope, wrong ticker, turn and member', async () => {
   const { service, bound, session, quoteCalls } = fixture();
   assert.equal(await service.isCurrent('alice', bound), true);

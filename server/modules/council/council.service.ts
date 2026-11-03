@@ -858,7 +858,7 @@ export class CouncilService implements OnModuleInit {
       ticker: row.ticker, language: row.language, status: row.status, revision: row.revision,
       messages: messages.map(({ id, role, memberName, content, revision, tokensUsed, createdAt, metadata }) => ({
         id, role, memberName, content, revision, tokensUsed, createdAt: createdAt.toISOString(),
-        ...(metadata ? { memberId: metadata.memberId, phase: metadata.phase, replyToMessageId: metadata.replyToMessageId,
+        ...(metadata ? { memory: metadata.memory, memberId: metadata.memberId, phase: metadata.phase, replyToMessageId: metadata.replyToMessageId,
           turn: metadata.turn, cycleId: metadata.cycleId, response: metadata.response, researchEventId: metadata.researchEvent?.id,
           evidenceIds: metadata.evidenceIds, reasoningSummary: metadata.reasoningSummary, questions: metadata.questions,
           acquisition: metadata.acquisition, externalAgent: metadata.externalAgent, externalUsageUnknown: metadata.externalUsageUnknown, taskId: metadata.taskId } : {}),

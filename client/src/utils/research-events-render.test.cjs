@@ -8,6 +8,7 @@ const { renderToStaticMarkup } = require('react-dom/server');
 const ts = require('typescript');
 const translations = require('../i18n/council.en.json');
 const cache = new Map();
+let language = 'en';
 
 function load(filename) {
   if (cache.has(filename)) return cache.get(filename).exports;
@@ -15,7 +16,7 @@ function load(filename) {
   cache.set(filename, module);
   const requireModule = id => {
     if (id.endsWith('.css')) return {};
-    if (id === 'react-i18next') return { useTranslation: () => ({ i18n: { language: 'en' }, t: (key, values = {}) => {
+    if (id === 'react-i18next') return { useTranslation: () => ({ i18n: { language }, t: (key, values = {}) => {
       const value = key.replace(/^council\./, '').split('.').reduce((item, part) => item?.[part], translations) ?? key;
       return String(value).replace(/\{\{(\w+)\}\}/gu, (_match, name) => String(values[name] ?? ''));
     } }) };
@@ -43,6 +44,30 @@ const session = { id: 's1', revision: 1, status: 'running', messages: [], report
 const task = { key: 'task-turn', taskId: 't1', revision: 1, memberId: 'm1', memberName: 'Analyst', turn: 0,
   status: 'running', startedAt: base.createdAt, activities: [], sourceCount: 0, isStale: false, truncated: false };
 const render = props => renderToStaticMarkup(React.createElement(ChatMessage, { session, onQuestion: () => {}, ...props }));
+
+test('role messages and task attempts show a folded bilingual selected/prepared/submitted inventory', () => {
+  const inventory = { requested: [{ kind: 'thesis', id: 'thesis-1', version: 2 }], selected: [{ kind: 'thesis', id: 'thesis-1', version: 2 }],
+    prepared: [], submitted: [], counts: { requested: 1, selected: 1, prepared: 0, submitted: 0 },
+    budgetTokens: 120, usedTokens: 0, basis: 'conservative-utf8', omissions: [{ kind: 'thesis', id: 'thesis-1', version: 2, reason: 'budget' }] };
+  const workflow = { goal: 'financials', peers: [], tasks: [{ id: 't', key: 'financials', state: 'failed', dependencies: [], skills: [], reworks: 0,
+    attempts: [{ id: 'attempt', kind: 'work', state: 'failed', startedAt: base.createdAt, memory: inventory }] }] };
+  const Panel = load(path.resolve(__dirname, '../pages/Council/CouncilWorkflowPanel.tsx')).default;
+  try {
+    for (const [locale, labels] of [['en', ['Selected', 'Prepared', 'Submitted', 'Whole item exceeds budget']],
+      ['zh-CN', ['已选择', '已准备', '已提交', '整条超过预算']]]) {
+      language = locale;
+      const chat = render({ message: { ...base, memory: inventory } });
+      const panel = renderToStaticMarkup(React.createElement(Panel, { session: { ...session, workflow }, actions: {} }));
+      const running = render({ task: { ...task, taskId: 'attempt' }, session: { ...session, workflow } });
+      for (const html of [chat, panel, running]) {
+        for (const label of labels) assert.ok(html.includes(label), `${locale}: ${label}`);
+        assert.match(html, /thesis-1/); assert.match(html, /v2/);
+        assert.doesNotMatch(html, /<details[^>]*\bopen(?:[= >])/u);
+        assert.doesNotMatch(html, /model used|模型已使用/iu);
+      }
+    }
+  } finally { language = 'en'; }
+});
 
 test('all seven template personas retain distinct portraits and match their message palette', () => {
   const Avatar = load(path.resolve(__dirname, '../pages/Council/CouncilMemberAvatar.tsx')).default;

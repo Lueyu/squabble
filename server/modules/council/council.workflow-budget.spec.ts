@@ -8,6 +8,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { CouncilService } from './council.service';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
+import { jsonChatMessages, type ChatMessage, type LlmCallOptions } from '../multi-agent/llm.service';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { reviewDelivery, workflowReviewPrompt } from './council.workflow-review';
 import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../../shared/research-workflow.interface';
@@ -47,10 +48,11 @@ test('ordinary Chinese and English workflows fit default request budgets with re
     for (const language of ['zh-CN', 'en'] as const) {
       const owner = randomUUID(), sizes: Array<{ key: string; bytes: number }> = [];
       await client`INSERT INTO users(id, username, password_hash) VALUES (${owner}, ${language}, 'test-only')`;
-      const model = async (messages: { role: string; content: string }[], userId: string, options: { taskId: string; purpose: string; maxOutputTokens: number }) => {
+      const model = async (messages: ChatMessage[], userId: string, options: LlmCallOptions) => {
         const input = JSON.parse(messages[1].content);
-        sizes.push({ key: `${input.task.key}:${input.submitted ? 'review' : 'work'}`, bytes: estimateInputTokens(messages) });
-        const reservation = await budget.reserve(userId, { ...options, model: 'fixture', messages });
+        const complete = jsonChatMessages(messages);
+        sizes.push({ key: `${input.task.key}:${input.submitted ? 'review' : 'work'}`, bytes: estimateInputTokens(complete) });
+        const reservation = await budget.reserve(userId, { ...options, model: 'fixture', messages: complete }, options.onDispatch);
         const content = response(language === 'en');
         const data = input.submitted ? Array.isArray(input.submitted)
           ? { reviews: input.submitted.map((item: { taskId: string; submittedAttemptId: string }) => ({ ...item, delivery: undefined, requirement: undefined, accepted: true, feedback: 'Source period and scope checked.' })) }
@@ -81,12 +83,18 @@ test('ordinary Chinese and English workflows fit default request budgets with re
       for (let i = 0; i < 500 && result.status === 'running'; i++) {
         await new Promise(resolve => setTimeout(resolve, 10)); result = await service.getSession(owner, session.id);
       }
-      assert.equal(result.status, 'completed', JSON.stringify({ error: result.error, sizes }));
-      assert.equal(result.reports.at(-1)?.coverage?.complete, true, JSON.stringify(sizes));
+      assert.equal(result.status, 'completed', JSON.stringify({ error: result.error, sizes,
+        summary: result.workflow?.tasks.find(task => task.key === 'summary')?.attempts.at(-1)?.memory }));
+      assert.equal(result.reports.at(-1)?.coverage?.complete, true, JSON.stringify({ sizes, tasks: result.workflow?.tasks.map(task => ({
+        key: task.key, state: task.state, reason: task.reason, attempts: task.attempts.map(attempt => ({ kind: attempt.kind, memory: attempt.memory, error: attempt.error })) })) }));
       assert.equal(result.reports.at(-1)?.thesisCandidates, null, 'older model output remains unstructured without breaking the workflow');
       assert.equal(sizes.length, 8);
       assert.ok(sizes.every(size => size.bytes <= 6000), JSON.stringify(sizes));
       assert.equal((await budget.getUsage(owner)).dayCalls, 8);
+      const reviews = result.workflow!.tasks.flatMap(task => task.attempts).filter(attempt => attempt.kind === 'review');
+      assert.ok(reviews.every(attempt => attempt.memory?.counts.prepared === 0 && attempt.memory?.counts.submitted === 0));
+      assert.ok(reviews.every(attempt => attempt.dispatched && attempt.memory?.requestTokens! > 0));
+      assert.ok(reviews.some(attempt => attempt.memory?.sharedRequestAttemptId), 'secondary batch review retains shared request attribution');
       const delivery = result.workflow!.tasks[0].delivery!;
       const oversized = { ...result.workflow!.tasks[0], delivery: { ...delivery,
         conclusion: 'A distinct conclusion', response: { ...delivery.response, details: 'Do not hide this material evidence. '.repeat(400) } } };

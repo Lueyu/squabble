@@ -4,7 +4,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 import { QuoteService } from '../quote/quote.service';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { researchMemories, researchMemoryPreferences, researchTheses, researchThesisVersions } from '../../database/research-memory.schema';
-import type { ArchiveResearchReport, MemoryCitation, MemoryFlag, ResearchMemoryItem, ResearchMemoryList,
+import type { ArchiveResearchReport, MemoryCitation, MemoryFlag, MemoryOmission, ResearchMemoryItem, ResearchMemoryList,
   ResearchMemoryPreferences, ResearchMemoryQuery, ResearchMemoryRecall, ResearchMemoryRecallItem,
   ResearchThesis, ResearchThesisVersion, ThesisContent, UpdateResearchThesis } from '@shared/research-memory.interface';
 import { canonicalMemorySymbol, MEMORY_STALE_MS, normalizedTopic, rankMemoryRecall } from './research-memory.rules';
@@ -12,6 +12,7 @@ import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdat
   thesisCandidateSchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
 import { isUnverifiedCitation, normalizeThesisContent, thesisEvidenceIds, thesisFingerprint, validateThesisReferences } from './research-memory.theses';
 import { acceptedWorkflowProvenance } from './research-memory.provenance';
+import { memoryReference } from './research-memory.context';
 
 type MemoryRow = typeof researchMemories.$inferSelect;
 type ThesisRow = typeof researchTheses.$inferSelect;
@@ -209,23 +210,38 @@ export class ResearchMemoryService {
     return rankMemoryRecall(items, query.topic ?? '', preferences);
   }
   /** A checkpoint pins IDs/versions, never authority. Resolve owner and live source for every prompt. */
-  async refreshRecall(owner: string, frozen: ResearchMemoryRecall): Promise<ResearchMemoryRecall> {
+  async refreshRecall(owner: string, frozen: ResearchMemoryRecall, query?: ResearchMemoryQuery & { enabled?: boolean }): Promise<ResearchMemoryRecall> {
     const preferences = await this.getPreferences(owner);
-    if (!preferences.recallEnabled) return { items: [], context: '', preferences };
+    const requested = frozen.items.slice(0, 3).map(memoryReference);
+    if (!preferences.recallEnabled || query?.enabled === false) return { items: [], context: '', preferences, requested,
+      omissions: requested.map(item => ({ ...item, reason: 'disabled' })) };
+    const symbol = query ? this.symbol(query) : undefined;
     const items: ResearchMemoryRecallItem[] = [];
+    const omissions: MemoryOmission[] = [];
     for (const item of frozen.items.slice(0, 3)) {
+      let reason: MemoryOmission['reason'] = 'revoked', currentVersion: number | undefined;
       try {
         if (item.kind === 'history') {
           const memory = await this.getMemory(owner, item.id);
-          if (memory.source && !memory.excluded && memory.source.reportVersion === item.version) items.push(this.historyRecallItem(memory));
+          if (memory.source && !memory.excluded && (!symbol || memory.ticker === symbol.ticker && memory.market === symbol.market)) {
+            if (memory.source.reportVersion === item.version) { items.push(this.historyRecallItem(memory)); continue; }
+            reason = 'version-changed'; currentVersion = memory.source.reportVersion;
+          }
         } else if (item.kind === 'thesis') {
           const thesis = await this.getThesis(owner, item.id);
           const memory = await this.getMemory(owner, thesis.memoryId);
-          if (thesis.version === item.version && !memory.excluded && this.recallableThesis(thesis)) items.push(this.thesisRecallItem(thesis));
+          if (!memory.excluded && this.recallableThesis(thesis) && (!symbol || memory.ticker === symbol.ticker && memory.market === symbol.market)) {
+            if (thesis.version === item.version) { items.push(this.thesisRecallItem(thesis)); continue; }
+            reason = 'version-changed'; currentVersion = thesis.version;
+          } else if (!memory.excluded && (!symbol || memory.ticker === symbol.ticker && memory.market === symbol.market)
+            && thesis.version !== item.version && !thesis.excluded && thesis.source && !['dismissed', 'expired'].includes(thesis.status)) {
+            reason = 'version-changed'; currentVersion = thesis.version;
+          }
         }
       } catch (error) { if (!(error instanceof NotFoundException)) throw error; }
+      omissions.push({ ...memoryReference(item), reason, ...(currentVersion ? { currentVersion } : {}) });
     }
-    return rankMemoryRecall(items, '', preferences);
+    return { ...rankMemoryRecall(items, '', preferences), requested, omissions };
   }
 
   private owner(owner: string): void { if (!owner?.trim()) throw new UnauthorizedException('MEMORY_OWNER_REQUIRED'); }
@@ -323,11 +339,16 @@ export class ResearchMemoryService {
       summary: memory.summary, flags: memory.flags, source: memory.source!, citations: memory.citations };
   }
   private thesisRecallItem(thesis: ResearchThesis): ResearchMemoryRecallItem {
+    const { claim, supportingEvidence, opposingEvidence, assumptions, indicators, invalidationConditions,
+      horizon, boundaryOrigin, evidenceRelations, provenance } = thesis;
+    const content: ThesisContent = { claim, supportingEvidence, opposingEvidence, assumptions, indicators, invalidationConditions,
+      ...(horizon ? { horizon } : {}), boundaryOrigin, evidenceRelations, provenance };
     return { kind: 'thesis', id: thesis.id, memoryId: thesis.memoryId, version: thesis.version, topic: thesis.topic,
       summary: [thesis.claim, ...thesis.opposingEvidence.map(line => `Opposing: ${line}`),
         ...thesis.assumptions.map(line => `Assumption: ${line}`), ...thesis.indicators.map(line => `Indicator: ${line}`),
         ...thesis.invalidationConditions.map(line => `Invalidation: ${line}`)].join('\n'),
       flags: thesis.flags, source: thesis.source!, citations: thesis.citations, provenance: thesis.provenance,
+      content, status: thesis.status, expiresAt: thesis.expiresAt,
       endorsement: thesis.status === 'confirmed' ? 'user' : 'agent' };
   }
 }
