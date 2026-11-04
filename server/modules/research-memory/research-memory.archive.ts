@@ -138,8 +138,8 @@ export class ResearchArchiveService implements OnModuleInit, OnModuleDestroy {
     }
     const target = this.memory.symbol({ ticker: input.ticker, market: input.market });
     const digits = target.ticker.split('.')[0];
-    const candidates = target.market === 'HK' ? [target.ticker, digits, String(Number(digits)),
-      digits.replace(/^0/u, ''), `${Number(digits)}.HK`, `${String(Number(digits)).padStart(4, '0')}.HK`]
+    const candidates = target.market === 'HK' ? Array.from({ length: 5 }, (_, index) =>
+      String(Number(digits)).padStart(index + 1, '0')).flatMap(code => [code, `${code}.HK`])
       : [target.ticker, target.ticker.replace(/\.SH$/u, '.SS'), digits];
     return [...new Set(candidates.filter(ticker => {
       try { const symbol = this.memory.symbol({ ticker }); return symbol.ticker === target.ticker && symbol.market === target.market; }

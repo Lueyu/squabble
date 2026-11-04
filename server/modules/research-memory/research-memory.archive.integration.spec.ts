@@ -182,6 +182,65 @@ test('archive import and status counts share canonical ticker scope for lowercas
     await assert.rejects(jobs.importReports(owner, { ticker: '700.HK', market: 'US' }), /MEMORY_MARKET_MISMATCH/);
   }));
 
+test('every valid Hong Kong padding form shares import, automatic job counts and pagination without widening owner or market', {
+  skip: !process.env.MEMORY_TEST_DATABASE_URL,
+}, async () => fixture(async ({ db, owner, jobs, memory }) => {
+  const groups = [
+    ['0.HK', '00.HK', '000.HK', '0000.HK', '00000.HK', '0000', '00000'],
+    ['7.HK', '07.HK', '007.HK', '0007.HK', '00007.HK', '0007', '00007'],
+    ['70.HK', '070.HK', '0070.HK', '00070.HK', '0070', '00070'],
+    ['700.HK', '0700.HK', '00700.HK', '0700', '00700'],
+    ['7000.HK', '07000.HK', '7000', '07000'],
+    ['70000.HK', '70000'],
+  ];
+  for (const aliases of groups) {
+    const canonical = memory.symbol({ ticker: aliases[0], market: 'HK' });
+    const expected = new Set<string>();
+    for (const ticker of aliases) {
+      assert.deepEqual(memory.symbol({ ticker, market: 'HK' }), canonical);
+      const source = await seed(db, owner);
+      await db.update(councilSessions).set({ ticker }).where(eq(councilSessions.id, source.session.id));
+      expected.add(source.report.id);
+      const [automatic] = await db.insert(councilReports).values({ ...source.report, id: randomUUID(), version: 2 }).returning();
+      expected.add(automatic.id);
+      await enqueueResearchArchive(db, automatic, ticker);
+    }
+    let imported = 0, cursor: string | undefined;
+    do {
+      const page = await jobs.importReports(owner, { ticker: canonical.ticker, market: 'HK', limit: 2, cursor });
+      imported += page.queued; cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    assert.equal(imported, aliases.length, `canonical import finds every stored alias for ${canonical.ticker}`);
+    for (const ticker of aliases) {
+      const page = await jobs.list(owner, { ticker: ` ${ticker.toLowerCase()} `, market: 'HK' });
+      assert.equal(page.counts.queued, expected.size, `counts cover every alias when querying ${ticker}`);
+      assert.deepEqual(new Set(page.jobs.map(row => row.reportId)), expected);
+    }
+    const paged = new Set<string>(); cursor = undefined;
+    do {
+      const page = await jobs.list(owner, { ticker: aliases[0], market: 'HK', limit: 2, cursor });
+      assert.equal(page.counts.queued, expected.size);
+      for (const row of page.jobs) { assert.ok(!paged.has(row.reportId)); paged.add(row.reportId); }
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    assert.deepEqual(paged, expected);
+  }
+  for (const ticker of ['70', '070', '000070.HK']) {
+    await assert.rejects(jobs.list(owner, { ticker, market: 'HK' }), /MEMORY_INVALID_SYMBOL/);
+    await assert.rejects(jobs.importReports(owner, { ticker, market: 'HK' }), /MEMORY_INVALID_SYMBOL/);
+  }
+  await assert.rejects(jobs.list(owner, { ticker: '000070', market: 'HK' }), /MEMORY_MARKET_MISMATCH/);
+  const cn = await seed(db, owner), foreign = await seed(db, randomUUID());
+  await db.update(councilSessions).set({ ticker: '000070' }).where(eq(councilSessions.id, cn.session.id));
+  await db.update(councilSessions).set({ ticker: '070.HK' }).where(eq(councilSessions.id, foreign.session.id));
+  await enqueueResearchArchive(db, cn.report, '000070');
+  await enqueueResearchArchive(db, foreign.report, '070.HK');
+  const scoped = await jobs.list(owner, { ticker: '00070.HK', market: 'HK' });
+  assert.equal(scoped.counts.queued, 12);
+  assert.ok(scoped.jobs.every(row => row.reportId !== cn.report.id && row.reportId !== foreign.report.id));
+  assert.equal((await jobs.importReports(owner, { ticker: '070.HK', market: 'HK' })).queued, 0);
+}));
+
 test('transient archive failures back off, stop after bounded attempts and support an owner retry', { skip: !process.env.MEMORY_TEST_DATABASE_URL },
   async () => fixture(async ({ db, client, owner, jobs }) => {
     const source = await seed(db, owner); await enqueueResearchArchive(db, source.report, 'AAPL');
