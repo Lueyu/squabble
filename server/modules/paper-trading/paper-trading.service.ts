@@ -60,7 +60,7 @@ import { TradingMarketService } from './trading-market.service';
 import { strategyTriggerMatches } from './strategy.rules';
 import type { TradingMarketSnapshot } from '../../../shared/trading-market.interface';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
-import { captureStrategyMemory, strategyMemoryBlock } from '../research-memory/research-memory.dependencies';
+import { strategyMemoryBlock } from '../research-memory/research-memory.dependencies';
 import { observeThesisMonitors } from '../research-memory/research-memory.monitor.service';
 import type { StrategyRule } from '../../../shared/strategy.interface';
 import type {
@@ -432,11 +432,7 @@ export class PaperTradingService {
           throw new BadRequestException('Entry plan is expired, superseded or price moved');
         }
         if (!protectiveStrategyStop) {
-          let inventory = plan.memoryInventory;
-          if (!inventory) {
-            const existing = await captureStrategyMemory(tx, userId, plan.reportIds);
-            inventory = existing.state === 'legacy-no-structure' ? existing : { state: 'unknown', dependencies: [], reason: 'MEMORY_LEGACY_PLAN_REVIEW_REQUIRED' };
-          }
+          const inventory = plan.memoryInventory ?? { state: 'unknown' as const, dependencies: [], reason: 'MEMORY_LEGACY_PLAN_REVIEW_REQUIRED' };
           await observeThesisMonitors(tx, userId, inventory, strategySnapshot!, builderProfile.id);
           const memoryBlock = await strategyMemoryBlock(tx, userId, inventory, dto.ticker, new Date(), true);
           if (memoryBlock) {

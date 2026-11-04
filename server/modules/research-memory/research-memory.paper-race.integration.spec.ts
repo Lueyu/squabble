@@ -5,6 +5,7 @@ import { randomUUID, randomInt } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { monitorFixture, seedMonitor } from './research-memory.monitor.fixtures';
 import { paperOrders, paperPositions } from '../../database/schema';
+import { councilReports } from '../../database/council.schema';
 import { strategyPlans, strategyProtections, strategySignals, strategyTasks } from '../../database/strategy.schema';
 import { PaperTradingService } from '../paper-trading/paper-trading.service';
 import { AgentBuilderService } from '../paper-trading/agent-builder.service';
@@ -57,6 +58,10 @@ test('actual ledger serializes revocation and physical source deletion in both o
       if (mutation === 'exclude' && first === 'revocation') {
         await db.update(strategyPlans).set({ memoryInventory: null }).where(eq(strategyPlans.id, plan.id));
         await assert.rejects(fill(), /MEMORY_UNKNOWN/, 'old structured plans cannot become trusted empty inventories');
+        await client`UPDATE council_reports SET thesis_candidates = NULL WHERE id = ${f.report.id}`;
+        await db.update(strategySignals).set({ state: 'approved' }).where(eq(strategySignals.id, candidate.signalId));
+        await assert.rejects(fill(), /MEMORY_UNKNOWN/, 'absence of old structured output does not prove absence of historical memory input');
+        await db.update(councilReports).set({ thesisCandidates: f.report.thesisCandidates }).where(eq(councilReports.id, f.report.id));
         await db.update(strategyPlans).set({ memoryInventory: f.inventory }).where(eq(strategyPlans.id, plan.id));
         await db.update(strategySignals).set({ state: 'approved' }).where(eq(strategySignals.id, candidate.signalId));
       }
