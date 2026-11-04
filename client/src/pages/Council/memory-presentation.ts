@@ -41,6 +41,11 @@ export function latestMonitorRules(rules: ResearchMonitorRule[]): { latest: Rese
 export function memoryErrorCode(error: unknown): string {
   return errorMessage(error, '');
 }
+/** Cached source-bearing content must not remain visible after an authoritative access failure. */
+export function memoryAccessUnavailable(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } } | null)?.response?.status;
+  return Boolean(status && [401, 403, 404, 410].includes(status)) || /(?:NOT_FOUND|DELETED|SOURCE_UNAVAILABLE)/u.test(memoryErrorCode(error));
+}
 export function memoryErrorText(error: unknown, copy: MemoryCopy): string {
   const code = typeof error === 'string' ? error : memoryErrorCode(error);
   if (code.includes('MONITOR_VERSION_CONFLICT')) return copy.monitorConflict;

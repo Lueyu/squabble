@@ -15,6 +15,7 @@ import { MemoryThesisDetails } from './MemoryThesisDetails';
 import { MemoryEditorSession } from './MemoryEditorSession';
 import { MemoryVersions } from './MemoryVersions';
 import { MemoryOperations } from './MemoryOperations';
+import { MemoryMonitorSession } from './MemoryMonitorSession';
 
 interface CouncilMemoryPanelProps {
   ticker: string; market?: Market; topic?: string; language?: 'zh-CN' | 'en'; onChange?: () => void;
@@ -31,7 +32,10 @@ function MemoryPanel({ ticker, market, topic, language, onChange }: CouncilMemor
   const actions = useResearchMemoryActions();
   const [editing, setEditing] = useState<{ thesis: ResearchThesis; mode: 'edit' | 'confirm' } | null>(null);
   const [historyId, setHistoryId] = useState<string | null>(null);
+  const [monitoring, setMonitoring] = useState<ResearchThesis | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
+  const monitorOpener = useRef<HTMLButtonElement | null>(null);
+  const panel = useRef<HTMLElement | null>(null);
   const allMutations = [actions.preferences, actions.updateMemory, actions.deleteMemory, actions.updateThesis, actions.deleteThesis];
   const error = allMutations.find(action => action.error)?.error ?? listing.error ?? preferences.error;
   const busy = allMutations.some(action => action.isPending);
@@ -42,7 +46,7 @@ function MemoryPanel({ ticker, market, topic, language, onChange }: CouncilMemor
   const active = (thesis: ResearchThesis) => ['accepted', 'confirmed'].includes(thesis.status) && !thesis.excluded && thesis.sourceStatus === 'available';
   const theses = listing.error ? [] : listing.data?.theses ?? [];
   const cards = (items: ResearchThesis[]) => items.map(thesis => <article key={thesis.id} className="min-w-0 space-y-3 rounded-lg border border-border bg-card p-3 sm:p-4">
-    <MemoryThesisDetails thesis={thesis} copy={copy} locale={locale} />
+    <MemoryThesisDetails thesis={thesis} copy={copy} locale={locale} onMonitors={event => { monitorOpener.current = event.currentTarget; setMonitoring(thesis); }} />
     <div className="flex flex-wrap items-center gap-2">
       {thesis.source && thesis.sourceStatus === 'available' && <>
         {thesis.status !== 'confirmed' && <Button size="sm" disabled={busy} onClick={event => { opener.current = event.currentTarget; reset(); setEditing({ thesis, mode: 'confirm' }); }}>{copy.confirm}</Button>}
@@ -56,7 +60,7 @@ function MemoryPanel({ ticker, market, topic, language, onChange }: CouncilMemor
       <Button variant="ghost" size="sm" disabled={busy} onClick={() => { reset(); actions.deleteThesis.mutate({ id: thesis.id, expectedVersion: thesis.version }, { onSuccess: onChange }); }}>{copy.delete}</Button>
     </div>
   </article>);
-  return <section className="min-w-0 space-y-4 rounded-lg border border-border p-3 sm:p-4" data-ai-section-type="card-list">
+  return <section ref={panel} tabIndex={-1} className="min-w-0 space-y-4 rounded-lg border border-border p-3 sm:p-4" data-ai-section-type="card-list">
     <div><h2 className="font-semibold">{copy.title}</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{copy.description}</p></div>
     {error && <p role="alert" className="text-sm text-destructive">{memoryErrorText(error, copy)}</p>}
     {listing.isLoading && <p role="status">{copy.loading}</p>}
@@ -88,11 +92,20 @@ function MemoryPanel({ ticker, market, topic, language, onChange }: CouncilMemor
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => { reset(); actions.deleteMemory.mutate(memory.id, { onSuccess: onChange }); }}>{copy.delete}</Button></div>
       </article>)}</div>
     </details>}
+    <Dialog open={Boolean(monitoring)} onOpenChange={open => { if (!open) setMonitoring(null); }}>
+      <DialogContent showCloseButton={false} className="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-2xl"
+        onCloseAutoFocus={event => { event.preventDefault(); (monitorOpener.current?.isConnected ? monitorOpener.current : panel.current)?.focus(); }}>
+        <DialogHeader><DialogTitle>{copy.monitors}</DialogTitle><DialogDescription>{copy.monitorScope}</DialogDescription></DialogHeader>
+        {monitoring && <MemoryMonitorSession key={monitoring.id} snapshot={monitoring} copy={copy} locale={locale} listingError={listing.error}
+          listed={listing.data?.theses.find(thesis => thesis.id === monitoring.id)} />}
+        <DialogClose asChild><Button variant="ghost" className="justify-self-end">{copy.close}</Button></DialogClose>
+      </DialogContent>
+    </Dialog>
     <Dialog open={Boolean(editing)} onOpenChange={open => { if (!open) setEditing(null); }}>
       <DialogContent showCloseButton={false} className="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-2xl"
         onCloseAutoFocus={event => { event.preventDefault(); opener.current?.focus(); }}><DialogHeader>
         <DialogTitle>{editing?.mode === 'confirm' ? copy.confirm : copy.edit}</DialogTitle><DialogDescription>{copy.editDescription}</DialogDescription></DialogHeader>
-        {editing && <MemoryEditorSession snapshot={editing.thesis} mode={editing.mode} copy={copy} busy={busy} error={actions.updateThesis.error}
+        {editing && <MemoryEditorSession snapshot={editing.thesis} mode={editing.mode} copy={copy} busy={busy} error={actions.updateThesis.error} accessError={listing.error}
           unavailable={listing.data?.theses.find(thesis => thesis.id === editing.thesis.id)?.sourceStatus}
           onCancel={() => setEditing(null)} onReload={thesis => { reset(); setEditing({ thesis, mode: editing.mode }); }}
           onSave={input => { reset(); actions.updateThesis.mutate({ id: editing.thesis.id, input }, { onSuccess: () => { setEditing(null); onChange?.(); } }); }} />}

@@ -9,7 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { MemoryCopy } from './memory-copy';
-import { formatMemoryDate, latestMonitorRules, memoryErrorCode, memoryErrorText } from './memory-presentation';
+import { formatMemoryDate, latestMonitorRules, memoryAccessUnavailable, memoryErrorCode, memoryErrorText } from './memory-presentation';
 
 const observationReasons: Record<string, [string, string]> = {
   invalid_rule: ['Invalid condition', '条件无效'], symbol_mismatch: ['Symbol does not match', '标的不匹配'],
@@ -63,17 +63,26 @@ export function MonitorRule({ rule, copy, locale, children }: { rule: ResearchMo
   </article>;
 }
 
-export function MemoryMonitors({ thesis, copy, locale }: { thesis: ResearchThesis; copy: MemoryCopy; locale: string }) {
+export function MemoryMonitors({ thesis, copy, locale, blocked = false }: { thesis: ResearchThesis; copy: MemoryCopy; locale: string; blocked?: boolean }) {
+  const query = useQuery({ queryKey: ['research-memory', 'monitors', thesis.id], queryFn: () => fetchResearchMonitors(thesis.id), refetchInterval: 15_000, retry: false });
+  if (memoryAccessUnavailable(query.error) || thesis.sourceStatus !== 'available' || !thesis.source) return <p role="alert">{copy.sourceUnavailable}</p>;
+  if (!query.data) return <p role={query.error ? 'alert' : 'status'}>{query.error ? memoryErrorText(query.error, copy) : copy.loading}</p>;
+  // Transient failures keep this child mounted. Authoritative source/access failures above clear it.
+  return <MonitorWorkspace thesis={thesis} view={query.data} copy={copy} locale={locale} blocked={blocked || Boolean(query.error)}
+    refresh={() => { void query.refetch(); }} />;
+}
+
+function MonitorWorkspace({ thesis, view, copy, locale, blocked, refresh }: {
+  thesis: ResearchThesis; view: ResearchMonitorView; copy: MemoryCopy; locale: string; blocked: boolean; refresh: () => void;
+}) {
   const client = useQueryClient();
   // Keep the condition indices, citations and version from opening the draft together.
   const [editing, setEditing] = useState<{ thesis: ResearchThesis; rule?: ResearchMonitorRule } | null>(null);
-  const query = useQuery({ queryKey: ['research-memory', 'monitors', thesis.id], queryFn: () => fetchResearchMonitors(thesis.id), refetchInterval: 15_000, retry: false });
   const mutation = useMutation({ mutationFn: (input: WriteResearchMonitor) => writeResearchMonitor(thesis.id, input), retry: false,
     onSuccess: async () => { setEditing(null); await client.invalidateQueries({ queryKey: ['research-memory'] }); },
     onError: () => { void client.invalidateQueries({ queryKey: ['research-memory'] }); } });
-  if (query.isError) return <p role="alert" className="text-sm">{memoryErrorText(query.error, copy)}</p>;
-  if (!query.data) return <p role="status">{copy.loading}</p>;
-  const grouped = latestMonitorRules(query.data.rules);
+  if (memoryAccessUnavailable(mutation.error)) return <p role="alert">{copy.sourceUnavailable}</p>;
+  const grouped = latestMonitorRules(view.rules);
   const current = grouped.latest.filter(rule => rule.thesisVersion === thesis.version);
   const historical = [...grouped.history, ...grouped.latest.filter(rule => rule.thesisVersion !== thesis.version)];
   const canWrite = ['accepted', 'confirmed'].includes(thesis.status) && !thesis.excluded && thesis.sourceStatus === 'available'
@@ -84,23 +93,25 @@ export function MemoryMonitors({ thesis, copy, locale }: { thesis: ResearchThesi
     || editing.rule && !current.some(rule => rule.id === editing.rule!.id && rule.version === editing.rule!.version)
     || memoryErrorCode(mutation.error).includes('VERSION_CONFLICT')));
   return <div className="min-w-0 space-y-3 pt-3 [overflow-wrap:anywhere]">
-    <MonitorStatus view={query.data} thesis={thesis} copy={copy} locale={locale} />
+    <p className="whitespace-pre-wrap text-sm font-medium">{thesis.claim}</p>
+    <MonitorStatus view={view} thesis={thesis} copy={copy} locale={locale} />
+    {blocked && <p role="alert" className="text-sm text-destructive">{copy.monitorRefreshFailed}</p>}
     {mutation.error && <p role="alert" className="text-xs text-destructive">{memoryErrorText(mutation.error, copy)}</p>}
     {current.map(rule => <MonitorRule key={rule.id} rule={rule} copy={copy} locale={locale}>
-      {canWrite && <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={mutation.isPending || Boolean(editing)} onClick={() => { mutation.reset(); setEditing({ thesis, rule }); }}>{copy.editRule}</Button>
-        <Button size="sm" variant="outline" disabled={mutation.isPending || Boolean(editing)} onClick={() => { mutation.reset(); mutation.mutate({ expectedVersion: thesis.version,
+      {canWrite && <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={blocked || mutation.isPending || Boolean(editing)} onClick={() => { mutation.reset(); setEditing({ thesis, rule }); }}>{copy.editRule}</Button>
+        <Button size="sm" variant="outline" disabled={blocked || mutation.isPending || Boolean(editing)} onClick={() => { if (blocked) return; mutation.reset(); mutation.mutate({ expectedVersion: thesis.version,
           condition: rule.condition, ruleId: rule.id, ruleVersion: rule.version, enabled: !rule.enabled }); }}>{rule.enabled ? copy.disableRule : copy.enableRule}</Button></div>}
     </MonitorRule>)}
     {!!historical.length && <details><summary className="cursor-pointer text-sm">{copy.historicalRules} ({historical.length})</summary>
       <div className="mt-2 space-y-2">{historical.map(rule => <MonitorRule key={rule.id} rule={rule} copy={copy} locale={locale} />)}</div></details>}
-    {canWrite && !editing && <Button size="sm" variant="outline" disabled={!thesis.invalidationConditions.length || mutation.isPending}
+    {canWrite && !editing && <Button size="sm" variant="outline" disabled={blocked || !thesis.invalidationConditions.length || mutation.isPending}
       onClick={() => { mutation.reset(); setEditing({ thesis }); }}>{copy.addRule}</Button>}
     {staleEdit && <div role="alert"><p>{copy.monitorConflict}</p><Button size="sm" variant="outline" onClick={() => {
-      setEditing(null); mutation.reset(); void query.refetch(); void client.invalidateQueries({ queryKey: ['research-memory'] });
+      setEditing(null); mutation.reset(); refresh(); void client.invalidateQueries({ queryKey: ['research-memory'] });
     }}>{copy.restartMonitorDraft}</Button></div>}
     {editing && <MonitorEditor key={`${editing.thesis.id}:${editing.thesis.version}:${editing.rule?.id ?? 'new'}`} thesis={editing.thesis} rule={editing.rule} copy={copy}
-      busy={mutation.isPending} blocked={staleEdit} onCancel={() => setEditing(null)} onSave={input => {
-        if (!staleEdit && canWrite && !mutation.isPending && input.expectedVersion === editing.thesis.version) mutation.mutate(input);
+      busy={mutation.isPending} blocked={blocked || staleEdit} onCancel={() => setEditing(null)} onSave={input => {
+        if (!blocked && !staleEdit && canWrite && !mutation.isPending && input.expectedVersion === editing.thesis.version) mutation.mutate(input);
       }} />}
   </div>;
 }

@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ResearchThesis, ThesisContent } from '@shared/research-memory.interface';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import type { MemoryCopy } from './memory-copy';
 import { formatMemoryDate } from './memory-presentation';
 import { MemoryEvidenceDetails } from './MemoryEvidenceDetails';
-import { MemoryMonitors } from './MemoryMonitors';
 
 export function ThesisBoundaries({ content, expiresAt, copy, locale }: {
   content: ThesisContent; expiresAt?: string | null; copy: MemoryCopy; locale: string;
@@ -26,9 +26,10 @@ export function ThesisBoundaries({ content, expiresAt, copy, locale }: {
   </div>;
 }
 
-export function MemoryThesisDetails({ thesis, copy, locale }: { thesis: ResearchThesis; copy: MemoryCopy; locale: string }) {
+export function MemoryThesisDetails({ thesis, copy, locale, onMonitors }: {
+  thesis: ResearchThesis; copy: MemoryCopy; locale: string; onMonitors?: React.MouseEventHandler<HTMLButtonElement>;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const [monitorsOpen, setMonitorsOpen] = useState(false);
   if (!thesis.source || thesis.sourceStatus !== 'available') return <p className="text-sm text-muted-foreground">
     {thesis.sourceStatus === 'not-yet-known' ? copy.sourcePending : copy.sourceDeleted}</p>;
   const origin = thesis.provenance?.origin;
@@ -56,9 +57,6 @@ export function MemoryThesisDetails({ thesis, copy, locale }: { thesis: Research
           {thesis.provenance?.workflow && <p>{Object.values(thesis.provenance.workflow).join(' · ')}</p>}</details>
       </div>
     </details>
-    <details onToggle={event => setMonitorsOpen(event.currentTarget.open)}>
-      <summary className="cursor-pointer py-1 text-sm font-medium">{copy.monitors}</summary>
-      {monitorsOpen && <MemoryMonitors thesis={thesis} copy={copy} locale={locale} />}
-    </details>
+    <Button size="sm" variant="outline" onClick={onMonitors}>{copy.monitors}</Button>
   </div>;
 }
