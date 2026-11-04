@@ -1,5 +1,5 @@
 # Research memory roadmap / 研究记忆升级路线
-Updated: 2026-11-03. Baseline: main `6ed6c4d`.
+Updated: 2026-11-04. Baseline: main `6ed6c4d`.
 
 ## Product outcome / 产品目标
 A personal research and automatic paper-trading assistant that keeps each investment thesis, its boundaries, evidence and changes explainable. 用户每天可以看清判断变化、依据、模拟动作和结果。
@@ -16,9 +16,9 @@ A personal research and automatic paper-trading assistant that keeps each invest
 | M7 | [#63](https://github.com/Lueyu/squabble/issues/63) Retrieval evaluation / 检索评测 | M1–M6 | Task-aware retrieval and counterevidence; reproducible operation-level fixtures and request-level regressions. |
 
 ## Execution checklist
-- [ ] M1 structured delivery and archival
-- [ ] M2 intact token-budgeted context and telemetry
-- [ ] M3 temporal evidence and claim relations
+- [x] M1 structured delivery and archival (implementation and focused reviews complete; final integration/PR checks pending)
+- [x] M2 intact token-budgeted context and telemetry (implementation and focused reviews complete; final integration/PR checks pending)
+- [x] M3 temporal evidence and claim relations (implementation and focused reviews complete; final integration/PR checks pending)
 - [ ] M4 archival recovery and batch retrieval
 - [ ] M5 monitoring and automatic paper-strategy dependencies
 - [ ] M6 research dossier and bilingual interactions

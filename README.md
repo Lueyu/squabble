@@ -75,6 +75,7 @@ Override `SERVER_PORT=3000` and `CLIENT_DEV_PORT=8080` in `.env.local` if needed
 |---|---|
 | **Portfolio tracking** | US/HK/CN holdings, cash, P&L and net-value curves. USD/HKD/CNY conversion built in. |
 | **AI research** | Bull-bear debate, critic review, risk gates. 14-section report. Versioned, with losing arguments kept. |
+| **Research memory** | Versioned theses with evidence, counterevidence, invalidation conditions and time boundaries. Inspect which complete memory items were sent to each research attempt. Agent acceptance and your confirmation remain separate. |
 | **Paper trading** | AI bot with hard risk limits (daily-loss breaker, per-order cap). Manual and MCP agent orders. |
 | **Portfolio import** | CSV with auto column mapping (5 broker presets). Screenshot OCR via your own AI key. |
 | **Notifications** | Webhook, Bark, ServerChan, SMTP, Telegram. Every fill and risk event, pushed to you. |
