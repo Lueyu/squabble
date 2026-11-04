@@ -15,7 +15,7 @@ import { CouncilWorkflowStore } from './council.workflow-store';
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import type { ResearchToolResult } from '../../../shared/research-tools.interface';
-import { attachValuation, compactPeerComparison, compactValuationHandoff, excerptToolData, referenceEvidenceMetadata } from './council.workflow-tools';
+import { attachValuation, compactPeerComparison, compactHandoffs, compactValuationHandoff, excerptToolData, handoffEvidenceExcerpt, referenceEvidenceMetadata } from './council.workflow-tools';
 import { workflowReviewPrompt } from './council.workflow-review';
 import { packMemoryContext } from '../research-memory/research-memory.context';
 import type { MemoryContextInventory } from '../../../shared/research-memory.interface';
@@ -145,7 +145,7 @@ export class CouncilWorkflowExecutor {
         conclusion: t.delivery!.conclusion.slice(0, 800), evidenceIds: t.delivery!.evidenceIds,
         thesisCandidates: t.delivery!.thesisCandidates,
         computedValuation: t.delivery!.valuation ? excerptToolData(compactValuationHandoff(t.delivery!.valuation.data)) : undefined,
-        evidencePoints: t.delivery!.response.evidencePoints.slice(0, 4).map(point => point.slice(0, 600)),
+        evidencePoints: t.delivery!.response.evidencePoints,
         assumptions: t.delivery!.assumptions, gaps: t.delivery!.gaps })),
       // A predecessor's key/state/reason already accompanies its handoff. Coverage retains the other tasks.
       coverage: tasks.filter(t => (task.key === 'summary' || task.dependencies.includes(t.key))
@@ -162,6 +162,7 @@ export class CouncilWorkflowExecutor {
     const requestSize = (promptSystem: string, promptInput: unknown): number => member.executionMode === 'local'
       ? Buffer.byteLength(`${promptSystem}\n${JSON.stringify(promptInput)}`, 'utf8')
       : estimateInputTokens(jsonChatMessages([{ role: 'system', content: promptSystem }, { role: 'user', content: JSON.stringify(promptInput) }]));
+    const handoffs = input.handoffs;
     const compact = (length: number) => ({
       readOnlyToolResults: toolResults.map(item => ({ name: item.name, status: item.result.status, errorCode: item.result.errorCode,
         data: length === 60 ? compactPeerComparison(excerptToolData(item.result.data, length)) : excerptToolData(item.result.data, length), excerpts: true })),
@@ -170,8 +171,9 @@ export class CouncilWorkflowExecutor {
           const data = item.result.data as { evidenceId?: string } | undefined;
           return data?.evidenceId ? [{ id: data.evidenceId, data: excerptToolData(data, length) }] : [];
         })),
-      handoffs: input.handoffs.map(h => ({ ...h, conclusion: byteExcerpt(h.conclusion, length),
-        evidencePoints: h.evidencePoints.slice(0, 2).map(point => byteExcerpt(point, length)) })),
+      ...compactHandoffs(handoffs.map(h => ({ ...h, conclusion: byteExcerpt(h.conclusion, length),
+        // A short fact is a whole entry in every language; only longer prose uses byte excerpts.
+        evidencePoints: h.evidencePoints.map(point => handoffEvidenceExcerpt(point, length)) }))),
     });
     // Reserve whole memory before optional prose, while retaining current figures, citations and dependency handoffs.
     // Task-essential context, latest steering and review deliverables can still cause a safe no-fit rejection.

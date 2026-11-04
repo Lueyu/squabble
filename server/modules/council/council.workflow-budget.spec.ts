@@ -64,6 +64,10 @@ test('ordinary Chinese and English workflows fit default request budgets with re
       await client`INSERT INTO users(id, username, password_hash) VALUES (${owner}, ${language}, 'test-only')`;
       const model = async (messages: ChatMessage[], userId: string, options: LlmCallOptions) => {
         const input = JSON.parse(messages[1].content);
+        if (input.handoffDefaults) {
+          assert.match(input.handoffInheritance, /explicit fields win/);
+          input.handoffs = input.handoffs.map((handoff: object) => ({ ...input.handoffDefaults, ...handoff }));
+        }
         if (!input.submitted) for (const handoff of input.handoffs) {
           assert.ok(Object.hasOwn(handoff, 'reason'), 'a predecessor keeps its exact workflow reason beside its state');
           assert.ok(!input.coverage.some((item: { key: string }) => item.key === handoff.key), 'coverage does not repeat the handoff state');

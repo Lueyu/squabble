@@ -64,6 +64,38 @@ test('challenge and summary without replacement tools retain snapshot financials
   }
 });
 
+test('summary retains a short unique third or later handoff fact with its citation and valid steering', async () => {
+  for (const [count, language] of [[3, 'en'], [5, 'en'], [3, 'zh-CN']] as const) {
+    const marker = language === 'zh-CN' ? '本期客户续约率采用同口径付费客户计算，已扣除终止合同，结果为82.3%。' : 'Unique retention result: 82.3 percent.';
+    const evidence = [...secFinancialEvidence(), { ...fact('business-news', 'news', 'Renewal disclosure', marker),
+      role: 'news', sourceName: 'Provider', sourceUrl: 'https://example.test/renewals' }];
+    const row = { id: 'session', owner: 'owner', revision: 1, ticker: 'AAPL', language, status: 'running',
+      profileSnapshot: {}, checkpoint: { workflow: { peers: [], recallEnabled: false } }, evidenceSnapshot: evidence };
+    const builder = { from: () => builder, where: () => builder,
+      then: (resolve: (value: unknown) => unknown) => Promise.resolve([row]).then(resolve),
+      orderBy: async () => [{ content: '请核对公开披露数据。'.repeat(language === 'zh-CN' ? 60 : count === 3 ? 55 : 30) }] };
+    let captured = '', measured = 0;
+    const executor = new CouncilWorkflowExecutor({ db: { select: () => builder },
+      llm: { getInputLimit: async () => 6000, chatFastJSON: async (messages: unknown) => { captured = JSON.stringify(messages); throw new Error('CAPTURED'); } },
+      store: { markRemote: async (_row: unknown, _task: unknown, _id: unknown, update: { memory: { requestTokens: number } }) => { measured = update.memory.requestTokens; } },
+      activity: async () => {} } as never);
+    const points = ['First observation: revenue growth is conditional.', 'Second observation: cash conversion needs review.',
+      ...(count === 5 ? ['Third observation: margin sensitivity matters.', 'Fourth observation: no annualization.'] : []), marker];
+    const financialPoints = ['Financial scope is distinct.', 'Separate cash-flow source.', 'Unique financial stress: USD 42.'];
+    await assert.rejects(executor.execute(row as never, { id: 'task', key: 'summary', position: 0, dependencies: ['business', 'financials'], skills: [], reason: null } as never,
+      { id: 'attempt', revision: 1, kind: 'work' } as never, { id: 'researcher', name: 'Fixture', model: 'fast', instructions: '' } as never,
+      [{ key: 'business', state: 'accepted', reason: 'Reviewed', delivery: { conclusion: 'The business requires monitoring.',
+        evidenceIds: ['business-news'], response: { evidencePoints: points }, assumptions: [], gaps: [] } }, ...(count === 5 ? [{
+        key: 'financials', state: 'needs_revision', reason: 'Independent reconciliation pending.', delivery: { conclusion: 'The financial scope differs.',
+          evidenceIds: ['sec-0'], response: { evidencePoints: financialPoints }, assumptions: ['No growth assumption.'], gaps: ['Reconcile cash flow.'] },
+      }] : [])] as never), /CAPTURED/);
+    assert.ok(measured <= 6000);
+    for (const point of points) assert.ok(captured.includes(point), `lost complete short point: ${point}`);
+    if (count === 5) for (const point of financialPoints) assert.ok(captured.includes(point));
+    assert.ok(captured.includes('business-news'));
+  }
+});
+
 test('populated discussion preserves real SEC facts before optional prose or reaches the full request gate', () => {
   const config = normalizeBuilderConfig({ name: 'Research', template: 'guard', tickers: ['AAPL'], minimumRating: 'Buy',
     customPrompt: '审查现金流和负债。'.repeat(100), maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1, notifyOnProposal: false });

@@ -2,8 +2,31 @@ import type { ResearchToolResult } from '../../../shared/research-tools.interfac
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { isMemoryToolData } from '../research-memory/research-memory.context';
 import { compactEvidencePromptEnvelope, containsEvidencePromptMetadata, evidencePromptMetadata, isEvidencePromptMetadata } from '../research-memory/research-memory.temporal';
-import type { CouncilEvidence } from './council.rules';
+import { byteExcerpt, type CouncilEvidence } from './council.rules';
 import type { EvidenceSourceMetadata } from '../../../shared/research-evidence.interface';
+
+/** Whole short entries use Unicode code points, not UTF-8 bytes or UTF-16 code units. */
+export function handoffEvidenceExcerpt(point: string, maxBytes: number): string {
+  return [...point].length <= 60 ? point : byteExcerpt(point, maxBytes);
+}
+
+/** Whole equal fields only: arrays are never merged by position, prefix or meaning. */
+export function compactHandoffs<T extends Record<string, unknown>>(handoffs: T[]): {
+  handoffs: Array<Partial<T>>; handoffDefaults?: Partial<T>; handoffInheritance?: string;
+} {
+  const unchanged = { handoffs, handoffDefaults: undefined, handoffInheritance: undefined };
+  if (handoffs.length < 2) return unchanged;
+  const rows = handoffs.map(item => ({ ...item })), defaults: Partial<T> = {};
+  for (const key of Object.keys(handoffs[0]) as Array<keyof T>) {
+    if (handoffs.every(item => Object.hasOwn(item, key) && JSON.stringify(item[key]) === JSON.stringify(handoffs[0][key]))) {
+      defaults[key] = handoffs[0][key]; rows.forEach(item => { delete item[key]; });
+    }
+  }
+  if (!Object.keys(defaults).length) return unchanged;
+  const packed = { handoffs: rows, handoffDefaults: defaults,
+    handoffInheritance: 'Merge handoffDefaults into each handoff; explicit fields win.' };
+  return Buffer.byteLength(JSON.stringify(packed)) < Buffer.byteLength(JSON.stringify(unchanged)) ? packed : unchanged;
+}
 
 /** Prompt-only projection of the server calculator. Unknown wording and nonuniform measurements remain exact. */
 export function compactValuationHandoff(value: unknown): unknown {

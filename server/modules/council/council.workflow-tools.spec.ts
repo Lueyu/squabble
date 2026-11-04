@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { attachValuation, excerptToolData, compactPeerComparison, compactValuationHandoff, referenceEvidenceMetadata } from './council.workflow-tools';
+import { attachValuation, excerptToolData, compactPeerComparison, compactHandoffs, compactValuationHandoff, handoffEvidenceExcerpt, referenceEvidenceMetadata } from './council.workflow-tools';
 import { nativeWorkflowSources } from './council.workflow-executor';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { workflowReviewPrompt } from './council.workflow-review';
@@ -12,6 +12,43 @@ import { boundedResult } from '../research-tools/research-tools.output';
 import { evidenceExcerpts, type CouncilEvidence } from './council.rules';
 import { evidencePromptMetadata } from '../research-memory/research-memory.temporal';
 import { valuationScenarios } from '../research-tools/research-valuation';
+
+test('short handoff points use60 Unicode code points, preserving emoji and combining sequences whole', () => {
+  for (const point of ['a'.repeat(60), '据'.repeat(60), '😀'.repeat(60), 'e\u0301'.repeat(30), '👩‍💻'.repeat(20)]) {
+    assert.equal([...point].length, 60);
+    assert.equal(handoffEvidenceExcerpt(point, 60), point);
+    const longer = `${point}x`;
+    assert.equal([...longer].length, 61);
+    const excerpt = handoffEvidenceExcerpt(longer, 60);
+    assert.ok(excerpt.endsWith('…'), 'long prose is explicitly marked as excerpted');
+    assert.ok(Buffer.byteLength(excerpt) <= 60);
+    assert.equal(Buffer.from(excerpt).toString(), excerpt, 'byte excerpts never leave a half surrogate');
+    assert.ok(longer.startsWith(excerpt.slice(0, -1)));
+  }
+});
+
+test('handoff field sharing is exactly reversible for distinct roles, complete arrays, null and missing fields', () => {
+  const shared = { state: 'accepted', reason: 'Independent evidence and scope reviewed. '.repeat(3),
+    conclusion: 'This conditional conclusion is shared verbatim. '.repeat(3), assumptions: [], gaps: [] };
+  const handoffs = [
+    { ...shared, key: 'financials', evidenceIds: ['filing'], evidencePoints: ['First.', 'Second.', 'Unique CFO: USD 42.'], optional: null },
+    { ...shared, key: 'business', evidenceIds: ['news'], evidencePoints: ['First.', 'Second.', 'Third.', 'Fourth.', 'Unique retention: 82.3 percent.'] },
+    { ...shared, key: 'challenge', reason: 'A different review reason.', evidenceIds: ['risk'], evidencePoints: ['Second.', 'First.'], optional: 'known' },
+  ];
+  const before = structuredClone(handoffs), packed = compactHandoffs(handoffs);
+  assert.deepEqual(packed.handoffs.map(handoff => ({ ...packed.handoffDefaults, ...handoff })), handoffs);
+  assert.match(packed.handoffInheritance!, /explicit fields win/);
+  assert.equal(packed.handoffDefaults?.reason, undefined, 'different reasons stay with their task');
+  assert.equal(packed.handoffDefaults?.evidencePoints, undefined, 'different arrays are never merged by position or prefix');
+  assert.ok(Buffer.byteLength(JSON.stringify(packed)) < Buffer.byteLength(JSON.stringify({ handoffs })));
+  assert.deepEqual(handoffs, before);
+  const equalArrays = handoffs.map(handoff => ({ ...handoff, evidencePoints: ['Exact first point. '.repeat(12), 'Exact second point. '.repeat(12)] }));
+  const equal = compactHandoffs(equalArrays);
+  assert.deepEqual(equal.handoffDefaults?.evidencePoints, equalArrays[0].evidencePoints);
+  assert.deepEqual(equal.handoffs.map(handoff => ({ ...equal.handoffDefaults, ...handoff })), equalArrays);
+  const distinct = [{ key: 'financials', evidencePoints: ['A'] }, { key: 'business', evidencePoints: ['B'], unknown: null }];
+  assert.deepEqual(compactHandoffs(distinct).handoffs, distinct);
+});
 
 test('calculator handoffs compact exact repeated fields while preserving measurements and every limitation', () => {
   const result = valuationScenarios('AAPL', [{ metric: 'earnings', value: 123.45, annual: true, currency: 'USD', units: 'currency',
