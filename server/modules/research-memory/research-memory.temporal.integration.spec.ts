@@ -7,6 +7,7 @@ import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
 import { councilReports, councilSessions } from '../../database/council.schema';
+import { ResearchArchiveService } from './research-memory.archive';
 import { ResearchMemoryService } from './research-memory.service';
 import { QuoteService } from '../quote/quote.service';
 import type { EvidenceMetadata } from '@shared/research-evidence.interface';
@@ -36,7 +37,7 @@ async function fixture(run: (f: Awaited<ReturnType<typeof setup>>) => Promise<vo
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
     for (const file of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql', '08_investment_council.sql',
-      '12_council_dialogue.sql', '14_a2a_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql', '20_research_memory_temporal.sql']) {
+      '12_council_dialogue.sql', '14_a2a_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql', '20_research_memory_temporal.sql', '21_research_archive_jobs.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     await run(await setup(client));
@@ -149,6 +150,7 @@ test('real provider typed metadata survives tool archive, checkpoint, publicatio
   const [report] = await db.select().from(councilReports).where(eq(councilReports.sessionId, session.id));
   assert.deepEqual(report.evidence[0].metadata, evidence.metadata);
   assert.deepEqual(report.evidence.find(item => item.id === archived.id)?.metadata, evidence.metadata);
+  await new ResearchArchiveService(db, service).tick();
   const listing = await service.list(owner, { ticker: 'AAPL' });
   const graph = await service.evidenceGraph(owner, listing.memories[0].id);
   assert.equal(graph.evidence[0].metadata.sources[0].facts[0].value, 100);

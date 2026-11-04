@@ -26,6 +26,8 @@ test('atomic thesis migration upgrades populated legacy tables and reapplies wit
       '12_council_dialogue.sql', '14_a2a_agents.sql', '17_research_memory.sql', '18_research_workflow.sql']) {
       const legacy = readFileSync(`scripts/db/${file}`, 'utf8').replace('  thesis_candidates JSONB,', '')
         .replace('  "metadata" jsonb,', '')
+        .replace(/CREATE TABLE IF NOT EXISTS research_archive_jobs[\s\S]*$/u, '')
+        .replace(/  publication_outcome[^\n]+\n/u, '')
         .replaceAll("'candidate','accepted','confirmed'", "'candidate','confirmed'")
         .replaceAll("'candidate','accept','confirm'", "'candidate','confirm'");
       await client.unsafe(legacy);
@@ -43,13 +45,14 @@ test('atomic thesis migration upgrades populated legacy tables and reapplies wit
     const [run] = await client`INSERT INTO agent_runs (owner, ticker, trigger_type) VALUES ('migration-owner', 'AAPL', 'manual') RETURNING id`;
     const [oldEvidence] = await client`INSERT INTO agent_evidence (owner, run_id, role, evidence_type, title, content, fetched_at)
       VALUES ('migration-owner', ${run.id}, 'fundamental', 'financial', 'Legacy source', 'Existing body', '2026-05-01') RETURNING id`;
+    assert.equal((await client`SELECT to_regclass('research_archive_jobs')::text AS name`)[0].name, null);
     // Use the production startup loader, including its statement splitting.
     await startDatabase(namespace);
     await startDatabase(namespace);
     const [temporal] = await client`SELECT to_regclass('research_memory_evidence')::text AS name`;
     assert.equal(temporal.name, 'research_memory_evidence');
-    const [after] = await client`SELECT summary, thesis_candidates FROM council_reports WHERE id = ${report.id}`;
-    assert.deepEqual(after, { summary: 'Legacy report summary', thesis_candidates: null });
+    const [after] = await client`SELECT summary, thesis_candidates, publication_outcome FROM council_reports WHERE id = ${report.id}`;
+    assert.deepEqual(after, { summary: 'Legacy report summary', thesis_candidates: null, publication_outcome: null });
     const [legacy] = await client`SELECT content, status, version FROM research_theses WHERE id = ${thesis.id}`;
     assert.deepEqual(legacy, { content: { claim: 'Legacy opinion' }, status: 'candidate', version: 1 });
     assert.deepEqual((await client`SELECT content, metadata FROM agent_evidence WHERE id = ${oldEvidence.id}`)[0],
@@ -62,7 +65,11 @@ test('atomic thesis migration upgrades populated legacy tables and reapplies wit
       VALUES ('migration-owner', ${memory.id}, ${report.id}, 1, 1, 'filing', '{"sources":[]}') RETURNING id, ingested_at`;
     await client`INSERT INTO research_thesis_evidence(owner, version_id, evidence_record_id, role)
       VALUES ('migration-owner', ${version.id}, ${evidence.id}, 'qualify')`;
+    const [job] = await client`INSERT INTO research_archive_jobs(owner, report_id, session_id, report_version, ticker, topic, intent, state, attempts, error)
+      VALUES ('migration-owner', ${report.id}, ${session.id}, 1, 'AAPL', 'general', 'manual', 'failed', 3, 'MEMORY_ARCHIVE_FAILED') RETURNING id`;
     await startDatabase(namespace);
+    assert.deepEqual((await client`SELECT state, attempts, error FROM research_archive_jobs WHERE id = ${job.id}`)[0],
+      { state: 'failed', attempts: 3, error: 'MEMORY_ARCHIVE_FAILED' });
     assert.deepEqual((await client`SELECT id, ingested_at FROM research_memory_evidence`)[0], evidence);
     assert.equal((await client`SELECT change_reason FROM research_thesis_versions WHERE id = ${version.id}`)[0].change_reason, 'Reviewed source');
     assert.equal((await client`SELECT role FROM research_thesis_evidence`)[0].role, 'qualify');
@@ -81,7 +88,9 @@ test('production startup loader applies atomic thesis schema on a fresh base ins
     await startDatabase(namespace);
     const [temporal] = await client`SELECT to_regclass('research_thesis_evidence')::text AS name`;
     assert.equal(temporal.name, 'research_thesis_evidence');
-    assert.equal((await client`SELECT thesis_candidates FROM council_reports`).length, 0);
+    assert.equal((await client`SELECT thesis_candidates, publication_outcome FROM council_reports`).length, 0);
+    assert.equal((await client`SELECT * FROM research_archive_jobs`).length, 0);
+    await startDatabase(namespace);
     const [constraint] = await client`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
       WHERE conrelid = 'research_theses'::regclass AND conname = 'research_theses_status_check'`;
     assert.match(constraint.definition, /accepted/);

@@ -121,6 +121,8 @@ export interface CouncilMessage {
   researchEventId?: string;
 }
 export interface CouncilReport {
+  /** Null/absent means the historical publication outcome was not recorded. */
+  publicationOutcome?: 'succeeded' | 'failed' | null;
   thesisCandidates?: ThesisCandidateInput[] | null;
   coverage?: ResearchCoverage | null;
   id: string;

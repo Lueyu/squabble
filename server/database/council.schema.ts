@@ -41,6 +41,7 @@ export const councilMessages = pgTable('council_messages', {
 }, (table) => [index('council_messages_session_idx').on(table.owner, table.sessionId, table.createdAt)]);
 
 export const councilReports = pgTable('council_reports', {
+  publicationOutcome: varchar('publication_outcome', { length: 10 }).$type<'succeeded' | 'failed'>(),
   thesisCandidates: jsonb('thesis_candidates').$type<CouncilReport['thesisCandidates']>(),
   coverage: jsonb('coverage').$type<CouncilReport['coverage']>(),
   id: uuid('id').primaryKey().defaultRandom(),

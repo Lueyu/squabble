@@ -1,6 +1,7 @@
 import http from './http';
 import type { ResearchMemoryItem, ResearchMemoryList, ResearchMemoryPreferences, ResearchMemoryQuery,
-  ResearchThesis, ResearchThesisVersion, UpdateResearchThesis, ResearchMemoryRecall } from '@shared/research-memory.interface';
+  ResearchThesis, ResearchThesisVersion, UpdateResearchThesis, ResearchMemoryRecall, ResearchArchiveQuery, ResearchArchiveJobs, ResearchArchiveJob,
+  ResearchArchiveImport, ResearchArchiveImportResult } from '@shared/research-memory.interface';
 
 const root = '/api/research-memory';
 export async function previewResearchMemory(query: ResearchMemoryQuery): Promise<ResearchMemoryRecall> {
@@ -29,4 +30,17 @@ export async function deleteResearchThesis(id: string, expectedVersion: number):
 }
 export async function fetchResearchThesisVersions(id: string): Promise<ResearchThesisVersion[]> {
   return (await http.get<ResearchThesisVersion[]>(`${root}/theses/${encodeURIComponent(id)}/versions`)).data;
+}
+
+export async function fetchResearchMemoryById(id: string): Promise<ResearchMemoryItem> {
+  return (await http.get<ResearchMemoryItem>(`${root}/memories/${encodeURIComponent(id)}`)).data;
+}
+export async function fetchResearchArchiveJobs(query: ResearchArchiveQuery = {}): Promise<ResearchArchiveJobs> {
+  return (await http.get<ResearchArchiveJobs>(`${root}/archive-jobs`, { params: query })).data;
+}
+export async function importResearchReports(input: ResearchArchiveImport = {}): Promise<ResearchArchiveImportResult> {
+  return (await http.post<ResearchArchiveImportResult>(`${root}/archive-jobs/import`, input)).data;
+}
+export async function retryResearchArchive(id: string): Promise<ResearchArchiveJob> {
+  return (await http.post<ResearchArchiveJob>(`${root}/archive-jobs/${encodeURIComponent(id)}/retry`)).data;
 }

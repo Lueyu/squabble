@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, lte } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { QuoteService } from '../quote/quote.service';
 import { councilReports, councilSessions } from '../../database/council.schema';
@@ -12,10 +12,13 @@ import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdat
   thesisCandidateSchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
 import { isUnverifiedCitation, normalizeThesisContent, thesisEvidenceIds, thesisFingerprint, validateThesisReferences } from './research-memory.theses';
 import { acceptedWorkflowProvenance } from './research-memory.provenance';
+import { loadMemorySources, type MemorySources } from './research-memory.loader';
+import { archivalEligibility } from './research-memory.archive-authority';
 import { memoryReference } from './research-memory.context';
 import { compactEvidenceMetadata, evidenceVisibleAt, normalizeEvidenceMetadata, thesisFreshness } from './research-memory.temporal';
-import { archiveEvidence, bindThesisEvidence, evidenceComparisons, evidenceRelations } from './research-memory.evidence';
+import { archiveEvidence, bindThesisEvidence, compareEvidenceRows, evidenceComparisons, evidenceRelations } from './research-memory.evidence';
 
+export type MemoryDatabase = Pick<PostgresJsDatabase, 'select' | 'selectDistinctOn' | 'insert' | 'update' | 'delete' | 'transaction'>;
 type MemoryRow = typeof researchMemories.$inferSelect;
 type ThesisRow = typeof researchTheses.$inferSelect;
 type ReportRow = typeof councilReports.$inferSelect;
@@ -24,7 +27,7 @@ const DEFAULT_PREFERENCES: ResearchMemoryPreferences = { autoArchive: true, reca
 
 @Injectable()
 export class ResearchMemoryService {
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase, private readonly quotes: QuoteService) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: MemoryDatabase, private readonly quotes: QuoteService) {}
 
   async getPreferences(owner: string): Promise<ResearchMemoryPreferences> {
     this.owner(owner);
@@ -41,15 +44,26 @@ export class ResearchMemoryService {
   }
 
   async archiveReport(owner: string, input: ArchiveResearchReport): Promise<ResearchMemoryItem | null> {
-    if (!(await this.getPreferences(owner)).autoArchive) return null;
+    const id = await this.db.transaction(tx => this.archiveReportInTransaction(tx, owner, input));
+    return id ? this.getMemory(owner, id) : null;
+  }
+
+  /** DB-only archival boundary. Callers must hold their job lease before entering. */
+  async archiveReportInTransaction(tx: Pick<PostgresJsDatabase, 'select' | 'insert' | 'update'>, owner: string,
+    input: ArchiveResearchReport, intent: 'automatic' | 'manual' = 'automatic'): Promise<string | null> {
+    this.owner(owner);
+    await tx.insert(researchMemoryPreferences).values({ owner }).onConflictDoNothing();
+    const [preferences] = await tx.select().from(researchMemoryPreferences).where(eq(researchMemoryPreferences.owner, owner)).for('share');
+    if (intent === 'automatic' && !preferences.autoArchive) return null;
     this.id(input.sessionId); this.id(input.report.id);
     const symbol = this.symbol(input);
-    const [source] = await this.db.select({ report: councilReports, session: councilSessions }).from(councilReports)
+    const [source] = await tx.select({ report: councilReports, session: councilSessions }).from(councilReports)
       .innerJoin(councilSessions, and(eq(councilReports.sessionId, councilSessions.id), eq(councilSessions.owner, owner)))
       .where(and(eq(councilReports.id, input.report.id), eq(councilReports.owner, owner),
-        eq(councilReports.sessionId, input.sessionId), eq(councilReports.version, input.report.version))).limit(1);
+        eq(councilReports.sessionId, input.sessionId), eq(councilReports.version, input.report.version))).limit(1).for('update');
     if (!source) throw new NotFoundException('MEMORY_SOURCE_NOT_FOUND');
-    if (source.session.status !== 'completed') throw new BadRequestException('MEMORY_SOURCE_NOT_COMPLETED');
+    const eligible = await archivalEligibility(tx, owner, source.report, source.session);
+    if (!eligible) throw new BadRequestException('MEMORY_SOURCE_NOT_COMPLETED');
     const sourceSymbol = this.symbol({ ticker: source.session.ticker });
     if (sourceSymbol.ticker !== symbol.ticker || sourceSymbol.market !== symbol.market
       || input.language !== source.session.language) throw new BadRequestException('MEMORY_SOURCE_MISMATCH');
@@ -57,7 +71,7 @@ export class ResearchMemoryService {
     const supplied = input.thesisCandidates !== undefined;
     const raw = supplied ? input.thesisCandidates! : report.thesisCandidates ?? [];
     if (!Array.isArray(raw) || raw.length > 5) throw new BadRequestException('MEMORY_TOO_MANY_CANDIDATES');
-    const workflow = !supplied ? await acceptedWorkflowProvenance(this.db, owner, source.session.id, report) : undefined;
+    const workflow = !supplied ? await acceptedWorkflowProvenance(tx, owner, source.session.id, report) : undefined;
     const seen = new Set<string>();
     const candidates = raw.map(candidate => {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new BadRequestException('MEMORY_INVALID_THESIS');
@@ -79,7 +93,7 @@ export class ResearchMemoryService {
       if (seen.has(fingerprint)) return false;
       seen.add(fingerprint); return true;
     });
-    const id = await this.db.transaction(async tx => {
+    {
       const [created] = await tx.insert(researchMemories).values({ owner, ...symbol, topic: normalizedTopic(input.topic),
         language: input.language, sessionId: source.session.id, reportId: report.id, reportVersion: report.version,
         reportRevision: report.revision, reportCreatedAt: report.createdAt, summary: report.summary.slice(0, 3000),
@@ -97,8 +111,7 @@ export class ResearchMemoryService {
         await bindThesisEvidence(tx, owner, version.id, content, evidence);
       }
       return created.id;
-    });
-    return id ? this.getMemory(owner, id) : null;
+    }
   }
 
   async list(owner: string, input: ResearchMemoryQuery): Promise<ResearchMemoryList> {
@@ -110,17 +123,21 @@ export class ResearchMemoryService {
       eq(researchMemories.ticker, symbol.ticker), eq(researchMemories.market, symbol.market), isNull(researchMemories.deletedAt),
       parsed.data.asOf ? lte(researchMemories.createdAt, new Date(parsed.data.asOf)) : undefined))
       .orderBy(desc(researchMemories.reportCreatedAt)).limit(100);
-    const memories = (await Promise.all(rows.map(row => this.materializeMemory(owner, row, parsed.data.asOf))))
-      .filter(memory => !parsed.data.asOf || !memory.excluded && memory.sourceStatus !== 'not-yet-known');
-    const thesisRows = rows.length ? await this.db.select().from(researchTheses).where(and(eq(researchTheses.owner, owner),
-      inArray(researchTheses.memoryId, rows.map(row => row.id)), isNull(researchTheses.deletedAt))).orderBy(desc(researchTheses.updatedAt)) : [];
-    const theses: ResearchThesis[] = [];
-    for (const current of thesisRows) {
-      const memory = memories.find(item => item.id === current.memoryId);
-      if (!memory || parsed.data.asOf && (current.excluded || memory.excluded)) continue;
-      const row = await this.thesisAt(owner, current, parsed.data.asOf);
-      if (row) theses.push(this.materializeThesis(row, memory, parsed.data.asOf));
-    }
+    const joined = await this.db.select({ thesis: researchTheses, memory: researchMemories }).from(researchTheses)
+      .innerJoin(researchMemories, and(eq(researchMemories.id, researchTheses.memoryId), eq(researchMemories.owner, owner)))
+      .where(and(eq(researchTheses.owner, owner), eq(researchMemories.ticker, symbol.ticker), eq(researchMemories.market, symbol.market),
+        isNull(researchMemories.deletedAt), isNull(researchTheses.deletedAt), parsed.data.asOf ? undefined
+          : or(inArray(researchTheses.memoryId, rows.map(row => row.id)), inArray(researchTheses.status, ['accepted', 'confirmed']))));
+    const parents = [...new Map([...rows, ...joined.map(row => row.memory)].map(row => [row.id, row])).values()];
+    const loaded = await this.materializeMemories(owner, parents, parsed.data.asOf);
+    const byId = new Map(loaded.map(row => [row.id, row]));
+    const memories = rows.map(row => byId.get(row.id)!).filter(memory => !parsed.data.asOf || !memory.excluded && memory.sourceStatus !== 'not-yet-known');
+    const versions = await this.thesesAt(owner, joined.map(row => row.thesis), parsed.data.asOf);
+    const theses = versions.flatMap(row => {
+      const memory = byId.get(row.memoryId)!;
+      if (parsed.data.asOf && (row.excluded || memory.excluded || memory.sourceStatus === 'not-yet-known')) return [];
+      return [this.materializeThesis(row, memory, parsed.data.asOf)];
+    });
     return { memories, theses, preferences: await this.getPreferences(owner) };
   }
 
@@ -208,6 +225,11 @@ export class ResearchMemoryService {
       excluded: row.excluded, sourceStatus: thesis.sourceStatus, changeReason: row.changeReason, createdAt: row.createdAt.toISOString() }));
   }
 
+  /** Reuse the caller's connection when it already holds a session transaction. */
+  async recallInTransaction(tx: MemoryDatabase, owner: string, query: ResearchMemoryQuery): Promise<ResearchMemoryRecall> {
+    return new ResearchMemoryService(tx, this.quotes).recall(owner, query);
+  }
+
   async recall(owner: string, query: ResearchMemoryQuery & { enabled?: boolean }): Promise<ResearchMemoryRecall> {
     const { enabled, ...filters } = query;
     if (!memoryQuerySchema.safeParse(filters).success) throw new BadRequestException('MEMORY_INVALID_QUERY');
@@ -235,20 +257,35 @@ export class ResearchMemoryService {
     if (!preferences.recallEnabled || query?.enabled === false) return { items: [], context: '', preferences, requested,
       omissions: requested.map(item => ({ ...item, reason: 'disabled' })), ...(cutoff ? { asOf: cutoff } : {}) };
     const symbol = query ? this.symbol(query) : undefined;
+    const pins = frozen.items.slice(0, 3);
+    for (const pin of pins) this.id(pin.id);
+    const thesisRows = await this.db.select().from(researchTheses).where(and(eq(researchTheses.owner, owner),
+      inArray(researchTheses.id, pins.filter(item => item.kind === 'thesis').map(item => item.id)), isNull(researchTheses.deletedAt)));
+    const parentIds = [...pins.filter(item => item.kind === 'history').map(item => item.id), ...thesisRows.map(row => row.memoryId)];
+    const parentRows = await this.db.select().from(researchMemories).where(and(eq(researchMemories.owner, owner),
+      inArray(researchMemories.id, parentIds), isNull(researchMemories.deletedAt)));
+    const memories = new Map((await this.materializeMemories(owner, parentRows, cutoff)).map(row => [row.id, row]));
+    const theses = new Map((await this.thesesAt(owner, thesisRows, cutoff)).flatMap(row => {
+      const parent = memories.get(row.memoryId);
+      return parent ? [[row.id, this.materializeThesis(row, parent, cutoff)] as const] : [];
+    }));
+
     const items: ResearchMemoryRecallItem[] = [];
     const omissions: MemoryOmission[] = [];
     for (const item of frozen.items.slice(0, 3)) {
       let reason: MemoryOmission['reason'] = 'revoked', currentVersion: number | undefined;
       try {
         if (item.kind === 'history') {
-          const memory = await this.getMemory(owner, item.id, cutoff);
+          const memory = memories.get(item.id);
+          if (!memory) throw new NotFoundException('MEMORY_NOT_FOUND');
           if (memory.source && !memory.excluded && (!symbol || memory.ticker === symbol.ticker && memory.market === symbol.market)) {
             if (memory.source.reportVersion === item.version) { items.push(this.historyRecallItem(memory, cutoff)); continue; }
             reason = 'version-changed'; currentVersion = memory.source.reportVersion;
           }
         } else if (item.kind === 'thesis') {
-          const thesis = await this.getThesis(owner, item.id, cutoff);
-          const memory = await this.getMemory(owner, thesis.memoryId, cutoff);
+          const thesis = theses.get(item.id);
+          if (!thesis) throw new NotFoundException('MEMORY_THESIS_NOT_FOUND');
+          const memory = memories.get(thesis.memoryId)!;
           if (!memory.excluded && this.recallableThesis(thesis) && (!symbol || memory.ticker === symbol.ticker && memory.market === symbol.market)) {
             if (thesis.version === item.version) { items.push(this.thesisRecallItem(thesis, cutoff)); continue; }
             reason = 'version-changed'; currentVersion = thesis.version;
@@ -265,7 +302,7 @@ export class ResearchMemoryService {
 
   private owner(owner: string): void { if (!owner?.trim()) throw new UnauthorizedException('MEMORY_OWNER_REQUIRED'); }
   private id(id: string): void { if (!memoryIdSchema.safeParse(id).success) throw new BadRequestException('MEMORY_INVALID_ID'); }
-  private symbol(input: ResearchMemoryQuery) {
+  symbol(input: ResearchMemoryQuery) {
     return canonicalMemorySymbol(input.ticker, input.market, ticker => this.quotes.detectMarket(ticker));
   }
   private async memoryRow(owner: string, id: string): Promise<MemoryRow> {
@@ -292,10 +329,10 @@ export class ResearchMemoryService {
     const symbol = this.symbol({ ticker: row.ticker });
     return symbol.ticker === memory.ticker && symbol.market === memory.market ? row.report : null;
   }
-  private async materializeMemory(owner: string, row: MemoryRow, asOf = new Date().toISOString()): Promise<ResearchMemoryItem> {
-    const source = await this.sourceReport(owner, row);
-    const records = source ? await this.db.select().from(researchMemoryEvidence)
-      .where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemoryEvidence.memoryId, row.id))) : [];
+  private async materializeMemory(owner: string, row: MemoryRow, asOf = new Date().toISOString(), sources?: MemorySources): Promise<ResearchMemoryItem> {
+    const loaded = sources ?? await this.loadSources(owner, [row]);
+    const source = loaded.reports.get(row.id) ?? null;
+    const records = loaded.evidence.get(row.id) ?? [];
     for (const record of records) record.metadata = normalizeEvidenceMetadata({
       ...source?.evidence.find(item => item.id === record.evidenceId), metadata: record.metadata });
     const known = row.createdAt.getTime() <= Date.parse(asOf) && row.reportCreatedAt.getTime() <= Date.parse(asOf)
@@ -304,7 +341,7 @@ export class ResearchMemoryService {
         return evidenceVisibleAt(record?.metadata ?? normalizeEvidenceMetadata(item), (record?.ingestedAt ?? row.createdAt).toISOString(), asOf);
       });
     const report = known ? source : null;
-    const comparisons = report && !row.excluded ? await evidenceComparisons(this.db, owner, row, records, asOf,
+    const comparisons = report && !row.excluded ? compareEvidenceRows(records, loaded.peers, asOf,
       ticker => { const symbol = this.symbol({ ticker }); return symbol.ticker === row.ticker && symbol.market === row.market; }) : [];
     const conflicts = new Set(comparisons.filter(item => item.kind === 'conflict').map(item => item.left));
     const citations: MemoryCitation[] = report?.evidence.map(evidence => {
@@ -340,18 +377,34 @@ export class ResearchMemoryService {
     if (!citations.length || citations.some(citation => citation.metadata?.sources.some(source => source.verification === 'unknown'))) flags.push('provenance_unknown');
     return { ...normalizeThesisContent(available ? row.content : EMPTY_CONTENT), id: row.id, memoryId: row.memoryId, ticker: memory.ticker,
       market: memory.market, topic: memory.topic, status: row.status, freshness,
-      version: row.version, excluded: row.excluded, expiresAt: row.expiresAt?.toISOString() ?? null,
+      version: row.version, excluded: row.excluded || memory.excluded, expiresAt: row.expiresAt?.toISOString() ?? null,
       sourceStatus: memory.sourceStatus, source: memory.source, citations, flags,
       createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
   }
   private async thesisAt(owner: string, current: ThesisRow, asOf?: string): Promise<ThesisRow | null> {
-    if (!asOf) return current;
-    if (current.createdAt.getTime() > Date.parse(asOf)) return null;
-    const [version] = await this.db.select().from(researchThesisVersions).where(and(eq(researchThesisVersions.owner, owner),
-      eq(researchThesisVersions.thesisId, current.id), lte(researchThesisVersions.createdAt, new Date(asOf))))
-      .orderBy(desc(researchThesisVersions.version)).limit(1);
-    return version ? { ...current, version: version.version, content: version.content, status: version.status,
-      excluded: current.excluded || version.excluded, expiresAt: version.expiresAt, updatedAt: version.createdAt } : null;
+    return (await this.thesesAt(owner, [current], asOf))[0] ?? null;
+  }
+  private async thesesAt(owner: string, current: ThesisRow[], asOf?: string): Promise<ThesisRow[]> {
+    if (!asOf || !current.length) return current;
+    const versions = await this.db.selectDistinctOn([researchThesisVersions.thesisId]).from(researchThesisVersions)
+      .where(and(eq(researchThesisVersions.owner, owner), inArray(researchThesisVersions.thesisId, current.map(row => row.id)),
+        lte(researchThesisVersions.createdAt, new Date(asOf))))
+      .orderBy(researchThesisVersions.thesisId, desc(researchThesisVersions.version));
+    const byId = new Map(versions.map(row => [row.thesisId, row]));
+    return current.flatMap(row => {
+      const version = byId.get(row.id);
+      return version && row.createdAt.getTime() <= Date.parse(asOf) ? [{ ...row, version: version.version, content: version.content,
+        status: version.status, excluded: row.excluded || version.excluded, expiresAt: version.expiresAt, updatedAt: version.createdAt }] : [];
+    });
+  }
+  private loadSources(owner: string, rows: MemoryRow[]) {
+    return loadMemorySources(this.db, owner, rows, (memory, ticker) => {
+      const symbol = this.symbol({ ticker }); return symbol.ticker === memory.ticker && symbol.market === memory.market;
+    });
+  }
+  private async materializeMemories(owner: string, rows: MemoryRow[], asOf?: string): Promise<ResearchMemoryItem[]> {
+    const sources = await this.loadSources(owner, rows);
+    return Promise.all(rows.map(row => this.materializeMemory(owner, row, asOf, sources)));
   }
   async evidenceGraph(owner: string, memoryId: string): Promise<ResearchEvidenceGraph> {
     const row = await this.memoryRow(owner, memoryId), memory = await this.materializeMemory(owner, row);

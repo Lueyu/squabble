@@ -6,7 +6,7 @@ import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { thesisFingerprint } from './research-memory.theses';
 
 /** Resolve workflow authority from owner-scoped persisted work, never from an archive request. */
-export async function acceptedWorkflowProvenance(db: PostgresJsDatabase, owner: string, sessionId: string,
+export async function acceptedWorkflowProvenance(db: Pick<PostgresJsDatabase, 'select'>, owner: string, sessionId: string,
   report: Pick<CouncilReport, 'revision' | 'coverage' | 'thesisCandidates'>): Promise<NonNullable<ThesisContent['provenance']>['workflow']> {
   const coverage = report.coverage;
   if (!coverage || coverage.revision !== report.revision || !report.thesisCandidates?.length) return;

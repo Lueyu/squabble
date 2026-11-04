@@ -15,6 +15,7 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { CouncilWorkflowStore } from './council.workflow-store';
 import type { CouncilSession } from '../../../shared/council.interface';
 import type { ResearchTaskKind } from '../../../shared/research-workflow.interface';
+import { ResearchArchiveService } from '../research-memory/research-memory.archive';
 import { ResearchMemoryService } from '../research-memory/research-memory.service';
 import { QuoteService } from '../quote/quote.service';
 
@@ -48,9 +49,16 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
     for (const name of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql', '08_investment_council.sql',
-      '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql', '20_research_memory_temporal.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
+      '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '15_native_agents.sql', '17_research_memory.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql', '20_research_memory_temporal.sql', '21_research_archive_jobs.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     const db = drizzle(client);
     const memory = new ResearchMemoryService(db, new QuoteService(db, undefined as never));
+    const archives = new ResearchArchiveService(db, memory);
+    const drainArchives = async () => {
+      for (let index = 0; index < 20; index++) {
+        await archives.tick();
+        if (!(await archives.list(owner)).counts.queued) return;
+      }
+    };
     const owner = randomUUID();
     await client`INSERT INTO users(id, username, password_hash) VALUES (${owner}, 'workflow-test', 'test-only')`;
     let active = 0, maximum = 0, failFinancials = false, rejectFinancials = 0, unrelatedGap = false;
@@ -113,7 +121,7 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     assert.equal(complete.reports.at(-1)?.coverage?.complete, true);
     const published = complete.reports.at(-1)!;
     assert.equal(published.thesisCandidates?.[0].claim, 'Cash conversion remains resilient');
-    for (let i = 0; i < 100 && !(await memory.list(owner, { ticker: 'AAPL' })).theses.length; i++) await pause(10);
+    await drainArchives();
     const archived = (await memory.list(owner, { ticker: 'AAPL' })).theses[0];
     assert.equal(archived.claim, published.thesisCandidates![0].claim);
     assert.equal(archived.status, 'accepted', 'Agent acceptance must never be human confirmation');
@@ -131,7 +139,7 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     const gapResult = await waitFor(withGap.id);
     assert.equal(gapResult.reports.at(-1)?.coverage?.complete, false);
     assert.ok(gapResult.workflow!.tasks.every(task => task.state === 'accepted'));
-    for (let i = 0; i < 100 && !(await memory.list(owner, { ticker: 'AAPL' })).theses.some(t => t.source?.sessionId === withGap.id); i++) await pause(10);
+    await drainArchives();
     assert.equal((await memory.list(owner, { ticker: 'AAPL' })).theses.find(t => t.source?.sessionId === withGap.id)?.status, 'accepted',
       'an explicitly accepted unrelated data gap does not disqualify a supported atomic claim');
     unrelatedGap = false;
@@ -236,7 +244,7 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     assert.equal(nativeCalls.length, 8);
     assert.equal(nativeComplete.reports.at(-1)!.tokensUsed, 56, 'native moderator review usage must be counted once per actual request');
     assert.equal(nativeComplete.reports.at(-1)!.externalUsageUnknown, false);
-    for (let i = 0; i < 100 && !(await memory.list(owner, { ticker: 'MSFT' })).theses.some(t => t.source?.sessionId === nativeSession.id); i++) await pause(10);
+    await drainArchives();
     const nativeThesis = (await memory.list(owner, { ticker: 'MSFT' })).theses.find(t => t.source?.sessionId === nativeSession.id)!;
     assert.equal(nativeThesis.status, 'candidate', 'unverified native evidence cannot auto-accept a thesis');
     assert.ok(nativeThesis.flags.includes('unverified'));

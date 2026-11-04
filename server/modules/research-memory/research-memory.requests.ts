@@ -29,3 +29,10 @@ export const thesisUpdateSchema = z.object({
   if (value.action === 'exclude' && value.excluded === undefined) ctx.addIssue({ code: 'custom', message: 'Excluded required', path: ['excluded'] });
   if (value.action !== 'edit' && value.content) ctx.addIssue({ code: 'custom', message: 'Use edit action', path: ['content'] });
 });
+
+export const archiveQuerySchema = z.object({ ticker: z.string().trim().min(1).max(20).optional(),
+  market: z.enum(['US', 'HK', 'CN']).optional(), state: z.enum(['queued', 'running', 'succeeded', 'failed']).optional(),
+  cursor: memoryIdSchema.optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }).strict();
+export const archiveImportSchema = z.object({ ticker: z.string().trim().min(1).max(20).optional(),
+  market: z.enum(['US', 'HK', 'CN']).optional(),
+  cursor: memoryIdSchema.optional(), limit: z.number().int().min(1).max(100).default(100) }).strict();

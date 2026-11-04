@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS council_messages (
 );
 CREATE INDEX IF NOT EXISTS council_messages_session_idx ON council_messages(owner, session_id, created_at);
 CREATE TABLE IF NOT EXISTS council_reports (
+  publication_outcome varchar(10) CHECK (publication_outcome IN ('succeeded','failed')),
   thesis_candidates JSONB,
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
   session_id uuid NOT NULL REFERENCES council_sessions(id) ON DELETE CASCADE,

@@ -22,7 +22,7 @@ test('persisted scans and final execution enforce cadence and consume only curre
   const owners = [owner];
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-30T14:00:00Z') });
   try {
-    for (const file of ['03_agent_builder.sql', '08_investment_council.sql', '09_builder_cadence.sql', '12_council_dialogue.sql']) {
+    for (const file of ['03_agent_builder.sql', '08_investment_council.sql', '09_builder_cadence.sql', '12_council_dialogue.sql', '21_research_archive_jobs.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     const config = normalizeBuilderConfig({ name: 'Execution test', template: 'balanced', tickers: [],

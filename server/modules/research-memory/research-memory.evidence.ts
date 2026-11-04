@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { researchMemories, researchMemoryEvidence, researchThesisEvidence, researchThesisVersions } from '../../database/research-memory.schema';
@@ -29,15 +29,23 @@ export async function bindThesisEvidence(db: WriteDb, owner: string, versionId: 
 export async function evidenceComparisons(db: Pick<PostgresJsDatabase, 'select'>, owner: string, memory: Memory,
   local: EvidenceRow[], asOf: string, matchesSymbol: (ticker: string) => boolean): Promise<ResearchEvidenceGraph['comparisons']> {
   if (!local.some(row => row.metadata.sources.some(source => source.facts.length))) return [];
-  const rows = await db.select({ evidence: researchMemoryEvidence, memory: researchMemories, ticker: councilSessions.ticker,
+  return compareEvidenceRows(local, await loadComparisonEvidence(db, owner, [memory]), asOf, matchesSymbol);
+}
+
+export async function loadComparisonEvidence(db: Pick<PostgresJsDatabase, 'select'>, owner: string, memories: Memory[]) {
+  if (!memories.length) return [];
+  return db.select({ evidence: researchMemoryEvidence, memory: researchMemories, ticker: councilSessions.ticker,
     reportEvidence: councilReports.evidence }).from(researchMemoryEvidence)
     .innerJoin(researchMemories, and(eq(researchMemories.id, researchMemoryEvidence.memoryId), eq(researchMemories.owner, owner)))
     .innerJoin(councilReports, and(eq(councilReports.id, researchMemoryEvidence.reportId), eq(councilReports.owner, owner),
       eq(councilReports.version, researchMemoryEvidence.reportVersion), eq(councilReports.revision, researchMemoryEvidence.reportRevision)))
     .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, owner),
       eq(councilSessions.id, researchMemories.sessionId)))
-    .where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemories.ticker, memory.ticker),
-      eq(researchMemories.market, memory.market), eq(researchMemories.excluded, false), isNull(researchMemories.deletedAt)));
+    .where(and(eq(researchMemoryEvidence.owner, owner), or(...memories.map(memory => and(eq(researchMemories.ticker, memory.ticker), eq(researchMemories.market, memory.market)))), eq(researchMemories.excluded, false), isNull(researchMemories.deletedAt)));
+}
+
+export function compareEvidenceRows(local: EvidenceRow[], rows: Awaited<ReturnType<typeof loadComparisonEvidence>>,
+  asOf: string, matchesSymbol: (ticker: string) => boolean): ResearchEvidenceGraph['comparisons'] {
   const results: ResearchEvidenceGraph['comparisons'] = [];
   for (const left of local) for (const { evidence: right, memory: peer, ticker, reportEvidence } of rows) {
     const rightMetadata = normalizeEvidenceMetadata({ ...reportEvidence.find(item => item.id === right.evidenceId), metadata: right.metadata });
@@ -58,7 +66,7 @@ export async function evidenceRelations(db: Pick<PostgresJsDatabase, 'select'>, 
   if (!records.length) return [];
   const rows = await db.select({ relation: researchThesisEvidence, version: researchThesisVersions }).from(researchThesisEvidence)
     .innerJoin(researchThesisVersions, and(eq(researchThesisVersions.id, researchThesisEvidence.versionId), eq(researchThesisVersions.owner, owner)))
-    .where(eq(researchThesisEvidence.owner, owner));
+    .where(and(eq(researchThesisEvidence.owner, owner), inArray(researchThesisEvidence.evidenceRecordId, records.map(row => row.id))));
   const ids = new Set(records.map(row => row.id));
   return rows.filter(row => ids.has(row.relation.evidenceRecordId)).map(({ relation, version }) => ({
     thesisId: version.thesisId, version: version.version, evidenceRecordId: relation.evidenceRecordId, role: relation.role }));

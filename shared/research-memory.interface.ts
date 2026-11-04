@@ -6,6 +6,19 @@ export const THESIS_STATUSES = ['candidate', 'accepted', 'confirmed', 'dismissed
 export type ThesisStatus = (typeof THESIS_STATUSES)[number];
 export type MemoryFlag = 'opinion' | 'stale' | 'contradictory' | 'unverified' | 'provenance_unknown' | 'needs_review';
 export interface ResearchMemoryPreferences { autoArchive: boolean; recallEnabled: boolean }
+export const ARCHIVE_JOB_STATES = ['queued', 'running', 'succeeded', 'failed'] as const;
+export type ArchiveJobState = typeof ARCHIVE_JOB_STATES[number];
+export interface ResearchArchiveJob {
+  id: string; reportId: string; sessionId: string; reportVersion: number; ticker: string;
+  intent: 'automatic' | 'manual'; state: ArchiveJobState; attempts: number; error: string | null;
+  nextAttemptAt: string; createdAt: string; updatedAt: string;
+}
+export interface ResearchArchiveQuery { ticker?: string; market?: Market; state?: ArchiveJobState; cursor?: string; limit?: number }
+export interface ResearchArchiveJobs {
+  jobs: ResearchArchiveJob[]; nextCursor: string | null; counts: Record<ArchiveJobState, number>;
+}
+export interface ResearchArchiveImport { ticker?: string; market?: Market; cursor?: string; limit?: number }
+export interface ResearchArchiveImportResult { queued: number; scanned: number; nextCursor: string | null; hasMore: boolean }
 export interface ResearchMemoryQuery { ticker: string; market?: Market; topic?: string; asOf?: string }
 /** References contain no copied evidence bodies. Evidence is resolved from the current owner-owned report. */
 export interface MemoryEvidenceReference { evidenceId: string }

@@ -1,10 +1,11 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Put, Query, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
+import { ResearchArchiveService } from './research-memory.archive';
 import type { Request } from 'express';
 import type { z } from 'zod';
 import { NeedLogin } from '../../common/platform';
 import { ResearchMemoryService } from './research-memory.service';
 import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema,
-  thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
+  archiveImportSchema, archiveQuerySchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
@@ -15,10 +16,22 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 @NeedLogin()
 @Controller('api/research-memory')
 export class ResearchMemoryController {
-  constructor(private readonly memory: ResearchMemoryService) {}
+  constructor(private readonly memory: ResearchMemoryService, private readonly archives: ResearchArchiveService) {}
 
   @Get() list(@Req() request: Request, @Query() query: unknown) {
     return this.memory.list(request.userContext.userId, parse(memoryQuerySchema, query));
+  }
+  @Get('archive-jobs') archiveJobs(@Req() request: Request, @Query() query: unknown) {
+    return this.archives.list(request.userContext.userId, parse(archiveQuerySchema, query));
+  }
+  @Post('archive-jobs/import') importReports(@Req() request: Request, @Body() body: unknown) {
+    return this.archives.importReports(request.userContext.userId, parse(archiveImportSchema, body));
+  }
+  @Post('archive-jobs/:id/retry') retryArchive(@Req() request: Request, @Param('id') id: string) {
+    return this.archives.retry(request.userContext.userId, parse(memoryIdSchema, id));
+  }
+  @Get('memories/:id') memoryById(@Req() request: Request, @Param('id') id: string) {
+    return this.memory.getMemory(request.userContext.userId, parse(memoryIdSchema, id));
   }
   @Get('preferences') preferences(@Req() request: Request) {
     return this.memory.getPreferences(request.userContext.userId);

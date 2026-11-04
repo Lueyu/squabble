@@ -132,7 +132,7 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
       const users = await client.query('SELECT count(*)::int AS count FROM users');
       assert.equal(users.rows[0].count, 0);
       const migration = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(migration.rows[0].version, 20);
+      assert.equal(migration.rows[0].version, 21);
       const latestColumn = await client.query("SELECT enabled FROM llm_budget_settings LIMIT 0");
       assert.deepEqual(latestColumn.rows, []);
       const strategyTables = await client.query(`SELECT table_name FROM information_schema.tables
@@ -186,6 +186,7 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
       await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '16_daily_strategy.sql'), 'utf8'));
       await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '19_atomic_research_theses.sql'), 'utf8'));
       await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '20_research_memory_temporal.sql'), 'utf8'));
+      await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '21_research_archive_jobs.sql'), 'utf8'));
       const historicalTheses = await reopened.query("SELECT thesis_candidates FROM council_reports WHERE owner = 'desktop-native-probe'");
       assert.equal(historicalTheses.rows[0].thesis_candidates, null);
       const report = await reopened.query("SELECT engine FROM council_reports WHERE owner = 'desktop-native-probe'");
@@ -254,7 +255,7 @@ test('desktop recovers a private PostgreSQL cluster after its owner is force kil
     await client.connect();
     try {
       const version = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(version.rows[0].version, 20);
+      assert.equal(version.rows[0].version, 21);
     } finally {
       await client.end();
     }
@@ -297,7 +298,7 @@ test('desktop reclaims an active private PostgreSQL cluster before starting anot
     await client.connect();
     try {
       const version = await client.query('SELECT version FROM desktop_installation');
-      assert.equal(version.rows[0].version, 20);
+      assert.equal(version.rows[0].version, 21);
     } finally {
       await client.end();
     }
