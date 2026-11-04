@@ -2,9 +2,10 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
+import { eq, inArray } from 'drizzle-orm';
 import { councilReports, councilSessions } from '../../database/council.schema';
-import { researchMemories, researchTheses } from '../../database/research-memory.schema';
-import { monitorFixture } from './research-memory.monitor.fixtures';
+import { researchMemories, researchTheses, researchThesisVersions } from '../../database/research-memory.schema';
+import { monitorFixture, seedMonitor } from './research-memory.monitor.fixtures';
 import { ResearchMemoryService } from './research-memory.service';
 import { QuoteService } from '../quote/quote.service';
 import { retrievalCorpus } from './research-memory.retrieval.fixtures';
@@ -55,4 +56,54 @@ test('one frozen pool supports different tasks beyond three seats without import
   const historical = await memory.recall(owner, { ticker: 'AAPL', asOf: cutoff, query: 'cash flows' });
   assert.ok(historical.items.some(item => item.id === pin.id && item.version === pin.version),
     'future imports must be filtered before the finite thesis window, not crowd out what was known at the cutoff');
+}));
+
+test('excluded, not-yet-known and physically deleted histories do not consume the eligible history window', {
+  skip: !process.env.MEMORY_TEST_DATABASE_URL,
+}, async () => monitorFixture(async (db, _client, owner) => {
+  const f = await seedMonitor(db, owner);
+  await f.memory.updateThesis(owner, f.thesis.id, { action: 'dismiss', expectedVersion: f.thesis.version });
+  const recent = new Date(), future = new Date(Date.now() + 86400000).toISOString();
+  const reports = await db.insert(councilReports).values(Array.from({ length: 100 }, (_, i) => ({
+    ...f.report, id: randomUUID(), version: i + 2, createdAt: recent,
+    evidence: [{ ...f.report.evidence[0], fetchedAt: future }] }))).returning();
+  const parents = await db.insert(researchMemories).values(reports.map(source => ({ owner, ticker: 'AAPL', market: 'US' as const,
+    topic: 'general', language: 'en' as const, sessionId: f.session.id, reportId: source.id, reportVersion: source.version,
+    reportRevision: source.revision, reportCreatedAt: recent, summary: 'Fictional later history', decision: 'wait' as const }))).returning();
+  for (const parent of parents) await f.memory.updateMemory(owner, parent.id, { excluded: true });
+  const retained = async () => (await f.memory.recall(owner, { ticker: 'AAPL', query: 'price support' })).items.some(item => item.id === f.memoryId);
+  assert.equal(await retained(), true, 'excluded histories cannot crowd out an older available history');
+  assert.equal((await f.memory.list(owner, { ticker: 'AAPL' })).memories.filter(item => item.excluded).length, 100,
+    'the dossier still exposes excluded rows for management');
+  for (const parent of parents) await f.memory.updateMemory(owner, parent.id, { excluded: false });
+  assert.equal(await retained(), true, 'future observation histories cannot consume the eligible window');
+  await db.delete(councilReports).where(inArray(councilReports.id, reports.map(row => row.id)));
+  assert.equal(await retained(), true, 'physically deleted sources cannot consume the eligible window');
+}));
+
+test('historical active status is resolved before the thesis window and survives later dismissal', {
+  skip: !process.env.MEMORY_TEST_DATABASE_URL,
+}, async () => monitorFixture(async (db, _client, owner) => {
+  const f = await seedMonitor(db, owner), later = new Date();
+  const reports = await db.insert(councilReports).values(Array.from({ length: 500 }, (_, i) => ({
+    ...f.report, id: randomUUID(), version: i + 2, createdAt: later }))).returning();
+  const parents = await db.insert(researchMemories).values(reports.map(source => ({ owner, ticker: 'AAPL', market: 'US' as const,
+    topic: 'general', language: 'en' as const, sessionId: f.session.id, reportId: source.id, reportVersion: source.version,
+    reportRevision: source.revision, reportCreatedAt: later, summary: 'Fictional candidate history', decision: 'wait' as const, createdAt: later }))).returning();
+  const [original] = await db.select().from(researchTheses).where(eq(researchTheses.id, f.thesis.id));
+  const candidates = await db.insert(researchTheses).values(parents.map(parent => ({ owner, memoryId: parent.id,
+    content: original.content, status: 'candidate' as const, createdAt: later, updatedAt: later }))).returning();
+  await db.insert(researchThesisVersions).values(candidates.map(thesis => ({ owner, thesisId: thesis.id, version: 1,
+    content: thesis.content, status: 'candidate' as const, action: 'candidate' as const, excluded: false, createdAt: later })));
+  const cutoff = new Date().toISOString();
+  const historical = async () => (await f.memory.recall(owner, { ticker: 'AAPL', asOf: cutoff, query: 'price support' })).items;
+  assert.ok((await historical()).some(item => item.id === f.thesis.id), 'candidate versions cannot crowd out historically active claims');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await f.memory.updateThesis(owner, f.thesis.id, { action: 'dismiss', expectedVersion: f.thesis.version });
+  await f.memory.updateThesis(owner, candidates[0].id, { action: 'confirm', expectedVersion: 1 });
+  const after = await historical();
+  assert.ok(after.some(item => item.id === f.thesis.id && item.version === f.thesis.version), 'later dismissal cannot erase an active historical version');
+  assert.ok(!after.some(item => item.id === candidates[0].id), 'later confirmation cannot activate a candidate backwards');
+  await f.memory.updateMemory(owner, f.memoryId, { excluded: true });
+  assert.ok(!(await historical()).some(item => item.id === f.thesis.id), 'current privacy still overrides historical active status');
 }));

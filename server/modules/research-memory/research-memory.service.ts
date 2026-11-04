@@ -30,6 +30,18 @@ type ReportRow = typeof councilReports.$inferSelect;
 const EMPTY_CONTENT: ThesisContent = { claim: '', supportingEvidence: [], opposingEvidence: [], assumptions: [], indicators: [], invalidationConditions: [] };
 const DEFAULT_PREFERENCES: ResearchMemoryPreferences = { autoArchive: true, recallEnabled: true };
 
+/** Bound retained candidates and each materialization batch, not the number of ineligible rows inspected. */
+async function eligibleWindow<Row, Item>(limit: number, fetch: (offset: number) => Promise<Row[]>,
+  materialize: (rows: Row[]) => Promise<Item[]>): Promise<Item[]> {
+  const items: Item[] = [];
+  for (let offset = 0; items.length < limit; offset += limit) {
+    const rows = await fetch(offset);
+    items.push(...await materialize(rows));
+    if (rows.length < limit) break;
+  }
+  return items.slice(0, limit);
+}
+
 @Injectable()
 export class ResearchMemoryService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: MemoryDatabase, private readonly quotes: QuoteService) {}
@@ -131,11 +143,19 @@ export class ResearchMemoryService {
     const parsed = memoryQuerySchema.safeParse(input);
     if (!parsed.success) throw new BadRequestException('MEMORY_INVALID_QUERY');
     const symbol = this.symbol(parsed.data);
-    const rows = await this.db.select().from(researchMemories).where(and(eq(researchMemories.owner, owner),
+    const memoryQuery = this.db.select().from(researchMemories).where(and(eq(researchMemories.owner, owner),
       eq(researchMemories.ticker, symbol.ticker), eq(researchMemories.market, symbol.market), isNull(researchMemories.deletedAt),
+      retrieval ? eq(researchMemories.excluded, false) : undefined,
       parsed.data.asOf ? lte(researchMemories.reportCreatedAt, new Date(parsed.data.asOf)) : undefined,
       parsed.data.asOf ? lte(researchMemories.createdAt, new Date(parsed.data.asOf)) : undefined))
-      .orderBy(desc(researchMemories.reportCreatedAt)).limit(100);
+      .orderBy(desc(researchMemories.reportCreatedAt), researchMemories.id).$dynamic();
+    const rows = retrieval ? [] : await memoryQuery.limit(100);
+    // Filter the latest version at the cutoff, not today's status or any older active version.
+    const historical = parsed.data.asOf ? this.db.selectDistinctOn([researchThesisVersions.thesisId], {
+      thesisId: researchThesisVersions.thesisId, status: researchThesisVersions.status, excluded: researchThesisVersions.excluded,
+    }).from(researchThesisVersions).where(and(eq(researchThesisVersions.owner, owner),
+      lte(researchThesisVersions.createdAt, new Date(parsed.data.asOf))))
+      .orderBy(researchThesisVersions.thesisId, desc(researchThesisVersions.version)).as('historical_retrieval_status') : undefined;
     const thesisQuery = this.db.select({ thesis: researchTheses, memory: researchMemories }).from(researchTheses)
       .innerJoin(researchMemories, and(eq(researchMemories.id, researchTheses.memoryId), eq(researchMemories.owner, owner)))
       .where(and(eq(researchTheses.owner, owner), eq(researchMemories.ticker, symbol.ticker), eq(researchMemories.market, symbol.market),
@@ -144,10 +164,25 @@ export class ResearchMemoryService {
         parsed.data.asOf ? lte(researchMemories.reportCreatedAt, new Date(parsed.data.asOf)) : undefined,
         parsed.data.asOf ? lte(researchTheses.createdAt, new Date(parsed.data.asOf)) : undefined,
         retrieval ? eq(researchMemories.excluded, false) : undefined, retrieval ? eq(researchTheses.excluded, false) : undefined,
-        retrieval && !parsed.data.asOf ? inArray(researchTheses.status, ['accepted', 'confirmed']) : undefined, parsed.data.asOf ? undefined
+        retrieval ? historical ? inArray(researchTheses.id, this.db.select({ id: historical.thesisId }).from(historical)
+          .where(and(inArray(historical.status, ['accepted', 'confirmed']), eq(historical.excluded, false))))
+          : inArray(researchTheses.status, ['accepted', 'confirmed']) : undefined,
+        retrieval || parsed.data.asOf ? undefined
           : or(inArray(researchTheses.memoryId, rows.map(row => row.id)), inArray(researchTheses.status, ['accepted', 'confirmed']))))
-      .orderBy(desc(parsed.data.asOf ? researchTheses.createdAt : researchTheses.updatedAt), researchTheses.id);
-    const joined = await (retrieval ? thesisQuery.limit(MEMORY_THESIS_WINDOW) : thesisQuery);
+      .orderBy(desc(parsed.data.asOf ? researchTheses.createdAt : researchTheses.updatedAt), researchTheses.id).$dynamic();
+    if (retrieval) {
+      const memories = await eligibleWindow(100, offset => memoryQuery.limit(100).offset(offset), async batch =>
+        (await this.materializeMemories(owner, batch, parsed.data.asOf)).filter(memory => !memory.excluded && Boolean(memory.source)));
+      const theses = await eligibleWindow(MEMORY_THESIS_WINDOW, offset => thesisQuery.limit(MEMORY_THESIS_WINDOW).offset(offset), async batch => {
+        const parents = [...new Map(batch.map(row => [row.memory.id, row.memory])).values()];
+        const loaded = new Map((await this.materializeMemories(owner, parents, parsed.data.asOf)).map(memory => [memory.id, memory]));
+        const versions = await this.thesesAt(owner, batch.map(row => row.thesis), parsed.data.asOf);
+        return versions.map(row => this.materializeThesis(row, loaded.get(row.memoryId)!, parsed.data.asOf))
+          .filter(thesis => this.recallableThesis(thesis));
+      });
+      return { memories, theses, preferences: await this.getPreferences(owner) };
+    }
+    const joined = await thesisQuery;
     const parents = [...new Map([...rows, ...joined.map(row => row.memory)].map(row => [row.id, row])).values()];
     const loaded = await this.materializeMemories(owner, parents, parsed.data.asOf);
     const byId = new Map(loaded.map(row => [row.id, row]));
