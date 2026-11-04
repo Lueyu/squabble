@@ -16,11 +16,13 @@ const noop = () => {};
 const mutation = { mutate: noop, reset: noop, isPending: false };
 const queries = new Map();
 const cache = new Map();
+let renderPortals = false;
 function load(relative) {
   const filename = path.isAbsolute(relative) ? relative : path.resolve(__dirname, '..', relative);
   if (cache.has(filename)) return cache.get(filename).exports;
   const module = { exports: {} }; cache.set(filename, module);
   const requireModule = id => {
+    if (id === '@radix-ui/react-dialog' && renderPortals) return { ...require(id), Portal: ({ children }) => children };
     if (id === 'react-i18next') return { useTranslation: () => ({ i18n: { language, resolvedLanguage: language }, t: key => key }) };
     if (id === '@/hooks/use-research-memory') return {
       useResearchMemory: () => ({ data: listing }), useResearchMemoryPreferences: () => ({ data: { autoArchive: true, recallEnabled: true } }),
@@ -200,4 +202,14 @@ test('memory strategy and context errors provide bilingual actions without raw c
     const text = memoryReason(code, locale);
     assert.ok(text && !text.includes('MEMORY_')); assert.doesNotMatch(text, /API key|API 密钥/);
   }
+});
+
+test('the dossier sheet close button accepts a localized accessible name', () => {
+  renderPortals = true;
+  const { Sheet, SheetContent, SheetTitle, SheetDescription } = load('components/ui/sheet.tsx');
+  const html = renderToStaticMarkup(React.createElement(Sheet, { open: true }, React.createElement(SheetContent, { closeLabel: '关闭' },
+    React.createElement(SheetTitle, null, '研究记忆'), React.createElement(SheetDescription, null, '论点与边界'))));
+  assert.match(html, /class="sr-only">关闭<\/span>/);
+  assert.doesNotMatch(html, /class="sr-only">Close<\/span>/);
+  renderPortals = false;
 });

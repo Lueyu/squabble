@@ -1,6 +1,9 @@
 // Deterministic approval/rejection interleaving with isolated data.
 const assert = require('node:assert/strict');
 const { MemoryDb, loadService, tables } = require('../transactions/transactions-regression.spec.cjs');
+// This fixture exercises approval of an existing pending order, not strategy-plan execution.
+// Keep newly imported strategy dependencies explicit and fail if this path starts using them.
+const unexpectedStrategyMemory = () => assert.fail('Pending-order approval unexpectedly invoked strategy memory');
 const PaperTradingService = loadService('server/modules/paper-trading/paper-trading.service.ts', 'PaperTradingService', {
   'node:crypto': require('node:crypto'),
   '../../database/schema': tables,
@@ -15,6 +18,9 @@ const PaperTradingService = loadService('server/modules/paper-trading/paper-trad
   '../council/council.service': { CouncilService: class {} },
   './trading-market.service': { TradingMarketService: class {} },
   './strategy.rules': {},
+  '../research-memory/research-memory.fence': { lockMemoryOwner: unexpectedStrategyMemory },
+  '../research-memory/research-memory.dependencies': { strategyMemoryBlock: unexpectedStrategyMemory },
+  '../research-memory/research-memory.monitor.service': { observeThesisMonitors: unexpectedStrategyMemory },
 });
 function deferred() {
   let resolve;

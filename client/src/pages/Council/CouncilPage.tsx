@@ -128,7 +128,7 @@ export default function CouncilPage() {
     </div>
 
     <Sheet open={memoryOpen} onOpenChange={setMemoryOpen}>
-      <SheetContent className="w-[min(620px,96vw)] overflow-y-auto sm:max-w-[620px]">
+      <SheetContent closeLabel={copy.close} className="w-[min(620px,96vw)] overflow-y-auto sm:max-w-[620px]">
         <SheetHeader><SheetTitle>{copy.memoryManage}</SheetTitle><SheetDescription>{copy.preferencesHint}</SheetDescription></SheetHeader>
         {session && <CouncilMemoryPanel ticker={session.ticker} />}
       </SheetContent>
