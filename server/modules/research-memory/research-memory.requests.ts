@@ -18,7 +18,7 @@ export const thesisContentSchema = z.object({
 }).strict().refine(value => (value.monitorConditions ?? []).every(condition => condition.conditionIndex < value.invalidationConditions.length), 'Condition index must reference an explicit invalidation condition');
 export const thesisCandidateSchema = thesisContentSchema.extend({ expiresAt: z.iso.datetime().nullable().optional() });
 export const memoryQuerySchema = z.object({ ticker: z.string().trim().min(1).max(20),
-  market: z.enum(['US', 'HK', 'CN']).optional(), topic: z.string().trim().max(120).optional(),
+  market: z.enum(['US', 'HK', 'CN']).optional(), topic: z.string().trim().max(120).optional(), query: z.string().trim().max(1200).optional(),
   asOf: z.iso.datetime({ offset: true }).optional() }).strict();
 export const memoryPreferencesSchema = z.object({ autoArchive: z.boolean(), recallEnabled: z.boolean() }).strict();
 export const memoryUpdateSchema = z.object({ excluded: z.boolean() }).strict();

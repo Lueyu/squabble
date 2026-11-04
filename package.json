@@ -29,7 +29,8 @@
     "lint": "node ./scripts/lint.js",
     "precommit": "node scripts/hooks/run-precommit.js",
     "prepare": "node scripts/setup-git-hooks.js",
-    "test:local-agents": "tsx --tsconfig tsconfig.node.json --test server/local-agents/*.spec.ts server/modules/local-agents/*.spec.ts"
+    "test:local-agents": "tsx --tsconfig tsconfig.node.json --test server/local-agents/*.spec.ts server/modules/local-agents/*.spec.ts",
+    "test:memory-eval": "node scripts/evaluate-memory.cjs"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",

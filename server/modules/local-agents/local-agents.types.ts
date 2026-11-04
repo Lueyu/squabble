@@ -2,6 +2,8 @@ import type { NativeAgentConfiguration } from '../../../shared/local-agents.inte
 import type { ResearchToolScope } from '../../../shared/research-tools.interface';
 
 export interface LocalAgentTaskRef { taskId: string; contextId: string }
+/** Validation may fence the local handoff, but must never await remote execution. */
+export type LocalAgentHandoff = (handoff: () => Promise<void>) => Promise<void>;
 export interface LocalAgentExecution {
   researchScope?: ResearchToolScope;
   agentId: string;
@@ -12,6 +14,7 @@ export interface LocalAgentExecution {
   contextId?: string;
   resumeInput?: boolean;
   onDispatch?(submission?: { inputBytes: number }): Promise<void>;
+  withHandoff?: LocalAgentHandoff;
   /** Queue acceptance alone is not delivery. Companion receipt means emitted command, not private model use. */
   onSubmitted?(delivery: 'runtime' | 'companion-command'): Promise<void>;
   onTask(ref: LocalAgentTaskRef): Promise<void>;
@@ -36,6 +39,8 @@ export class LocalAgentError extends Error {
 export function nativeFailureCode(error: unknown): string {
   if (error instanceof LocalAgentError) return error.code;
   const codes: Record<string, string> = {
+    MEMORY_CONTEXT_CHANGED: 'MEMORY_CONTEXT_CHANGED',
+    LOCAL_PAUSED: 'LOCAL_PAUSED',
     NATIVE_AGENT_LOGIN_REQUIRED: 'LOCAL_LOGIN_REQUIRED',
     NATIVE_AGENT_INVALID_CONFIGURATION: 'LOCAL_INVALID_CONFIGURATION',
     NATIVE_AGENT_CONFIGURATION_UNSUPPORTED: 'LOCAL_CONFIGURATION_UNSUPPORTED',

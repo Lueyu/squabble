@@ -14,10 +14,11 @@ test('native submission requires runtime entry; cancelled staging and activation
   process.env.SQUABBLE_DESKTOP_ORIGIN = 'http://127.0.0.1:43199';
   let submitted = 0, runs = 0;
   const service = new LocalAgentsService({ detectNativeAgents: async () => [{ ...providerCatalog.codex, state: 'ready' }],
-    openNativeLogin: async () => {}, runNativeAgent: async () => { runs++; assert.equal(submitted, 1); return { text: 'Fixture', usageTokens: null }; },
+    openNativeLogin: async () => {}, runNativeAgent: async () => { runs++; assert.equal(submitted, 0); return { text: 'Fixture', usageTokens: null }; },
   }, new LocalAgentStore(directory));
   const request = { agentId: 'native-codex', messageId: 'normal', prompt: 'Fixture', onTask: async () => {},
-    onProgress: async () => {}, shouldContinue: async () => true, onSubmitted: async (delivery: string) => { assert.equal(delivery, 'runtime'); submitted++; } };
+    onProgress: async () => {}, shouldContinue: async () => true, onSubmitted: async (delivery: string) => {
+      assert.equal(runs, 1, 'receipt follows actual runtime entry'); assert.equal(delivery, 'runtime'); submitted++; } };
   try {
     await service.connect('alice', 'native-codex');
     await assert.rejects(service.execute('alice', { ...request, messageId: 'cancel-stage',

@@ -19,12 +19,14 @@ export interface ResearchArchiveJobs {
 }
 export interface ResearchArchiveImport { ticker?: string; market?: Market; cursor?: string; limit?: number }
 export interface ResearchArchiveImportResult { queued: number; scanned: number; nextCursor: string | null; hasMore: boolean }
-export interface ResearchMemoryQuery { ticker: string; market?: Market; topic?: string; asOf?: string }
+export interface ResearchMemoryQuery { ticker: string; market?: Market; topic?: string; query?: string; asOf?: string }
 /** References contain no copied evidence bodies. Evidence is resolved from the current owner-owned report. */
 export interface MemoryEvidenceReference { evidenceId: string }
 export interface MemoryCitation extends MemoryEvidenceReference {
   title: string; sourceUrl: string | null; fetchedAt: string;
   recordId?: string; metadata?: CompactEvidenceMetadata; conflicting?: boolean;
+  /** Owner-scoped, time-filtered comparisons established by the server, never lexical matches. */
+  relatedEvidence?: Array<{ recordId: string; kind: 'conflict' | 'superseded' }>;
 }
 export interface MemorySource {
   sessionId: string; reportId: string; reportVersion: number; reportRevision: number;
@@ -82,7 +84,7 @@ export interface ResearchMemoryRecallItem {
 }
 export interface MemoryReference { kind: ResearchMemoryRecallItem['kind']; id: string; version: number }
 export interface MemoryOmission extends MemoryReference {
-  reason: 'budget' | 'disabled' | 'revoked' | 'version-changed' | 'structure-missing'; currentVersion?: number;
+  reason: 'budget' | 'disabled' | 'revoked' | 'version-changed' | 'structure-missing' | 'redundant-history'; currentVersion?: number;
 }
 /** Submission is observable; model use and native private context are not. Contains no prompt bodies. */
 export interface MemoryContextInventory {

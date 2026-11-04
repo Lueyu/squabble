@@ -15,7 +15,7 @@ test('canonical memory identity shares HK aliases and rejects incompatible marke
   assert.throws(() => canonicalMemorySymbol('ABC.HK', undefined, detect));
 });
 
-test('recall selects only three items with a hard bounded context and treats history as opinion', () => {
+test('recall retains a finite candidate pool with a hard bounded context and treats history as opinion', () => {
   const items: ResearchMemoryRecallItem[] = Array.from({ length: 8 }, (_, index) => ({
     kind: 'history', id: String(index), version: 1, memoryId: String(index),
     summary: `${index} ${'untrusted opinion '.repeat(1000)}`, flags: ['opinion'],
@@ -23,7 +23,7 @@ test('recall selects only three items with a hard bounded context and treats his
       reportCreatedAt: new Date(Date.UTC(2026, 10, index + 1)).toISOString(), url: '/council' }, citations: [],
   }));
   const result = rankMemoryRecall(items, '', { autoArchive: true, recallEnabled: true });
-  assert.equal(result.items.length, 3);
+  assert.equal(result.items.length, 8);
   assert.equal(result.items[0].id, '7');
   assert.equal(result.items[0].summary, items[7].summary, 'ranking preserves whole selected items even if they cannot fit');
   assert.equal(result.context, '', 'oversized histories are omitted as whole units');

@@ -8,7 +8,7 @@ import type { ResearchEvent } from '../../../shared/research-events.interface';
 import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../../shared/research-workflow.interface';
 import { jsonChatMessages, LlmService } from '../multi-agent/llm.service';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
-import { ResearchMemoryService } from '../research-memory/research-memory.service';
+import { ResearchMemoryService, type MemoryDatabase } from '../research-memory/research-memory.service';
 import { validateDelivery } from './council.tasks';
 import { byteExcerpt, evidenceExcerpts, type CouncilEvidence } from './council.rules';
 import { CouncilWorkflowStore } from './council.workflow-store';
@@ -18,6 +18,7 @@ import type { ResearchToolResult } from '../../../shared/research-tools.interfac
 import { attachValuation, compactPeerComparison, compactHandoffs, compactValuationHandoff, excerptToolData, handoffEvidenceExcerpt, referenceEvidenceMetadata } from './council.workflow-tools';
 import { workflowReviewPrompt } from './council.workflow-review';
 import { packMemoryContext } from '../research-memory/research-memory.context';
+import { taskMemoryQuery } from '../research-memory/research-memory.ranking';
 import type { MemoryContextInventory } from '../../../shared/research-memory.interface';
 
 type Session = typeof councilSessions.$inferSelect;
@@ -110,7 +111,8 @@ export class CouncilWorkflowExecutor {
     const review = attempt.kind === 'review';
     const inputLimit = member.executionMode === 'local' ? 32_000 : await this.deps.llm.getInputLimit?.(row.owner) ?? 6000;
     const packingTarget = member.executionMode === 'local' ? 5500 : Math.max(0, inputLimit - 500);
-    const recallQuery = { ticker: row.ticker, enabled: row.checkpoint?.workflow?.recallEnabled };
+    const recallQuery = { ticker: row.ticker, enabled: row.checkpoint?.workflow?.recallEnabled,
+      query: taskMemoryQuery(row.checkpoint?.workflow?.goal ?? '', instructions[task.key], messages.at(-1)?.content ?? '') };
     const recall = !review && frozen && memory ? await memory.refreshRecall(row.owner, frozen, recallQuery) : undefined;
     const suppliedIds = new Set(toolResults.flatMap(item => {
       const data = item.result.data as { evidenceId?: string } | undefined;
@@ -240,6 +242,22 @@ export class CouncilWorkflowExecutor {
         prompt: `${promptContext.system}\n${JSON.stringify(promptContext.input)}`,
         researchScope: { ...scope, memoryReferences: inventory.prepared },
         onDispatch,
+        withHandoff: async handoff => {
+          const activeHandoff = async (tx: MemoryDatabase) => {
+            const [current] = await tx.select({ revision: councilSessions.revision, status: councilSessions.status }).from(councilSessions)
+              .where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('share');
+            if (current?.revision !== row.revision || current.status !== 'running') throw new Error('LOCAL_PAUSED');
+          };
+          if (memory) {
+            try { await memory.withRecallHandoff(row.owner, frozen ?? { items: [], context: '', preferences: { autoArchive: false, recallEnabled: false } },
+              recallQuery, inventory.prepared, handoff, activeHandoff); }
+            catch (error) {
+              // Persist the safe omission after releasing the fence; never record an un-emitted submission.
+              if (error instanceof Error && error.message === 'MEMORY_CONTEXT_CHANGED') await onDispatch();
+              throw error;
+            }
+          } else await db.transaction(async tx => { await activeHandoff(tx); await handoff(); });
+        },
         onSubmitted: recordSubmission,
         onTask: ref => this.deps.store.markRemote(row, task, attempt.id, { remoteTaskId: ref.taskId, remoteContextId: ref.contextId }),
         onProgress: async () => undefined, shouldContinue: () => this.active(row),

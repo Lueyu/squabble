@@ -1,7 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import type { Market } from '@shared/api.interface';
 import type { ResearchMemoryPreferences, ResearchMemoryRecall, ResearchMemoryRecallItem } from '@shared/research-memory.interface';
-import { packMemoryContext } from './research-memory.context';
+import { memoryReference, packMemoryContext } from './research-memory.context';
+import { boundedMemoryPins, memoryRelevance, relatedCounterclaim } from './research-memory.ranking';
 export { compareEvidence, evidenceVisibleAt, thesisFreshness } from './research-memory.temporal';
 
 export function canonicalMemorySymbol(ticker: string, market: Market | undefined,
@@ -29,11 +30,23 @@ export function normalizedTopic(topic?: string): string { return (topic?.trim().
 export function rankMemoryRecall(items: ResearchMemoryRecallItem[], topic: string,
   preferences: ResearchMemoryPreferences): ResearchMemoryRecall {
   if (!preferences.recallEnabled) return { items: [], context: '', preferences };
-  const terms = topic.toLowerCase().split(/\s+/u).filter(Boolean);
-  const relevance = (item: ResearchMemoryRecallItem): number => (terms.length && item.topic === normalizedTopic(topic) ? 100 : 0) + terms.reduce((score, term) =>
-    score + (item.summary.toLowerCase().includes(term) ? 1 : 0), 0);
-  const selected = [...items].sort((a, b) => Number(b.kind === 'thesis') - Number(a.kind === 'thesis') || relevance(b) - relevance(a)
+  const scores = new Map(items.map(item => [item, memoryRelevance(item, topic) + (topic && item.topic === normalizedTopic(topic) ? 100 : 0)]));
+  const anchors = items.filter(item => scores.get(item)! > 0);
+  const links = new Map(anchors.map(anchor => [anchor, items.filter(item => item !== anchor && relatedCounterclaim(anchor, item))]));
+  const relatedScores = new Map(items.map(item => [item, Math.max(scores.get(item)!,
+    ...anchors.filter(anchor => links.get(anchor)!.includes(item)).map(anchor => scores.get(anchor)! - 0.5))]));
+  const relevance = (item: ResearchMemoryRecallItem): number => relatedScores.get(item)!;
+  const sorted = [...items].sort((a, b) => relevance(b) - relevance(a)
+    || Number(Boolean(links.get(b)?.length)) - Number(Boolean(links.get(a)?.length))
+    || Number(b.kind === 'thesis') - Number(a.kind === 'thesis')
     || Date.parse(b.source.reportCreatedAt) - Date.parse(a.source.reportCreatedAt)
-    || a.id.localeCompare(b.id)).slice(0, 3);
-  return { items: selected, context: packMemoryContext(selected, MEMORY_CONTEXT_LIMIT).context, preferences };
+    || a.id.localeCompare(b.id));
+  // Reserve ordering for authoritative counterevidence beside its anchor, ahead of equally topical unrelated claims.
+  // Packing still omits an entire unit with an explicit budget reason if the pair cannot fit.
+  const pool = boundedMemoryPins(sorted.flatMap(item => [item, ...sorted.filter(peer => links.get(item)?.includes(peer))]));
+  const represented = new Set(pool.filter(item => item.kind === 'thesis' && item.content && item.status).map(item => item.memoryId));
+  const selected = pool.filter(item => item.kind !== 'history' || !represented.has(item.memoryId));
+  return { items: selected, context: packMemoryContext(selected, MEMORY_CONTEXT_LIMIT).context, preferences,
+    requested: pool.map(memoryReference), omissions: pool.filter(item => !selected.includes(item)).map(item => ({
+      ...memoryReference(item), reason: 'redundant-history' as const })) };
 }

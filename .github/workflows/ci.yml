@@ -55,6 +55,20 @@ jobs:
           MEMORY_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
         run: npm run test:server
 
+      - name: Evaluate fictional research memory operations and retrieval
+        env:
+          MEMORY_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
+          COUNCIL_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
+        run: npm run --silent test:memory-eval > memory-evaluation.json
+
+      - name: Save research memory evaluation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-evaluation
+          path: memory-evaluation.json
+          if-no-files-found: ignore
+
       - name: Run client tests
         run: npm run test:client
 

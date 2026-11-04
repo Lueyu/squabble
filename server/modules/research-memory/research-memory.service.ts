@@ -4,7 +4,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 import { QuoteService } from '../quote/quote.service';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { researchMemories, researchMemoryPreferences, researchTheses, researchThesisVersions, researchMemoryEvidence } from '../../database/research-memory.schema';
-import type { ArchiveResearchReport, MemoryCitation, MemoryFlag, MemoryOmission, ResearchMemoryItem, ResearchMemoryList,
+import type { ArchiveResearchReport, MemoryCitation, MemoryFlag, MemoryOmission, MemoryReference, ResearchMemoryItem, ResearchMemoryList,
   ResearchMemoryPreferences, ResearchMemoryQuery, ResearchMemoryRecall, ResearchMemoryRecallItem,
   ResearchThesis, ResearchThesisVersion, ThesisContent, UpdateResearchThesis, ResearchEvidenceGraph, ResearchEvidenceRecord } from '@shared/research-memory.interface';
 import { canonicalMemorySymbol, normalizedTopic, rankMemoryRecall } from './research-memory.rules';
@@ -19,6 +19,7 @@ import { createThesisMonitors } from './research-memory.monitor.service';
 import { recordReviewedReplacement } from './research-memory.dependencies';
 import { researchMonitorEvents, researchMonitorRules, researchThesisReplacements } from '../../database/research-monitor.schema';
 import { memoryReference } from './research-memory.context';
+import { boundedMemoryPins, MEMORY_THESIS_WINDOW } from './research-memory.ranking';
 import { compactEvidenceMetadata, evidenceVisibleAt, normalizeEvidenceMetadata, thesisFreshness } from './research-memory.temporal';
 import { archiveEvidence, bindThesisEvidence, compareEvidenceRows, evidenceRelations, type EvidenceRow } from './research-memory.evidence';
 
@@ -123,19 +124,30 @@ export class ResearchMemoryService {
   }
 
   async list(owner: string, input: ResearchMemoryQuery): Promise<ResearchMemoryList> {
+    return this.listCandidates(owner, input);
+  }
+  private async listCandidates(owner: string, input: ResearchMemoryQuery, retrieval = false): Promise<ResearchMemoryList> {
     this.owner(owner);
     const parsed = memoryQuerySchema.safeParse(input);
     if (!parsed.success) throw new BadRequestException('MEMORY_INVALID_QUERY');
     const symbol = this.symbol(parsed.data);
     const rows = await this.db.select().from(researchMemories).where(and(eq(researchMemories.owner, owner),
       eq(researchMemories.ticker, symbol.ticker), eq(researchMemories.market, symbol.market), isNull(researchMemories.deletedAt),
+      parsed.data.asOf ? lte(researchMemories.reportCreatedAt, new Date(parsed.data.asOf)) : undefined,
       parsed.data.asOf ? lte(researchMemories.createdAt, new Date(parsed.data.asOf)) : undefined))
       .orderBy(desc(researchMemories.reportCreatedAt)).limit(100);
-    const joined = await this.db.select({ thesis: researchTheses, memory: researchMemories }).from(researchTheses)
+    const thesisQuery = this.db.select({ thesis: researchTheses, memory: researchMemories }).from(researchTheses)
       .innerJoin(researchMemories, and(eq(researchMemories.id, researchTheses.memoryId), eq(researchMemories.owner, owner)))
       .where(and(eq(researchTheses.owner, owner), eq(researchMemories.ticker, symbol.ticker), eq(researchMemories.market, symbol.market),
-        isNull(researchMemories.deletedAt), isNull(researchTheses.deletedAt), parsed.data.asOf ? undefined
-          : or(inArray(researchTheses.memoryId, rows.map(row => row.id)), inArray(researchTheses.status, ['accepted', 'confirmed']))));
+        isNull(researchMemories.deletedAt), isNull(researchTheses.deletedAt),
+        parsed.data.asOf ? lte(researchMemories.createdAt, new Date(parsed.data.asOf)) : undefined,
+        parsed.data.asOf ? lte(researchMemories.reportCreatedAt, new Date(parsed.data.asOf)) : undefined,
+        parsed.data.asOf ? lte(researchTheses.createdAt, new Date(parsed.data.asOf)) : undefined,
+        retrieval ? eq(researchMemories.excluded, false) : undefined, retrieval ? eq(researchTheses.excluded, false) : undefined,
+        retrieval && !parsed.data.asOf ? inArray(researchTheses.status, ['accepted', 'confirmed']) : undefined, parsed.data.asOf ? undefined
+          : or(inArray(researchTheses.memoryId, rows.map(row => row.id)), inArray(researchTheses.status, ['accepted', 'confirmed']))))
+      .orderBy(desc(parsed.data.asOf ? researchTheses.createdAt : researchTheses.updatedAt), researchTheses.id);
+    const joined = await (retrieval ? thesisQuery.limit(MEMORY_THESIS_WINDOW) : thesisQuery);
     const parents = [...new Map([...rows, ...joined.map(row => row.memory)].map(row => [row.id, row])).values()];
     const loaded = await this.materializeMemories(owner, parents, parsed.data.asOf);
     const byId = new Map(loaded.map(row => [row.id, row]));
@@ -267,12 +279,44 @@ export class ResearchMemoryService {
     return new ResearchMemoryService(tx, this.quotes).recall(owner, query);
   }
 
+  /** Serialize revocation with the last local handoff. The callback must not await remote work. */
+  async withRecallHandoff(owner: string, frozen: ResearchMemoryRecall, query: ResearchMemoryQuery & { enabled?: boolean },
+    prepared: MemoryReference[], handoff: () => Promise<void>, validate?: (tx: MemoryDatabase) => Promise<void>): Promise<void> {
+    this.owner(owner);
+    await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      await validate?.(tx);
+      if (!prepared.length) return handoff();
+      const pins = boundedMemoryPins(frozen.items).filter(item => prepared.some(ref =>
+        ref.kind === item.kind && ref.id === item.id && ref.version === item.version));
+      if (pins.length !== prepared.length) throw new Error('MEMORY_CONTEXT_CHANGED');
+      const theses = await tx.select().from(researchTheses).where(and(eq(researchTheses.owner, owner),
+        inArray(researchTheses.id, pins.filter(item => item.kind === 'thesis').map(item => item.id))));
+      const parents = await tx.select().from(researchMemories).where(and(eq(researchMemories.owner, owner),
+        inArray(researchMemories.id, [...pins.filter(item => item.kind === 'history').map(item => item.id), ...theses.map(item => item.memoryId)])));
+      // Lock physical sources too: SQL deletion need not participate in the application owner fence.
+      await tx.select({ id: councilSessions.id }).from(councilSessions).where(and(eq(councilSessions.owner, owner),
+        inArray(councilSessions.id, parents.map(item => item.sessionId)))).orderBy(councilSessions.id).for('share');
+      await tx.select({ id: councilReports.id }).from(councilReports).where(and(eq(councilReports.owner, owner),
+        inArray(councilReports.id, parents.map(item => item.reportId)))).orderBy(councilReports.id).for('share');
+      await tx.select({ id: researchMemories.id }).from(researchMemories).where(and(eq(researchMemories.owner, owner),
+        inArray(researchMemories.id, parents.map(item => item.id)))).orderBy(researchMemories.id).for('share');
+      await tx.select({ id: researchTheses.id }).from(researchTheses).where(and(eq(researchTheses.owner, owner),
+        inArray(researchTheses.id, theses.map(item => item.id)))).orderBy(researchTheses.id).for('share');
+      const current = await new ResearchMemoryService(tx, this.quotes).refreshRecall(owner, { ...frozen, items: pins }, query);
+      if (prepared.some(ref => !current.items.some(item => item.kind === ref.kind && item.id === ref.id && item.version === ref.version))) {
+        throw new Error('MEMORY_CONTEXT_CHANGED');
+      }
+      await handoff();
+    });
+  }
+
   async recall(owner: string, query: ResearchMemoryQuery & { enabled?: boolean }): Promise<ResearchMemoryRecall> {
     const { enabled, ...filters } = query;
     if (!memoryQuerySchema.safeParse(filters).success) throw new BadRequestException('MEMORY_INVALID_QUERY');
     const preferences = await this.getPreferences(owner);
     if (enabled === false || !preferences.recallEnabled) return { items: [], context: '', preferences, ...(query.asOf ? { asOf: query.asOf } : {}) };
-    const listing = await this.list(owner, filters);
+    const listing = await this.listCandidates(owner, filters, true);
     const items: ResearchMemoryRecallItem[] = [];
     for (const memory of listing.memories) {
       if (!memory.excluded && memory.source) items.push(this.historyRecallItem(memory, query.asOf));
@@ -282,7 +326,7 @@ export class ResearchMemoryService {
         items.push(this.thesisRecallItem(thesis, query.asOf));
       }
     }
-    return { ...rankMemoryRecall(items, query.topic ?? '', preferences), ...(query.asOf ? { asOf: query.asOf } : {}) };
+    return { ...rankMemoryRecall(items, query.query ?? query.topic ?? '', preferences), ...(query.asOf ? { asOf: query.asOf } : {}) };
   }
   /** A checkpoint pins IDs/versions, never authority. Resolve owner and live source for every prompt. */
   async refreshRecall(owner: string, frozen: ResearchMemoryRecall, query?: ResearchMemoryQuery & { enabled?: boolean }): Promise<ResearchMemoryRecall> {
@@ -290,11 +334,13 @@ export class ResearchMemoryService {
     if (query && !memoryQuerySchema.safeParse((({ enabled: _enabled, ...filters }) => filters)({ ...query, asOf: cutoff })).success
       || cutoff && !memoryQuerySchema.shape.asOf.safeParse(cutoff).success) throw new BadRequestException('MEMORY_INVALID_QUERY');
     const preferences = await this.getPreferences(owner);
-    const requested = frozen.items.slice(0, 3).map(memoryReference);
+    const pins = boundedMemoryPins(frozen.items);
+    const redundant = (frozen.omissions ?? []).filter(item => item.reason === 'redundant-history').slice(0, 200);
+    const requested = [...new Map([...pins.map(memoryReference), ...redundant.map(memoryReference)]
+      .map(ref => [`${ref.kind}:${ref.id}:${ref.version}`, ref])).values()].slice(0, 200);
     if (!preferences.recallEnabled || query?.enabled === false) return { items: [], context: '', preferences, requested,
       omissions: requested.map(item => ({ ...item, reason: 'disabled' })), ...(cutoff ? { asOf: cutoff } : {}) };
     const symbol = query ? this.symbol(query) : undefined;
-    const pins = frozen.items.slice(0, 3);
     for (const pin of pins) this.id(pin.id);
     const thesisRows = await this.db.select().from(researchTheses).where(and(eq(researchTheses.owner, owner),
       inArray(researchTheses.id, pins.filter(item => item.kind === 'thesis').map(item => item.id)), isNull(researchTheses.deletedAt)));
@@ -309,7 +355,7 @@ export class ResearchMemoryService {
 
     const items: ResearchMemoryRecallItem[] = [];
     const omissions: MemoryOmission[] = [];
-    for (const item of frozen.items.slice(0, 3)) {
+    for (const item of pins) {
       let reason: MemoryOmission['reason'] = 'revoked', currentVersion: number | undefined;
       try {
         if (item.kind === 'history') {
@@ -334,7 +380,8 @@ export class ResearchMemoryService {
       } catch (error) { if (!(error instanceof NotFoundException)) throw error; }
       omissions.push({ ...memoryReference(item), reason, ...(currentVersion ? { currentVersion } : {}) });
     }
-    return { ...rankMemoryRecall(items, '', preferences), requested, omissions, ...(cutoff ? { asOf: cutoff } : {}) };
+    const ranked = rankMemoryRecall(items, query?.query ?? query?.topic ?? '', preferences);
+    return { ...ranked, requested, omissions: [...omissions, ...redundant, ...(ranked.omissions ?? [])], ...(cutoff ? { asOf: cutoff } : {}) };
   }
 
   private owner(owner: string): void { if (!owner?.trim()) throw new UnauthorizedException('MEMORY_OWNER_REQUIRED'); }
@@ -386,7 +433,10 @@ export class ResearchMemoryService {
       return { evidenceId: evidence.id, title: evidence.title, sourceUrl: this.sourceUrl(evidence.sourceUrl),
         fetchedAt: evidence.fetchedAt, ...(record ? { recordId: record.id } : {}),
         metadata: compactEvidenceMetadata(record?.metadata ?? normalizeEvidenceMetadata(evidence)),
-        ...(record && conflicts.has(record.id) ? { conflicting: true } : {}) };
+        ...(record && conflicts.has(record.id) ? { conflicting: true } : {}),
+        ...(record ? { relatedEvidence: [...new Map(comparisons.filter(item => item.left === record.id
+          && (item.kind === 'conflict' || item.kind === 'superseded')).map(item => [item.right, {
+            recordId: item.right, kind: item.kind as 'conflict' | 'superseded' }])).values()].slice(0, 200) } : {}) };
     }) ?? [];
     const flags: MemoryFlag[] = ['opinion'];
     if (conflicts.size) flags.push('contradictory', 'needs_review');

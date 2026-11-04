@@ -17,6 +17,7 @@ import { RESEARCH_TOOLS, toolDescriptor, validRequest, type ResearchToolDefiniti
 import { boundedResult, clipped, isoDate, researchFailure, researchSource } from './research-tools.output';
 import { extractValuationInputs, frozenPeerTickers, valuationScenarios } from './research-valuation';
 import { memoryReference, memoryToolData } from '../research-memory/research-memory.context';
+import { boundedMemoryPins } from '../research-memory/research-memory.ranking';
 import { compactToolEvidence, toolEvidenceMetadata } from './research-tools.evidence';
 
 type SessionRow = typeof councilSessions.$inferSelect;
@@ -206,7 +207,7 @@ export class ResearchToolsService {
     if (review || scope.memoryReferences?.length === 0) {
       recall = { items: [], context: '', preferences: await this.memory.getPreferences(owner) };
     } else if (workflow?.recallEnabled === false || workflow && !workflow.memory) {
-      const requested = workflow.memory?.items.slice(0, 3).map(memoryReference) ?? [];
+      const requested = boundedMemoryPins(workflow.memory?.items ?? []).map(memoryReference);
       recall = { items: [], context: '', preferences: await this.memory.getPreferences(owner), requested,
         omissions: requested.map(item => ({ ...item, reason: 'disabled' })) };
     } else if (workflow?.memory) recall = await this.memory.refreshRecall(owner, workflow.memory, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) });

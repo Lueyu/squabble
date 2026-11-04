@@ -77,6 +77,20 @@ test('missing legacy inventory is unknown only when the automated context opts i
   assert.doesNotMatch(html, /Submitted 0/);
 });
 
+test('duplicate report history has an explicit bilingual omission label', () => {
+  const Inventory = load('pages/Council/CouncilMemoryInventory.tsx').default;
+  const inventory = { requested: [], selected: [], prepared: [], submitted: [],
+    counts: { requested: 1, selected: 0, prepared: 0, submitted: 0 }, usedTokens: 0, budgetTokens: 100, basis: 'conservative-utf8',
+    omissions: [{ kind: 'history', id: 'report-history', version: 1, reason: 'redundant-history' }] };
+  for (const locale of ['en', 'zh-CN']) {
+    language = locale;
+    const html = render(Inventory, { inventory });
+    assert.match(html, locale === 'en' ? /Report represented by an independent claim/ : /报告已由独立论点代表/u);
+    assert.doesNotMatch(html, /undefined/);
+  }
+  language = 'en';
+});
+
 test('edit payload preserves optional structures and expiry while excluding server provenance', async () => {
   const { editableThesisContent, thesisEditRequest, formatMemoryDate } = load('pages/Council/memory-presentation.ts');
   const rich = { ...thesis, expiresAt: '2027-05-01T00:00:00Z', monitorConditions: [{ conditionIndex: 0, metric: 'price' }],

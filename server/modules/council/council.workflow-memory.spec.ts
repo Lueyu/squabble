@@ -34,7 +34,7 @@ import { financialMetadata } from '../multi-agent/financial-evidence-metadata';
 
 test('real executor submissions match durable inventories across languages, refresh, API failures, reviews and native callbacks', {
   skip: !process.env.COUNCIL_TEST_DATABASE_URL,
-}, async () => {
+}, async t => {
   const url = process.env.COUNCIL_TEST_DATABASE_URL!;
   const namespace = `workflow_memory_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(url, { max: 1, onnotice: () => {} });
@@ -54,6 +54,7 @@ test('real executor submissions match durable inventories across languages, refr
     const llm = new LlmService({ getLlmConfig: async () => ({ source: 'server', baseUrl: 'https://fixture.invalid',
       apiKey: 'fixture', fastModel: 'fixture', slowModel: 'fixture' }) } as unknown as SettingsService, budgets);
     for (const language of ['en', 'zh-CN'] as const) {
+      let apiRequests = 0, nativeRequests = 0, agreements = 0, intactUnits = 0;
       const owner = randomUUID(), cycleId = randomUUID();
       await client`INSERT INTO users(id, username, password_hash) VALUES (${owner}, ${language}, 'fixture')`;
       await budgets.saveSettings(owner, { ...await budgets.getSettings(owner), maxCallsPerTask: 30 });
@@ -104,6 +105,8 @@ test('real executor submissions match durable inventories across languages, refr
         assert.equal(live.dispatched, true, 'submission must be durable before the transport starts');
         const units = JSON.parse(input.memory || '[]') as ResearchMemoryRecallItem[];
         assert.deepEqual(live.memory!.submitted, units.map(({ kind, id, version }) => ({ kind, id, version })));
+        apiRequests++; agreements++;
+        for (const unit of units) { assert.deepEqual(unit.content, selected.content); assert.deepEqual(unit.citations, selected.citations); intactUnits++; }
         assert.equal(live.memory!.requestTokens, estimateInputTokens(payload.messages));
         if (transportFails) throw new Error('offline failure');
         return { status: 200, statusText: 'OK', headers: {}, config, data: { usage: { prompt_tokens: 10, completion_tokens: 5 },
@@ -117,8 +120,11 @@ test('real executor submissions match durable inventories across languages, refr
           launches++;
           const after = (await store.list(owner, created.id, cycleId))[0].attempts.at(-1)!;
           const input = JSON.parse(prompt.slice(prompt.lastIndexOf('\n') + 1));
-          assert.equal(after.memory!.submission, 'agent');
-          assert.equal(after.memory!.counts.submitted, input.submitted ? 0 : 1);
+          const units = JSON.parse(input.memory || '[]') as ResearchMemoryRecallItem[];
+          assert.deepEqual(after.memory!.prepared, units.map(({ kind, id, version }) => ({ kind, id, version })));
+          nativeRequests++;
+          for (const unit of units) { assert.deepEqual(unit.content, selected.content); assert.deepEqual(unit.citations, selected.citations); intactUnits++; }
+          assert.equal(after.memory!.counts.prepared, input.submitted ? 0 : 1);
           assert.equal(after.memory!.requestScope, 'application-prompt-and-snapshot');
           assert.equal(after.memory!.requestTokens, Buffer.byteLength(researchSnapshotPrompt(prompt, run.researchTools!.snapshot)));
           assert.equal(after.memory!.requestBudgetTokens, 32_000);
@@ -126,7 +132,7 @@ test('real executor submissions match durable inventories across languages, refr
           const tool = await run.researchTools!.call({ callId: 'memory', name: 'get_research_memory', arguments: {} }, run.signal);
           const data = tool.data as MemoryToolData;
           assert.equal(data.items.length, input.submitted ? 0 : 1);
-          assert.ok(data.items.every(item => after.memory!.submitted.some(ref => ref.id === item.id && ref.version === item.version)));
+          assert.ok(data.items.every(item => after.memory!.prepared.some(ref => ref.id === item.id && ref.version === item.version)));
           return { text: JSON.stringify(input.submitted ? { accepted: true, feedback: 'Checked.' } : result), usageTokens: null };
         },
       }, new LocalAgentStore(join(directory, language)), nativeTools);
@@ -179,7 +185,7 @@ test('real executor submissions match durable inventories across languages, refr
         assert.equal(captures.at(-1)!.handoffs[0].assumptions[0], caveat, 'historical memory must not squeeze out current caveats');
         assert.equal(captures.at(-1)!.handoffs[0].gaps[0], 'Cash flow statements have not been independently reconciled. '.repeat(4));
       }
-      assert.ok(summary.latest.memory!.omissions.some(item => item.kind === 'history' && item.reason === 'budget'));
+      assert.ok(!summary.latest.memory!.prepared.some(item => item.kind === 'history'), 'selected thesis represents the same report without duplicate history');
       expectedLimit = 6000;
       await budgets.saveSettings(owner, { ...await budgets.getSettings(owner), maxInputTokens: expectedLimit });
       const savedMessages = await db.select().from(councilMessages).where(eq(councilMessages.sessionId, created.id));
@@ -187,8 +193,11 @@ test('real executor submissions match durable inventories across languages, refr
       assert.deepEqual(savedMessage.metadata?.memory, first.latest.memory, 'message details retain the attempt inventory across later cycles');
       const native = await run('work', { ...member, executionMode: 'local', agentId: 'native-codex' });
       assert.equal(native.failure, undefined); assert.equal(native.latest.memory!.submission, 'agent');
+      assert.deepEqual(native.latest.memory!.submitted, native.latest.memory!.prepared);
+      agreements++;
       const nativeReview = await run('review', { ...manager, executionMode: 'local', agentId: 'native-codex' });
       assert.equal(nativeReview.failure, undefined); assert.equal(nativeReview.latest.memory!.counts.submitted, 0);
+      agreements++;
       assert.equal(launches, 2);
       // Quoting the known JSON snapshot adds bytes too; fail before native activation if that envelope cannot fit.
       const nativeBundle = nativeTools.bundle.bind(nativeTools);
@@ -245,6 +254,47 @@ test('real executor submissions match durable inventories across languages, refr
       assert.equal(higher.latest.memory!.requestBudgetTokens, expectedLimit);
       assert.ok(higher.latest.memory!.requestTokens! > 6000);
       assert.deepEqual(captures.at(-1)!.steering, [higherSteering], 'explicitly configured higher input limit remains usable');
+      // Receipt recording is after runtime entry. Empty-memory tasks still require a live session at that boundary.
+      await db.insert(councilMessages).values({ owner, sessionId: created.id, revision: 1, role: 'user', memberName: 'User', content: 'Check cash flow.' });
+      const takeNative = localAgents.store.takeNative.bind(localAgents.store);
+      for (const change of [{ status: 'paused' as const }, { revision: 2 }]) {
+        await db.update(councilResearchTasks).set({ attempts: [] }).where(eq(councilResearchTasks.id, taskRow.id));
+        localAgents.store.takeNative = async (...args) => { const taken = await takeNative(...args);
+          await db.update(councilSessions).set(change).where(eq(councilSessions.id, created.id)); return taken; };
+        const stopped = await run('work', { ...member, executionMode: 'local', agentId: 'native-codex' });
+        assert.match(String(stopped.failure), /LOCAL_(?:PAUSED|CANCELLED)/);
+        assert.equal(stopped.latest.memory!.counts.prepared, 0); assert.equal(stopped.latest.memory!.counts.submitted, 0);
+        assert.equal(launches, 2, 'pause or steering revision at takeNative must block runtime entry');
+        await db.update(councilSessions).set({ status: 'running', revision: 1 }).where(eq(councilSessions.id, created.id));
+      }
+      localAgents.store.takeNative = takeNative;
+      const modeBefore = process.env.LOCAL_AGENTS_MODE;
+      delete process.env.SQUABBLE_DESKTOP_ORIGIN; process.env.LOCAL_AGENTS_MODE = 'companion';
+      const activate = localAgents.store.activate.bind(localAgents.store);
+      try {
+        const paired = await localAgents.store.pair((await localAgents.pairing(owner)).code, 'Fixture');
+        const agents = [{ ...providerCatalog.codex, state: 'ready' as const }];
+        await localAgents.store.poll(paired.token, { agents, updates: [] }); await localAgents.connect(owner, 'companion-codex');
+        for (const change of [{ status: 'paused' as const }, { revision: 2 }]) {
+          let commands = 0;
+          await db.update(councilResearchTasks).set({ attempts: [] }).where(eq(councilResearchTasks.id, taskRow.id));
+          localAgents.store.activate = async (...args) => {
+            await activate(...args);
+            await db.update(councilSessions).set(change).where(eq(councilSessions.id, created.id));
+            commands += (await localAgents.store.poll(paired.token, { agents, updates: [] })).commands.length;
+          };
+          const stopped = await run('work', { ...member, executionMode: 'local', agentId: 'companion-codex' });
+          assert.match(String(stopped.failure), /LOCAL_(?:PAUSED|CANCELLED)/);
+          assert.equal(stopped.latest.memory!.counts.prepared, 0); assert.equal(stopped.latest.memory!.counts.submitted, 0);
+          assert.equal(commands, 0, 'empty-memory queued work respects pause and steering before a companion command');
+          await db.update(councilSessions).set({ status: 'running', revision: 1 }).where(eq(councilSessions.id, created.id));
+        }
+      } finally {
+        localAgents.store.activate = activate;
+        process.env.SQUABBLE_DESKTOP_ORIGIN = 'http://127.0.0.1:43199';
+        if (modeBefore === undefined) delete process.env.LOCAL_AGENTS_MODE; else process.env.LOCAL_AGENTS_MODE = modeBefore;
+      }
+      t.diagnostic(`MEMORY_REQUEST_MEASUREMENT ${JSON.stringify({ language, apiRequests, nativeRequests, agreements, intactUnits })}`);
     }
   } finally {
     for (const service of nativeServices) await service.onModuleDestroy();

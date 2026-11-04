@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CompanionPoll, CompanionPollResult, LocalAgentProvider, NativeAgentConfiguration, NativeAgentStatus } from '../../../shared/local-agents.interface';
-import { LocalAgentError } from './local-agents.types';
+import { LocalAgentError, nativeFailureCode, type LocalAgentHandoff } from './local-agents.types';
 import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from './local-agents.requests';
 import type { ResearchActivity, ResearchEventPage } from '../../../shared/research-events.interface';
 import type { ResearchToolBundle, ResearchToolRequest, ResearchToolResult, ResearchToolScope } from '../../../shared/research-tools.interface';
@@ -21,6 +21,7 @@ export interface AgentTask {
   createdAt: number; updatedAt: number; progress?: string; text?: string;
   usageTokens?: number | null; error?: string;
   commandEmitted?: boolean;
+  runtimeEntered?: boolean;
 }
 export interface AgentDevice {
   id: string; owner: string; name: string; tokenHash: string;
@@ -60,7 +61,22 @@ export class LocalAgentStore {
   private tail: Promise<unknown> = Promise.resolve();
   private loaded = false;
   private readonly pairs = new Map<string, { owner: string; expiresAt: number }>();
+  private readonly handoffs = new Map<string, LocalAgentHandoff>();
   constructor(readonly root: string) {}
+
+  registerHandoff(owner: string, id: string, guard: LocalAgentHandoff): () => void {
+    const key = `${owner}:${id}`;
+    this.handoffs.set(key, guard);
+    return () => { if (this.handoffs.get(key) === guard) this.handoffs.delete(key); };
+  }
+  /** Never execute an asynchronous validation callback under the journal's mutation queue. */
+  async handoff(owner: string, id: string, emit: () => Promise<void>): Promise<void> {
+    const task = await this.task(owner, id);
+    const guard = this.handoffs.get(`${owner}:${id}`);
+    if (guard) return guard(emit);
+    if (task.researchScope?.memoryReferences?.length) throw new LocalAgentError('MEMORY_CONTEXT_CHANGED');
+    await emit();
+  }
 
   private async atomic(path: string, value: unknown): Promise<void> {
     const temporary = `${path}.${randomUUID()}.tmp`;
@@ -242,6 +258,9 @@ export class LocalAgentStore {
       task.state = 'running'; task.updatedAt = Date.now(); return true;
     });
   }
+  markNativeEntry(owner: string, id: string): Promise<void> {
+    return this.access(true, state => { ownedTask(state, owner, id).runtimeEntered = true; });
+  }
   update(owner: string, id: string, change: Partial<Pick<AgentTask, 'state' | 'progress' | 'text' | 'usageTokens' | 'error'>>): Promise<void> {
     return this.access(true, (state) => {
       const task = ownedTask(state, owner, id);
@@ -340,7 +359,32 @@ export class LocalAgentStore {
     });
   }
 
-  poll(token: string, request: CompanionPoll): Promise<CompanionPollResult> {
+  async poll(token: string, request: CompanionPoll): Promise<CompanionPollResult> {
+    const result = await this.pollState(token, request);
+    const candidates = await this.access(false, state => {
+      const tokenHash = hash(token), device = state.devices.find(item => item.tokenHash === tokenHash);
+      if (!device) return fail('LOCAL_COMPANION_UNAUTHORIZED');
+      return Object.values(state.tasks).filter(task => task.deviceId === device.id && task.owner === device.owner && task.state === 'queued');
+    });
+    for (const task of candidates) {
+      let emittedHere = false;
+      try {
+        await this.handoff(task.owner, task.id, async () => {
+          const emitted = await this.pollState(token, { agents: request.agents, updates: [] }, task.id);
+          emittedHere = emitted.commands.length > 0;
+          result.commands.push(...emitted.commands);
+        });
+      } catch (error) {
+        // A command already emitted remains an observable receipt, even if later bookkeeping fails.
+        if (!(await this.task(task.owner, task.id)).commandEmitted) {
+          await this.update(task.owner, task.id, { state: 'failed', error: nativeFailureCode(error) });
+          result.cancelTaskIds.push(task.id);
+        } else if (emittedHere) await this.update(task.owner, task.id, { state: 'failed', error: 'LOCAL_DISPATCH_UNCERTAIN' });
+      }
+    }
+    return result;
+  }
+  private pollState(token: string, request: CompanionPoll, handoffId?: string): Promise<CompanionPollResult> {
     return this.access(true, (state) => {
       const tokenHash = hash(token);
       const device = state.devices.find((item) => item.tokenHash.length === tokenHash.length && timingSafeEqual(Buffer.from(item.tokenHash), Buffer.from(tokenHash)));
@@ -379,7 +423,7 @@ export class LocalAgentStore {
         // Helpers terminate disconnected work within 30s and all work within 10 minutes.
         // Old terminal records must not grow heartbeat payloads without bound.
         if (['cancelling', 'cancelled', 'failed'].includes(task.state) && now - task.updatedAt <= 600_000) cancelTaskIds.push(task.id);
-        if (task.state === 'queued') {
+        if (task.state === 'queued' && task.id === handoffId) {
           if (!device.agents.some((agent) => agent.provider === task.provider)) {
             task.state = 'failed'; task.error = 'LOCAL_VERSION_UNSUPPORTED'; task.updatedAt = now;
             continue;
