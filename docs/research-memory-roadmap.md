@@ -20,7 +20,7 @@ A personal research and automatic paper-trading assistant that keeps each invest
 - [x] M2 intact token-budgeted context and telemetry (implementation and focused reviews complete; final integration/PR checks pending)
 - [x] M3 temporal evidence and claim relations (implementation and focused reviews complete; final integration/PR checks pending)
 - [x] M4 archival recovery and batch retrieval (backend implementation and focused reviews complete; operation UI follows in M6; final integration/PR checks pending)
-- [ ] M5 monitoring and automatic paper-strategy dependencies
+- [x] M5 monitoring and automatic paper-strategy dependencies (implementation and focused reviews complete; operation UI follows in M6; final integration/PR checks pending)
 - [ ] M6 research dossier and bilingual interactions
 - [ ] M7 evaluation and retrieval tuning
 - [ ] Whole application verification, migrations, review and PR
