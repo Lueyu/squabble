@@ -17,8 +17,10 @@ export const researchMonitorEvents = pgTable('research_monitor_events', {
   ruleVersion: integer('rule_version').notNull(), thesisId: uuid('thesis_id').notNull(), thesisVersion: integer('thesis_version').notNull(),
   observationKey: text('observation_key').notNull(), observation: jsonb('observation').$type<MonitorObservation>().notNull(),
   state: text('state').$type<MonitorObservation['state']>().notNull(), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  sequence: integer('sequence').notNull().default(0),
 }, t => [uniqueIndex('research_monitor_observation_idx').on(t.owner, t.ruleId, t.ruleVersion, t.thesisVersion, t.observationKey),
-  index('research_monitor_breach_idx').on(t.owner, t.thesisId, t.thesisVersion, t.state)]);
+  index('research_monitor_breach_idx').on(t.owner, t.thesisId, t.thesisVersion, t.state),
+  index('research_monitor_latest_idx').on(t.owner, t.ruleId, t.sequence.desc(), t.createdAt.desc(), t.id.desc())]);
 export const researchThesisReplacements = pgTable('research_thesis_replacements', {
   id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(), thesisId: uuid('thesis_id').notNull(),
   thesisVersion: integer('thesis_version').notNull(), previousId: uuid('previous_id').notNull(), previousVersion: integer('previous_version').notNull(),

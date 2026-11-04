@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
-import { randomUUID } from 'node:crypto';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { createHash, randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { researchMonitorEvents, researchMonitorRules, researchThesisReplacements } from '../../database/research-monitor.schema';
 import { researchTheses, researchMemories } from '../../database/research-memory.schema';
@@ -44,10 +44,17 @@ export async function observeThesisMonitors(tx: MemoryFenceTransaction, owner: s
       eq(researchMonitorRules.thesisId, ref.thesisId), eq(researchMonitorRules.thesisVersion, ref.version), eq(researchMonitorRules.enabled, true)));
     for (const rule of rules) {
       const observation = evaluateMonitor(rule.condition, rule.ticker, snapshot, now);
-      const [event] = await tx.insert(researchMonitorEvents).values({ owner, ruleId: rule.id, ruleVersion: rule.version,
-        thesisId: ref.thesisId, thesisVersion: ref.version, observationKey: observation.observationKey, state: observation.state, observation })
-        .onConflictDoNothing().returning({ id: researchMonitorEvents.id });
       breached ||= observation.state === 'breached';
+      const [last] = await tx.select().from(researchMonitorEvents).where(and(eq(researchMonitorEvents.owner, owner),
+        eq(researchMonitorEvents.ruleId, rule.id))).orderBy(desc(researchMonitorEvents.sequence), desc(researchMonitorEvents.createdAt), desc(researchMonitorEvents.id)).limit(1);
+      // Snapshot identity is not transition identity: A -> unknown -> A must record the recovery.
+      // The owner fence serializes this comparison with every writer, including concurrent ticks.
+      if (last?.observation.observationKey === observation.observationKey) continue;
+      const observationKey = createHash('sha256').update(JSON.stringify([last?.id ?? null, observation.observationKey])).digest('hex');
+      const [event] = await tx.insert(researchMonitorEvents).values({ owner, ruleId: rule.id, ruleVersion: rule.version,
+        thesisId: ref.thesisId, thesisVersion: ref.version, observationKey, state: observation.state, observation,
+        sequence: (last?.sequence ?? 0) + 1, createdAt: sql`clock_timestamp()` })
+        .onConflictDoNothing().returning({ id: researchMonitorEvents.id });
       if (event && observation.state === 'breached' && config.notifyOnProposal) await tx.insert(strategyOutbox).values({ owner, profileId,
         eventKey: `memory-breach:${profileId}:${ref.thesisId}:${ref.version}`, payload: { event: 'strategy_memory_breached',
           title: config.language === 'en' ? 'PAPER thesis condition breached' : '模拟策略论点条件已触发',
@@ -106,10 +113,10 @@ export class ResearchMonitorService {
       const configured = rules.filter(rule => rule.thesisVersion === current.thesis.version && rule.enabled);
       const latest = rules.length ? await tx.selectDistinctOn([researchMonitorEvents.ruleId]).from(researchMonitorEvents).where(and(
         eq(researchMonitorEvents.owner, owner), inArray(researchMonitorEvents.ruleId, rules.map(rule => rule.id))))
-        .orderBy(researchMonitorEvents.ruleId, desc(researchMonitorEvents.createdAt)) : [];
+        .orderBy(researchMonitorEvents.ruleId, desc(researchMonitorEvents.sequence), desc(researchMonitorEvents.createdAt), desc(researchMonitorEvents.id)) : [];
       const valid = rules.length ? await tx.selectDistinctOn([researchMonitorEvents.ruleId]).from(researchMonitorEvents).where(and(
         eq(researchMonitorEvents.owner, owner), inArray(researchMonitorEvents.ruleId, rules.map(rule => rule.id)), ne(researchMonitorEvents.state, 'unknown')))
-        .orderBy(researchMonitorEvents.ruleId, desc(researchMonitorEvents.createdAt)) : [];
+        .orderBy(researchMonitorEvents.ruleId, desc(researchMonitorEvents.sequence), desc(researchMonitorEvents.createdAt), desc(researchMonitorEvents.id)) : [];
       const [breach] = await tx.select({ id: researchMonitorEvents.id }).from(researchMonitorEvents).where(and(eq(researchMonitorEvents.owner, owner),
         eq(researchMonitorEvents.thesisId, thesisId), eq(researchMonitorEvents.thesisVersion, current.thesis.version), eq(researchMonitorEvents.state, 'breached'))).limit(1);
       const [proof] = await tx.select().from(researchThesisReplacements).where(and(eq(researchThesisReplacements.owner, owner),

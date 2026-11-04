@@ -13,14 +13,47 @@ import { strategyOutbox } from '../../database/strategy.schema';
 import { ResearchMonitorService } from './research-memory.monitor.service';
 import { captureStrategyMemory, strategyMemoryBlock } from './research-memory.dependencies';
 import { lockMemoryOwner } from './research-memory.fence';
+import { emptyTradingSnapshot } from '../paper-trading/trading-market.source';
+import { resolveTradingTicker } from '@shared/trading-market.interface';
+import { createDatabase } from '../../common/platform/database.provider';
+import type postgres from 'postgres';
 
 test('monitor migration is installed by production startup', { skip: !process.env.MEMORY_TEST_DATABASE_URL }, async () => {
   await monitorFixture(async (_db, client) => {
     assert.equal((await client`SELECT to_regclass('research_monitor_events')::text AS name`)[0].name, 'research_monitor_events');
     assert.equal((await client`SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema()
       AND table_name = 'strategy_plans' AND column_name = 'memory_inventory'`).length, 1);
+    assert.equal((await client`SELECT sequence FROM research_monitor_events`).length, 0);
   });
 });
+
+test('production startup upgrades populated migration22 observations without rewriting history and reapplies after recovery', {
+  skip: !process.env.MEMORY_TEST_DATABASE_URL,
+}, async () => monitorFixture(async (db, client, owner) => {
+  const f = await seedMonitor(db, owner), healthy = f.snapshot(100);
+  await f.monitor.observe(owner, f.inventory, healthy, f.profile.id);
+  await f.monitor.observe(owner, f.inventory, { ...healthy, quoteUsable: false }, f.profile.id);
+  await client`ALTER TABLE research_monitor_events DROP COLUMN sequence CASCADE`;
+  await client`UPDATE research_monitor_events SET observation_key = observation->>'observationKey'`;
+  const before = await client`SELECT * FROM research_monitor_events ORDER BY id`;
+  const namespace = (await client`SELECT current_schema() AS name`)[0].name;
+  const start = async () => {
+    const uri = new URL(process.env.MEMORY_TEST_DATABASE_URL!);
+    uri.searchParams.set('search_path', namespace); uri.searchParams.set('client_min_messages', 'error');
+    const started = await createDatabase(uri.toString());
+    await (started as typeof started & { $client: postgres.Sql }).$client.end();
+  };
+  await start();
+  assert.deepEqual(Array.from(await client`SELECT * FROM research_monitor_events ORDER BY id`), before.map(event => ({ ...event, sequence: 0 })));
+  assert.equal((await f.monitor.view(owner, f.thesis.id)).rules[0].lastObservation?.state, 'unknown');
+  await f.monitor.observe(owner, f.inventory, healthy, f.profile.id);
+  assert.equal((await f.monitor.view(owner, f.thesis.id)).rules[0].lastObservation?.state, 'clear');
+  const recovered = await client`SELECT * FROM research_monitor_events ORDER BY id`;
+  await start();
+  assert.deepEqual(await client`SELECT * FROM research_monitor_events ORDER BY id`, recovered);
+  await f.monitor.observe(owner, f.inventory, healthy, f.profile.id);
+  assert.equal((await client`SELECT id FROM research_monitor_events`).length, 3);
+}));
 
 test('concurrent ticks deduplicate event/outbox and false, unknown, rule edit and restart preserve the version breach', { skip: !process.env.MEMORY_TEST_DATABASE_URL }, async () => {
   await monitorFixture(async (db, _client, owner) => {
@@ -47,6 +80,39 @@ test('concurrent ticks deduplicate event/outbox and false, unknown, rule edit an
     await assert.rejects(f.monitor.view(owner, f.thesis.id), /MEMORY_THESIS_NOT_FOUND/);
     await assert.rejects(f.monitor.view(randomUUID(), f.thesis.id), /MEMORY_THESIS_NOT_FOUND/);
   });
+});
+
+test('recovered identical observations become current, deduplicate consecutive ticks, and preserve historical breaches', {
+  skip: !process.env.MEMORY_TEST_DATABASE_URL,
+}, async t => {
+  for (const breached of [false, true]) await t.test(breached ? 'previously breached' : 'clear', async () => monitorFixture(async (db, _client, owner) => {
+    const f = await seedMonitor(db, owner);
+    const healthy = f.snapshot(100);
+    const gate = () => db.transaction(async tx => { await lockMemoryOwner(tx, owner);
+      return strategyMemoryBlock(tx, owner, f.inventory, 'AAPL', new Date(), true); });
+    if (breached) await f.monitor.observe(owner, f.inventory, f.snapshot(80), f.profile.id);
+    await f.monitor.observe(owner, f.inventory, healthy, f.profile.id);
+    const initial = await db.select().from(researchMonitorEvents);
+    const outage = emptyTradingSnapshot('AAPL', new Date(), resolveTradingTicker('AAPL'));
+    outage.reason = outage.quoteReason = 'source_unavailable';
+    await f.monitor.observe(owner, f.inventory, outage, f.profile.id);
+    assert.equal((await f.monitor.view(owner, f.thesis.id)).rules[0].lastObservation?.state, 'unknown');
+    assert.equal(await gate(), breached ? 'MEMORY_CONDITION_BREACHED' : 'MEMORY_MONITOR_UNKNOWN');
+    const restarted = new ResearchMonitorService(db);
+    await Promise.all(Array.from({ length: 5 }, () => restarted.observe(owner, f.inventory,
+      { ...healthy, fetchedAt: new Date().toISOString() }, f.profile.id)));
+    const recovered = await restarted.view(owner, f.thesis.id);
+    assert.equal(recovered.rules[0].lastObservation?.state, 'clear');
+    assert.equal(recovered.rules[0].lastValidObservation?.state, 'clear');
+    assert.equal(recovered.breached, breached);
+    assert.equal(await gate(), breached ? 'MEMORY_CONDITION_BREACHED' : null);
+    const events = await db.select().from(researchMonitorEvents);
+    assert.equal(events.length, initial.length + 2, 'outage and recovery each append once despite concurrent recovery ticks');
+    for (const event of initial) assert.deepEqual(events.find(item => item.id === event.id), event, 'historical observations are immutable');
+    await restarted.observe(owner, f.inventory, { ...healthy, fetchedAt: new Date().toISOString() }, f.profile.id);
+    assert.equal((await db.select().from(researchMonitorEvents)).length, events.length, 'a later fetch of the same current evaluation is not another transition');
+    assert.equal((await db.select().from(strategyOutbox)).length, breached ? 1 : 0);
+  }));
 });
 
 test('structured archive states, recall origin and disabled automation are explicit', { skip: !process.env.MEMORY_TEST_DATABASE_URL }, async () => {

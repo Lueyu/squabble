@@ -180,7 +180,7 @@ async function validateStrategyDependencies(tx: MemoryFenceTransaction, owner: s
         eq(researchMonitorRules.thesisId, ref.thesisId), eq(researchMonitorRules.thesisVersion, ref.version), eq(researchMonitorRules.enabled, true)));
       for (const rule of rules) {
         const [last] = await tx.select().from(researchMonitorEvents).where(and(eq(researchMonitorEvents.owner, owner),
-          eq(researchMonitorEvents.ruleId, rule.id))).orderBy(desc(researchMonitorEvents.createdAt)).limit(1);
+          eq(researchMonitorEvents.ruleId, rule.id))).orderBy(desc(researchMonitorEvents.sequence), desc(researchMonitorEvents.createdAt), desc(researchMonitorEvents.id)).limit(1);
         if (!last || last.state !== 'clear' || Date.parse(rule.condition.validUntil) <= now.getTime()
           || Date.parse(rule.condition.validFrom) > now.getTime()
           || rule.condition.metric === 'price' && (!last.observation.observedAt || now.getTime() - Date.parse(last.observation.observedAt) > 20 * 60_000)) return 'MEMORY_MONITOR_UNKNOWN';

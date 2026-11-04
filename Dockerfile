@@ -54,6 +54,7 @@ COPY scripts/db/19_atomic_research_theses.sql ./scripts/db/19_atomic_research_th
 COPY scripts/db/20_research_memory_temporal.sql ./scripts/db/20_research_memory_temporal.sql
 COPY scripts/db/21_research_archive_jobs.sql ./scripts/db/21_research_archive_jobs.sql
 COPY scripts/db/22_research_monitors.sql ./scripts/db/22_research_monitors.sql
+COPY scripts/db/23_monitor_observation_order.sql ./scripts/db/23_monitor_observation_order.sql
 COPY scripts/ensure-settings-key.cjs scripts/ensure-jwt-secret.cjs scripts/start-app.cjs ./scripts/
 
 # Views and static assets are resolved from process.cwd()/dist/client

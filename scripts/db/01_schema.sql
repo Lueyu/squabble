@@ -603,10 +603,11 @@ CREATE INDEX IF NOT EXISTS research_monitor_thesis_idx ON research_monitor_rules
 CREATE TABLE IF NOT EXISTS research_monitor_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, rule_id uuid NOT NULL, rule_version integer NOT NULL,
   thesis_id uuid NOT NULL, thesis_version integer NOT NULL, observation_key text NOT NULL, observation jsonb NOT NULL,
-  state text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+  state text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), sequence integer NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS research_monitor_observation_idx ON research_monitor_events(owner, rule_id, rule_version, thesis_version, observation_key);
 CREATE INDEX IF NOT EXISTS research_monitor_breach_idx ON research_monitor_events(owner, thesis_id, thesis_version, state);
+CREATE INDEX IF NOT EXISTS research_monitor_latest_idx ON research_monitor_events(owner, rule_id, sequence DESC, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS research_thesis_replacements (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, thesis_id uuid NOT NULL, thesis_version integer NOT NULL,
   previous_id uuid NOT NULL, previous_version integer NOT NULL, reason text NOT NULL,
