@@ -225,14 +225,15 @@ export class LocalAgentsService implements OnModuleDestroy {
     } catch (error) {
       // Revoke captured callbacks synchronously before any awaited journal cleanup.
       clearHandoff?.();
-      const running = this.running.get(task.id); running?.abort.abort();
+      const running = this.running.get(task.id);
+      const uncertain = !(error instanceof LocalAgentError) || error.code === 'LOCAL_DISPATCH_UNCERTAIN';
       let abandoned: AgentTask;
-      try { abandoned = await this.store.abandon(owner, task.id, running?.entered); }
+      try { abandoned = await this.store.abandon(owner, task.id, running?.entered, uncertain); }
       catch { throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id); }
+      finally { running?.abort.abort(); }
       if (abandoned.commandEmitted) await recordSubmission('companion-command');
       if (abandoned.runtimeEntered || running?.entered) await recordSubmission('runtime');
-      if (!(error instanceof LocalAgentError) && (abandoned.commandEmitted || abandoned.runtimeEntered || running?.entered)) {
-        await this.store.update(owner, task.id, { state: 'failed', error: 'LOCAL_DISPATCH_UNCERTAIN' });
+      if (uncertain && (abandoned.commandEmitted || abandoned.runtimeEntered || running?.entered)) {
         throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
       }
       throw error;

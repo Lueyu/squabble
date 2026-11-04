@@ -134,6 +134,41 @@ for (const native of [false, true]) test(`${native ? 'native' : 'companion'} pre
   }
 });
 
+for (const unexpected of [true, false]) test(`fast native abort preserves ${unexpected ? 'unexpected post-entry uncertainty' : 'explicit cancellation'} after the handoff returns`, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'squabble-fast-abort-'));
+  const origin = process.env.SQUABBLE_DESKTOP_ORIGIN; process.env.SQUABBLE_DESKTOP_ORIGIN = 'http://127.0.0.1:43199';
+  let submitted!: () => void, handoffReturned = false, runs = 0, receipts = 0, taskId = '';
+  const receipt = new Promise<void>(resolve => { submitted = resolve; });
+  const store = new LocalAgentStore(directory);
+  const service = new LocalAgentsService({ detectNativeAgents: async () => [{ ...providerCatalog.codex, state: 'ready' }],
+    openNativeLogin: async () => {}, runNativeAgent: async (_provider, _prompt, options) => {
+      runs++; await new Promise<void>(resolve => options.signal?.addEventListener('abort', () => resolve(), { once: true }));
+      return { text: 'Already entered', usageTokens: null };
+    } }, store);
+  try {
+    await service.connect('alice', 'native-codex');
+    await assert.rejects(service.execute('alice', { agentId: 'native-codex', messageId: 'fast-abort', prompt: 'Fictional review',
+      onTask: async ref => { taskId = ref.taskId; }, onProgress: async () => {},
+      withHandoff: async emit => { await emit(); handoffReturned = true; },
+      onSubmitted: async () => { receipts++; submitted(); }, shouldContinue: async () => {
+        await receipt; assert.equal(handoffReturned, true);
+        if (unexpected) throw new Error('Transient database disconnect');
+        return false;
+      } }), unexpected ? /LOCAL_DISPATCH_UNCERTAIN/ : /LOCAL_PAUSED/);
+    await service.onModuleDestroy();
+    assert.equal(runs, 1); assert.equal(receipts, 1);
+    for (const saved of [await store.task('alice', taskId), await new LocalAgentStore(directory).task('alice', taskId)]) {
+      assert.equal(saved.runtimeEntered, true);
+      assert.equal(saved.state, unexpected ? 'failed' : 'cancelled');
+      assert.equal(saved.error, unexpected ? 'LOCAL_DISPATCH_UNCERTAIN' : 'LOCAL_CANCELLED');
+    }
+  } finally {
+    await service.onModuleDestroy();
+    if (origin === undefined) delete process.env.SQUABBLE_DESKTOP_ORIGIN; else process.env.SQUABBLE_DESKTOP_ORIGIN = origin;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 for (const native of [false, true]) test(`${native ? 'native runtime' : 'companion command'} revalidates after activation before actual handoff`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'squabble-handoff-'));
   const origin = process.env.SQUABBLE_DESKTOP_ORIGIN, mode = process.env.LOCAL_AGENTS_MODE;

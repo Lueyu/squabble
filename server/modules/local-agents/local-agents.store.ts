@@ -288,11 +288,14 @@ export class LocalAgentStore {
     });
   }
   /** Execution lost its controller. Pre-entry work stops locally; dispatched work retains its evidence. */
-  abandon(owner: string, id: string, runtimeEntered = false): Promise<AgentTask> {
+  abandon(owner: string, id: string, runtimeEntered = false, uncertain = false): Promise<AgentTask> {
     return this.access(true, state => {
       const task = ownedTask(state, owner, id);
       if (runtimeEntered) task.runtimeEntered = true;
-      if (active(task)) {
+      // This controller failure, unlike explicit cancellation, must survive a faster runtime stop.
+      if (uncertain && (task.runtimeEntered || task.commandEmitted)) {
+        task.state = 'failed'; task.error = 'LOCAL_DISPATCH_UNCERTAIN'; task.updatedAt = Date.now();
+      } else if (active(task)) {
         if (runtimeEntered || task.runtimeEntered || task.commandEmitted) requestCancellation(task);
         else { task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED'; task.updatedAt = Date.now(); }
       }
