@@ -16,14 +16,18 @@ A personal research and automatic paper-trading assistant that keeps each invest
 | M7 | [#63](https://github.com/Lueyu/squabble/issues/63) Retrieval evaluation / 检索评测 | M1–M6 | Task-aware retrieval and counterevidence; reproducible operation-level fixtures and request-level regressions. |
 
 ## Execution checklist
-- [x] M1 structured delivery and archival (implementation and focused reviews complete; final integration/PR checks pending)
-- [x] M2 intact token-budgeted context and telemetry (implementation and focused reviews complete; final integration/PR checks pending)
-- [x] M3 temporal evidence and claim relations (implementation and focused reviews complete; final integration/PR checks pending)
-- [x] M4 archival recovery and batch retrieval (backend and M6 operation UI complete; focused reviews passed; final integration/PR checks pending)
-- [x] M5 monitoring and automatic paper-strategy dependencies (backend and M6 operation UI complete; focused reviews passed; final integration/PR checks pending)
-- [x] M6 research dossier and bilingual interactions (implementation, real-browser checks and independent specification/quality reviews complete; final integration/PR checks pending)
-- [ ] M7 evaluation and retrieval tuning
-- [ ] Whole application verification, migrations, review and PR
+- [x] M1 structured delivery and archival
+- [x] M2 intact token-budgeted context and telemetry
+- [x] M3 temporal evidence and claim relations
+- [x] M4 archival recovery and batch retrieval, including the operation UI
+- [x] M5 monitoring and automatic paper-strategy dependencies
+- [x] M6 research dossier and bilingual interactions
+- [x] M7 task-aware retrieval, counterevidence and reproducible evaluation
+- [x] Whole application local verification, migrations and independent review
+
+Each stage has passed specification and code-quality reviews. PR, required CI and
+merge status are tracked in [the roadmap issue](https://github.com/Lueyu/squabble/issues/64).
+Checked stages mean implementation and local acceptance, not a published release.
 
 ## Boundaries / 边界
 - Preserve account isolation, revisions, tombstones, local-agent simplicity and the existing paper risk gate.
@@ -34,11 +38,25 @@ A personal research and automatic paper-trading assistant that keeps each invest
 - First monitoring sources are the existing validated price and completed daily indicators. Unsupported financial/text conditions remain visibly unsupported.
 - Independent graph/vector databases, arbitrary model-generated monitor code, real brokerage execution and institution-specific approval workflows are not part of this delivery.
 - Semantics beyond deterministic term aliases/linked evidence require a measured retrieval need before adding embeddings.
+- Retrieval retains up to 100 eligible histories and 500 eligible theses, then freezes up to 200 references. Batched filtering can scan more rows; these are candidate limits, not database scan or dossier display limits.
 - Daily overview, extensive experience mining and portfolio-wide attribution remain later product increments, not prerequisites of memory integrity.
 
 ## Validation
 Use offline model/native fixtures, disposable PostgreSQL, zh/en UI checks and real serialized executor requests. Test revocation, CAS races, repeated monitor ticks, failed archival retry, 100+ report histories and fresh/upgrade schemas.
 Follow CONTRIBUTING: lint, server/client/desktop/local-agent tests, builds and all six required PR checks. No performance or accuracy claims without measured results.
+
+Local acceptance: 498 server, 119 client and 49 desktop tests passed. Native-agent
+tests passed 142 cases with one existing POSIX-only test skipped on Windows.
+Lint and the complete application build passed. Fresh-install, populated-upgrade
+and repeat-start migration checks use the production database loader. The bilingual
+dossier was checked in a real browser at desktop and 390-pixel widths.
+
+`npm run test:memory-eval` passed 93 required operation/request tests with no skips;
+all 20 observed API/native request inventories agreed with actual prepared/sent
+content. On six fixed fictional cases, the five nonempty expected sets had 0/8
+expected-item hits with the historical baseline and 8/8 with task-aware ranking.
+The tiny-budget case correctly omitted whole units. These are deliberately chosen
+failure cases, not a measurement of general semantic accuracy.
 
 Local tutorial and architecture diagrams live in ignored `docs/local-development/`. They are not published to GitHub.
 

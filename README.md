@@ -98,15 +98,43 @@ tool outcomes, elapsed time and sources. No MCP JSON or extra connection steps a
 Each role's research is collapsed above its reply. Replies separate the conclusion,
 supporting evidence, risks and next checks; longer analysis remains expandable.
 
+## Research memory
+
+Open the book icon in a discussion to inspect that stock's research dossier.
+Start with active theses and their invalidation conditions, then expand evidence,
+known dates, counterevidence and version history. Agent acceptance and your own
+confirmation are separate; neither turns an unknown source field into a verified fact.
+
+Later research ranks eligible memory for the current task and sends whole thesis
+units within the request budget. The activity details distinguish prepared and
+submitted items, versions and omissions; submission does not prove model use.
+
+Reports are archived in the background. The dossier shows pending or failed jobs,
+supports retry and imports eligible historical reports without a model call.
+Older reports without structured theses remain report history. Turning off
+automatic archival still allows an explicit manual import or retry.
+
+Price, SMA20, RSI14 and daily volume-ratio conditions can be monitored within an
+enabled daily paper strategy; indicators use completed daily bars. Unconfigured or
+unsupported conditions remain visible, and missing data is unknown. A triggered
+condition stays in that thesis version's history. After a breach, new risk requires dependencies
+established by a reviewed replacement or deliberate user revision; a price rebound
+does not erase the original event.
+
 ## Daily strategies and automatic paper trading
 
 In **Agent Builder**, enable the research team and **Daily strategy**, choose the
 fast reviewer, configure notifications, then save and activate the profile.
 The team prepares a plan before each market opens. During continuous trading,
 the program checks its conditions and computes indicators; the fast reviewer
-can approve, wait or veto. The ledger checks the current plan, price, funds,
+can approve, wait or veto. The ledger checks the current plan, thesis dependencies, price, funds,
 position limits and risk rules again before a simulated fill. Protective stops
 use deterministic rules. Notifications are queued independently of orders.
+
+After upgrading, stored plans without a memory dependency inventory need a fresh
+validated plan before adding risk; protective exits remain available. A new plan
+with structured theses waits for their archival. If automatic archival is off,
+use the dossier's manual import or retry instead of repeating the research.
 
 Existing profiles keep their previous mode until you opt in. The server must
 remain running. Public Yahoo quotes may be delayed; indicators use completed
