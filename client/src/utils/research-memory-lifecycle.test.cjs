@@ -132,6 +132,9 @@ test('mounted monitor workspace survives active-to-candidate movement with its o
   assert.equal(writes.length, 0, 'stale opening version cannot be submitted');
   await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
   assert.equal(document.querySelector('[role="dialog"]'), null, 'keyboard close still works after the opener moves');
+  // Radix restores focus in an unmount timer, after the dialog has left the DOM.
+  const focusDeadline = Date.now() + 1000;
+  while (document.activeElement.getAttribute('data-ai-section-type') !== 'card-list' && Date.now() < focusDeadline) await flush();
   assert.equal(document.activeElement.getAttribute('data-ai-section-type'), 'card-list', 'focus returns to the stable panel when the opener moved');
 }));
 
