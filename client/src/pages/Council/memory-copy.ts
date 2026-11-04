@@ -1,5 +1,7 @@
+import { dossierCopy } from './memory-dossier-copy';
 export const memoryCopy = {
   en: {
+    ...dossierCopy.en,
     title: 'Research memory', description: 'Historical opinions are not verified facts. Current, sourced Agent research and user-confirmed theses can enter future research. Agent acceptance does not mean you endorsed the claim.',
     archive: 'Automatically archive completed reports', recall: 'Use memory in future research', history: 'Report history', theses: 'Long-term theses',
     empty: 'No archived research for this symbol yet.', noTicker: 'Select a symbol to view its research memory.', loading: 'Loading memory…',
@@ -14,10 +16,11 @@ export const memoryCopy = {
     opinion: 'Historical opinion', stale: 'Outside validity horizon', contradictory: 'Conflicting comparable evidence', unverified: 'Unverified',
     provenance_unknown: 'Structured source provenance unknown', needs_review: 'Needs review', sourcePending: 'Source was not yet known at this time.',
     editAction: 'Edited', confirmAction: 'Confirmed', dismissAction: 'Dismissed', expireAction: 'Expired', excludeAction: 'Inclusion changed',
-    noEvidence: 'This report has no source citations.', confirmHint: 'Candidate: review and confirm to allow future recall.',
+    noEvidence: 'This report has no source citations.', confirmHint: 'Candidate: review the claim before endorsement. Sources and validity are checked separately.',
     deleted: 'Deleted', general: 'General', invalid: 'Enter a claim and keep each field within 20 lines of 1,500 characters.',
   },
   'zh-CN': {
+    ...dossierCopy['zh-CN'],
     title: '研究记忆', description: '历史观点不等于已核实事实。仍有效且有来源的 Agent 研究和用户确认论点可进入后续研究。Agent 验收不代表你认同该观点。',
     archive: '自动归档已完成报告', recall: '后续研究使用记忆', history: '历史报告', theses: '长期论点',
     empty: '该标的暂无研究记忆。', noTicker: '选择标的后查看研究记忆。', loading: '正在加载记忆…',
@@ -32,7 +35,7 @@ export const memoryCopy = {
     opinion: '历史观点', stale: '已超适用期限', contradictory: '同口径证据冲突', unverified: '尚未核实',
     provenance_unknown: '结构化来源未知', needs_review: '需复核', sourcePending: '该时点尚未知晓此来源。',
     editAction: '已编辑', confirmAction: '已确认', dismissAction: '已驳回', expireAction: '已过期', excludeAction: '已调整是否参与研究',
-    noEvidence: '这份报告没有可引用的来源。', confirmHint: '候选论点：检查并确认后才可被后续研究召回。',
+    noEvidence: '这份报告没有可引用的来源。', confirmHint: '候选论点：认同前请先复核观点。来源与适用性仍会分别检查。',
     deleted: '已删除', general: '综合研究', invalid: '请填写核心观点；各字段最多 20 行，每行不超过 1,500 字。',
   },
 };

@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
 import { workflowCopy } from './workflow-copy';
 import CouncilMemoryInventory from './CouncilMemoryInventory';
+import { memoryReason } from '@/utils/memory-reason';
 
 export default function CouncilWorkflowPanel({ session, actions }: { session: CouncilSession; actions: ReturnType<typeof useCouncilActions> }) {
   const { i18n } = useTranslation();
@@ -23,15 +24,15 @@ export default function CouncilWorkflowPanel({ session, actions }: { session: Co
         <div className="flex flex-wrap justify-between gap-2"><strong>{copy.kinds[task.key]} · {session.members?.find(m => m.id === task.memberId)?.name}</strong>
           <span className={['failed', 'uncertain'].includes(task.state) ? 'text-destructive' : 'text-muted-foreground'}>{copy.states[task.state]}</span></div>
         {!!task.dependencies.length && <p className="text-muted-foreground">{copy.dependencies}: {task.dependencies.map(k => copy.kinds[k]).join(' · ')}</p>}
-        {task.reason && <p className="whitespace-pre-wrap break-words leading-5">{task.reason}</p>}
+        {task.reason && <p className="whitespace-pre-wrap break-words leading-5">{memoryReason(task.reason, i18n.language)}</p>}
         {!!task.skills.length && <p className="text-muted-foreground">{copy.skills}: {task.skills.map(s => `${s.id} v${s.version}`).join(' · ')}</p>}
         {!!task.attempts.length && <details><summary className="cursor-pointer text-muted-foreground">{task.attempts.length} {copy.history} · {copy.reworks}: {task.reworks}/1</summary>
           <ol className="mt-2 space-y-2">{task.attempts.map((attempt, index) => <li key={attempt.id} className="border-l-2 border-border pl-2 leading-5">
             {index + 1}. {attempt.kind === 'review' ? copy.reviewer : copy.kinds[task.key]} · {copy.states[attempt.state === 'succeeded' ? 'submitted' : attempt.state]}
             <time className="ml-2 text-muted-foreground">{new Date(attempt.startedAt).toLocaleTimeString(i18n.language)}</time>
             {attempt.review && <p>{attempt.review.accepted ? copy.states.accepted : copy.states.needs_revision}: {attempt.review.feedback}</p>}
-            {attempt.error && <p className="break-words text-destructive">{attempt.error}</p>}
-            <CouncilMemoryInventory inventory={attempt.memory} />
+            {attempt.error && <p className="break-words text-destructive">{memoryReason(attempt.error, i18n.language)}</p>}
+            <CouncilMemoryInventory inventory={attempt.memory} applicable />
           </li>)}</ol></details>}
         {session.status !== 'running' && ['failed', 'blocked', 'cancelled', 'uncertain'].includes(task.state) && <div className="space-y-1">
           <Button size="sm" variant="outline" disabled={actions.retry.isPending} onClick={() => actions.retry.mutate({ id: session.id, taskId: task.id },

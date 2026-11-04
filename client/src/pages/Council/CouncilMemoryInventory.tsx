@@ -7,6 +7,7 @@ const copy = {
     api: 'Submitted to the API. Submission does not establish model use.', agent: 'Submitted to the native runtime. Its private model context is not observable.',
     command: 'Emitted in a companion command. Receipt by its private model is not observable.',
     scope: 'Known application prompt and evidence snapshot; private Agent context is unknown.', shared: 'Shared review request',
+    unknown: 'Memory submission unknown: this attempt has no recorded inventory.',
     pending: 'Not submitted.', omitted: 'Omissions', reasons: { budget: 'Whole item exceeds budget', disabled: 'Recall disabled',
       revoked: 'Unavailable or revoked', 'version-changed': 'Pinned version changed', 'structure-missing': 'Atomic structure unavailable' } },
   'zh-CN': { title: '初始提示词记忆', requested: '请求的固定版本', selected: '已选择', prepared: '已准备', submitted: '已提交',
@@ -14,14 +15,15 @@ const copy = {
     api: '已提交到 API。提交不代表模型实际采用。', agent: '已提交到原生运行时。其私有模型上下文不可观测。',
     command: '已随伴随程序命令发出。其私有模型是否收到不可观测。',
     scope: '仅核算已知应用提示词与证据快照；Agent 私有上下文未知。', shared: '共用验收请求',
+    unknown: '记忆提交情况未知：此任务未记录提交清单。',
     pending: '尚未提交。', omitted: '省略原因', reasons: { budget: '整条超过预算', disabled: '已关闭召回',
       revoked: '不可用或已撤回', 'version-changed': '固定版本已变化', 'structure-missing': '缺少独立论点结构' } },
 };
 
-export default function CouncilMemoryInventory({ inventory }: { inventory?: MemoryContextInventory }) {
+export default function CouncilMemoryInventory({ inventory, applicable = false }: { inventory?: MemoryContextInventory; applicable?: boolean }) {
   const { i18n } = useTranslation();
-  if (!inventory) return null;
   const text = copy[i18n.language.startsWith('zh') ? 'zh-CN' : 'en'];
+  if (!inventory) return applicable ? <p className="mt-2 text-xs text-muted-foreground">{text.unknown}</p> : null;
   return <details className="mt-2 text-xs">
     <summary className="cursor-pointer text-muted-foreground">{text.title} · {text.selected} {inventory.counts.selected}
       {' · '}{text.prepared} {inventory.counts.prepared}{' · '}{text.submitted} {inventory.counts.submitted}</summary>

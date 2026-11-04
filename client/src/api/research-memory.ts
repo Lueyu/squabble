@@ -1,7 +1,8 @@
 import http from './http';
 import type { ResearchMemoryItem, ResearchMemoryList, ResearchMemoryPreferences, ResearchMemoryQuery,
   ResearchThesis, ResearchThesisVersion, UpdateResearchThesis, ResearchMemoryRecall, ResearchArchiveQuery, ResearchArchiveJobs, ResearchArchiveJob,
-  ResearchArchiveImport, ResearchArchiveImportResult } from '@shared/research-memory.interface';
+  ResearchArchiveImport, ResearchArchiveImportResult, ResearchEvidenceGraph } from '@shared/research-memory.interface';
+import type { ResearchMonitorView, WriteResearchMonitor } from '@shared/research-monitor.interface';
 
 const root = '/api/research-memory';
 export async function previewResearchMemory(query: ResearchMemoryQuery): Promise<ResearchMemoryRecall> {
@@ -43,4 +44,16 @@ export async function importResearchReports(input: ResearchArchiveImport = {}): 
 }
 export async function retryResearchArchive(id: string): Promise<ResearchArchiveJob> {
   return (await http.post<ResearchArchiveJob>(`${root}/archive-jobs/${encodeURIComponent(id)}/retry`)).data;
+}
+export async function fetchResearchThesis(id: string): Promise<ResearchThesis> {
+  return (await http.get<ResearchThesis>(`${root}/theses/${encodeURIComponent(id)}`)).data;
+}
+export async function fetchResearchEvidence(id: string): Promise<ResearchEvidenceGraph> {
+  return (await http.get<ResearchEvidenceGraph>(`${root}/memories/${encodeURIComponent(id)}/evidence`)).data;
+}
+export async function fetchResearchMonitors(id: string): Promise<ResearchMonitorView> {
+  return (await http.get<ResearchMonitorView>(`${root}/theses/${encodeURIComponent(id)}/monitors`)).data;
+}
+export async function writeResearchMonitor(id: string, input: WriteResearchMonitor): Promise<ResearchMonitorView> {
+  return (await http.post<ResearchMonitorView>(`${root}/theses/${encodeURIComponent(id)}/monitors`, input)).data;
 }

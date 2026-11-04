@@ -45,6 +45,13 @@ const task = { key: 'task-turn', taskId: 't1', revision: 1, memberId: 'm1', memb
   status: 'running', startedAt: base.createdAt, activities: [], sourceCount: 0, isStale: false, truncated: false };
 const render = props => renderToStaticMarkup(React.createElement(ChatMessage, { session, onQuestion: () => {}, ...props }));
 
+test('legacy automated replies expose missing submission records as unknown while user replies do not', () => {
+  const automated = render({ message: base });
+  assert.match(automated, /Memory submission unknown/);
+  assert.doesNotMatch(automated, /Submitted 0/);
+  assert.doesNotMatch(render({ message: { ...base, role: 'user' } }), /Memory submission unknown/);
+});
+
 test('role messages and task attempts show a folded bilingual selected/prepared/submitted inventory', () => {
   const inventory = { requested: [{ kind: 'thesis', id: 'thesis-1', version: 2 }], selected: [{ kind: 'thesis', id: 'thesis-1', version: 2 }],
     prepared: [], submitted: [], counts: { requested: 1, selected: 1, prepared: 0, submitted: 0 },

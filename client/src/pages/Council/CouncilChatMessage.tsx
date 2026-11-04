@@ -63,7 +63,7 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
             <span className="mt-1 line-clamp-2 block break-words">{councilMessageDisplayContent(replyTo)}</span></span>
         </button>}
         {message && <CouncilResponseBody message={message} />}
-        {!isUser && <CouncilMemoryInventory inventory={inventory} />}
+        {!isUser && <CouncilMemoryInventory inventory={inventory} applicable />}
         {!isUser && cited.length > 0 && <details className="mt-3 text-xs">
           <summary className="cursor-pointer text-muted-foreground"><span className="inline-flex items-center gap-1"><FileText className="size-3" />
             {t('council.chat.sources', { count: cited.length })}</span></summary>

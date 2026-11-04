@@ -18,6 +18,7 @@ import CouncilWorkflowPanel from './CouncilWorkflowPanel';
 import CouncilMemberAvatar from './CouncilMemberAvatar';
 import { councilPersona } from './council-persona';
 import { councilReplyExcerpt } from '@/utils/council-message-text';
+import { isMemoryContextError, memoryReason } from '@/utils/memory-reason';
 
 interface CouncilConversationProps {
   session: CouncilSession;
@@ -26,7 +27,7 @@ interface CouncilConversationProps {
 }
 
 export default function CouncilConversation({ session, actions, profileChanged }: CouncilConversationProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [draft, setDraft] = useState<{ content: string; reply: CouncilMessage | null }>({ content: '', reply: null });
   const { content, reply } = draft;
   const setContent = (next: SetStateAction<string>) => setDraft(current => ({ ...current,
@@ -137,9 +138,9 @@ export default function CouncilConversation({ session, actions, profileChanged }
           {t('council.runningHint')}
         </div>}
         {session.error && <div role="alert" className="mx-auto max-w-xl rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs leading-6">
-          <p className="whitespace-pre-wrap break-words text-destructive">{session.error}</p>
+          <p className="whitespace-pre-wrap break-words text-destructive">{memoryReason(session.error, i18n.language)}</p>
           <div className="mt-1 flex flex-wrap gap-x-4 text-muted-foreground">
-            <Link to="/settings" className="hover:underline">{t('council.apiSettings')}</Link>
+            {!isMemoryContextError(session.error) && <Link to="/settings" className="hover:underline">{t('council.apiSettings')}</Link>}
             <Link to="/settings/budget" className="hover:underline">{t('council.budget.open')}</Link>
           </div>
         </div>}

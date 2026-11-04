@@ -11,11 +11,14 @@ export interface MonitorCondition {
 }
 export interface ThesisReplacement { thesisId: string; version: number; reason: string }
 export interface ResearchMonitorRule {
-  id: string; thesisId: string; thesisVersion: number; version: number;
+  id: string; rootId: string; thesisId: string; thesisVersion: number; version: number;
   ticker: string; market: Market; origin: 'agent-reviewed' | 'user';
   reportId: string; reportVersion: number; condition: MonitorCondition; enabled: boolean;
   lastObservation?: MonitorObservation | null;
   lastValidObservation?: MonitorObservation | null;
+}
+export interface WriteResearchMonitor {
+  expectedVersion: number; condition: MonitorCondition; ruleId?: string; ruleVersion?: number; enabled?: boolean;
 }
 export interface MonitorObservation {
   state: 'clear' | 'breached' | 'unknown'; reason: string | null;

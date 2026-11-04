@@ -8,6 +8,7 @@ import type { DailyStrategyPlan } from '@shared/strategy.interface';
 import { fetchStrategyRuntime } from '@/api/builder';
 import { Badge } from '@/components/ui/badge';
 import { strategyDisplayState } from '@/utils/strategy-state';
+import { memoryReason } from '@/utils/memory-reason';
 
 export default function StrategyRuntimeCard({ profile }: { profile: BuilderProfile }) {
   const { t, i18n } = useTranslation();
@@ -42,7 +43,7 @@ export default function StrategyRuntimeCard({ profile }: { profile: BuilderProfi
           <div><dt className="text-muted-foreground">{t('strategy.lastCheck')}</dt><dd className="mt-1">{formatDate(market.lastCheckAt)}</dd></div>
           <div><dt className="text-muted-foreground">{t('strategy.lastQuote')}</dt><dd className="mt-1">{formatDate(market.lastQuoteAt)}</dd></div>
         </dl>
-        {market.reason && <p className="whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{market.reason}</p>}
+        {market.reason && <p className="whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{memoryReason(market.reason, i18n.language)}</p>}
         {market.currentPlan ? <PlanDetails plan={market.currentPlan} formatDate={formatDate} />
           : <p className="text-xs leading-5 text-muted-foreground">{t('strategy.empty')}</p>}
       </article>;
@@ -57,11 +58,24 @@ export default function StrategyRuntimeCard({ profile }: { profile: BuilderProfi
 }
 
 function PlanDetails({ plan, formatDate }: { plan: DailyStrategyPlan; formatDate: (value: string | null) => string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const zh = i18n.language.startsWith('zh');
+  const inventory = plan.memoryInventory;
+  const inventoryReason = inventory?.reason ?? (inventory?.state === 'archive-pending' ? 'MEMORY_ARCHIVE_PENDING'
+    : inventory?.state === 'archive-failed' ? 'MEMORY_ARCHIVE_FAILED' : inventory?.state === 'archive-disabled' ? 'MEMORY_ARCHIVE_DISABLED'
+      : inventory?.state === 'unknown' || !inventory ? 'MEMORY_SUBMISSION_UNKNOWN' : null);
   return <div className="space-y-2 border-t border-border pt-3 text-xs">
     <p className="flex items-center gap-1.5 font-semibold"><CalendarClock className="size-3.5" />{t('strategy.plan')} · {t('strategy.version', { version: plan.version })}</p>
     <p className="whitespace-pre-wrap break-words leading-6">{plan.summary}</p>
     <p className="text-muted-foreground">{t('strategy.expires')}：{formatDate(plan.expiresAt)}</p>
+    <details className="[overflow-wrap:anywhere]"><summary className="cursor-pointer">{zh ? '论点依赖' : 'Thesis dependencies'} · {inventory?.state === 'ready'
+      ? inventory.dependencies.length : inventory?.state === 'legacy-no-structure' ? zh ? '历史报告未提供结构' : 'Legacy report has no structure' : zh ? '待核验' : 'Not yet verified'}</summary>
+      {inventoryReason && <p>{memoryReason(inventoryReason, i18n.language)}</p>}
+      {inventory?.dependencies.map(dependency => <p key={`${dependency.thesisId}:${dependency.version}`}>
+        {dependency.ticker} · v{dependency.version} · {dependency.origin === 'current-report' ? zh ? '当前报告' : 'Current report'
+          : dependency.origin === 'recalled-memory' ? zh ? '已提交的历史记忆' : 'Submitted recalled memory' : zh ? '上一策略保留的依赖' : 'Dependency retained from the previous plan'}
+        <span className="block text-muted-foreground">{dependency.thesisId}</span></p>)}
+    </details>
     {plan.rules.length === 0 ? <p className="text-muted-foreground">{t('strategy.noRules')}</p> : <details>
       <summary className="cursor-pointer py-1 font-medium text-primary">{t('strategy.rules', { count: plan.rules.length })}</summary>
       <ul className="mt-2 space-y-3">{plan.rules.map((rule) => <li key={rule.id} className="space-y-1.5 rounded-lg border border-border p-2.5 leading-5">
