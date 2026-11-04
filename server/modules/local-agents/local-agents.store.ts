@@ -22,6 +22,7 @@ export interface AgentTask {
   usageTokens?: number | null; error?: string;
   commandEmitted?: boolean;
   runtimeEntered?: boolean;
+  handoffRequired?: boolean;
 }
 export interface AgentDevice {
   id: string; owner: string; name: string; tokenHash: string;
@@ -70,12 +71,13 @@ export class LocalAgentStore {
     return () => { if (this.handoffs.get(key) === guard) this.handoffs.delete(key); };
   }
   /** Never execute an asynchronous validation callback under the journal's mutation queue. */
-  async handoff(owner: string, id: string, emit: () => Promise<void>): Promise<void> {
+  async handoff(owner: string, id: string, emit: (isCurrent: () => boolean) => Promise<void>): Promise<void> {
     const task = await this.task(owner, id);
-    const guard = this.handoffs.get(`${owner}:${id}`);
-    if (guard) return guard(emit);
+    const key = `${owner}:${id}`, guard = this.handoffs.get(key);
+    if (guard) return guard(() => emit(() => this.handoffs.get(key) === guard));
     if (task.researchScope?.memoryReferences?.length) throw new LocalAgentError('MEMORY_CONTEXT_CHANGED');
-    await emit();
+    if (task.handoffRequired) throw new LocalAgentError('LOCAL_PAUSED');
+    await emit(() => !this.handoffs.has(key) && !this.state.tasks[id]?.handoffRequired);
   }
 
   private async atomic(path: string, value: unknown): Promise<void> {
@@ -227,7 +229,7 @@ export class LocalAgentStore {
 
   stage(owner: string, agentId: string, provider: LocalAgentProvider, messageId: string, prompt: string,
     kind: 'run' | 'login' = 'run', inputSettings?: NativeAgentConfiguration,
-    research?: { scope: ResearchToolScope; bundle: ResearchToolBundle }): Promise<AgentTask> {
+    research?: { scope: ResearchToolScope; bundle: ResearchToolBundle }, handoffRequired = false): Promise<AgentTask> {
     const agentSettings = parseNativeAgentConfiguration(inputSettings);
     return this.access(true, (state) => {
       const existing = Object.values(state.tasks).find((task) => task.owner === owner && task.messageId === messageId);
@@ -243,13 +245,20 @@ export class LocalAgentStore {
       const task: AgentTask = { id: randomUUID(), owner, agentId, provider, deviceId: device?.id, kind, messageId, prompt,
         ...(agentSettings ? { agentSettings } : {}),
         ...(research ? { researchScope: research.scope, researchBundle: research.bundle } : {}),
+        ...(handoffRequired ? { handoffRequired: true } : {}),
         state: 'staged', createdAt: Date.now(), updatedAt: Date.now() };
       state.tasks[task.id] = task;
       return task;
     });
   }
+  requireHandoff(owner: string, id: string): Promise<void> {
+    return this.access(true, state => { ownedTask(state, owner, id).handoffRequired = true; });
+  }
   activate(owner: string, id: string): Promise<void> {
-    return this.access(true, (state) => { const task = ownedTask(state, owner, id); if (task.state === 'staged') { task.state = 'queued'; task.updatedAt = Date.now(); } });
+    return this.access(true, (state) => {
+      const task = ownedTask(state, owner, id);
+      if (task.state === 'staged') { task.state = 'queued'; task.updatedAt = Date.now(); }
+    });
   }
   takeNative(owner: string, id: string): Promise<boolean> {
     return this.access(true, (state) => {
@@ -276,6 +285,18 @@ export class LocalAgentStore {
       const task = ownedTask(state, owner, id);
       requestCancellation(task);
       return task.state;
+    });
+  }
+  /** Execution lost its controller. Pre-entry work stops locally; dispatched work retains its evidence. */
+  abandon(owner: string, id: string, runtimeEntered = false): Promise<AgentTask> {
+    return this.access(true, state => {
+      const task = ownedTask(state, owner, id);
+      if (runtimeEntered) task.runtimeEntered = true;
+      if (active(task)) {
+        if (runtimeEntered || task.runtimeEntered || task.commandEmitted) requestCancellation(task);
+        else { task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED'; task.updatedAt = Date.now(); }
+      }
+      return task;
     });
   }
 
@@ -369,8 +390,8 @@ export class LocalAgentStore {
     for (const task of candidates) {
       let emittedHere = false;
       try {
-        await this.handoff(task.owner, task.id, async () => {
-          const emitted = await this.pollState(token, { agents: request.agents, updates: [] }, task.id);
+        await this.handoff(task.owner, task.id, async isCurrent => {
+          const emitted = await this.pollState(token, { agents: request.agents, updates: [] }, task.id, isCurrent);
           emittedHere = emitted.commands.length > 0;
           result.commands.push(...emitted.commands);
         });
@@ -384,7 +405,7 @@ export class LocalAgentStore {
     }
     return result;
   }
-  private pollState(token: string, request: CompanionPoll, handoffId?: string): Promise<CompanionPollResult> {
+  private pollState(token: string, request: CompanionPoll, handoffId?: string, isCurrent?: () => boolean): Promise<CompanionPollResult> {
     return this.access(true, (state) => {
       const tokenHash = hash(token);
       const device = state.devices.find((item) => item.tokenHash.length === tokenHash.length && timingSafeEqual(Buffer.from(item.tokenHash), Buffer.from(tokenHash)));
@@ -424,6 +445,7 @@ export class LocalAgentStore {
         // Old terminal records must not grow heartbeat payloads without bound.
         if (['cancelling', 'cancelled', 'failed'].includes(task.state) && now - task.updatedAt <= 600_000) cancelTaskIds.push(task.id);
         if (task.state === 'queued' && task.id === handoffId) {
+          if (!isCurrent?.()) fail('LOCAL_CANCELLED');
           if (!device.agents.some((agent) => agent.provider === task.provider)) {
             task.state = 'failed'; task.error = 'LOCAL_VERSION_UNSUPPORTED'; task.updatedAt = now;
             continue;
