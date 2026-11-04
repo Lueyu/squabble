@@ -6,7 +6,7 @@ import { councilReports, councilSessions } from '../../database/council.schema';
 import { researchMemories, researchMemoryPreferences, researchTheses, researchThesisVersions, researchMemoryEvidence } from '../../database/research-memory.schema';
 import type { ArchiveResearchReport, MemoryCitation, MemoryFlag, MemoryOmission, ResearchMemoryItem, ResearchMemoryList,
   ResearchMemoryPreferences, ResearchMemoryQuery, ResearchMemoryRecall, ResearchMemoryRecallItem,
-  ResearchThesis, ResearchThesisVersion, ThesisContent, UpdateResearchThesis, ResearchEvidenceGraph } from '@shared/research-memory.interface';
+  ResearchThesis, ResearchThesisVersion, ThesisContent, UpdateResearchThesis, ResearchEvidenceGraph, ResearchEvidenceRecord } from '@shared/research-memory.interface';
 import { canonicalMemorySymbol, normalizedTopic, rankMemoryRecall } from './research-memory.rules';
 import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema,
   thesisCandidateSchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
@@ -20,7 +20,7 @@ import { recordReviewedReplacement } from './research-memory.dependencies';
 import { researchMonitorEvents, researchMonitorRules, researchThesisReplacements } from '../../database/research-monitor.schema';
 import { memoryReference } from './research-memory.context';
 import { compactEvidenceMetadata, evidenceVisibleAt, normalizeEvidenceMetadata, thesisFreshness } from './research-memory.temporal';
-import { archiveEvidence, bindThesisEvidence, compareEvidenceRows, evidenceComparisons, evidenceRelations } from './research-memory.evidence';
+import { archiveEvidence, bindThesisEvidence, compareEvidenceRows, evidenceRelations, type EvidenceRow } from './research-memory.evidence';
 
 export type MemoryDatabase = Pick<PostgresJsDatabase, 'select' | 'selectDistinctOn' | 'insert' | 'update' | 'delete' | 'transaction'>;
 type MemoryRow = typeof researchMemories.$inferSelect;
@@ -444,13 +444,30 @@ export class ResearchMemoryService {
     return Promise.all(rows.map(row => this.materializeMemory(owner, row, asOf, sources)));
   }
   async evidenceGraph(owner: string, memoryId: string): Promise<ResearchEvidenceGraph> {
-    const row = await this.memoryRow(owner, memoryId), memory = await this.materializeMemory(owner, row);
+    const row = await this.memoryRow(owner, memoryId), asOf = new Date().toISOString();
+    const loaded = await this.loadSources(owner, [row]);
+    const memory = await this.materializeMemory(owner, row, asOf, loaded);
     if (!memory.source || memory.excluded) return { evidence: [], relations: [], comparisons: [] };
-    const records = await this.db.select().from(researchMemoryEvidence).where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemoryEvidence.memoryId, memoryId)));
-    const comparisons = await evidenceComparisons(this.db, owner, row, records, new Date().toISOString(),
+    const records = loaded.evidence.get(row.id) ?? [];
+    const allComparisons = compareEvidenceRows(records, loaded.peers, asOf,
       ticker => { const symbol = this.symbol({ ticker }); return symbol.ticker === row.ticker && symbol.market === row.market; });
-    return { evidence: records.map(({ owner: _owner, ingestedAt, ...record }) => ({ ...record, ingestedAt: ingestedAt.toISOString() })),
-      relations: await evidenceRelations(this.db, owner, records), comparisons };
+    // Keep the dossier response bounded without changing the complete comparison used by recall and execution gates.
+    const comparisons = allComparisons.slice(0, 200);
+    const referenced = new Set(comparisons.flatMap(comparison => [comparison.left, comparison.right]));
+    const localIds = new Set(records.map(record => record.id));
+    const project = (record: EvidenceRow, parent: MemoryRow, evidence: ReportRow['evidence']): ResearchEvidenceRecord => {
+      const citation = evidence.find(item => item.id === record.evidenceId);
+      const { owner: _owner, ingestedAt, ...stored } = record;
+      return { ...stored, metadata: normalizeEvidenceMetadata({ ...citation, metadata: record.metadata }),
+        ingestedAt: ingestedAt.toISOString(), title: citation?.title, source: {
+          sessionId: parent.sessionId, reportId: record.reportId, reportVersion: record.reportVersion, reportRevision: record.reportRevision,
+          reportCreatedAt: parent.reportCreatedAt.toISOString(),
+          url: `/council?sessionId=${parent.sessionId}&reportId=${record.reportId}#report-${record.reportId}-v${record.reportVersion}` } };
+    };
+    const comparisonEvidence = loaded.peers.filter(peer => referenced.has(peer.evidence.id) && !localIds.has(peer.evidence.id))
+      .map(peer => project(peer.evidence, peer.memory, peer.reportEvidence));
+    return { evidence: records.map(record => project(record, row, loaded.reports.get(row.id)!.evidence)), comparisonEvidence,
+      relations: await evidenceRelations(this.db, owner, records), comparisons, comparisonsTruncated: allComparisons.length > comparisons.length };
   }
   private sourceUrl(value: string | null): string | null {
     try { const url = new URL(value ?? ''); return ['https:', 'http:'].includes(url.protocol) ? url.toString() : null; } catch { return null; }

@@ -18,6 +18,7 @@ import { CouncilService } from '../council/council.service';
 import { evidenceExcerpts, type CouncilEvidence } from '../council/council.rules';
 import { nativeWorkflowSources } from '../council/council.workflow-executor';
 import { FinnhubEvidenceService } from '../multi-agent/finnhub-evidence.service';
+import { renderEvidenceGraph } from './research-memory.render.fixture.cjs';
 
 const enabled = { skip: !process.env.MEMORY_TEST_DATABASE_URL };
 const metadata = (value = 100): EvidenceMetadata => ({ sources: [{ origin: 'provider', verification: 'server-verified',
@@ -46,16 +47,17 @@ async function fixture(run: (f: Awaited<ReturnType<typeof setup>>) => Promise<vo
 async function setup(client: postgres.Sql) {
   const db = drizzle(client), owner = randomUUID();
   const service = new ResearchMemoryService(db, new QuoteService(db, undefined as never));
-  const seed = async (data: EvidenceMetadata | null = metadata(), claim = content, decision: 'wait' | 'reject' = 'wait', fetchedAt = '2026-05-01T00:00:00Z') => {
-    const [session] = await db.insert(councilSessions).values({ owner, profileVersion: 1, profileSnapshot: {} as never,
-      ticker: 'AAPL', status: 'completed', language: 'en' }).returning();
-    const [report] = await db.insert(councilReports).values({ owner, sessionId: session.id, version: 1, revision: 1,
+  const seed = async (data: EvidenceMetadata | null = metadata(), claim = content, decision: 'wait' | 'reject' = 'wait', fetchedAt = '2026-05-01T00:00:00Z',
+    identity = { owner, ticker: 'AAPL' }) => {
+    const [session] = await db.insert(councilSessions).values({ owner: identity.owner, profileVersion: 1, profileSnapshot: {} as never,
+      ticker: identity.ticker, status: 'completed', language: 'en' }).returning();
+    const [report] = await db.insert(councilReports).values({ owner: identity.owner, sessionId: session.id, version: 1, revision: 1,
       decision, summary: 'Historical quarterly evidence', dissent: [], nextReviewCondition: '', engine: 'llm',
       createdAt: new Date('2026-05-01T00:00:00Z'), evidence: [{ id: 'filing', title: 'Quarterly filing', content: 'Published source body',
         sourceUrl: 'https://example.test/filing', fetchedAt, ...(data ? { metadata: data } : {}) }] }).returning();
-    const memory = await service.archiveReport(owner, { sessionId: session.id, ticker: 'AAPL', language: 'en',
+    const memory = await service.archiveReport(identity.owner, { sessionId: session.id, ticker: identity.ticker, language: 'en',
       report: { ...report, createdAt: report.createdAt.toISOString() }, thesisCandidates: [claim] });
-    const thesis = (await service.list(owner, { ticker: 'AAPL' })).theses.find(item => item.memoryId === memory!.id)!;
+    const thesis = (await service.list(identity.owner, { ticker: identity.ticker })).theses.find(item => item.memoryId === memory!.id)!;
     return { session, report, memory: memory!, thesis };
   };
   return { db, client, owner, service, seed };
@@ -183,6 +185,59 @@ test('direction differences are opinions while aligned typed data conflicts requ
   const conflict = (await service.evidenceGraph(owner, first.memory.id)).comparisons.find(item => item.kind === 'conflict');
   assert.equal(conflict?.leftSourceIndex, 0); assert.equal(conflict?.leftFactIndex, 0);
   assert.equal(conflict?.rightSourceIndex, 0); assert.equal(conflict?.rightFactIndex, 0);
+}));
+
+test('cross-report graph resolves only authorized comparison records and renders both source contexts', enabled, async () => fixture(async ({ service, owner, seed, db }) => {
+  const first = await seed(metadata(111111));
+  const competing = metadata(222222); competing.sources[0].sourceUrl = 'https://example.test/competing-filing';
+  competing.sources[0].publishedAt = '2026-04-29';
+  const second = await seed(competing);
+  const unrelated = metadata(333333); unrelated.sources[0].facts[0].metric = 'unrelated-metric';
+  await seed(unrelated);
+  await seed(metadata(444444), content, 'wait', undefined, { owner: randomUUID(), ticker: 'AAPL' });
+  await seed(metadata(555555), content, 'wait', undefined, { owner, ticker: 'MSFT' });
+  await seed(metadata(666666), content, 'wait', undefined, { owner, ticker: '700.HK' });
+  const excluded = await seed(metadata(777777)); await service.updateMemory(owner, excluded.memory.id, { excluded: true });
+  const future = metadata(888888); future.sources[0].publishedAt = '2099-01-01'; await seed(future);
+  const unverified = metadata(999999); unverified.sources[0].origin = 'agent'; unverified.sources[0].verification = 'unverified'; await seed(unverified);
+  const graph = await service.evidenceGraph(owner, first.memory.id);
+  assert.equal(graph.evidence.length, 1);
+  assert.equal(graph.comparisons.length, 1);
+  assert.notEqual(graph.comparisons[0].left, graph.comparisons[0].right);
+  assert.equal(graph.comparisonEvidence?.length, 1);
+  assert.equal(graph.comparisonEvidence![0].reportId, second.report.id);
+  assert.equal(graph.comparisonEvidence![0].metadata.sources[0].facts[0].value, 222222);
+  assert.equal(graph.comparisonEvidence![0].source?.reportId, second.report.id);
+  for (const language of ['en', 'zh-CN']) {
+    const html = renderEvidenceGraph(graph, first.memory.citations, language);
+    for (const value of ['111111', '222222', 'https://example.test/competing-filing', '2026-04-29', 'us-gaap:Revenues', 'USD',
+      `reportId=${second.report.id}`]) assert.ok(html.includes(value), `${language}: ${value}`);
+    for (const absent of ['333333', '444444', '555555', '666666', '777777', '888888', '999999']) assert.ok(!html.includes(absent), absent);
+  }
+  await assert.rejects(service.evidenceGraph(randomUUID(), first.memory.id));
+  await service.updateMemory(owner, second.memory.id, { excluded: true });
+  assert.equal((await service.evidenceGraph(owner, first.memory.id)).comparisonEvidence?.length ?? 0, 0);
+  await service.updateMemory(owner, second.memory.id, { excluded: false });
+  await db.update(councilSessions).set({ ticker: 'MSFT' }).where(eq(councilSessions.id, second.session.id));
+  assert.equal((await service.evidenceGraph(owner, first.memory.id)).comparisonEvidence?.length ?? 0, 0);
+  await db.update(councilSessions).set({ ticker: 'AAPL' }).where(eq(councilSessions.id, second.session.id));
+  await db.delete(councilReports).where(eq(councilReports.id, second.report.id));
+  const afterDeletion = await service.evidenceGraph(owner, first.memory.id);
+  assert.equal(afterDeletion.comparisons.length, 0);
+  assert.equal(afterDeletion.comparisonEvidence?.length ?? 0, 0);
+  assert.ok(!renderEvidenceGraph(afterDeletion, first.memory.citations, 'en').includes('222222'));
+}));
+
+test('graph comparison payload is bounded with an explicit truncation signal', enabled, async () => fixture(async ({ service, owner, seed }) => {
+  const first = await seed(metadata(111111));
+  const multiple = metadata(222222);
+  multiple.sources[0].facts = Array.from({ length: 205 }, (_, index) => ({ ...multiple.sources[0].facts[0], value: 222222 + index }));
+  await seed(multiple);
+  const graph = await service.evidenceGraph(owner, first.memory.id);
+  assert.equal(graph.comparisons.length, 200);
+  assert.equal(graph.comparisonsTruncated, true);
+  assert.equal(graph.comparisonEvidence?.length, 1);
+  assert.ok(renderEvidenceGraph(graph, first.memory.citations, 'en').includes('More comparisons exist'));
 }));
 
 test('known future publication is excluded despite an old fetch, while a previously known forecast target may be future', enabled, async () => fixture(async ({ service, owner, seed }) => {

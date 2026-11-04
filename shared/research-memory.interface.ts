@@ -112,9 +112,14 @@ export interface UpdateResearchThesis {
 export interface ResearchEvidenceRecord {
   id: string; memoryId: string; reportId: string; reportVersion: number; reportRevision: number;
   evidenceId: string; metadata: EvidenceMetadata; ingestedAt: string;
+  /** Read-time context resolved from a still-available, owner-scoped report. */
+  title?: string; source?: MemorySource;
 }
 export interface ResearchEvidenceGraph {
   evidence: ResearchEvidenceRecord[];
+  /** Only external records referenced by the returned comparisons, never the full account archive. */
+  comparisonEvidence?: ResearchEvidenceRecord[];
+  comparisonsTruncated?: boolean;
   relations: Array<{ thesisId: string; version: number; evidenceRecordId: string; role: 'support' | 'refute' | 'qualify' }>;
   comparisons: Array<{ left: string; right: string; leftSourceIndex: number; leftFactIndex: number;
     rightSourceIndex: number; rightFactIndex: number; kind: EvidenceComparisonKind }>;

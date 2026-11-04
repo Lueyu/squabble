@@ -9,7 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { MemoryCopy } from './memory-copy';
-import { formatMemoryDate, latestMonitorRules, memoryErrorText } from './memory-presentation';
+import { formatMemoryDate, latestMonitorRules, memoryErrorCode, memoryErrorText } from './memory-presentation';
 
 const observationReasons: Record<string, [string, string]> = {
   invalid_rule: ['Invalid condition', '条件无效'], symbol_mismatch: ['Symbol does not match', '标的不匹配'],
@@ -65,7 +65,8 @@ export function MonitorRule({ rule, copy, locale, children }: { rule: ResearchMo
 
 export function MemoryMonitors({ thesis, copy, locale }: { thesis: ResearchThesis; copy: MemoryCopy; locale: string }) {
   const client = useQueryClient();
-  const [editing, setEditing] = useState<ResearchMonitorRule | 'new' | null>(null);
+  // Keep the condition indices, citations and version from opening the draft together.
+  const [editing, setEditing] = useState<{ thesis: ResearchThesis; rule?: ResearchMonitorRule } | null>(null);
   const query = useQuery({ queryKey: ['research-memory', 'monitors', thesis.id], queryFn: () => fetchResearchMonitors(thesis.id), refetchInterval: 15_000, retry: false });
   const mutation = useMutation({ mutationFn: (input: WriteResearchMonitor) => writeResearchMonitor(thesis.id, input), retry: false,
     onSuccess: async () => { setEditing(null); await client.invalidateQueries({ queryKey: ['research-memory'] }); },
@@ -77,33 +78,42 @@ export function MemoryMonitors({ thesis, copy, locale }: { thesis: ResearchThesi
   const historical = [...grouped.history, ...grouped.latest.filter(rule => rule.thesisVersion !== thesis.version)];
   const canWrite = ['accepted', 'confirmed'].includes(thesis.status) && !thesis.excluded && thesis.sourceStatus === 'available'
     && !thesis.flags.includes('unverified') && thesis.supportingEvidence.length + (thesis.evidenceRelations?.length ?? 0) > 0;
-  const staleEdit = editing && editing !== 'new' && !current.some(rule => rule.id === editing.id);
+  const staleEdit = Boolean(editing && (!canWrite || editing.thesis.id !== thesis.id || editing.thesis.version !== thesis.version
+    || editing.thesis.memoryId !== thesis.memoryId || editing.thesis.source?.reportId !== thesis.source?.reportId
+    || editing.thesis.source?.reportVersion !== thesis.source?.reportVersion || editing.thesis.source?.reportRevision !== thesis.source?.reportRevision
+    || editing.rule && !current.some(rule => rule.id === editing.rule!.id && rule.version === editing.rule!.version)
+    || memoryErrorCode(mutation.error).includes('VERSION_CONFLICT')));
   return <div className="min-w-0 space-y-3 pt-3 [overflow-wrap:anywhere]">
     <MonitorStatus view={query.data} thesis={thesis} copy={copy} locale={locale} />
     {mutation.error && <p role="alert" className="text-xs text-destructive">{memoryErrorText(mutation.error, copy)}</p>}
     {current.map(rule => <MonitorRule key={rule.id} rule={rule} copy={copy} locale={locale}>
-      {canWrite && <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => { mutation.reset(); setEditing(rule); }}>{copy.editRule}</Button>
-        <Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => { mutation.reset(); mutation.mutate({ expectedVersion: thesis.version,
+      {canWrite && <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={mutation.isPending || Boolean(editing)} onClick={() => { mutation.reset(); setEditing({ thesis, rule }); }}>{copy.editRule}</Button>
+        <Button size="sm" variant="outline" disabled={mutation.isPending || Boolean(editing)} onClick={() => { mutation.reset(); mutation.mutate({ expectedVersion: thesis.version,
           condition: rule.condition, ruleId: rule.id, ruleVersion: rule.version, enabled: !rule.enabled }); }}>{rule.enabled ? copy.disableRule : copy.enableRule}</Button></div>}
     </MonitorRule>)}
     {!!historical.length && <details><summary className="cursor-pointer text-sm">{copy.historicalRules} ({historical.length})</summary>
       <div className="mt-2 space-y-2">{historical.map(rule => <MonitorRule key={rule.id} rule={rule} copy={copy} locale={locale} />)}</div></details>}
     {canWrite && !editing && <Button size="sm" variant="outline" disabled={!thesis.invalidationConditions.length || mutation.isPending}
-      onClick={() => { mutation.reset(); setEditing('new'); }}>{copy.addRule}</Button>}
-    {staleEdit ? <div role="alert"><p>{copy.monitorConflict}</p><Button size="sm" variant="outline" onClick={() => { setEditing(null); mutation.reset(); void query.refetch(); }}>{copy.refresh}</Button></div>
-      : canWrite && editing && <MonitorEditor key={editing === 'new' ? 'new' : editing.id} thesis={thesis} rule={editing === 'new' ? undefined : editing} copy={copy}
-        busy={mutation.isPending} onCancel={() => setEditing(null)} onSave={input => mutation.mutate(input)} />}
+      onClick={() => { mutation.reset(); setEditing({ thesis }); }}>{copy.addRule}</Button>}
+    {staleEdit && <div role="alert"><p>{copy.monitorConflict}</p><Button size="sm" variant="outline" onClick={() => {
+      setEditing(null); mutation.reset(); void query.refetch(); void client.invalidateQueries({ queryKey: ['research-memory'] });
+    }}>{copy.restartMonitorDraft}</Button></div>}
+    {editing && <MonitorEditor key={`${editing.thesis.id}:${editing.thesis.version}:${editing.rule?.id ?? 'new'}`} thesis={editing.thesis} rule={editing.rule} copy={copy}
+      busy={mutation.isPending} blocked={staleEdit} onCancel={() => setEditing(null)} onSave={input => {
+        if (!staleEdit && canWrite && !mutation.isPending && input.expectedVersion === editing.thesis.version) mutation.mutate(input);
+      }} />}
   </div>;
 }
 
-function MonitorEditor({ thesis, rule, copy, busy, onSave, onCancel }: { thesis: ResearchThesis; rule?: ResearchMonitorRule; copy: MemoryCopy;
-  busy: boolean; onSave: (input: WriteResearchMonitor) => void; onCancel: () => void }) {
+function MonitorEditor({ thesis, rule, copy, busy, blocked, onSave, onCancel }: { thesis: ResearchThesis; rule?: ResearchMonitorRule; copy: MemoryCopy;
+  busy: boolean; blocked: boolean; onSave: (input: WriteResearchMonitor) => void; onCancel: () => void }) {
   const [condition, setCondition] = useState<MonitorCondition>(() => rule?.condition ?? { conditionIndex: 0, metric: 'price', unit: thesis.market === 'HK' ? 'HKD' : thesis.market === 'CN' ? 'CNY' : 'USD',
     operator: 'lt', threshold: 0, validFrom: '', validUntil: '', evidenceIds: [], rationale: '' });
   const [invalid, setInvalid] = useState(false);
   const selectClass = 'w-full min-w-0 rounded-md border bg-background p-2 text-sm';
   const save = (event: React.FormEvent) => {
     event.preventDefault();
+    if (blocked || busy) return;
     const validDates = [condition.validFrom, condition.validUntil].every(value => /^\d{4}-\d{2}-\d{2}T.*Z$/u.test(value) && Number.isFinite(Date.parse(value)));
     const badMetric = ['price', 'sma20'].includes(condition.metric) ? !['USD', 'HKD', 'CNY'].includes(condition.unit) || condition.threshold <= 0
       : condition.metric === 'rsi14' ? condition.unit !== 'points' || condition.threshold > 100 : condition.unit !== 'ratio';
@@ -123,7 +133,7 @@ function MonitorEditor({ thesis, rule, copy, busy, onSave, onCancel }: { thesis:
       <Label className="grid gap-1">{copy.threshold}<Input type="number" min={0} max={1e12} step="any" value={condition.threshold} onChange={event => setCondition({ ...condition, threshold: Number(event.target.value) })} /></Label></div>
     <Label className="grid gap-1">{copy.unit}<select className={selectClass} value={condition.unit} onChange={event => setCondition({ ...condition, unit: event.target.value as MonitorCondition['unit'] })}>
       {Object.entries(copy.units).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select></Label>
-    <p className="text-xs text-muted-foreground">{copy.dateInput}</p>
+    <p className="text-xs text-muted-foreground">{copy.monitorDateInput}</p>
     {(['validFrom', 'validUntil'] as const).map(key => <Label key={key} className="grid gap-1">{key === 'validFrom' ? copy.startAt : copy.endAt}
       <Input value={condition[key]} placeholder="2027-01-01T00:00:00Z" onChange={event => setCondition({ ...condition, [key]: event.target.value })} /></Label>)}
     <fieldset className="space-y-2"><legend className="text-sm">{copy.supportingEvidence}</legend>{thesis.citations.map(citation => <Label key={citation.evidenceId} className="flex items-start gap-2">
@@ -131,6 +141,6 @@ function MonitorEditor({ thesis, rule, copy, busy, onSave, onCancel }: { thesis:
         ? [...condition.evidenceIds, citation.evidenceId] : condition.evidenceIds.filter(id => id !== citation.evidenceId) })} />{citation.title}</Label>)}</fieldset>
     <Label className="grid gap-1">{copy.rationale}<Textarea maxLength={1000} value={condition.rationale} onChange={event => setCondition({ ...condition, rationale: event.target.value })} /></Label>
     {invalid && <p role="alert" className="text-xs text-destructive">{copy.monitorInvalid}</p>}
-    <div className="flex flex-wrap gap-2"><Button type="submit" size="sm" disabled={busy}>{copy.monitorSave}</Button><Button type="button" size="sm" variant="outline" onClick={onCancel}>{copy.cancel}</Button></div>
+    <div className="flex flex-wrap gap-2"><Button type="submit" size="sm" disabled={busy || blocked}>{copy.monitorSave}</Button><Button type="button" size="sm" variant="outline" onClick={onCancel}>{copy.cancel}</Button></div>
   </form>;
 }
