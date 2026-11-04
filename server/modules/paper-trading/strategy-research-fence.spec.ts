@@ -28,7 +28,7 @@ test('publication keeps the active plan and position protection when accepted re
     await admin`CREATE SCHEMA ${admin(namespace)}`;
     initialized = true;
     for (const name of ['01_schema', '03_agent_builder', '07_llm_budget', '08_investment_council',
-      '12_council_dialogue', '14_a2a_agents', '16_daily_strategy', '18_research_workflow', '19_atomic_research_theses', '21_research_archive_jobs']) {
+      '12_council_dialogue', '14_a2a_agents', '16_daily_strategy', '17_research_memory', '18_research_workflow', '19_atomic_research_theses', '20_research_memory_temporal', '21_research_archive_jobs', '22_research_monitors']) {
       await client.unsafe(readFileSync(`scripts/db/${name}.sql`, 'utf8'));
     }
     await client`INSERT INTO users(id, username, password_hash) VALUES(${owner}, 'strategy-fence-test', 'test-only')`;
@@ -56,7 +56,7 @@ test('publication keeps the active plan and position protection when accepted re
       return { owner, sessionId: session.id, cycleId, revision: 1, key, position, memberId: key,
         dependencies: [], state: 'accepted' as const, skills: [], acceptedAttemptId,
         attempts: [{ id: acceptedAttemptId, revision: 1, kind: 'work' as const, state: 'succeeded' as const,
-          messageId: randomUUID(), startedAt: '2026-11-03T12:00:00.000Z', finishedAt: '2026-11-03T12:01:00.000Z' }] };
+          dispatched: true, memory: { requested: [], selected: [], prepared: [], submitted: [], counts: { requested: 0, selected: 0, prepared: 0, submitted: 0 }, budgetTokens: 0, usedTokens: 0, basis: 'conservative-utf8' as const }, messageId: randomUUID(), startedAt: '2026-11-03T12:00:00.000Z', finishedAt: '2026-11-03T12:01:00.000Z' }] };
     })).returning();
     const coverage: ResearchCoverage = { goal: 'comprehensive', cycleId, revision: 1, complete: true,
       tasks: researchTasks.map((task: typeof councilResearchTasks.$inferSelect) => ({

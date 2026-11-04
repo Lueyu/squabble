@@ -31,6 +31,8 @@ export interface MemorySource {
   reportCreatedAt: string; url: string;
 }
 export interface ThesisContent {
+  monitorConditions?: import('./research-monitor.interface').MonitorCondition[];
+  supersedes?: import('./research-monitor.interface').ThesisReplacement;
   claim: string;
   supportingEvidence: MemoryEvidenceReference[];
   opposingEvidence: string[];

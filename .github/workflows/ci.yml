@@ -42,7 +42,7 @@ jobs:
           PGPASSWORD: test-only
         run: |
           psql -h localhost -U postgres -d squabble_test -v ON_ERROR_STOP=1 -f scripts/db/01_schema.sql
-          for migration in scripts/db/{03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19,20,21}_*.sql; do
+          for migration in scripts/db/{03,04,05,06,07,08,09,10,11,12,13,14,15,16,17,18,19,20,21,22}_*.sql; do
             psql -h localhost -U postgres -d squabble_test -v ON_ERROR_STOP=1 -f "$migration"
           done
 

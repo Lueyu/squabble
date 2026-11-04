@@ -216,12 +216,14 @@ test('native aliases are bound in nested atomic thesis references before deliver
   const result = nativeWorkflowSources({ evidenceIds: ['s1'], sources: [
     { id: 's1', title: 'Filing', url: 'https://example.test/', content: 'Excerpt' }], thesisCandidates: [{
     claim: 'One claim', supportingEvidence: [{ evidenceId: 's1' }],
+    monitorConditions: [{ evidenceIds: ['s1', 'foreign'] }],
     evidenceRelations: [{ evidenceId: 's1', role: 'qualify' }, { evidenceId: 'foreign', role: 'refute' }],
   }] }, 'attempt', [], 'zh-CN');
-  const candidates = result.data.thesisCandidates as Array<{ supportingEvidence: unknown; evidenceRelations: unknown }>;
+  const candidates = result.data.thesisCandidates as Array<{ supportingEvidence: unknown; evidenceRelations: unknown; monitorConditions: unknown }>;
   assert.deepEqual(candidates[0].supportingEvidence, [{ evidenceId: 'native:attempt:0' }]);
   assert.deepEqual(candidates[0].evidenceRelations,
     [{ evidenceId: 'native:attempt:0', role: 'qualify' }, { evidenceId: 'foreign', role: 'refute' }]);
+  assert.deepEqual(candidates[0].monitorConditions, [{ evidenceIds: ['native:attempt:0', 'foreign'] }]);
 });
 
 test('review retains atomic conditions and includes opposing evidence cited only by a thesis', () => {

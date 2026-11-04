@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { monitorConditionSchema } from './research-memory.monitor.rules';
 export const memoryIdSchema = z.string().uuid();
 const text = z.string().trim().min(1).max(1500);
 const lines = z.array(text).max(20);
@@ -12,7 +13,9 @@ export const thesisContentSchema = z.object({
   opposingEvidence: lines, assumptions: lines, indicators: lines, invalidationConditions: lines,
   horizon: horizon.optional(), boundaryOrigin: z.enum(['stated', 'proposed', 'unknown']).optional(),
   evidenceRelations: z.array(reference.extend({ role: z.enum(['support', 'refute', 'qualify']) })).max(40).optional(),
-}).strict();
+  monitorConditions: z.array(monitorConditionSchema).max(20).optional(),
+  supersedes: z.object({ thesisId: z.string().uuid(), version: z.number().int().min(1), reason: text }).strict().optional(),
+}).strict().refine(value => (value.monitorConditions ?? []).every(condition => condition.conditionIndex < value.invalidationConditions.length), 'Condition index must reference an explicit invalidation condition');
 export const thesisCandidateSchema = thesisContentSchema.extend({ expiresAt: z.iso.datetime().nullable().optional() });
 export const memoryQuerySchema = z.object({ ticker: z.string().trim().min(1).max(20),
   market: z.enum(['US', 'HK', 'CN']).optional(), topic: z.string().trim().max(120).optional(),

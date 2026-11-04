@@ -9,6 +9,7 @@ import { archiveImportSchema, archiveQuerySchema, memoryIdSchema } from './resea
 import { archivalEligibility } from './research-memory.archive-authority';
 import { normalizedTopic } from './research-memory.rules';
 import { ResearchMemoryService } from './research-memory.service';
+import { lockMemoryOwner } from './research-memory.fence';
 
 type Job = typeof researchArchiveJobs.$inferSelect;
 const MAX_ATTEMPTS = 5;
@@ -65,8 +66,10 @@ export class ResearchArchiveService implements OnModuleInit, OnModuleDestroy {
   }
   async runClaim(id: string, token: string): Promise<void> {
     try {
+      const [identity] = await this.db.select({ owner: researchArchiveJobs.owner }).from(researchArchiveJobs).where(eq(researchArchiveJobs.id, id));
+      if (!identity) return;
       await this.db.transaction(async tx => {
-        // Future owner-level revocation fences belong before these row locks. No network work occurs here.
+        await lockMemoryOwner(tx, identity.owner);
         const [job] = await tx.select().from(researchArchiveJobs).where(and(eq(researchArchiveJobs.id, id),
           eq(researchArchiveJobs.state, 'running'), eq(researchArchiveJobs.leaseToken, token),
           gt(researchArchiveJobs.leaseUntil, new Date()))).for('update');
@@ -120,6 +123,7 @@ export class ResearchArchiveService implements OnModuleInit, OnModuleDestroy {
     await this.memory.getPreferences(owner);
     if (!memoryIdSchema.safeParse(id).success) throw new BadRequestException('MEMORY_INVALID_ID');
     return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
       const [job] = await tx.select().from(researchArchiveJobs)
         .where(and(eq(researchArchiveJobs.owner, owner), eq(researchArchiveJobs.id, id))).for('update');
       if (!job) throw new NotFoundException('MEMORY_ARCHIVE_NOT_FOUND');
@@ -153,6 +157,7 @@ export class ResearchArchiveService implements OnModuleInit, OnModuleDestroy {
     const { cursor, limit } = parsed.data;
     const symbols = this.symbols(parsed.data);
     return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
       const rows = await tx.select({ report: councilReports, session: councilSessions }).from(councilReports)
         .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, owner)))
         .where(and(eq(councilReports.owner, owner), ne(councilReports.engine, 'basic'),

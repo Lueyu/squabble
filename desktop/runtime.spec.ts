@@ -187,6 +187,7 @@ test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean 
       await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '19_atomic_research_theses.sql'), 'utf8'));
       await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '20_research_memory_temporal.sql'), 'utf8'));
       await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '21_research_archive_jobs.sql'), 'utf8'));
+      await reopened.query(await readFile(join(resolve('.'), 'scripts', 'db', '22_research_monitors.sql'), 'utf8'));
       const historicalTheses = await reopened.query("SELECT thesis_candidates FROM council_reports WHERE owner = 'desktop-native-probe'");
       assert.equal(historicalTheses.rows[0].thesis_candidates, null);
       const report = await reopened.query("SELECT engine FROM council_reports WHERE owner = 'desktop-native-probe'");

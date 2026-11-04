@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import type { z } from 'zod';
 import { NeedLogin } from '../../common/platform';
 import { ResearchMemoryService } from './research-memory.service';
+import { ResearchMonitorService } from './research-memory.monitor.service';
 import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema,
   archiveImportSchema, archiveQuerySchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
 
@@ -16,7 +17,14 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 @NeedLogin()
 @Controller('api/research-memory')
 export class ResearchMemoryController {
-  constructor(private readonly memory: ResearchMemoryService, private readonly archives: ResearchArchiveService) {}
+  constructor(private readonly memory: ResearchMemoryService, private readonly archives: ResearchArchiveService, private readonly monitors: ResearchMonitorService) {}
+
+  @Get('theses/:id/monitors') monitorsForThesis(@Req() request: Request, @Param('id') id: string) {
+    return this.monitors.view(request.userContext.userId, parse(memoryIdSchema, id));
+  }
+  @Post('theses/:id/monitors') writeMonitor(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) {
+    return this.monitors.write(request.userContext.userId, parse(memoryIdSchema, id), body);
+  }
 
   @Get() list(@Req() request: Request, @Query() query: unknown) {
     return this.memory.list(request.userContext.userId, parse(memoryQuerySchema, query));

@@ -9,6 +9,8 @@ import type { NotificationPayload } from '../notifications/notification.service'
 import { strategyReason } from './strategy.messages';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { captureStrategyMemory, carryPlanBreaches, strategyMemoryBlock } from '../research-memory/research-memory.dependencies';
 
 export type StrategyTaskRow = typeof strategyTasks.$inferSelect;
 export type StrategyPlanRow = typeof strategyPlans.$inferSelect;
@@ -16,13 +18,22 @@ export interface StrategyResearchFence { sessionId: string; reportId: string; re
 export const mapStrategyPlan = (row: StrategyPlanRow): DailyStrategyPlan => ({
   id: row.id, profileId: row.profileId, profileVersion: row.profileVersion, version: row.version,
   market: row.market as Market, marketDate: row.marketDate, status: row.status as DailyStrategyPlan['status'],
-  rules: row.rules, sessionIds: row.sessionIds, reportIds: row.reportIds, summary: row.summary,
+  rules: row.rules, sessionIds: row.sessionIds, reportIds: row.reportIds, summary: row.summary, memoryInventory: row.memoryInventory,
   expiresAt: row.expiresAt.toISOString(), createdAt: row.createdAt.toISOString(),
 });
 
 @Injectable()
 export class StrategyStore {
   constructor(@Inject(DRIZZLE_DATABASE) readonly db: PostgresJsDatabase) {}
+
+  async inspectMemory(owner: string, reportIds: string[]) {
+    return this.db.transaction(async tx => { await lockMemoryOwner(tx, owner);
+      return captureStrategyMemory(tx, owner, reportIds); });
+  }
+  async memoryBlock(owner: string, inventory: import('@shared/research-monitor.interface').StrategyMemoryInventory, ticker?: string) {
+    return this.db.transaction(async tx => { await lockMemoryOwner(tx, owner);
+      return strategyMemoryBlock(tx, owner, inventory, ticker); });
+  }
 
   async tasks(owner: string, profile: BuilderProfile, market: Market, date: string): Promise<StrategyTaskRow[]> {
     return this.db.select().from(strategyTasks).where(and(eq(strategyTasks.owner, owner),
@@ -55,6 +66,7 @@ export class StrategyStore {
   async publish(task: StrategyTaskRow, rules: StrategyRule[], reportIds: string[], summary: string,
     expiresAt: Date, researchFence: StrategyResearchFence[] = []): Promise<StrategyPlanRow> {
     return this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, task.owner);
       if (researchFence.length) {
         const sessions = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, task.owner),
           inArray(councilSessions.id, researchFence.map(f => f.sessionId)))).orderBy(councilSessions.id).for('update');
@@ -77,12 +89,17 @@ export class StrategyStore {
         eq(builderProfiles.id, task.profileId))).for('update');
       if (profile?.status !== 'active' || profile.version !== task.profileVersion
         || !(profile.config as { automation?: { enabled?: boolean } }).automation?.enabled) throw new Error('Profile changed; plan discarded');
+      const previous = await tx.select({ id: strategyPlans.id, memoryInventory: strategyPlans.memoryInventory }).from(strategyPlans)
+        .where(and(eq(strategyPlans.owner, task.owner), eq(strategyPlans.profileId, task.profileId), eq(strategyPlans.market, task.market), eq(strategyPlans.status, 'active')));
+      const memoryInventory = await carryPlanBreaches(tx, task.owner, await captureStrategyMemory(tx, task.owner, reportIds), previous, rules.map(rule => rule.ticker));
+      const memoryBlock = await strategyMemoryBlock(tx, task.owner, memoryInventory);
+      if (memoryBlock) throw new Error(memoryBlock);
       await tx.update(strategyPlans).set({ status: 'superseded' }).where(and(eq(strategyPlans.owner, task.owner),
         eq(strategyPlans.profileId, task.profileId), eq(strategyPlans.market, task.market), eq(strategyPlans.status, 'active')));
       const [plan] = await tx.insert(strategyPlans).values({ owner: task.owner, profileId: task.profileId,
         profileVersion: task.profileVersion, taskId: task.id, version: task.attempt + 1,
         market: task.market, marketDate: task.marketDate, rules, sessionIds: task.sessionIds,
-        reportIds, summary: summary.slice(0, 2000), expiresAt }).returning();
+        reportIds, summary: summary.slice(0, 2000), expiresAt, memoryInventory }).returning();
       const [account] = await tx.select().from(paperAccounts).where(eq(paperAccounts.owner, task.owner));
       if (!account?.botEnabled) throw new Error('Paper account stopped; plan discarded');
       const positions = await tx.select().from(paperPositions).where(eq(paperPositions.accountId, account.id));

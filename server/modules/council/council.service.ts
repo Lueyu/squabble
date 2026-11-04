@@ -1,3 +1,4 @@
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import {
   BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional, type OnModuleInit,
 } from '@nestjs/common';
@@ -127,6 +128,7 @@ export class CouncilService implements OnModuleInit {
       throw new BadRequestException('Message must contain 1–2000 characters');
     }
     await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
@@ -166,6 +168,7 @@ export class CouncilService implements OnModuleInit {
       if (configured.some((value) => !value)) throw new BadRequestException('Configure a model connection for every team member before starting');
     }
     const { row, started } = await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
@@ -272,6 +275,7 @@ export class CouncilService implements OnModuleInit {
       .where(and(eq(councilReports.owner, userId), eq(councilReports.id, reportId)));
     if (!report) throw new NotFoundException('Council report not found');
     await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
       const [session] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, report.sessionId))).for('update');
       const [order] = await tx.select().from(paperOrders)
@@ -408,6 +412,7 @@ export class CouncilService implements OnModuleInit {
         const code = error instanceof Error ? error.message : '';
         if (code.startsWith('LOCAL_')) {
           await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
             const [locked] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
             if (!locked?.checkpoint) return;
             const remote = locked.checkpoint.remote;
@@ -437,6 +442,7 @@ export class CouncilService implements OnModuleInit {
 
   private async claimTurn(userId: string, row: SessionRow): Promise<string | null> {
     return this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       const checkpoint = current?.checkpoint;
@@ -457,6 +463,7 @@ export class CouncilService implements OnModuleInit {
 
   private async recordTurn(userId: string, row: SessionRow, turn: DialogueTurn, claimId: string, output: MemberOutput): Promise<boolean> {
     return this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       const checkpoint = current?.checkpoint;
@@ -537,6 +544,7 @@ export class CouncilService implements OnModuleInit {
   private async recordActivity(userId: string, row: SessionRow, event: ResearchEvent, acquisition?: ResearchAcquisition): Promise<void> {
     if (!row.checkpoint) return;
     await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       if (!current || current.status !== 'running' || current.revision !== row.revision || current.checkpoint?.cycleId !== row.checkpoint!.cycleId) return;
@@ -618,6 +626,7 @@ export class CouncilService implements OnModuleInit {
       },
       onTask: async (ref) => {
         await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
           const [latest] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
           if (latest?.checkpoint?.remote?.messageId !== remote.messageId) throw new Error('LOCAL_PAUSED');
           await tx.update(councilSessions).set({ checkpoint: { ...latest.checkpoint, remote: { ...remote, ...ref, lastUserMessageId, awaitingInput: false, dispatchStarted: true } } })
@@ -640,6 +649,7 @@ export class CouncilService implements OnModuleInit {
   private async runResearch(userId: string, row: SessionRow): Promise<void> {
     for (let count = 0; count < 2; count++) {
       const request = await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
         const [current] = await tx.select().from(councilSessions)
           .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
         const checkpoint = current?.checkpoint;
@@ -674,6 +684,7 @@ export class CouncilService implements OnModuleInit {
           continue;
         }
         await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
           const [current] = await tx.select().from(councilSessions)
             .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
           if (current?.checkpoint?.cycleId !== row.checkpoint?.cycleId) return;
@@ -701,6 +712,7 @@ export class CouncilService implements OnModuleInit {
   private async publish(userId: string, row: SessionRow, opinion: CouncilOpinion, engine: CouncilReport['engine'], error: string | null,
     researchStance: CouncilReport['researchStance'] = null, coverage?: ResearchCoverage, thesisCandidates?: CouncilReport['thesisCandidates']): Promise<boolean> {
     const published = await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       if (!current || current.status !== 'running' || current.revision !== row.revision) return false;

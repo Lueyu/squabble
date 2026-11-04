@@ -14,6 +14,10 @@ import { isUnverifiedCitation, normalizeThesisContent, thesisEvidenceIds, thesis
 import { acceptedWorkflowProvenance } from './research-memory.provenance';
 import { loadMemorySources, type MemorySources } from './research-memory.loader';
 import { archivalEligibility } from './research-memory.archive-authority';
+import { lockMemoryOwner } from './research-memory.fence';
+import { createThesisMonitors } from './research-memory.monitor.service';
+import { recordReviewedReplacement } from './research-memory.dependencies';
+import { researchMonitorEvents, researchMonitorRules, researchThesisReplacements } from '../../database/research-monitor.schema';
 import { memoryReference } from './research-memory.context';
 import { compactEvidenceMetadata, evidenceVisibleAt, normalizeEvidenceMetadata, thesisFreshness } from './research-memory.temporal';
 import { archiveEvidence, bindThesisEvidence, compareEvidenceRows, evidenceComparisons, evidenceRelations } from './research-memory.evidence';
@@ -38,8 +42,10 @@ export class ResearchMemoryService {
     this.owner(owner);
     const parsed = memoryPreferencesSchema.safeParse(input);
     if (!parsed.success) throw new BadRequestException('MEMORY_INVALID_PREFERENCES');
-    await this.db.insert(researchMemoryPreferences).values({ owner, ...parsed.data })
-      .onConflictDoUpdate({ target: researchMemoryPreferences.owner, set: parsed.data });
+    await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      await tx.update(researchMemoryPreferences).set(parsed.data).where(eq(researchMemoryPreferences.owner, owner));
+    });
     return parsed.data;
   }
 
@@ -52,7 +58,7 @@ export class ResearchMemoryService {
   async archiveReportInTransaction(tx: Pick<PostgresJsDatabase, 'select' | 'insert' | 'update'>, owner: string,
     input: ArchiveResearchReport, intent: 'automatic' | 'manual' = 'automatic'): Promise<string | null> {
     this.owner(owner);
-    await tx.insert(researchMemoryPreferences).values({ owner }).onConflictDoNothing();
+    await lockMemoryOwner(tx, owner);
     const [preferences] = await tx.select().from(researchMemoryPreferences).where(eq(researchMemoryPreferences.owner, owner)).for('share');
     if (intent === 'automatic' && !preferences.autoArchive) return null;
     this.id(input.sessionId); this.id(input.report.id);
@@ -109,6 +115,8 @@ export class ResearchMemoryService {
         const [version] = await tx.insert(researchThesisVersions).values({ owner, thesisId: thesis.id, version: 1, content,
           status, action: status === 'accepted' ? 'accept' : 'candidate', excluded: false, expiresAt: thesis.expiresAt, createdAt: created.createdAt }).returning();
         await bindThesisEvidence(tx, owner, version.id, content, evidence);
+        await createThesisMonitors(tx, owner, thesis, created);
+        if (status === 'accepted') await recordReviewedReplacement(tx, owner, thesis, created, report, workflow);
       }
       return created.id;
     }
@@ -147,19 +155,27 @@ export class ResearchMemoryService {
   async updateMemory(owner: string, id: string, input: { excluded: boolean }): Promise<ResearchMemoryItem> {
     await this.memoryRow(owner, id);
     if (!memoryUpdateSchema.safeParse(input).success) throw new BadRequestException('MEMORY_INVALID_UPDATE');
-    await this.db.update(researchMemories).set({ excluded: input.excluded })
-      .where(and(eq(researchMemories.owner, owner), eq(researchMemories.id, id), isNull(researchMemories.deletedAt)));
+    await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      await tx.update(researchMemories).set({ excluded: input.excluded })
+        .where(and(eq(researchMemories.owner, owner), eq(researchMemories.id, id), isNull(researchMemories.deletedAt)));
+    });
     return this.getMemory(owner, id);
   }
   async deleteMemory(owner: string, id: string): Promise<{ deleted: true }> {
     await this.memoryRow(owner, id);
     await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
       // Lock/update children before deleting their versions: a concurrent editor cannot insert a new
       // version between the purge and tombstone. The source archive remains a non-resurrectable ID.
       const theses = await tx.update(researchTheses).set({ deletedAt: new Date(), excluded: true, content: EMPTY_CONTENT })
         .where(and(eq(researchTheses.owner, owner), eq(researchTheses.memoryId, id))).returning({ id: researchTheses.id });
       if (theses.length) await tx.delete(researchThesisVersions).where(and(eq(researchThesisVersions.owner, owner),
         inArray(researchThesisVersions.thesisId, theses.map(thesis => thesis.id))));
+      if (theses.length) {
+        await tx.delete(researchMonitorRules).where(and(eq(researchMonitorRules.owner, owner), inArray(researchMonitorRules.thesisId, theses.map(thesis => thesis.id))));
+        await tx.delete(researchThesisReplacements).where(and(eq(researchThesisReplacements.owner, owner), inArray(researchThesisReplacements.thesisId, theses.map(thesis => thesis.id))));
+      }
       await tx.delete(researchMemoryEvidence).where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemoryEvidence.memoryId, id)));
       await tx.update(researchMemories).set({ deletedAt: new Date(), excluded: true, summary: '' })
         .where(and(eq(researchMemories.owner, owner), eq(researchMemories.id, id)));
@@ -190,6 +206,16 @@ export class ResearchMemoryService {
       : input.action === 'expire' ? 'expired' : input.action === 'edit' && current.status === 'accepted' ? 'candidate' : current.status;
     const expiresAt = input.expiresAt === undefined ? current.expiresAt : input.expiresAt ? new Date(input.expiresAt) : null;
     await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      const [breach] = await tx.select({ id: researchMonitorEvents.id }).from(researchMonitorEvents).where(and(
+        eq(researchMonitorEvents.owner, owner), eq(researchMonitorEvents.thesisId, id),
+        eq(researchMonitorEvents.thesisVersion, current.version), eq(researchMonitorEvents.state, 'breached'))).limit(1);
+      if (breach && (!['confirm', 'edit'].includes(input.action) || !parsed.data.changeReason)) {
+        if (!['dismiss', 'expire', 'exclude'].includes(input.action)) throw new BadRequestException('MEMORY_BREACH_REVIEW_REASON_REQUIRED');
+      }
+      const [liveMemory] = await tx.select().from(researchMemories).where(and(eq(researchMemories.owner, owner), eq(researchMemories.id, memory.id))).for('share');
+      const [liveSource] = await tx.select().from(councilReports).where(and(eq(councilReports.owner, owner), eq(councilReports.id, memory.reportId))).for('share');
+      if (!liveMemory || liveMemory.deletedAt || !liveSource) throw new BadRequestException('MEMORY_SOURCE_REQUIRED');
       const [updated] = await tx.update(researchTheses).set({ content, status, version: current.version + 1,
         excluded: input.excluded ?? current.excluded, expiresAt, updatedAt: new Date() })
         .where(and(eq(researchTheses.owner, owner), eq(researchTheses.id, id),
@@ -200,6 +226,14 @@ export class ResearchMemoryService {
         changeReason: parsed.data.changeReason ?? null, createdAt: updated.updatedAt }).returning();
       const evidence = await tx.select().from(researchMemoryEvidence).where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemoryEvidence.memoryId, memory.id)));
       await bindThesisEvidence(tx, owner, version.id, content, evidence);
+      await createThesisMonitors(tx, owner, updated, memory);
+      if (breach && !(parsed.data.changeReason && ['confirm', 'edit'].includes(input.action))) {
+        const prior = await tx.select().from(researchMonitorEvents).where(and(eq(researchMonitorEvents.owner, owner),
+          eq(researchMonitorEvents.thesisId, id), eq(researchMonitorEvents.thesisVersion, current.version), eq(researchMonitorEvents.state, 'breached')));
+        for (const event of prior) await tx.insert(researchMonitorEvents).values({ owner, ruleId: event.ruleId, ruleVersion: event.ruleVersion,
+          thesisId: id, thesisVersion: updated.version, state: 'breached', observation: event.observation,
+          observationKey: `inherited:${event.id}` }).onConflictDoNothing();
+      }
     });
     return this.getThesis(owner, id);
   }
@@ -207,11 +241,14 @@ export class ResearchMemoryService {
     await this.thesisRow(owner, id);
     if (!thesisDeleteSchema.safeParse({ expectedVersion }).success) throw new BadRequestException('MEMORY_INVALID_VERSION');
     await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
       const [removed] = await tx.update(researchTheses).set({ content: EMPTY_CONTENT, deletedAt: new Date(),
         excluded: true, version: expectedVersion + 1, updatedAt: new Date() }).where(and(eq(researchTheses.owner, owner),
         eq(researchTheses.id, id), eq(researchTheses.version, expectedVersion), isNull(researchTheses.deletedAt))).returning();
       if (!removed) throw new ConflictException('MEMORY_VERSION_CONFLICT');
       await tx.delete(researchThesisVersions).where(and(eq(researchThesisVersions.owner, owner), eq(researchThesisVersions.thesisId, id)));
+      await tx.delete(researchMonitorRules).where(and(eq(researchMonitorRules.owner, owner), eq(researchMonitorRules.thesisId, id)));
+      await tx.delete(researchThesisReplacements).where(and(eq(researchThesisReplacements.owner, owner), eq(researchThesisReplacements.thesisId, id)));
     });
     return { deleted: true };
   }
@@ -438,9 +475,10 @@ export class ResearchMemoryService {
   }
   private thesisRecallItem(thesis: ResearchThesis, asOf?: string): ResearchMemoryRecallItem {
     const { claim, supportingEvidence, opposingEvidence, assumptions, indicators, invalidationConditions,
-      horizon, boundaryOrigin, evidenceRelations, provenance } = thesis;
+      horizon, boundaryOrigin, evidenceRelations, provenance, monitorConditions, supersedes } = thesis;
     const content: ThesisContent = { claim, supportingEvidence, opposingEvidence, assumptions, indicators, invalidationConditions,
-      ...(horizon ? { horizon } : {}), boundaryOrigin, evidenceRelations, provenance };
+      ...(horizon ? { horizon } : {}), boundaryOrigin, evidenceRelations, provenance,
+      ...(monitorConditions ? { monitorConditions } : {}), ...(supersedes ? { supersedes } : {}) };
     return { kind: 'thesis', id: thesis.id, memoryId: thesis.memoryId, version: thesis.version, topic: thesis.topic,
       summary: [thesis.claim, ...thesis.opposingEvidence.map(line => `Opposing: ${line}`),
         ...thesis.assumptions.map(line => `Assumption: ${line}`), ...thesis.indicators.map(line => `Indicator: ${line}`),

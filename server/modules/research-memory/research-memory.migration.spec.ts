@@ -67,7 +67,10 @@ test('atomic thesis migration upgrades populated legacy tables and reapplies wit
       VALUES ('migration-owner', ${version.id}, ${evidence.id}, 'qualify')`;
     const [job] = await client`INSERT INTO research_archive_jobs(owner, report_id, session_id, report_version, ticker, topic, intent, state, attempts, error)
       VALUES ('migration-owner', ${report.id}, ${session.id}, 1, 'AAPL', 'general', 'manual', 'failed', 3, 'MEMORY_ARCHIVE_FAILED') RETURNING id`;
+    const [event] = await client`INSERT INTO research_monitor_events(owner, rule_id, rule_version, thesis_id, thesis_version, observation_key, observation, state)
+      VALUES ('migration-owner', ${randomUUID()}, 1, ${thesis.id}, 1, 'provider-observation', '{"state":"breached"}', 'breached') RETURNING id`;
     await startDatabase(namespace);
+    assert.equal((await client`SELECT state FROM research_monitor_events WHERE id = ${event.id}`)[0].state, 'breached');
     assert.deepEqual((await client`SELECT state, attempts, error FROM research_archive_jobs WHERE id = ${job.id}`)[0],
       { state: 'failed', attempts: 3, error: 'MEMORY_ARCHIVE_FAILED' });
     assert.deepEqual((await client`SELECT id, ingested_at FROM research_memory_evidence`)[0], evidence);
@@ -90,6 +93,9 @@ test('production startup loader applies atomic thesis schema on a fresh base ins
     assert.equal(temporal.name, 'research_thesis_evidence');
     assert.equal((await client`SELECT thesis_candidates, publication_outcome FROM council_reports`).length, 0);
     assert.equal((await client`SELECT * FROM research_archive_jobs`).length, 0);
+    assert.equal((await client`SELECT * FROM research_monitor_rules`).length, 0);
+    assert.equal((await client`SELECT * FROM research_thesis_replacements`).length, 0);
+    assert.equal((await client`SELECT memory_inventory FROM strategy_plans`).length, 0);
     await startDatabase(namespace);
     const [constraint] = await client`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
       WHERE conrelid = 'research_theses'::regclass AND conname = 'research_theses_status_check'`;

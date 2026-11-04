@@ -34,10 +34,16 @@ test('a changed dynamic universe cannot pair old-company research with a differe
         delay: 'possibly-delayed', maxQuoteAgeSeconds: 1200, timeframe: '1d', candles: [], schedule: tradingMarketSchedule('US', new Date()),
         indicators: { sma20: 99, sma50: 98, rsi14: 40, atr14: 2, volumeRatio: 1, asOf: new Date().toISOString(), sampleSize: 60, timeframe: '1d' } };
     } };
-    const store = { claimExtraction: async () => true,
+    let memoryState = 'legacy-no-structure', extractionClaims = 0, modelCalls = 0;
+    const store = { inspectMemory: async () => ({ state: memoryState, dependencies: [] }),
+      memoryBlock: async () => memoryState === 'archive-pending' ? 'MEMORY_ARCHIVE_PENDING' : null,
+    claimExtraction: async () => { extractionClaims++; return true; },
       publish: async (_task: unknown, _rules: unknown, reportIds: string[]) => { assert.deepEqual(reportIds, ['MSFT-report']); published = true; },
-      updateTask: async () => { throw new Error('Research identity unexpectedly failed'); } };
+      updateTask: async (_id: string, state: string, reason: string) => {
+        assert.equal(state, 'discussing'); assert.equal(reason, 'MEMORY_ARCHIVE_PENDING');
+      } };
     const model = { json: async (_owner: string, _member: unknown, _id: string, _purpose: string, prompt: string) => {
+      modelCalls++;
       assert.ok(prompt.includes('MSFT-evidence'));
       assert.ok(!prompt.includes('AAPL-evidence'));
       assert.ok(!prompt.includes('NVDA'));
@@ -53,5 +59,12 @@ test('a changed dynamic universe cannot pair old-company research with a differe
     ) => Promise<void>;
     await advance.call(service, 'owner', profile, task, ['MSFT', 'NVDA'], tradingMarketSchedule('US', new Date()));
     assert.deepEqual(calls, ['MSFT']); assert.equal(published, true);
+    memoryState = 'archive-pending';
+    for (let tick = 0; tick < 2; tick++) await advance.call(service, 'owner', profile, task, ['MSFT'], tradingMarketSchedule('US', new Date()));
+    assert.equal(modelCalls, 1, 'archive waits reuse the accepted cycle without paid extraction');
+    assert.equal(extractionClaims, 1, 'waiting does not consume the one extraction claim');
+    memoryState = 'legacy-no-structure';
+    await advance.call(service, 'owner', profile, task, ['MSFT'], tradingMarketSchedule('US', new Date()));
+    assert.equal(modelCalls, 2); assert.equal(extractionClaims, 2);
   } finally { t.mock.timers.reset(); }
 });

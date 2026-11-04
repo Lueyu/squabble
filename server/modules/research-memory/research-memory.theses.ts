@@ -8,7 +8,8 @@ export function normalizeThesisContent(content: ThesisContent, origin = content.
 }
 
 export function thesisEvidenceIds(content: ThesisContent): string[] {
-  return [...new Set([...content.supportingEvidence.map(ref => ref.evidenceId), ...(content.evidenceRelations ?? []).map(ref => ref.evidenceId)])];
+  return [...new Set([...content.supportingEvidence.map(ref => ref.evidenceId), ...(content.evidenceRelations ?? []).map(ref => ref.evidenceId),
+    ...(content.monitorConditions ?? []).flatMap(condition => condition.evidenceIds)])];
 }
 
 export function validateThesisReferences(content: ThesisContent, validIds: Set<string>): boolean {

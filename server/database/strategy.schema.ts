@@ -11,6 +11,7 @@ export const strategyTasks = pgTable('strategy_tasks', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [uniqueIndex('strategy_task_unique').on(table.owner, table.profileId, table.profileVersion, table.market, table.marketDate, table.attempt)]);
 export const strategyPlans = pgTable('strategy_plans', {
+  memoryInventory: jsonb('memory_inventory').$type<import('@shared/research-monitor.interface').StrategyMemoryInventory>(),
   id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(),
   profileId: uuid('profile_id').notNull(), profileVersion: integer('profile_version').notNull(),
   taskId: uuid('task_id').notNull().unique(), version: integer('version').notNull(),

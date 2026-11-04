@@ -64,6 +64,9 @@ export function nativeWorkflowSources(raw: Record<string, unknown>, attemptId: s
     ...(Array.isArray(raw.thesisCandidates) ? { thesisCandidates: raw.thesisCandidates.map(candidate =>
       candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? { ...candidate,
         supportingEvidence: rewrite(candidate.supportingEvidence),
+        ...(Array.isArray(candidate.monitorConditions) ? { monitorConditions: candidate.monitorConditions.map(condition =>
+          condition && typeof condition === 'object' && !Array.isArray(condition) ? { ...condition,
+            evidenceIds: Array.isArray(condition.evidenceIds) ? condition.evidenceIds.map(id => typeof id === 'string' ? aliases.get(id) ?? id : id) : condition.evidenceIds } : condition) } : {}),
         ...(candidate.evidenceRelations !== undefined ? { evidenceRelations: rewrite(candidate.evidenceRelations) } : {}) } : candidate) } : {}) } };
 }
 
@@ -122,7 +125,7 @@ export class CouncilWorkflowExecutor {
         : '通常300–600字，总结500–800字；保留事实、依据、风险与分歧，不凑字数。' : '',
       batch.length ? 'This is a batch review. Instead return ONLY {reviews:[{taskId,submittedAttemptId,accepted:boolean,feedback:string}]}, one independent verdict per submitted task. Copy exact task and submission IDs. Passing one task does not imply passing another.' : '',
       !review && task.key === 'summary' ? 'Set researchStance:"positive|balanced|cautious" from findings.' : '',
-      !review && task.key === 'summary' ? 'Add 1–5 atomic thesisCandidates:{claim,supportingEvidence:[{evidenceId}],opposingEvidence:[],assumptions:[],indicators:[],invalidationConditions:[],boundaryOrigin:"stated|proposed|unknown",evidenceRelations:[{evidenceId,role:"support|refute|qualify"}],horizon?:{startAt?,endAt?,reviewAt?}}. Scoped IDs. Missing conditions=[],boundaryOrigin=unknown. Separate stated/proposed; only known ISO dates. No invented defaults, truth probabilities or user endorsement. Provenance is server-assigned Agent.' : '',
+      !review && task.key === 'summary' ? '1–5 thesisCandidates:{claim,supportingEvidence:[{evidenceId}],opposingEvidence:[],assumptions:[],indicators:[],invalidationConditions:[],boundaryOrigin:stated|proposed|unknown,evidenceRelations:[{evidenceId,role:support|refute|qualify}],horizon?:{startAt?,endAt?,reviewAt?}}. Scoped IDs,ISO dates; no invention/endorsement. monitorConditions?:[{conditionIndex,metric:price|sma20|rsi14|volumeRatio,unit:USD|HKD|CNY|points|ratio,operator:lt|lte|gt|gte,threshold,validFrom,validUntil,evidenceIds,rationale}]. Deliberate revision: supersedes?:{thesisId,version,reason}. Unknown conditions=[],boundaryOrigin=unknown.' : '',
       !review && task.key === 'valuation' ? 'Return valuationScenario:{metric:"earnings|revenue|book_value",multiples:{bear:number,base:number,bull:number}}. Justify assumptions; app calculates total equity value. Never invent inputs, per-share targets or upside.' : '',
       'States/reasons: handoffs + coverage.',
       member.executionMode === 'local' ? 'You may research with available read-only tools. For new sources also return sources:[{id,title,url,content}]. Cite their unique id aliases in evidenceIds. Each excerpt at most 2000 characters, at most 12 sources. Distinguish agent-provided sources from independently verified facts.' : 'Use only supplied evidence.',
