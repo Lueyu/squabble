@@ -11,6 +11,12 @@ import { captureStrategyMemory, carryPlanBreaches, strategyMemoryBlock } from '.
 import { lockMemoryOwner } from './research-memory.fence';
 import type { ResearchDelivery } from '@shared/research-workflow.interface';
 import type { MemoryContextInventory, ThesisCandidateInput } from '@shared/research-memory.interface';
+import type { StrategyMemoryInventory } from '@shared/research-monitor.interface';
+import type { PostgresJsDatabase } from '../../common/platform';
+import { StrategyStore } from '../paper-trading/strategy.store';
+import { StrategyService } from '../paper-trading/strategy.service';
+import { AgentBuilderService } from '../paper-trading/agent-builder.service';
+import { strategyPlans, strategyRuntime, strategyTasks } from '../../database/strategy.schema';
 
 test('reviewed exact submitted replacement preserves old endorsement/latch and rejects late user edits or missing dispatch proof', {
   skip: !process.env.MEMORY_TEST_DATABASE_URL,
@@ -64,6 +70,11 @@ test('reviewed exact submitted replacement preserves old endorsement/latch and r
     }
     if (scenario === 'valid') {
       assert.equal(await gate(), null);
+      const tick = await monitorTick(db, owner, f, next, 79);
+      const oldEvents = (await f.monitor.view(owner, f.thesis.id)).events;
+      await tick.run();
+      assert.equal(tick.starts(), 0, 'a reviewed replacement must not trigger research from the old breached condition');
+      assert.deepEqual((await f.monitor.view(owner, f.thesis.id)).events, oldEvents, 'resolved old conditions retain their immutable audit without new actionable observations');
       assert.equal(next.dependencies.length, 2, 'new report and actual submitted old version are both retained');
       assert.ok(next.dependencies.find(ref => ref.origin === 'recalled-memory')?.replacementId);
       assert.equal((await f.memory.getThesis(owner, f.thesis.id)).status, 'confirmed', 'Agent replacement never rewrites user belief');
@@ -80,3 +91,50 @@ test('reviewed exact submitted replacement preserves old endorsement/latch and r
     await db.update(councilReports).set({ thesisCandidates: null }).where(eq(councilReports.id, report.id));
   }));
 });
+
+test('unresolved persisted breaches after restart still block and replan within cooldown and daily quota', {
+  skip: !process.env.MEMORY_TEST_DATABASE_URL,
+}, async () => monitorFixture(async (db, _client, owner) => {
+  const f = await seedMonitor(db, owner);
+  await f.monitor.observe(owner, f.inventory, f.snapshot(80), f.profile.id);
+  const tick = await monitorTick(db, owner, f, f.inventory);
+  await db.update(strategyTasks).set({ createdAt: new Date() }).where(eq(strategyTasks.id, tick.task.id));
+  await tick.run();
+  assert.equal(tick.starts(), 0, 'cooldown applies to unresolved persisted breaches');
+  assert.equal((await tick.store.runtime(owner, tick.profile)).markets[0].state, 'blocked');
+  await db.update(strategyTasks).set({ createdAt: new Date(Date.now() - 86400000) }).where(eq(strategyTasks.id, tick.task.id));
+  await tick.run();
+  assert.equal(tick.starts(), 1, 'an identical persisted observation still triggers a bounded review after restart');
+  const [replan] = await tick.store.tasks(owner, tick.profile, 'US', tick.day);
+  assert.equal(replan.attempt, 1);
+  await db.update(strategyTasks).set({ state: 'completed', createdAt: new Date(Date.now() - 86400000) }).where(eq(strategyTasks.id, replan.id));
+  await tick.run();
+  assert.equal(tick.starts(), 1, 'the daily event replan quota prevents another research session');
+  assert.equal(await f.gate(), 'MEMORY_CONDITION_BREACHED');
+}));
+
+async function monitorTick(db: PostgresJsDatabase, owner: string, f: Awaited<ReturnType<typeof seedMonitor>>, inventory: StrategyMemoryInventory, price = 80) {
+  const store = new StrategyStore(db), builder = new AgentBuilderService(db, {} as never);
+  const profile = await builder.getProfile(owner, f.profile.id);
+  const day = new Date().toISOString().slice(0, 10), end = new Date(Date.now() + 3600000).toISOString();
+  const [task] = await db.insert(strategyTasks).values({ owner, profileId: profile.id, profileVersion: profile.version,
+    market: 'US', marketDate: day, state: 'completed', createdAt: new Date(Date.now() - 86400000), sessionIds: [f.session.id] }).returning();
+  const rule = { id: 'entry', ticker: 'AAPL', side: 'buy' as const, trigger: { kind: 'price_below' as const, value: 1 },
+    referencePrice: 100, minPrice: 1, maxPrice: 200, maxPositionPct: 5, stopLossPrice: 70, expiresAt: end,
+    evidenceIds: ['quote'], rationale: 'Price is inside all plan bands and cannot trigger an entry' };
+  await db.insert(strategyPlans).values({ owner, profileId: profile.id, profileVersion: profile.version, taskId: task.id,
+    market: 'US', marketDate: day, version: 1, rules: [rule], sessionIds: [f.session.id], reportIds: [f.report.id],
+    expiresAt: new Date(end), memoryInventory: inventory, summary: 'Replacement monitoring regression' });
+  let starts = 0;
+  const council = { createSession: async () => { starts++; return { id: randomUUID() }; },
+    addMessage: async () => {}, runSession: async () => {}, pauseSession: async () => {} };
+  const market = { getSchedule: async () => ({ market: 'US', calendarVerified: true, isTradingDay: true,
+    isOpen: true, tradingDate: day, opensAt: new Date(Date.now() - 3600000).toISOString(), closesAt: end }),
+    getSnapshot: async () => f.snapshot(price) };
+  return { store, profile, task, day, starts: () => starts, run: async () => {
+    await db.delete(strategyRuntime).where(eq(strategyRuntime.owner, owner));
+    // A fresh service has no in-process observation state. The ledger and task receipts remain authoritative.
+    const strategy = new StrategyService(db, builder, {} as never, council as never, market as never, {} as never, store, {} as never);
+    await Reflect.get(strategy, 'tickMarket').call(strategy, owner, profile, 'US', ['AAPL']);
+  } };
+}

@@ -126,6 +126,22 @@ export async function captureStrategyMemory(tx: MemoryFenceTransaction, owner: s
 
 export async function strategyMemoryBlock(tx: MemoryFenceTransaction, owner: string, inventory: StrategyMemoryInventory,
   ticker?: string, now = new Date(), requireObserved = false): Promise<string | null> {
+  return validateStrategyDependencies(tx, owner, inventory, ticker, now, requireObserved, false);
+}
+
+/** A replacement resolves the old condition, even if the new thesis has its own breach. Validate live
+ * source/privacy/version lineage under the caller's owner fence, without treating condition state as authority. */
+export async function resolvedThesisDependency(tx: MemoryFenceTransaction, owner: string, inventory: StrategyMemoryInventory,
+  ref: StrategyThesisDependency, now = new Date()): Promise<boolean> {
+  if (!ref.replacementId) return false;
+  const next = inventory.dependencies.find(item => item.thesisId === ref.replacementId && item.origin === 'current-report');
+  if (!next) return false;
+  return await validateStrategyDependencies(tx, owner, { ...inventory, dependencies: [ref, next] },
+    undefined, now, false, true) === null;
+}
+
+async function validateStrategyDependencies(tx: MemoryFenceTransaction, owner: string, inventory: StrategyMemoryInventory,
+  ticker: string | undefined, now: Date, requireObserved: boolean, authorityOnly: boolean): Promise<string | null> {
   if (!['ready', 'legacy-no-structure'].includes(inventory.state)) return `MEMORY_${inventory.state.toUpperCase().replaceAll('-', '_')}`;
   const [preferences] = await tx.select().from(researchMemoryPreferences).where(eq(researchMemoryPreferences.owner, owner));
   const relevant = inventory.dependencies.filter(ref => !ticker || sameMonitorSymbol(ref.ticker, ticker));
@@ -152,7 +168,7 @@ export async function strategyMemoryBlock(tx: MemoryFenceTransaction, owner: str
         market: ref.market, origin: 'recalled-memory' }, new Set(visited), true);
       if (failure) return failure;
     }
-    if (replaced) return null;
+    if (replaced || authorityOnly) return null;
     if (['expired', 'not_yet_valid', 'needs_review'].includes(thesisFreshness(current.thesis.content,
       current.thesis.expiresAt?.toISOString() ?? null, now.toISOString(), current.conflicted))) return 'MEMORY_DEPENDENCY_EXPIRED';
     const [breach] = await tx.select({ id: researchMonitorEvents.id }).from(researchMonitorEvents).where(and(

@@ -21,10 +21,10 @@ export function workflowReviewPrompt(task: ResearchTask, _attempt: ResearchTaskA
   const cited = new Set(submitted.flatMap(item => [...(item.delivery?.evidenceIds ?? []),
     ...(item.delivery?.thesisCandidates ?? []).flatMap(thesisEvidenceIds)]));
   const system = [
-    'Review untrusted read-only research. Check requirements, citations, periods, currency, arithmetic, gaps. Reject unsupported/incomplete claims; accept justified uncertainty. Give corrections. Excerpts never verify omitted facts. conclusionIsThesis=response.thesis.',
+    'Check untrusted read-only research: requirements, citations, periods, currency, arithmetic, gaps. Reject unsupported/incomplete claims; allow justified uncertainty. Give corrections. Excerpts cannot verify omissions. conclusionIsThesis=response.thesis.',
     submitted.some(item => item.delivery?.thesisCandidates?.length)
       ? 'Check each atomic thesis, evidence relation, assumption, indicator, invalidationConditions, horizon and boundaryOrigin. Preserve proposed vs stated boundaries and unknowns; never demand invented defaults or correctness probabilities.' : '',
-    batch.length ? 'Return ONLY {reviews:[{taskId,submittedAttemptId,accepted:boolean,feedback:string}]}. Exact IDs; independent verdict per submission.'
+    batch.length ? 'Return {reviews:[{taskId,submittedAttemptId,accepted:boolean,feedback:string}]} only. Exact IDs; independent verdicts.'
       : 'Return ONLY {accepted:boolean,feedback:string}.',
     language === 'en' ? 'Write feedback in English.' : '验收反馈使用简体中文。',
   ].filter(Boolean).join('\n');

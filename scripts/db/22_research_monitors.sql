@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS research_thesis_replacements (
   cycle_id uuid NOT NULL, task_id uuid NOT NULL, attempt_id uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS research_thesis_replacement_idx ON research_thesis_replacements(owner, thesis_id, thesis_version);
--- NULL preserves unknown legacy dependency state until authoritative reports are inspected.
+-- NULL preserves unknown legacy dependency state until a fresh validated plan is captured.
 ALTER TABLE IF EXISTS strategy_plans ADD COLUMN IF NOT EXISTS memory_inventory jsonb;
 
 CREATE TABLE IF NOT EXISTS research_memory_preferences (owner text PRIMARY KEY, auto_archive boolean NOT NULL DEFAULT true, recall_enabled boolean NOT NULL DEFAULT true);

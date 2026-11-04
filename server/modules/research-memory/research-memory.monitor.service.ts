@@ -11,7 +11,7 @@ import type { ResearchMonitorView, StrategyMemoryInventory } from '@shared/resea
 import { resolveTradingTicker, type TradingMarketSnapshot } from '@shared/trading-market.interface';
 import { evaluateMonitor, monitorWriteSchema, sameMonitorSymbol } from './research-memory.monitor.rules';
 import { lockMemoryOwner, type MemoryFenceTransaction } from './research-memory.fence';
-import { lockedThesis } from './research-memory.dependencies';
+import { lockedThesis, resolvedThesisDependency } from './research-memory.dependencies';
 import { isUnverifiedCitation } from './research-memory.theses';
 import { thesisFreshness } from './research-memory.temporal';
 
@@ -37,6 +37,7 @@ export async function observeThesisMonitors(tx: MemoryFenceTransaction, owner: s
   if (profile?.status !== 'active' || !config?.automation?.enabled || !account?.botEnabled) return false;
   let breached = false;
   for (const ref of inventory.dependencies.filter(ref => sameMonitorSymbol(ref.ticker, snapshot.ticker))) {
+    if (await resolvedThesisDependency(tx, owner, inventory, ref, now)) continue;
     const current = await lockedThesis(tx, owner, ref.thesisId);
     if (!current || current.thesis.version !== ref.version) continue;
     const rules = await tx.select().from(researchMonitorRules).where(and(eq(researchMonitorRules.owner, owner),

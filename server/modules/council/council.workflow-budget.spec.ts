@@ -21,7 +21,7 @@ const providerEvidence = (ticker: string) => parseFinnhubFinancials({ symbol: ti
   report: { ic: [{ concept: 'Revenues', value: 1000, unit: 'USD' }, { concept: 'NetIncomeLoss', value: 100, unit: 'USD' }],
     cf: [{ concept: 'NetCashProvidedByUsedInOperatingActivities', value: 140, unit: 'USD' }],
     bs: [{ concept: 'Liabilities', value: 200, unit: 'USD' }] } }] }, ticker, 'annual').items.map(item => ({ ...item,
-      metadata: { sources: item.metadata!.sources.map(source => ({ ...source, observedAt: new Date().toISOString(), observationBasis: 'server' as const })) } }));
+      metadata: { sources: item.metadata!.sources.map(source => ({ ...source, observedAt: new Date(Date.now() - 1000).toISOString(), observationBasis: 'server' as const })) } }));
 const response = (english: boolean) => english ? {
   thesis: 'Reported growth supports a balanced view, but cash conversion and dilution still need verification before the valuation can support a stronger conclusion.',
   evidencePoints: [
@@ -42,7 +42,7 @@ const response = (english: boolean) => english ? {
   nextChecks: ['核对下一期经营现金流、稀释后股数和调整利润的勾稽关系。若现金流持续落后于利润，或股数明显增长，应重新审视当前判断。'],
 };
 
-test('ordinary Chinese and English workflows fit default request budgets with real reservations', { skip: !url }, async t => {
+test('ordinary Chinese and English workflows with distinct observation/fetch times fit default request budgets with real reservations', { skip: !url }, async t => {
   const namespace = `workflow_budget_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(url!, { max: 1, onnotice: () => {} });
   const client = postgres(url!, { max: 8, onnotice: () => {}, connection: { search_path: namespace } });
@@ -149,4 +149,18 @@ test('review projection omits validated skill hashes and an identical conclusion
   const { skillVersions: _validatedPins, ...substance } = delivery;
   assert.deepEqual(reviewDelivery({ ...delivery, conclusion: 'Distinct assertion' }), { ...substance, conclusion: 'Distinct assertion' });
   assert.deepEqual(delivery, original, 'review projection does not rewrite the durable delivery');
+  const source = providerEvidence('AAPL')[0], fetchedAt = new Date().toISOString();
+  const prompt = workflowReviewPrompt({ key: 'financials', delivery } as ResearchTask, {} as ResearchTaskAttempt, [],
+    { financials: 'Check all four reported facts' } as Record<ResearchTask['key'], string>, 'AAPL', 'en', [],
+    [{ ...source, id: 'source', fetchedAt }]);
+  const evidence = prompt.input.evidence[0], metadata = evidence.metadata!.sources[0];
+  assert.equal(evidence.fetchedAt, fetchedAt, 'fetch time must not disappear when observation time differs');
+  assert.equal(metadata.observation, `${source.metadata.sources[0].observedAt} (server)`);
+  assert.notEqual(source.metadata.sources[0].observedAt, fetchedAt);
+  assert.equal(evidence.sourceUrl, source.sourceUrl);
+  assert.equal(metadata.publication, '2026-02-01 (day)');
+  assert.deepEqual(metadata.contexts!.flatMap(context => context.periods.flatMap(period => period.facts))
+    .sort((a, b) => a.metric.localeCompare(b.metric)), source.metadata.sources[0].facts.map(({ metric, value }) => ({ metric, value }))
+    .sort((a, b) => a.metric.localeCompare(b.metric)), 'every typed financial fact remains available to review');
+  assert.ok(metadata.contexts!.every(context => context.measurement === 'AAPL; actual; unit=currency; currency=USD; basis=us-gaap'));
 });
