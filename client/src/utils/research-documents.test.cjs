@@ -45,6 +45,7 @@ test('report reader tolerates an older server response without adoption history 
     if (name === '@tanstack/react-query') return { useQuery: () => ({ data: { version, document: { strategyVersionIds: [] }, versions: [version], drafts: [], diff: [], strategyUses: [] } }) };
     if (name === 'react-i18next') return { useTranslation: () => ({ i18n: { resolvedLanguage: 'en' } }) };
     if (name === 'sonner') return { toast: {} };
+    if (name === '@/hooks/use-simple-experience') return { useSimpleExperience: () => ({ enabled: false }) };
     if (name === 'lucide-react') return Object.fromEntries(['ArrowLeft', 'GitBranch', 'MessageSquare', 'Pencil', 'Check', 'LoaderCircle'].map(key => [key, ui]));
     if (name.startsWith('@/components/ui/')) return { Button: ui, Badge: ui, Input: ui, Textarea: ui };
     return {};

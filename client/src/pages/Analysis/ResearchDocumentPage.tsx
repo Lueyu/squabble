@@ -15,6 +15,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import PortfolioDailyFactsPanel from '@/components/MultiAgent/PortfolioDailyFactsPanel';
 import type { PortfolioDailyFacts } from '@shared/portfolio-report.interface';
+import { useSimpleExperience } from '@/hooks/use-simple-experience';
+import SimpleReportReader from './SimpleReportReader';
 
 interface Editor { draft: ResearchRevisionDraft | null; title: string; reason: string; sections: ResearchDocumentSection[] }
 function Diff({ changes, en }: { changes: ResearchSectionDiff[]; en: boolean }) {
@@ -27,6 +29,8 @@ function Diff({ changes, en }: { changes: ResearchSectionDiff[]; en: boolean }) 
 
 export default function ResearchDocumentPage() {
   const { versionId = '' } = useParams<{ versionId: string }>();
+  const { enabled } = useSimpleExperience();
+  if (enabled) return <SimpleReportReader key={versionId} versionId={versionId} />;
   // A route change remounts editing state so a draft cannot accidentally publish against another version.
   return <ResearchDocumentReader key={versionId} versionId={versionId} />;
 }

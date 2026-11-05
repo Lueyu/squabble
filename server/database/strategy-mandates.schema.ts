@@ -2,6 +2,7 @@ import { pgTable, text, uuid, integer, timestamp, jsonb, uniqueIndex, numeric } 
 import type { StrategyMandateInput, StrategyRouteDecision } from '../../shared/strategy-mandate.interface';
 
 export const strategyMandates = pgTable('strategy_mandates', {
+  parentPolicyId: uuid('parent_policy_id'), parentPolicyRevision: integer('parent_policy_revision'), cycleId: uuid('cycle_id'),
   id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(),
   accountId: uuid('account_id').notNull(), profileId: uuid('profile_id').notNull(),
   profileVersion: integer('profile_version').notNull(), version: integer('version').notNull().default(1),

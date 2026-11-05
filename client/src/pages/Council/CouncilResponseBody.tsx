@@ -13,10 +13,15 @@ function additionalRationale(message: CouncilMessage, displayed: string): string
   });
 }
 
-export default function CouncilResponseBody({ message }: { message: CouncilMessage }) {
+export default function CouncilResponseBody({ message, compact = false }: { message: CouncilMessage; compact?: boolean }) {
   const { t } = useTranslation();
   const content = councilMessageDisplayContent(message);
   const response = message.response;
+  if (!response && compact && message.role !== 'user' && content.length > 600) {
+    const paragraph = content.split(/\n\s*\n/u)[0];
+    const preview = paragraph.length <= 600 ? paragraph : `${paragraph.slice(0, 600)}…`;
+    return <div className="space-y-3"><p className="whitespace-pre-wrap text-sm leading-7 [overflow-wrap:anywhere]">{preview}</p><details className="text-sm"><summary className="cursor-pointer text-xs font-medium text-muted-foreground">{t('council.chat.details')}</summary><p className="mt-3 whitespace-pre-wrap leading-7 [overflow-wrap:anywhere]">{content}</p></details></div>;
+  }
   const points = (key: string, values: string[]) => values.length > 0 && <section>
     <h4 className="text-xs font-semibold text-foreground/80">{t(`council.chat.${key}`)}</h4>
     <ul className="mt-1.5 list-disc space-y-1.5 pl-4 text-sm leading-7">

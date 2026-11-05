@@ -35,6 +35,7 @@ export interface StrategyRule {
   rationale: string;
 }
 export interface DailyStrategyPlan {
+  parentPolicyId?: string; parentPolicyRevision?: number; cycleId?: string;
   accountId?: string | null;
   mandateId?: string | null;
   mandateVersion?: number | null;
@@ -56,6 +57,7 @@ export interface StrategyRuntime {
   notification: { pending: number; failed: number; lastDeliveredAt: string | null };
 }
 export interface StrategyCandidate {
+  parentPolicyId?: string; parentPolicyRevision?: number; cycleId?: string;
   accountId?: string;
   mandateId?: string;
   mandateVersion?: number;

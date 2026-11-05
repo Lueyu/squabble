@@ -32,12 +32,15 @@ export function agentContribution(result: { data?: unknown; text: string }, evid
   if (!value) try { value = JSON.parse(result.text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')); } catch { /* Plain-text agents can still contribute. */ }
   const data = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { content: result.text };
   const sources: CouncilEvidence[] = [];
+  const aliases = new Map<string, string>();
   if (Array.isArray(data.sources)) for (const raw of data.sources.slice(0, 12)) {
     if (!raw || typeof raw !== 'object' || typeof raw.title !== 'string' || typeof raw.url !== 'string' || typeof raw.content !== 'string') continue;
     try {
       const url = new URL(raw.url);
       if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.href.length > 2048) continue;
-      sources.push({ id: randomUUID(), title: `${language === 'en' ? '[Agent source · unverified]' : '[Agent 来源 · 未独立核验]'} ${raw.title.slice(0, 170)}`, content: raw.content.slice(0, 2000), sourceUrl: url.href,
+      const id = randomUUID();
+      if (typeof raw.id === 'string') aliases.set(raw.id, id);
+      sources.push({ id, title: `${language === 'en' ? '[Agent source · unverified]' : '[Agent 来源 · 未独立核验]'} ${raw.title.slice(0, 170)}`, content: raw.content.slice(0, 2000), sourceUrl: url.href,
         metadata: unverifiedAgentMetadata(url.href, new Date().toISOString()), sourceName: 'Native agent · unverified', role: 'news', evidenceType: 'other', relevanceScore: 0, fetchedAt: new Date().toISOString() });
     } catch { /* Invalid source URLs are not published. */ }
   }
@@ -45,6 +48,8 @@ export function agentContribution(result: { data?: unknown; text: string }, evid
   const cited = Array.isArray(data.evidenceIds) ? data.evidenceIds.filter((id): id is string => typeof id === 'string' && known.has(id)) : [];
   const allIds = [...cited, ...sources.map((source) => source.id)].slice(0, 20);
   const contribution = parseContribution({ ...data, ...(!value ? { content: result.text } : {}),
+    ...(Array.isArray(data.claims) ? { claims: data.claims.map(raw => raw && typeof raw === 'object' ? { ...raw,
+      evidenceIds: Array.isArray(raw.evidenceIds) ? raw.evidenceIds.map(id => aliases.get(id) ?? id) : raw.evidenceIds } : raw) } : {}),
     evidenceIds: allIds, researchRequests: [], decision: ['approve', 'wait', 'reject'].includes(String(data.decision)) ? data.decision : 'wait',
     dissent: Array.isArray(data.dissent) ? data.dissent : [], nextReviewCondition: typeof data.nextReviewCondition === 'string' ? data.nextReviewCondition : '' },
   new Set([...known, ...allIds]), turn, candidate);

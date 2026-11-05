@@ -16,6 +16,7 @@ const emit = value => console.log(JSON.stringify(value));
 fs.appendFileSync(path.join(root,'calls'), JSON.stringify({provider,args})+'\\n');
 if (args.includes('--version')) { console.log(provider === 'kimi' ? 'kimi-code 0.40.0' : provider+' 1.5.0'); }
 else if(args.includes('--help')) { console.log('--model --effort --variant --agent-file --output-format --input-format --config --mode'); }
+else if(provider === 'codex' && args.includes('mcp') && args.includes('list')) { emit([{name:'fixture_global',enabled:!args.includes('mcp_servers.fixture_global.enabled=false')}]); }
 else if (provider === 'codex' && args.join(' ') === 'login status') { console.log('Logged in using ChatGPT'); }
 else if (provider === 'claude' && args.join(' ') === 'auth status') { emit({loggedIn:true}); }
 else if (provider === 'antigravity' && args.includes('models')) {

@@ -111,6 +111,7 @@ test('local sidebar replaces account identity and logout with the workspace labe
       'react-i18next': language, 'react-router-dom': { useLocation: () => ({ pathname: '/' }) },
       '../hooks/use-theme': { useTheme: () => ({ theme: 'light' }) },
       '@/api/http': { hasSession: () => true }, '@/api/auth-mode': { getAuthMode: () => mode },
+      '@/hooks/use-simple-experience': { useSimpleExperience: () => ({ enabled: false }) },
     });
     const tree = nodes(layout.default());
     const names = tree.map(node => node.type?.name);

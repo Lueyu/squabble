@@ -14,7 +14,9 @@ export interface CouncilContinuationSummary {
 }
 export interface ForkCouncilSession { messageId: string; title?: string; summary?: string; reportId?: string }
 export interface CouncilRevisionRequest { parentVersionId: string; sectionId?: string; generate?: boolean; requestId?: string }
-export interface CouncilReviewContext { references?: ReportReference[]; subject?: string; requireDeliberation?: boolean }
+export interface CouncilReviewContext { references?: ReportReference[]; subject?: string; requireDeliberation?: boolean;
+  /** Internal scheduler binding; never accepted from the conversation HTTP contract. */
+  automaticTaskId?: string }
 /** Public contracts for bounded, user-owned investment research. */
 export interface LlmBudgetSettings {
   enabled: boolean;
@@ -115,6 +117,11 @@ export interface CouncilResponse {
   details?: string;
 }
 export interface CouncilMessage {
+  actualExecutor?: import('./simple-conversation.interface').ActualExecutor;
+  claims?: import('./simple-conversation.interface').PublicClaim[];
+  respondsToClaims?: string[];
+  stanceChange?: import('./simple-conversation.interface').StanceChange;
+  evidenceCheckStatus?: 'unverified' | 'verified' | 'disputed' | 'unavailable';
   references?: ReportReference[];
   memory?: MemoryContextInventory;
   taskId?: string;

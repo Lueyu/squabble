@@ -11,6 +11,9 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
+import { useSimpleExperience } from '@/hooks/use-simple-experience';
+import { questionPath } from '@/utils/simple-experience';
 import { toast } from 'sonner';
 import { Pencil, Trash2, FolderOpen, X, Check, Sparkles, TrendingUp, TrendingDown, ShieldAlert, ExternalLink } from 'lucide-react';
 import type { Holding, Group, AgentRating, AgentConfidence } from '@shared/api.interface';
@@ -114,7 +117,8 @@ export default function HoldingDetailDialog({
   aiRating,
   onViewFullAnalysis,
 }: HoldingDetailDialogProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { enabled: simple } = useSimpleExperience();
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -256,6 +260,8 @@ export default function HoldingDetailDialog({
               )}
             </DialogTitle>
           </DialogHeader>
+
+          {simple && !editing && <div className="flex flex-wrap gap-2"><Button size="sm" asChild><Link to={questionPath({ ticker: holding.ticker })}>{i18n.language.startsWith('zh') ? '问问大家' : 'Ask the team'}</Link></Button><Button size="sm" variant="outline" asChild><Link to={`/analysis?ticker=${encodeURIComponent(holding.ticker)}`}>{i18n.language.startsWith('zh') ? '当前分析' : 'Current analysis'}</Link></Button></div>}
 
           {editing ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">

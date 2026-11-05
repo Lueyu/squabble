@@ -12,6 +12,7 @@ import CouncilMemoryInventory from './CouncilMemoryInventory';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { threadCopy } from './thread-copy';
+import type { ActualExecutor } from '@shared/simple-conversation.interface';
 
 function safeSourceUrl(value: string | null): string | null {
   if (!value) return null;
@@ -19,10 +20,12 @@ function safeSourceUrl(value: string | null): string | null {
   catch { return null; }
 }
 
-export default function CouncilChatMessage({ message, task, session, onQuestion, onReply, onFork }: {
+export default function CouncilChatMessage({ message, task, session, onQuestion, onReply, onFork, simple = false, executor }: {
   message?: CouncilMessage; task?: ResearchTaskView; session: CouncilSession; onQuestion: (question: string) => void;
   onReply?: (message: CouncilMessage) => void;
   onFork?: (message: CouncilMessage) => void;
+  simple?: boolean;
+  executor?: ActualExecutor;
 }) {
   const { t, i18n } = useTranslation();
   if ((!message && !task) || message?.acquisition || message?.phase === 'progress') return null;
@@ -51,7 +54,8 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
         {!isUser && <span className="council-role-label">{member?.roleTitle || t(`council.roles.${role}`)}</span>}
         <time dateTime={createdAt}>{new Date(createdAt).toLocaleTimeString(i18n.language, { hour: '2-digit', minute: '2-digit' })}</time>
         {task && <span>{t('council.progress.taskTurn', { turn: task.turn + 1 })}</span>}
-        {revision !== session.revision && <span>{t('council.progress.previousRevision', { revision })}</span>}
+        {!simple && revision !== session.revision && <span>{t('council.progress.previousRevision', { revision })}</span>}
+        {executor && <span className="break-words">{executor.provider} · {executor.model}</span>}
       </div>
       <div className="council-bubble">
         {task && <div className={message ? 'mb-4 border-b border-border/60 pb-3' : undefined}>
@@ -66,11 +70,11 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
           <span className="min-w-0 [overflow-wrap:anywhere]"><span className="font-medium">{t('council.chat.replyTo', { name: replyTo.role === 'user' ? t('council.you') : replyTo.memberName })}</span>
             <span className="mt-1 line-clamp-2 block break-words">{councilMessageDisplayContent(replyTo)}</span></span>
         </button>}
-        {message && <CouncilResponseBody message={message} />}
+        {message && <CouncilResponseBody message={message} compact={simple} />}
         {message?.references?.map((ref, index) => <Link key={`${ref.versionId}:${index}`} className="mt-2 block text-xs text-primary underline"
           to={`/analysis/reports/${encodeURIComponent(ref.versionId)}${ref.sectionId ? `#${encodeURIComponent(ref.sectionId)}` : ''}`}>
           {session.resolvedReferences?.find(item => item.versionId === ref.versionId)?.title ?? threadCopy(i18n.language).pinned}{ref.sectionId ? ` · ${ref.sectionId}` : ''}</Link>)}
-        {!isUser && <CouncilMemoryInventory inventory={inventory} applicable />}
+        {!isUser && (!simple ? <CouncilMemoryInventory inventory={inventory} applicable /> : inventory && <details className="mt-3 text-xs"><summary className="cursor-pointer">{i18n.language.startsWith('zh') ? '研究资料详情' : 'Research context details'}</summary><CouncilMemoryInventory inventory={inventory} applicable /></details>)}
         {!isUser && cited.length > 0 && <details className="mt-3 text-xs">
           <summary className="cursor-pointer text-muted-foreground"><span className="inline-flex items-center gap-1"><FileText className="size-3" />
             {t('council.chat.sources', { count: cited.length })}</span></summary>

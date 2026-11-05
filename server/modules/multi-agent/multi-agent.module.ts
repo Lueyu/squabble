@@ -58,6 +58,6 @@ import { FxModule } from '@server/modules/fx/fx.module';
     BatchService,
     PortfolioAnalysisService,
   ],
-  exports: [LlmService, EvidenceService, PortfolioContextService, MultiAgentService],
+  exports: [LlmService, EvidenceService, PortfolioContextService, MultiAgentService, PortfolioAnalysisService,ResearchWebService],
 })
 export class MultiAgentModule {}

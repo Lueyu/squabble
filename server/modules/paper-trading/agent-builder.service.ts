@@ -25,6 +25,8 @@ import { LocalAgentsService } from '../local-agents/local-agents.service';
 import { LocalAgentError } from '../local-agents/local-agents.types';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { strategyOutbox } from '../../database/strategy.schema';
+import { assertLegacyInvestmentWrite } from './investment-policy.fence';
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 
 @Injectable()
 export class AgentBuilderService {
@@ -86,9 +88,12 @@ export class AgentBuilderService {
   }
 
   async activateProfile(userId: string, id: string): Promise<BuilderProfile> {
+    await assertLegacyInvestmentWrite(this.db, userId);
     const current = await this.getProfile(userId, id);
     await this.assertCanActivate(userId, current.config);
     const row = await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
+      await assertLegacyInvestmentWrite(tx, userId);
       const [locked] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.id, id), eq(builderProfiles.owner, userId))).for('update');
       if (!locked || locked.version !== current.version) throw new BadRequestException('Agent changed during activation; reload and retry');
       if (locked.status === 'active') return locked;

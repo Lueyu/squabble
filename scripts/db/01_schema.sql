@@ -1279,3 +1279,133 @@ CREATE TABLE IF NOT EXISTS strategy_daily_adjustments (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS strategy_daily_adjustments_scope_idx
   ON strategy_daily_adjustments(owner, mandate_id, market, market_date);
+
+-- 31_simple_experience.sql
+CREATE TABLE IF NOT EXISTS experience_preferences (
+  owner text PRIMARY KEY, timezone text NOT NULL DEFAULT 'Asia/Shanghai', default_members jsonb NOT NULL DEFAULT '[]',
+  default_account_id uuid, migration_state text NOT NULL DEFAULT 'new', enabled boolean NOT NULL DEFAULT true, updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS research_current_views (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner text NOT NULL,topic_key text NOT NULL,date_key text NOT NULL,
+  current_document_id uuid REFERENCES research_document_versions(id),generation_key text,generation_sequence integer NOT NULL DEFAULT 0,
+  state text NOT NULL DEFAULT 'empty',task_id uuid,task_kind text,automatic_task_id uuid,error text,change_summary text,updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS research_current_view_identity ON research_current_views(owner,topic_key,date_key);
+CREATE TABLE IF NOT EXISTS research_followup_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner text NOT NULL,thesis_id uuid NOT NULL,observation_key text NOT NULL,
+  due_at timestamptz NOT NULL,state text NOT NULL DEFAULT 'queued',lease_token uuid,lease_until timestamptz,session_id uuid,
+  result jsonb,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS research_followup_identity ON research_followup_jobs(owner,thesis_id,observation_key);
+CREATE INDEX IF NOT EXISTS research_followup_due ON research_followup_jobs(state,due_at);
+-- An immutable material reference may never cross the owner's boundary.
+CREATE OR REPLACE FUNCTION check_current_research_owner() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.current_document_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM research_document_versions WHERE id=NEW.current_document_id AND owner=NEW.owner) THEN
+    RAISE EXCEPTION 'CURRENT_RESEARCH_OWNER_MISMATCH';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS current_research_owner ON research_current_views;
+CREATE TRIGGER current_research_owner BEFORE INSERT OR UPDATE ON research_current_views FOR EACH ROW EXECUTE FUNCTION check_current_research_owner();
+
+-- 32_autonomous_investment.sql
+-- Additive persistent authorization. No existing account is implicitly enrolled.
+CREATE TABLE IF NOT EXISTS investment_policies (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, account_id uuid NOT NULL,
+ revision integer NOT NULL DEFAULT 1 CHECK(revision>0), status text NOT NULL DEFAULT 'paused' CHECK(status IN ('running','paused','archived')),
+ base_config jsonb NOT NULL, effective_config jsonb NOT NULL, constraint_records jsonb NOT NULL DEFAULT '[]',
+ confirmed_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(owner,account_id), FOREIGN KEY(account_id) REFERENCES paper_accounts(id)
+);
+CREATE TABLE IF NOT EXISTS investment_previews (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, request_key text NOT NULL, request_hash text NOT NULL,
+ origin text NOT NULL, seed jsonb NOT NULL, source_preview_id uuid, expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(owner,request_key)
+);
+CREATE TABLE IF NOT EXISTS investment_requests (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, request_key text NOT NULL, request_hash text NOT NULL, operation text NOT NULL,
+ result jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(owner,request_key)
+);
+CREATE TABLE IF NOT EXISTS investment_cycles (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, account_id uuid NOT NULL REFERENCES paper_accounts(id),
+ policy_id uuid NOT NULL REFERENCES investment_policies(id), policy_revision integer NOT NULL,
+ market text NOT NULL, market_date text NOT NULL, trigger text NOT NULL, event_key text NOT NULL, priority integer NOT NULL DEFAULT 2,
+ state text NOT NULL DEFAULT 'queued', lease_token uuid, lease_until timestamptz,
+ input jsonb NOT NULL DEFAULT '{}', candidates jsonb NOT NULL DEFAULT '[]', result jsonb NOT NULL DEFAULT '{}', mandate_id uuid,
+ created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(owner,policy_id,policy_revision,market,market_date,event_key)
+);
+CREATE INDEX IF NOT EXISTS investment_cycle_queue ON investment_cycles(state,priority,created_at);
+CREATE TABLE IF NOT EXISTS investment_constraint_proposals (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, account_id uuid NOT NULL REFERENCES paper_accounts(id),
+ expected_policy_revision integer NOT NULL, "constraint" jsonb, text text NOT NULL, impact text NOT NULL, needs_input jsonb NOT NULL DEFAULT '[]',
+ state text NOT NULL DEFAULT 'proposed', expires_at timestamptz NOT NULL, request_key text NOT NULL, request_hash text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(owner,request_key)
+);
+CREATE TABLE IF NOT EXISTS automatic_research_tasks (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, account_id uuid REFERENCES paper_accounts(id),
+ key text NOT NULL, purpose text NOT NULL, date_key text NOT NULL, calls integer NOT NULL DEFAULT 0 CHECK(calls BETWEEN 0 AND 12),
+ state text NOT NULL DEFAULT 'claimed', created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(owner,key)
+);
+CREATE INDEX IF NOT EXISTS automatic_research_owner_day ON automatic_research_tasks(owner,date_key);
+ALTER TABLE strategy_mandates ADD COLUMN IF NOT EXISTS parent_policy_id uuid REFERENCES investment_policies(id);
+ALTER TABLE strategy_mandates ADD COLUMN IF NOT EXISTS parent_policy_revision integer;
+ALTER TABLE strategy_mandates ADD COLUMN IF NOT EXISTS cycle_id uuid REFERENCES investment_cycles(id);
+ALTER TABLE strategy_signals ADD COLUMN IF NOT EXISTS parent_policy_id uuid REFERENCES investment_policies(id);
+ALTER TABLE strategy_signals ADD COLUMN IF NOT EXISTS parent_policy_revision integer;
+ALTER TABLE strategy_signals ADD COLUMN IF NOT EXISTS cycle_id uuid REFERENCES investment_cycles(id);
+-- Composite ownership fences remain effective for every writer, not just HTTP handlers.
+CREATE UNIQUE INDEX IF NOT EXISTS paper_account_owner_identity ON paper_accounts(owner,id);
+CREATE UNIQUE INDEX IF NOT EXISTS investment_policy_owner_identity ON investment_policies(owner,id);
+CREATE UNIQUE INDEX IF NOT EXISTS investment_policy_owner_account_identity ON investment_policies(owner,account_id,id);
+CREATE UNIQUE INDEX IF NOT EXISTS investment_cycle_owner_identity ON investment_cycles(owner,id);
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='investment_policies'::regclass AND conname='investment_policy_owned_account') THEN
+  ALTER TABLE investment_policies ADD CONSTRAINT investment_policy_owned_account FOREIGN KEY(owner,account_id) REFERENCES paper_accounts(owner,id);
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='investment_cycles'::regclass AND conname='investment_cycle_owned_policy') THEN
+  ALTER TABLE investment_cycles ADD CONSTRAINT investment_cycle_owned_policy FOREIGN KEY(owner,account_id,policy_id) REFERENCES investment_policies(owner,account_id,id);
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='investment_constraint_proposals'::regclass AND conname='investment_constraint_owned_account') THEN
+  ALTER TABLE investment_constraint_proposals ADD CONSTRAINT investment_constraint_owned_account FOREIGN KEY(owner,account_id) REFERENCES paper_accounts(owner,id);
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='automatic_research_tasks'::regclass AND conname='automatic_research_owned_account') THEN
+  ALTER TABLE automatic_research_tasks ADD CONSTRAINT automatic_research_owned_account FOREIGN KEY(owner,account_id) REFERENCES paper_accounts(owner,id);
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='strategy_mandates'::regclass AND conname='mandate_owned_parent_policy') THEN
+  ALTER TABLE strategy_mandates ADD CONSTRAINT mandate_owned_parent_policy FOREIGN KEY(owner,account_id,parent_policy_id) REFERENCES investment_policies(owner,account_id,id);
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='strategy_signals'::regclass AND conname='signal_owned_parent_policy') THEN
+  ALTER TABLE strategy_signals ADD CONSTRAINT signal_owned_parent_policy FOREIGN KEY(owner,parent_policy_id) REFERENCES investment_policies(owner,id);
+ END IF;
+END $$;
+
+-- 33_simple_council.sql
+-- Additive, owner-scoped research entry identities and private independent submissions.
+CREATE UNIQUE INDEX IF NOT EXISTS council_sessions_owner_id_unique ON council_sessions(owner, id);
+CREATE TABLE IF NOT EXISTS simple_council_requests (
+  owner text NOT NULL, request_key text NOT NULL, input_hash text NOT NULL, session_id uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT simple_council_requests_owner_session_fk FOREIGN KEY(owner, session_id) REFERENCES council_sessions(owner, id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS simple_council_requests_owner_key ON simple_council_requests(owner, request_key);
+CREATE TABLE IF NOT EXISTS council_independent_submissions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, session_id uuid NOT NULL, cycle_id uuid NOT NULL,
+  member_id text NOT NULL, executor_identity jsonb NOT NULL, attempt integer NOT NULL DEFAULT 1 CHECK(attempt > 0),
+  contribution jsonb NOT NULL, evidence jsonb NOT NULL, tokens_used integer NOT NULL CHECK(tokens_used >= 0),
+  task_id text, external_usage_unknown text, submitted_at timestamptz NOT NULL DEFAULT now(), released_at timestamptz,
+  CONSTRAINT council_independent_owner_session_fk FOREIGN KEY(owner, session_id) REFERENCES council_sessions(owner, id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS council_independent_submission_unique ON council_independent_submissions(owner, session_id, cycle_id, member_id, attempt);
+CREATE OR REPLACE FUNCTION preserve_council_independent_submission() RETURNS trigger AS $$
+BEGIN
+  IF (to_jsonb(NEW) - 'released_at') IS DISTINCT FROM (to_jsonb(OLD) - 'released_at')
+    OR (OLD.released_at IS NOT NULL AND NEW.released_at IS DISTINCT FROM OLD.released_at) THEN
+    RAISE EXCEPTION 'Independent submissions are immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS council_independent_immutable ON council_independent_submissions;
+CREATE TRIGGER council_independent_immutable BEFORE UPDATE ON council_independent_submissions
+  FOR EACH ROW EXECUTE FUNCTION preserve_council_independent_submission();

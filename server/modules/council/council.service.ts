@@ -7,6 +7,8 @@ import { and, desc, eq, gte, ilike, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperOrders } from '../../database/schema';
 import { councilMessages, councilReports, councilSessions, councilRevisionRequests } from '../../database/council.schema';
+import { councilIndependentSubmissions } from '../../database/simple-council.schema';
+import { AutomaticResearchBudgetService } from '../paper-trading/automatic-research-budget.service';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { llmBudgetUsage } from '../../database/llm-budget.schema';
 import { LlmService } from '../multi-agent/llm.service';
@@ -82,6 +84,17 @@ export class CouncilService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.workflow.store.recover();
+    const interrupted = await this.db.select().from(councilSessions).where(eq(councilSessions.status, 'running'));
+    for (const row of interrupted) {
+      const checkpoint = row.checkpoint;
+      if (!checkpoint?.simple || !checkpoint.inflight || checkpoint.remote) continue;
+      // An API dispatch may have reached the provider. Never replay an uncertain paid step after restart.
+      const memberId = checkpoint.turns[checkpoint.nextTurn]?.memberId;
+      if (checkpoint.simple.stage === 'independent' && memberId) await this.db.update(councilSessions).set({ checkpoint: {
+        ...checkpoint, inflight: undefined, nextTurn: checkpoint.nextTurn + 1, simple: { ...checkpoint.simple,
+          unavailable: [...checkpoint.simple.unavailable, { memberId, reason: 'Server restarted during this model request; result is unavailable and was not resent.' }] } } })
+        .where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
+    }
     // Recovery changes lifecycle only. It never resumes model calls or touches order execution.
     await this.db.update(councilSessions).set({ status: 'paused', revision: sql`${councilSessions.revision} + 1`,
       checkpoint: sql`${councilSessions.checkpoint} - 'inflight'`,
@@ -98,7 +111,7 @@ export class CouncilService implements OnModuleInit {
     return Promise.all(rows.map((row) => this.hydrate(userId, row)));
   }
 
-  async createSession(userId: string, input: CreateCouncilSession): Promise<CouncilSession> {
+  async createSession(userId: string, input: CreateCouncilSession, options?: { independent?: boolean }): Promise<CouncilSession> {
     if (!input || typeof input !== 'object') throw new BadRequestException('Council input is required');
     const thread = normalizeThread(input);
     const ticker = thread.ticker;
@@ -121,21 +134,24 @@ export class CouncilService implements OnModuleInit {
     const source = input.profileId === undefined ? null : await this.getProfile(userId, input.profileId);
     let team: ReturnType<typeof normalizeCouncil>;
     try {
-      team = normalizeCouncil({ enabled: true, members: input.members ?? source?.config.council?.members ?? DEFAULT_MEMBERS,
+      team = options?.independent && input.members && input.members.length < 2
+        ? { enabled: true, members: input.members, webResearch: false }
+        : normalizeCouncil({ enabled: true, members: input.members ?? source?.config.council?.members ?? DEFAULT_MEMBERS,
         webResearch: input.webResearch ?? source?.config.council?.webResearch ?? false });
     } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid research team'); }
     await this.validateMembers(userId, team.members);
     const config = source ? { ...source.config, council: team } : normalizeBuilderConfig({
       name: 'Research room', template: 'guard', tickers: [ticker], minimumRating: 'Buy', customPrompt: '',
       maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1, notifyOnProposal: false,
-      priceRules: [], language: input.language ?? 'zh-CN', council: team,
+      priceRules: [], language: input.language ?? 'zh-CN', ...(team.members.length >= 2 ? { council: team } : {}),
     });
+    config.council = team;
     const profile = { id: source?.id ?? null, version: source?.version ?? 1, config };
     if (workflow?.recallEnabled && this.memory) workflow.memory = await this.memory.recall(userId, { ticker, topic: workflow.goal });
     let row = await this.insertSession(userId, profile, ticker, input.language ?? 'zh-CN', null,
       { evidence: [], sourceRunId: null }, null, { ...thread, references, resolvedReferences, parentReportId: input.parentReportId ?? null });
-    if (workflow) {
-      [row] = await this.db.update(councilSessions).set({ checkpoint: { ...newCheckpoint(team.members), workflow } })
+    if (workflow || options?.independent) {
+      [row] = await this.db.update(councilSessions).set({ checkpoint: { ...newCheckpoint(team.members, options), ...(workflow ? { workflow } : {}) } })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).returning();
     }
     return this.hydrate(userId, row);
@@ -348,10 +364,16 @@ export class CouncilService implements OnModuleInit {
       if (!current) throw new NotFoundException('Council session not found');
       if (current.status === 'running') return { row: current, started: false };
       const resume = current.checkpoint && (retryKeys || current.checkpoint.nextTurn < current.checkpoint.turns.length);
+      const checkpoint = resume ? current.checkpoint : await this.newCycleCheckpoint(current, tx);
+      if (checkpoint.simple && !checkpoint.simple.commonMessageIds) {
+        const messages = await tx.select({ id: councilMessages.id }).from(councilMessages)
+          .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, id)));
+        checkpoint.simple.commonMessageIds = messages.map(item => item.id);
+      }
       // The task budget is deliberately retained across resumes and user revisions.
       const [started] = await tx.update(councilSessions).set({ status: 'running',
         revision: current.revision + 1, error: null, updatedAt: new Date(),
-        checkpoint: resume ? current.checkpoint : await this.newCycleCheckpoint(current, tx),
+        checkpoint,
         // Explicit follow-ups use current credentials/data, without erasing old reports or budget usage.
         ...(!resume && (!current.candidate || current.revision > 1)
           ? { evidenceSnapshot: [], sourceRunId: null, cacheKey: null } : {}) })
@@ -373,7 +395,11 @@ export class CouncilService implements OnModuleInit {
   }
 
   private async newCycleCheckpoint(row: SessionRow, tx: MemoryDatabase): Promise<CouncilCheckpoint> {
-    const checkpoint = newCheckpoint(this.members(row.profileSnapshot));
+    const checkpoint = newCheckpoint(this.members(row.profileSnapshot), { independent: Boolean(row.checkpoint?.simple) });
+    checkpoint.automaticTaskId = row.checkpoint?.automaticTaskId;
+    if (checkpoint.simple && row.checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple,
+      executors: row.checkpoint.simple.executors, contextLabel: row.checkpoint.simple.contextLabel,
+      commonEvidence: row.checkpoint.simple.commonEvidence, automaticTaskId: row.checkpoint.simple.automaticTaskId };
     const workflow = row.checkpoint?.workflow;
     if (workflow) checkpoint.workflow = { ...workflow, memory: workflow.recallEnabled && this.memory
       ? await this.memory.recallInTransaction(tx, row.owner, { ticker: row.ticker, topic: workflow.goal }) : undefined };
@@ -491,6 +517,9 @@ export class CouncilService implements OnModuleInit {
     }
     const row = await this.insertSession(userId, profile, candidate.ticker, profile.config.language ?? 'zh-CN', candidate, snapshot, key,
       { scene: 'trade_pre_review', subject: context.subject, references: context.references ?? [], resolvedReferences });
+    if (context.automaticTaskId) await this.db.update(councilSessions).set({ checkpoint: {
+      ...newCheckpoint(this.members(profile.config)), automaticTaskId: context.automaticTaskId,
+    } }).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     await this.runSession(userId, row.id);
     await this.jobs.get(`${userId}:${row.id}`);
     const latest = await this.requireSession(userId, row.id);
@@ -538,10 +567,39 @@ export class CouncilService implements OnModuleInit {
       let row = await this.requireSession(userId, id);
       if (row.status !== 'running' || !row.checkpoint) return;
       if (row.checkpoint.inflight) return; // Another draining process owns this paid turn.
-      if (!row.evidenceSnapshot.length && this.members(row.profileSnapshot).some((member) => member.executionMode !== 'local')) {
+      if (row.scene === 'stock' && row.checkpoint.simple?.stage === 'independent'
+        && !row.checkpoint.simple.stockFactsPrepared && row.checkpoint.nextTurn === 0
+        && this.members(row.profileSnapshot).some(member => member.executionMode !== 'local')) {
+        // Owner context is already frozen by the entry layer. Add shared provider facts once;
+        // web/model research belongs to the bounded member tasks, never this preparation step.
+        const config = { ...row.profileSnapshot, council: { ...row.profileSnapshot.council!, webResearch: false } };
+        const snapshot = await this.collectSnapshot(userId, row.ticker, row.language, config, null, true, row);
+        await this.db.transaction(async tx => {
+          await lockMemoryOwner(tx, userId);
+          const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+          const checkpoint = current?.checkpoint;
+          if (current?.status !== 'running' || !checkpoint?.simple || checkpoint.cycleId !== row.checkpoint!.cycleId
+            || checkpoint.simple.stockFactsPrepared || checkpoint.nextTurn !== 0) return;
+          const commonEvidence = [...new Map([...(checkpoint.simple.commonEvidence ?? current.evidenceSnapshot), ...snapshot.evidence]
+            .map(item => [item.id, item])).values()].slice(0, 60);
+          await tx.update(councilSessions).set({ evidenceSnapshot: commonEvidence, sourceRunId: snapshot.sourceRunId,
+            checkpoint: { ...checkpoint, simple: { ...checkpoint.simple, commonEvidence, stockFactsPrepared: true } } })
+            .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+        });
+        row = await this.requireSession(userId, id);
+        if (row.status !== 'running' || !row.checkpoint) return;
+      }
+      if (row.checkpoint.simple && row.checkpoint.simple.commonEvidence === undefined
+        && this.members(row.profileSnapshot).every(member => member.executionMode === 'local')) {
+        row = { ...row, checkpoint: { ...row.checkpoint, simple: { ...row.checkpoint.simple, commonEvidence: [...row.evidenceSnapshot] } } };
+        await this.db.update(councilSessions).set({ checkpoint: row.checkpoint })
+          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+      }
+      if (!row.evidenceSnapshot.length && row.checkpoint.simple?.commonEvidence === undefined && this.members(row.profileSnapshot).some((member) => member.executionMode !== 'local')) {
         const cycleId = row.checkpoint.cycleId;
         const snapshot = await this.collectSnapshot(userId, row.ticker, row.language, row.profileSnapshot, row.candidate, true, row);
-        await this.db.update(councilSessions).set({ evidenceSnapshot: snapshot.evidence, sourceRunId: snapshot.sourceRunId })
+        await this.db.update(councilSessions).set({ evidenceSnapshot: snapshot.evidence, sourceRunId: snapshot.sourceRunId,
+          ...(row.checkpoint.simple ? { checkpoint: { ...row.checkpoint, simple: { ...row.checkpoint.simple, commonEvidence: snapshot.evidence } } } : {}) })
           .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id), eq(councilSessions.status, 'running'),
             sql`${councilSessions.checkpoint}->>'cycleId' = ${cycleId}`));
         row = await this.requireSession(userId, id);
@@ -551,6 +609,11 @@ export class CouncilService implements OnModuleInit {
         await this.runResearch(userId, row);
         row = await this.requireSession(userId, id);
         if (row.status !== 'running' || !row.checkpoint) return;
+      }
+      if (row.checkpoint.simple?.stage === 'independent' && row.checkpoint.nextTurn >= this.members(row.profileSnapshot).length) {
+        await this.releaseIndependent(userId, row);
+        attempt--; // Releasing the barrier is bookkeeping, not a paid contribution.
+        continue;
       }
       const checkpoint = row.checkpoint;
       const turn = checkpoint.turns[checkpoint.nextTurn];
@@ -574,11 +637,18 @@ export class CouncilService implements OnModuleInit {
           if (latest.status !== 'running' || latest.checkpoint?.inflight) return;
           continue;
         }
+        const automaticTaskId = row.checkpoint.automaticTaskId ?? row.checkpoint.simple?.automaticTaskId;
+        if (automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(userId, automaticTaskId);
+        if (row.checkpoint.simple) {
+          if ((row.checkpoint.simple.calls ?? 0) >= 12) throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
+          await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint}, '{simple,calls}', ${JSON.stringify((row.checkpoint.simple.calls ?? 0) + 1)}::jsonb)` })
+            .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+        }
         const output = await this.runMember(userId, row, member, turn);
         const recorded = await this.recordTurn(userId, row, turn, claimId, output);
         claimId = null;
         if (!recorded) continue;
-        if (output.sources?.length) row = { ...row, evidenceSnapshot: [...row.evidenceSnapshot, ...output.sources].slice(-60) };
+        if (output.sources?.length && row.checkpoint.simple?.stage !== 'independent') row = { ...row, evidenceSnapshot: [...row.evidenceSnapshot, ...output.sources].slice(-60) };
         if (turn.phase === 'summary' && output.contribution.opinion) {
           const opinion = output.contribution.opinion;
           if (row.candidate && opinion.decision === 'approve' && criticalEvidenceGaps(row.evidenceSnapshot)
@@ -593,6 +663,19 @@ export class CouncilService implements OnModuleInit {
         if (claimId) await this.releaseTurn(userId, id, claimId);
         const current = await this.requireSession(userId, id);
         const code = error instanceof Error ? error.message : '';
+        if (current.checkpoint?.simple?.stage === 'independent' && current.checkpoint.nextTurn === row.checkpoint?.nextTurn) {
+          await this.db.transaction(async tx => {
+            await lockMemoryOwner(tx, userId);
+            const [locked] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+            if (!locked?.checkpoint?.simple || locked.status !== 'running') return;
+            await tx.update(councilSessions).set({ checkpoint: { ...locked.checkpoint, inflight: undefined, remote: undefined,
+              nextTurn: locked.checkpoint.nextTurn + 1, simple: { ...locked.checkpoint.simple,
+                unavailable: [...locked.checkpoint.simple.unavailable, { memberId: turn.memberId, reason: code.startsWith('LOCAL_')
+                  ? agentErrorMessage(code, row.language) : safeAnalysisError(error, row.language) }] } } })
+              .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+          });
+          continue;
+        }
         if (code.startsWith('LOCAL_')) {
           await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
@@ -651,51 +734,151 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       const checkpoint = current?.checkpoint;
       if (!checkpoint || checkpoint.inflight?.id !== claimId || checkpoint.cycleId !== row.checkpoint?.cycleId) return false;
+      if (turn.phase === 'summary' && checkpoint.simple && (checkpoint.simple.steeringRevision ?? 0) !== (row.checkpoint?.simple?.steeringRevision ?? 0)) {
+        await tx.update(councilSessions).set({ checkpoint: { ...checkpoint, inflight: undefined, remote: undefined } })
+          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+        return false;
+      }
       if (output.member.executionMode === 'local' && (current.status !== 'running' || current.revision !== row.revision)) {
         await tx.update(councilSessions).set({ checkpoint: { ...checkpoint, inflight: undefined, remote: undefined } })
           .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         return false;
       }
       const contribution = output.contribution;
+      if (checkpoint.simple?.stage === 'independent' && turn.phase === 'opening') {
+        const executor = checkpoint.simple.executors.find(item => item.memberId === output.member.id)
+          ?? { memberId: output.member.id, identity: `unreported:${output.member.connectionId ?? output.member.agentId ?? 'default'}`,
+            connection: output.member.connectionId ?? output.member.agentId ?? 'default', provider: 'unreported', model: output.member.agentSettings?.model ?? 'unreported' };
+        await tx.insert(councilIndependentSubmissions).values({ owner: userId, sessionId: row.id, cycleId: checkpoint.cycleId,
+          memberId: output.member.id, executorIdentity: executor, contribution, evidence: output.sources ?? [],
+          tokensUsed: output.tokens, taskId: output.taskId, externalUsageUnknown: output.externalUsageUnknown ? 'true' : null }).onConflictDoNothing();
+        await tx.update(councilSessions).set({ updatedAt: new Date(), checkpoint: { ...checkpoint, inflight: undefined, remote: undefined,
+          nextTurn: checkpoint.nextTurn + 1 } }).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+        return true;
+      }
+      const publicClaims = checkpoint.simple ? await tx.select({ metadata: councilMessages.metadata }).from(councilMessages)
+        .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id))) : [];
+      const claimIds = new Set(publicClaims.flatMap(item => item.metadata?.claims?.map(claim => claim.id) ?? []));
+      if (checkpoint.simple && contribution.respondsToClaims?.some(id => !claimIds.has(id))) throw new Error('A challenge must refer to a published claim');
+      const publicMetadata = checkpoint.simple ? { actualExecutor: checkpoint.simple.executors.find(item => item.memberId === output.member.id),
+        claims: contribution.claims?.map((claim, index) => ({ ...claim, id: `${checkpoint.cycleId}:${output.member.id}:${checkpoint.nextTurn}:${index}` })),
+        respondsToClaims: contribution.respondsToClaims, stanceChange: contribution.stanceChange,
+        evidenceCheckStatus: 'unverified' as const } : {};
       await tx.insert(councilMessages).values({ owner: userId, sessionId: row.id, role: output.member.role,
         memberName: output.member.name, revision: row.revision, tokensUsed: output.tokens, content: contribution.content,
         metadata: { cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
-          taskId: output.taskId, referenceSnapshot: row.references,
+          ...publicMetadata, taskId: output.taskId, referenceSnapshot: row.references,
           replyToMessageId: output.replyToMessageId, evidenceIds: contribution.evidenceIds,
           reasoningSummary: contribution.reasoningSummary, questions: contribution.questions, response: contribution.response } });
       if (output.member.executionMode === 'local') await tx.update(councilMessages).set({ metadata: {
-        cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
+        ...publicMetadata, cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
         replyToMessageId: output.replyToMessageId, evidenceIds: contribution.evidenceIds, reasoningSummary: contribution.reasoningSummary,
         questions: contribution.questions, response: contribution.response,
         externalAgent: true, externalUsageUnknown: output.externalUsageUnknown, taskId: output.taskId,
         referenceSnapshot: row.references,
       } }).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id),
         sql`${councilMessages.metadata}->>'cycleId' = ${checkpoint.cycleId}`, sql`(${councilMessages.metadata}->>'turn')::int = ${checkpoint.nextTurn}`));
+      let nextCheckpoint = { ...checkpoint, inflight: undefined, remote: undefined,
+        nextTurn: checkpoint.nextTurn + (turn.phase === 'summary' ? 0 : 1),
+        pendingResearch: turn.phase === 'summary' ? [] : contribution.researchRequests };
+      if (checkpoint.simple && turn.phase !== 'summary' && nextCheckpoint.nextTurn === checkpoint.turns.length) {
+        const members = this.members(row.profileSnapshot);
+        const manager = members.find(member => member.role === 'manager') ?? members[0];
+        const targeted = contribution.respondsToClaims?.length && contribution.researchRequests.length;
+        const supplement = turn.phase === 'response' && targeted && checkpoint.simple.supplementRounds < 2 && (checkpoint.simple.calls ?? 0) < 11;
+        const challengedIds = new Set([...publicClaims.flatMap(item => item.metadata?.respondsToClaims ?? []), ...(contribution.respondsToClaims ?? [])]);
+        const targets = turn.phase === 'challenge' ? members.filter(member => publicClaims.some(item => item.metadata?.memberId === member.id
+          && item.metadata.claims?.some(claim => challengedIds.has(claim.id)))) : [];
+        nextCheckpoint = { ...nextCheckpoint, turns: [...checkpoint.turns, ...(targets.length
+          ? targets.map(member => ({ memberId: member.id, phase: 'response' as const }))
+          : [{ memberId: supplement ? output.member.id : manager.id,
+          phase: supplement ? 'response' as const : 'summary' as const }])],
+          simple: { ...checkpoint.simple, stage: supplement ? 'supplement' : 'discussion',
+            supplementRounds: checkpoint.simple.supplementRounds + (supplement ? 1 : 0) } };
+      }
       await tx.update(councilSessions).set({ updatedAt: new Date(),
         ...(output.sources?.length ? { evidenceSnapshot: [...current.evidenceSnapshot, ...output.sources].slice(-60) } : {}),
-        checkpoint: { ...checkpoint, inflight: undefined, remote: undefined,
-        nextTurn: checkpoint.nextTurn + (turn.phase === 'summary' ? 0 : 1),
-        pendingResearch: turn.phase === 'summary' ? [] : contribution.researchRequests } })
+        checkpoint: nextCheckpoint })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return true;
+    });
+  }
+
+  private simplePrompt(row: SessionRow, turn: DialogueTurn): string {
+    if (!row.checkpoint?.simple) return '';
+    return '\n' + [
+      row.checkpoint.simple.stage === 'independent'
+        ? 'This is independent research for this cycle. Use the shared question, frozen facts and previously public research only. No other current member submission is available. Do not infer their views.'
+        : 'Challenge specific public claim IDs or evidence. Return respondsToClaims:[claimId] and stanceChange:{status:"retained|changed|unconfirmed",reason}. Explain which view you retain, change or cannot establish, and why.',
+      'Return claims:[{id,statement,evidenceIds:[]}]. IDs must be unique to your member and cycle. Public rationale only, never private reasoning.',
+      'Verified means checked by the application, not agreement or a vote. Agent sources remain unverified. No response authorizes a trade.',
+      turn.phase === 'summary' ? 'Answer four points: what is confirmed, what remains disputed, what to do now (observation is valid), and what new evidence changes the view. State unavailable members honestly. Single-source research must never claim team consensus.' : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  private async releaseIndependent(userId: string, row: SessionRow): Promise<void> {
+    await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+      const checkpoint = current?.checkpoint;
+      if (!checkpoint?.simple || checkpoint.simple.stage !== 'independent' || current.status !== 'running') return;
+      const members = this.members(current.profileSnapshot);
+      const submissions = await tx.select().from(councilIndependentSubmissions).where(and(eq(councilIndependentSubmissions.owner, userId),
+        eq(councilIndependentSubmissions.sessionId, row.id), eq(councilIndependentSubmissions.cycleId, checkpoint.cycleId)))
+        .orderBy(councilIndependentSubmissions.submittedAt);
+      if (submissions.length + checkpoint.simple.unavailable.length < members.length) return;
+      const now = new Date();
+      for (const submission of submissions) {
+        const member = members.find(item => item.id === submission.memberId)!;
+        const contribution = submission.contribution;
+        const claims = (contribution.claims?.length ? contribution.claims : [{ id: member.id,
+          statement: contribution.response?.thesis ?? contribution.content.slice(0, 2000), evidenceIds: contribution.evidenceIds }])
+          .map((claim, index) => ({ ...claim, id: `${checkpoint.cycleId}:${member.id}:${index}` }));
+        await tx.insert(councilMessages).values({ owner: userId, sessionId: row.id, role: member.role, memberName: member.name,
+          content: contribution.content, revision: current.revision, tokensUsed: submission.tokensUsed, metadata: {
+            cycleId: checkpoint.cycleId, phase: 'opening', memberId: member.id, turn: members.findIndex(item => item.id === member.id),
+            taskId: submission.taskId ?? undefined, actualExecutor: submission.executorIdentity, claims,
+            evidenceIds: contribution.evidenceIds, reasoningSummary: contribution.reasoningSummary, questions: contribution.questions,
+            response: contribution.response, externalAgent: member.executionMode === 'local',
+            externalUsageUnknown: submission.externalUsageUnknown === 'true', evidenceCheckStatus: 'unverified', referenceSnapshot: row.references,
+          } });
+      }
+      await tx.update(councilIndependentSubmissions).set({ releasedAt: now }).where(and(eq(councilIndependentSubmissions.owner, userId),
+        eq(councilIndependentSubmissions.sessionId, row.id), eq(councilIndependentSubmissions.cycleId, checkpoint.cycleId)));
+      const disputed = submissions.length > 1 && (new Set(submissions.map(item => item.contribution.researchStance)).size > 1
+        || submissions.some(item => item.contribution.questions.length));
+      const completed = members.filter(member => submissions.some(item => item.memberId === member.id));
+      const manager = completed.find(member => member.role === 'manager') ?? completed[0];
+      const next: DialogueTurn[] = disputed ? completed.map(member => ({ memberId: member.id, phase: 'challenge' }))
+        : manager ? [{ memberId: manager.id, phase: 'summary' }] : [];
+      await tx.update(councilSessions).set({ status: manager ? 'running' : 'paused',
+        error: manager ? null : current.language === 'en' ? 'No member completed the initial research. Connect an available AI.' : '本轮没有成员完成研究，请连接可用的 AI。',
+        evidenceSnapshot: [...(checkpoint.simple.commonEvidence ?? []), ...submissions.flatMap(item => item.evidence)].slice(-60),
+        checkpoint: { ...checkpoint, turns: [...checkpoint.turns, ...next], pendingResearch: [],
+          simple: { ...checkpoint.simple, privateEvidence: undefined, stage: manager ? 'discussion' : 'waiting' } } })
+        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     });
   }
 
   private async runMember(userId: string, row: SessionRow, member: CouncilMember, turn: DialogueTurn): Promise<MemberOutput> {
     await this.validatePinnedReferences(row);
     if (member.executionMode === 'local') return this.runAgentMember(userId, row, member, turn);
-    const messages = await this.db.select().from(councilMessages)
+    const history = await this.db.select().from(councilMessages)
       .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id))).orderBy(councilMessages.createdAt);
+    const messages = row.checkpoint?.simple?.stage === 'independent' && row.checkpoint.simple.commonMessageIds
+      ? history.filter(item => row.checkpoint!.simple!.commonMessageIds!.includes(item.id)) : history;
     const discussion = messages.filter((item) => ['researcher', 'challenger', 'manager'].includes(item.role)
       && !(item.metadata?.cycleId === row.checkpoint?.cycleId && item.metadata?.phase === 'summary'));
-    const systemPrompt = discussionPrompt(turn, row.language, !!row.candidate);
+    const systemPrompt = discussionPrompt(turn, row.language, !!row.candidate) + this.simplePrompt(row, turn);
     const data = packDiscussionContext({ ticker: row.ticker, candidate: row.candidate, turn,
       ...(hasThreadContext(row) ? { thread: threadPromptContext(row) } : {}),
-      config: row.profileSnapshot, member, evidence: row.evidenceSnapshot, systemPrompt,
+      config: row.profileSnapshot, member, evidence: row.checkpoint?.simple?.stage === 'independent'
+        ? row.checkpoint.simple.commonEvidence ?? row.evidenceSnapshot : row.evidenceSnapshot, systemPrompt,
       userMessages: messages.filter((item) => item.role === 'user').map((item) => item.content),
       currentDiscussion: discussion.filter((item) => item.metadata?.cycleId === row.checkpoint?.cycleId),
       previousDiscussion: discussion.filter((item) => item.metadata?.cycleId !== row.checkpoint?.cycleId),
     });
+    if (row.checkpoint?.simple) Object.assign(data, { publicClaims: discussion.flatMap(item => item.metadata?.claims ?? []) });
     const prompt = [{ role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: JSON.stringify(data) }];
     const options = { taskId: row.taskId, purpose: `council:${turn.phase}:${member.id}`,
@@ -785,8 +968,10 @@ export class CouncilService implements OnModuleInit {
     if (!this.localAgents || !member.agentId || !row.checkpoint) throw new Error('LOCAL_UNAVAILABLE');
     const current = await this.requireSession(userId, row.id);
     const saved = current.checkpoint?.remote;
-    const messages = await this.db.select().from(councilMessages).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id)))
+    const history = await this.db.select().from(councilMessages).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id)))
       .orderBy(councilMessages.createdAt);
+    const messages = row.checkpoint.simple?.stage === 'independent' && row.checkpoint.simple.commonMessageIds
+      ? history.filter(item => row.checkpoint!.simple!.commonMessageIds!.includes(item.id)) : history;
     const lastUserMessageId = messages.filter((message) => message.role === 'user').at(-1)?.id;
     const resumeInput = saved?.awaitingInput === true && lastUserMessageId !== saved.lastUserMessageId;
     if (saved && ((!saved.taskId && saved.dispatchStarted) || saved.turn !== row.checkpoint.nextTurn || saved.agentId !== member.agentId)) throw new Error('LOCAL_DISPATCH_UNCERTAIN');
@@ -801,9 +986,11 @@ export class CouncilService implements OnModuleInit {
         webResearch: row.profileSnapshot.council?.webResearch === true, expiresAt: Date.now() + 600_000 },
       agentSettings: member.agentSettings,
       remoteTaskId: remote.taskId, contextId: remote.contextId, resumeInput,
-      prompt: agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
+      prompt: this.simplePrompt(row, turn) + '\n' + agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
         thread: threadPromptContext(row),
-        candidate: row.candidate, messages: messages.filter((message) => message.role !== 'system'), evidence: row.evidenceSnapshot }),
+        candidate: row.candidate, messages: messages.filter((message) => message.role !== 'system').map(message => ({ ...message,
+          ...(row.checkpoint?.simple && message.metadata?.claims ? { content: `${message.content}\nPublic claims: ${JSON.stringify(message.metadata.claims)}` } : {}) })),
+        evidence: row.checkpoint?.simple?.stage === 'independent' ? row.checkpoint.simple.commonEvidence ?? row.evidenceSnapshot : row.evidenceSnapshot }),
       onDispatch: async () => {
         await this.validatePinnedReferences(row);
         const dispatched = { ...remote, lastUserMessageId, awaitingInput: false, dispatchStarted: true };
@@ -828,7 +1015,10 @@ export class CouncilService implements OnModuleInit {
         return latest.status === 'running' && latest.revision === row.revision; },
     });
     try {
-      return { member, ...agentContribution(result, row.evidenceSnapshot, turn, row.candidate, row.language),
+      const latest = row.checkpoint.simple?.stage === 'independent' ? await this.requireSession(userId, row.id) : row;
+      const privateEvidence = latest.checkpoint?.simple?.privateEvidence?.[member.id] ?? [];
+      const parsed = agentContribution(result, [...row.evidenceSnapshot, ...privateEvidence], turn, row.candidate, row.language);
+      return { member, ...parsed, sources: [...privateEvidence, ...parsed.sources],
         taskId: result.taskId,
         tokens: result.usageTokens ?? 0, externalUsageUnknown: result.usageTokens === null,
         replyToMessageId: messages.filter((item) => item.role !== 'system').at(-1)?.id ?? null };
@@ -950,11 +1140,26 @@ export class CouncilService implements OnModuleInit {
       }
       await tx.update(councilSessions).set({ status: error ? 'failed' : 'completed', error, updatedAt: new Date(),
         ...(error || !current.checkpoint ? {} : { checkpoint: { ...current.checkpoint,
+          ...(current.checkpoint.simple ? { simple: { ...current.checkpoint.simple, stage: 'completed' as const,
+            outcome: await this.publicOutcome(tx, userId, current) } } : {}),
           nextTurn: current.checkpoint.turns.length, pendingResearch: [], inflight: undefined } }) })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return true;
     });
+    const automaticTaskId = row.checkpoint?.automaticTaskId ?? row.checkpoint?.simple?.automaticTaskId;
+    if (published && automaticTaskId) await new AutomaticResearchBudgetService(this.db)
+      .finish(userId, automaticTaskId, error ? 'failed' : 'completed');
     return published;
+  }
+
+  private async publicOutcome(tx: MemoryDatabase, owner: string, row: SessionRow): Promise<import('../../../shared/simple-conversation.interface').DebateOutcome> {
+    const messages = await tx.select().from(councilMessages).where(and(eq(councilMessages.owner, owner), eq(councilMessages.sessionId, row.id),
+      sql`${councilMessages.metadata}->>'cycleId' = ${row.checkpoint!.cycleId}`));
+    const disputed = new Set(messages.flatMap(item => item.metadata?.respondsToClaims ?? []));
+    const disagreements = [...disputed].map(claimId => ({ claimId, positions: messages.filter(item => item.metadata?.claims?.some(claim => claim.id === claimId)
+      || item.metadata?.respondsToClaims?.includes(claimId)).map(item => ({ memberId: item.metadata!.memberId!, view: item.metadata?.response?.thesis ?? item.content.slice(0, 2000), evidenceIds: item.metadata?.evidenceIds ?? [] })) }));
+    const nextEvidence = [...new Set(messages.flatMap(item => [...(item.metadata?.response?.nextChecks ?? []), ...(item.metadata?.questions ?? [])]))].slice(0, 12);
+    return { confirmed: [], disagreements, currentAction: disagreements.length || row.checkpoint?.simple?.unavailable.length || nextEvidence.length ? 'research_more' : 'observe', nextEvidence };
   }
 
   private async collectSnapshot(userId: string, ticker: string, language: 'zh-CN' | 'en',
@@ -1048,6 +1253,7 @@ export class CouncilService implements OnModuleInit {
   }
 
   private members(config: BuilderConfig): CouncilMember[] {
+    if (config.council && config.council.members.length < 2) return config.council.members;
     return normalizeCouncil(config.council).members;
   }
 
@@ -1078,8 +1284,13 @@ export class CouncilService implements OnModuleInit {
       .where(and(eq(councilResearchTasks.owner, userId), eq(councilResearchTasks.sessionId, row.id))).orderBy(councilResearchTasks.position) : [];
     const remoteAliases = new Map(workflowTasks.flatMap(task => task.attempts.flatMap(attempt => attempt.remoteTaskId ? [[attempt.remoteTaskId, attempt.id] as const] : [])));
     const sequences = new Map<string, number>();
+    const blind = row.checkpoint?.simple?.stage === 'independent';
     const events = [...(activity?.events ?? []), ...messages.flatMap(message => message.metadata?.researchEvent ? [message.metadata.researchEvent] : [])]
       .sort((a, b) => a.at.localeCompare(b.at) || a.sequence - b.sequence);
+    if (blind) for (const event of events) {
+      event.summary = row.language === 'en' ? 'Independent research in progress; findings are not yet public.' : '本轮独立研究进行中，结论尚未公开。';
+      event.sources = undefined;
+    }
     if (row.checkpoint?.workflow) for (const event of events) {
       event.taskId = remoteAliases.get(event.taskId) ?? event.taskId;
       const key = `${event.revision}:${event.taskId}:${event.turn}`;
@@ -1096,8 +1307,10 @@ export class CouncilService implements OnModuleInit {
       researchEvents: events.slice(-2048), researchEventsTruncated: activity?.truncated || events.length > 2048,
       ticker: row.ticker, language: row.language, status: row.status, revision: row.revision,
       messages: messages.map(({ id, role, memberName, content, revision, tokensUsed, createdAt, metadata }) => ({
-        id, role, memberName, content, revision, tokensUsed, createdAt: createdAt.toISOString(),
+        id, role, memberName, content: blind && role === 'system' ? (row.language === 'en' ? 'Independent research in progress.' : '本轮独立研究进行中。') : content, revision, tokensUsed, createdAt: createdAt.toISOString(),
         ...(metadata ? { references: metadata.references, memory: metadata.memory, memberId: metadata.memberId, phase: metadata.phase, replyToMessageId: metadata.replyToMessageId,
+          actualExecutor: metadata.actualExecutor, claims: metadata.claims, respondsToClaims: metadata.respondsToClaims,
+          stanceChange: metadata.stanceChange, evidenceCheckStatus: metadata.evidenceCheckStatus,
           turn: metadata.turn, cycleId: metadata.cycleId, response: metadata.response, researchEventId: metadata.researchEvent?.id,
           evidenceIds: metadata.evidenceIds, reasoningSummary: metadata.reasoningSummary, questions: metadata.questions,
           acquisition: metadata.acquisition, externalAgent: metadata.externalAgent, externalUsageUnknown: metadata.externalUsageUnknown, taskId: metadata.taskId } : {}),

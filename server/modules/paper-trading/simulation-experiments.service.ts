@@ -11,6 +11,7 @@ import { QuoteService } from '../quote/quote.service';
 import { FxService } from '../fx/fx.service';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { assertLegacyInvestmentWrite } from './investment-policy.fence';
 import { readCorporateActionGaps } from './simulation-corporate-actions';
 import { paperRiskDay } from './paper-risk-day';
 import { adjacentSimulationDate, observedDrawdown, simulationDayStart } from './simulation-review.rules';
@@ -79,12 +80,30 @@ export class SimulationExperimentsService {
     return { id: preview.id, expiresAt: expiresAt.toISOString(), seed };
   }
 
+  /** Explicit simulated cash does not depend on the real account owning this currency. */
+  async previewCash(_owner: string, currency: 'USD' | 'HKD' | 'CNY', amount: number): Promise<SimulationSeed> {
+    const capturedAt = new Date().toISOString();
+    const fx: SimulationSeed['fx'] = currency === 'USD' ? [{ currency, rate: '1', at: capturedAt }] : [];
+    if (currency !== 'USD') {
+      try {
+        const rate = await this.fx.convert(1, currency, 'USD');
+        const [dated] = await this.db.select().from(fxRates).where(sql`(${fxRates.base} = ${currency} AND ${fxRates.quote} = 'USD') OR (${fxRates.base} = 'USD' AND ${fxRates.quote} = ${currency})`).orderBy(desc(fxRates.rateDate)).limit(1);
+        if (dated && Number.isFinite(rate) && rate > 0) fx.push({ currency, rate: String(rate), at: String(dated.rateDate) });
+      } catch { /* A missing dated FX observation remains a visible blocker. */ }
+    }
+    return { sourceRevision: createHash('sha256').update(JSON.stringify({ currency, amount })).digest('hex'), capturedAt, positions: [],
+      cash: [{ currency, total: String(amount), available: String(amount), frozen: '0', unsettled: '0', availabilityKnown: true }],
+      fx, initialEquityUsd: fx.length ? String(amount * Number(fx[0].rate)) : null, gaps: fx.length ? [] : [`FX_MISSING:${currency}`],
+      model: { version: 'paper-v1', feeBps: 5, slippageBps: 10, corporateActions: 'unsupported' } };
+  }
+
   async create(owner: string, request: CreateSimulationExperiment): Promise<SimulationExperiment> {
     if (!request || !request.name?.trim() || request.name.length > 120 || !/^[\w-]{8,128}$/.test(request.idempotencyKey ?? '')
       || !/^[0-9a-f-]{36}$/i.test(request.previewId ?? '')) throw new BadRequestException('Valid preview, name and idempotency key required');
     const requestHash = createHash('sha256').update(JSON.stringify(request)).digest('hex');
     const accountId = await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, owner);
+      await assertLegacyInvestmentWrite(tx, owner);
       const [prior] = await tx.select().from(simulationSeeds).where(and(eq(simulationSeeds.owner, owner), eq(simulationSeeds.idempotencyKey, request.idempotencyKey)));
       if (prior) {
         if (prior.requestHash !== requestHash) throw new ConflictException('Idempotency key already used for a different request');
@@ -167,6 +186,7 @@ export class SimulationExperimentsService {
   async select(owner: string, accountId: string): Promise<SimulationExperiment> {
     await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, owner);
+      await assertLegacyInvestmentWrite(tx, owner);
       const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId))).for('update');
       if (!account) throw new NotFoundException('Experiment not found');
       if (account.isActive) return;

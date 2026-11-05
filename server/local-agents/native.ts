@@ -118,7 +118,7 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
             throw new Error('NATIVE_AGENT_TOOL_ISOLATION_FAILED');
           }
         }
-        if ((tools || image) && provider === 'codex' && !bridge) {
+        if (provider === 'codex' && !bridge) {
           try { invocation = await isolateCodexResearch(invocation, probe, workspace.cwd, run.signal); }
           catch { throw new Error(run.signal.aborted ? 'NATIVE_AGENT_CANCELLED' : 'NATIVE_AGENT_TOOL_ISOLATION_FAILED'); }
         }
