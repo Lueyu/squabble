@@ -65,6 +65,7 @@ CREATE TABLE "agent_runs" (
 	"status" varchar(20) DEFAULT 'pending' NOT NULL,
 	"model_fast" varchar(50),
 	"model_slow" varchar(50),
+	"model_route" jsonb,
 	"tokens_used" integer DEFAULT 0,
 	"cost_estimate" numeric DEFAULT '0',
 	"started_at" timestamptz (3),
