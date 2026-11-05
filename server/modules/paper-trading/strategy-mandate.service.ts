@@ -24,6 +24,7 @@ import { StrategyMonitorService } from './strategy-monitor.service';
 import { paperRiskDay } from './paper-risk-day';
 import { settleStrategyReservation } from './strategy-reservation';
 import { StrategyDailyAdjustments } from './strategy-daily-adjustments';
+import { assertLegacyInvestmentWrite } from './investment-policy.fence';
 
 export type MandateRow = typeof strategyMandates.$inferSelect;
 const map = (r: MandateRow): StrategyMandate => ({ ...r.config, id: r.id, version: r.version, revision: r.revision,
@@ -232,6 +233,7 @@ export class StrategyMandateService {
   }
   async publish(owner: string, id: string, expectedRevision: number, expectedPublishedId: string | null, activateExecution = false): Promise<StrategyMandate> {
     const requested = await this.get(owner, id);
+    await assertLegacyInvestmentWrite(this.db, owner, requested.accountId);
     const selected = await this.builder.getProfile(owner, requested.profileId);
     const executionConfig = activateExecution ? normalizeBuilderConfig({ ...selected.config,
       automation: { ...normalizeAutomation(selected.config.automation), enabled: true },
@@ -242,6 +244,7 @@ export class StrategyMandateService {
       const [draft] = await tx.select().from(strategyMandates).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.id, id))).for('update');
       if (!draft || draft.status !== 'draft' || draft.revision !== expectedRevision) throw new ConflictException('Draft changed or was published');
       const config = this.normalize(draft.config, true);
+      await assertLegacyInvestmentWrite(tx, owner, draft.accountId);
       await this.documents.assertExecutionSourcesInTransaction(tx, owner, config.references, new Date());
       const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, draft.accountId))).for('update');
       const [profile] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.id, draft.profileId))).for('update');

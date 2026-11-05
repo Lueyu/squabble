@@ -16,6 +16,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { paperAccounts, builderProfiles } from '../../database/schema';
+import { investmentPolicies } from '../../database/investment-policy.schema';
 import { anyMarketOpen } from '../../common/market-clock';
 import { PaperTradingService } from './paper-trading.service';
 
@@ -61,6 +62,8 @@ export class BotScheduler implements OnModuleInit, OnModuleDestroy {
       .where(and(eq(paperAccounts.botEnabled, true), eq(paperAccounts.isActive, true)));
     for (const account of accounts) {
       try {
+        const [policy] = await this.db.select({ id: investmentPolicies.id }).from(investmentPolicies).where(eq(investmentPolicies.accountId, account.id));
+        if (policy) continue;
         const profiles = await this.db.select().from(builderProfiles).where(eq(builderProfiles.owner, account.owner));
         if (profiles.some((item) => item.status === 'active'
           && (item.config as { automation?: { enabled: boolean } }).automation?.enabled)) continue;

@@ -16,11 +16,11 @@ export default function ResearchSourceActions({ source, versionId }: { source: R
     try {
       const version = versionId ? (await fetchResearchDocument(versionId)).version : await importResearchDocument(source);
       navigate(discuss ? researchDiscussionPath(version) : `/analysis/reports/${version.id}`);
-    } catch { toast.error(en ? 'Could not save this report version. Please retry.' : '未能保存此报告版本，请重试。'); }
+    } catch { toast.error(en ? 'Could not open the original report. Please retry.' : '未能打开原始报告，请重试。'); }
     finally { setBusy(false); }
   }
   return <div className="flex flex-wrap gap-2">
-    <Button size="sm" variant="outline" disabled={busy} onClick={() => void open(false)}>{en ? 'Read saved version' : '查看固定版本'}</Button>
+    <Button size="sm" variant="outline" disabled={busy} onClick={() => void open(false)}>{en ? 'Read original report' : '查看原始报告'}</Button>
     <Button size="sm" variant="secondary" disabled={busy} onClick={() => void open(true)}>{en ? 'Discuss this report' : '讨论这份报告'}</Button>
   </div>;
 }

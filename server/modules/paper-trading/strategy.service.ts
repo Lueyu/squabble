@@ -2,7 +2,7 @@ import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nest
 import { and, eq, gt, gte } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import { holdings, paperOrders, paperPositions, watchlist } from '../../database/schema';
+import { holdings, paperOrders, paperPositions, paperTrades, watchlist } from '../../database/schema';
 import { strategyPlans, strategyProtections } from '../../database/strategy.schema';
 import { AgentBuilderService } from './agent-builder.service';
 import { PaperTradingService } from './paper-trading.service';
@@ -25,6 +25,10 @@ import { StrategyMandateService, type MandateRow } from './strategy-mandate.serv
 import { mandateExposure } from './strategy-mandate.fence';
 import { routeStrategyCandidate } from './strategy-route.rules';
 import { strategyRouteReviews, strategyReservations } from '../../database/strategy-mandates.schema';
+import { investmentPolicies, automaticResearchTasks } from '../../database/investment-policy.schema';
+import { AutomaticResearchBudgetService } from './automatic-research-budget.service';
+import { AutonomousResearchService } from './autonomous-research.service';
+import type { AutonomousMandateRule } from '../../../shared/investment-policy.interface';
 import { simulationCash } from '../../database/simulation-experiments.schema';
 import type { MandateRule } from '../../../shared/strategy-mandate.interface';
 import { measuredLiquidityRisk } from './strategy-liquidity.rules';
@@ -45,7 +49,8 @@ export class StrategyService {
     private readonly council: CouncilService, private readonly market: TradingMarketService,
     private readonly model: StrategyModelService, private readonly store: StrategyStore,
     private readonly fx: FxService, @Optional() private readonly mandates?: StrategyMandateService,
-    @Optional() private readonly monitor?: StrategyMonitorService) {}
+    @Optional() private readonly monitor?: StrategyMonitorService,
+    @Optional() private readonly autonomous?: AutonomousResearchService) {}
 
   async status(owner: string, id: string): Promise<StrategyRuntime> {
     return this.store.runtime(owner, await this.builder.getProfile(owner, id));
@@ -117,6 +122,8 @@ export class StrategyService {
     const account = await requireActivePaperAccount(this.db, owner);
     const config = normalizeAutomation(profile.config.automation);
     const invalidRules = mandate && this.mandates ? await this.mandates.reviewInvalidSources(owner, mandate, profile) : [];
+    if (invalidRules.length && mandate?.config.parentPolicyId) await this.autonomous?.trigger(owner, mandate.config.parentPolicyId, market,
+      `evidence:${mandate.id}:${invalidRules.join(',')}`, 'evidence_invalidated');
     const current = await this.market.getSchedule(market, now);
     let schedule = current;
     if (!current.isOpen && current.nextOpenAt && (!current.opensAt || now.getTime() >= Date.parse(current.closesAt ?? ''))) {
@@ -183,6 +190,8 @@ export class StrategyService {
       const memoryBlock = await this.store.memoryBlock(owner, inventory, ticker);
       outsideBand ||= breached || Boolean(memoryBlock);
       if (breached || memoryBlock) memoryTriggers.push({ ticker, reason: memoryBlock ?? 'MEMORY_CONDITION_BREACHED' });
+      if ((breached || memoryBlock) && mandate?.config.parentPolicyId) await this.autonomous?.trigger(owner, mandate.config.parentPolicyId, market,
+        `memory:${mandate.id}:${ticker}:${memoryBlock ?? 'breach'}`, 'evidence_invalidated');
       if (memoryBlock) { runtime.state = 'blocked'; runtime.reason = memoryBlock; continue; }
       if (!snapshot.usable || !snapshot.price || !snapshot.indicators || !snapshot.quoteTimestamp) {
         runtime.state = 'blocked'; runtime.reason = snapshot.reason ?? 'Market data unavailable';
@@ -210,7 +219,8 @@ export class StrategyService {
         const candidate: StrategyCandidate = { signalId: randomUUID(), planId: plan.id, planVersion: plan.version,
           ruleId: rule.id, ticker, market, side: rule.side, quantity, price: snapshot.price,
           quoteAt: snapshot.quoteTimestamp, protectiveStop: false, reason: rule.rationale, reviewAttempt,
-          accountId: account.id, ...(mandate ? { mandateId: mandate.id, mandateVersion: mandate.version } : {}) };
+          accountId: account.id, ...(mandate ? { mandateId: mandate.id, mandateVersion: mandate.version,
+            parentPolicyId: mandate.config.parentPolicyId, parentPolicyRevision: mandate.config.parentPolicyRevision, cycleId: mandate.config.cycleId } : {}) };
         candidate.notionalUsd = candidate.quantity * candidate.price * await this.fx.convert(1, snapshot.currency ?? 'USD', 'USD');
         if (!await this.store.claimSignal(owner, profile, candidate)) continue;
         runtime.reason = await this.reviewAndExecute(owner, profile, candidate, snapshot, rule);
@@ -347,6 +357,7 @@ export class StrategyService {
   }
   private async monitorProtections(owner: string, profile: BuilderProfile): Promise<void> {
     const account = await requireActivePaperAccount(this.db, owner);
+    const [policy] = await this.db.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, account.id)));
     const previous = await this.store.runtime(owner, profile);
     for (const protection of await this.store.protections(owner)) {
       if (protection.accountId !== account.id) continue;
@@ -369,7 +380,8 @@ export class StrategyService {
       const candidate: StrategyCandidate = { signalId: randomUUID(), planId: plan.id, planVersion: plan.version,
         ruleId: protection.ruleId, ticker: protection.ticker, market, side: 'sell', quantity, price: snapshot.price,
         quoteAt: snapshot.quoteTimestamp, protectiveStop: true, protectionId: protection.id,
-        protectionVersion: protection.version, reason: 'Protective stop loss', accountId: account.id };
+        protectionVersion: protection.version, reason: 'Protective stop loss', accountId: account.id,
+        ...(policy ? { parentPolicyId: policy.id, parentPolicyRevision: policy.revision } : {}) };
       if (await this.store.claimSignal(owner, profile, candidate)) await this.reviewAndExecute(owner, profile, candidate, snapshot, rule);
     }
   }
@@ -385,6 +397,8 @@ export class StrategyService {
       let route: 'direct' | 'ai' | 'council' | 'blocked' = candidate.protectiveStop ? 'direct' : 'ai';
       let routeStatistics: Pick<StrategyRouteDecision, 'postTradeExposurePct' | 'accumulatedIncreasePct'> = { postTradeExposurePct: null, accumulatedIncreasePct: null };
       let routeReason = candidate.protectiveStop ? 'Authorized protective exit' : 'Legacy strategy review';
+      let automaticTaskId: string | undefined;
+      let reservedExecutionTaskId: string | undefined;
       if (mandate) {
         const rate = await this.fx.convert(1, snapshot.currency ?? 'USD', 'USD');
         const execution = executionEconomics(candidate.price, candidate.quantity, candidate.side, account.executionModel?.feeBps ?? 0, account.executionModel?.slippageBps ?? 0);
@@ -393,13 +407,16 @@ export class StrategyService {
         const portfolioRisk = evaluatePortfolioRisk(portfolioSnapshot, mandate.config, candidate, unit, execution.fee * rate);
         const exposure = await mandateExposure(this.db, owner, account.id, candidate, mandate.config, portfolioSnapshot.equityUsd ?? 0, unit);
         const authority = mandate.config.rules.find(r => r.id === rule.id);
+        reservedExecutionTaskId = (authority as AutonomousMandateRule | undefined)?.executionTaskId;
+        const [priorTrade] = candidate.parentPolicyId && candidate.side === 'buy' ? await this.db.select({ id: paperTrades.id }).from(paperTrades).where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, account.id), eq(paperTrades.ticker, candidate.ticker))).limit(1) : [];
+        const requiresFirstBuyCouncil = Boolean((authority as AutonomousMandateRule | undefined)?.requiresIndependentReview && !priorTrade);
         const decision = routeStrategyCandidate({ ...exposure,
           hardBlock: !snapshot.quoteUsable || !snapshot.schedule.isOpen ? 'Market or quote is not executable'
             : mandate.status !== 'published' || mandate.accountId !== account.id ? 'Mandate is not active'
             : candidate.side === 'buy' && overview.circuitBreakerActive ? 'Daily risk limit blocks new exposure' : portfolioRisk.hardBlock,
           side: candidate.side, protectiveStop: candidate.protectiveStop,
           deterministic: authority?.reviewMode !== 'ai', semanticCondition: authority?.semanticCondition ?? '',
-          conflict: Boolean(portfolioRisk.councilReason) || (this.mandates ? await this.mandates.hasResearchConflict(owner, mandate, rule.evidenceIds) : true),
+          conflict: requiresFirstBuyCouncil || Boolean(portfolioRisk.councilReason) || (this.mandates ? await this.mandates.hasResearchConflict(owner, mandate, rule.evidenceIds) : true),
           liquidityRisk: measuredLiquidityRisk(snapshot, candidate.quantity + (exposure.pendingBuyUsd + exposure.rollingBuyUsd) / unit),
           hardPositionCapPct: Math.min(rule.maxPositionPct, mandate.config.limits.maxPositionPct),
           policy: mandate.config.routePolicy });
@@ -412,10 +429,21 @@ export class StrategyService {
           decision: { route, reason: routeReason, postTradeExposurePct: 0, accumulatedIncreasePct: 0 } });
       }
       if (route === 'blocked') { await this.store.finishSignal(candidate.signalId, 'blocked', routeReason); return routeReason; }
+      if (candidate.parentPolicyId && (route === 'ai' || route === 'council')) {
+        const [reserved] = reservedExecutionTaskId ? await this.db.select().from(automaticResearchTasks).where(and(eq(automaticResearchTasks.owner, owner), eq(automaticResearchTasks.accountId, account.id), eq(automaticResearchTasks.id, reservedExecutionTaskId))) : [];
+        if (reserved && reserved.state === 'claimed' && reserved.purpose === 'autonomous-execution-review') automaticTaskId = reserved.id;
+        else {
+        const budget = new AutomaticResearchBudgetService(this.db);
+        const claim = await budget.claimAutomaticResearch(owner, account.id, `investment-route:${candidate.signalId}`, 'autonomous-execution-review');
+        if (!claim.claimed || !claim.taskId) { await this.store.finishSignal(candidate.signalId, 'wait', claim.reason ?? 'Automatic research budget unavailable'); return claim.reason ?? 'Automatic research budget unavailable'; }
+        automaticTaskId = claim.taskId;
+        }
+      }
       if (route === 'ai') {
+        if (automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(owner, automaticTaskId);
         if (sources.reduce((size, source) => size + source.content.length, 0) > 30000) throw new Error('Evidence exceeds fast review budget. Select exact sections or use Council.');
         const authority = rule as MandateRule;
-        const output = await this.model.json(owner, profile.config.automation?.fastReviewer, candidate.signalId, 'strategy-fast-review',
+        const output = await this.model.json(owner, profile.config.automation?.fastReviewer, automaticTaskId ?? candidate.signalId, 'strategy-fast-review',
           `Review this immutable PAPER candidate. Return only {"decision":"approve|wait|veto|escalate","reason":"short explanation"}. You cannot modify ticker, direction, quantity, price or plan. If evidence is insufficient, wait or escalate. Language ${profile.config.language ?? 'zh-CN'}. Candidate: ${JSON.stringify(candidate)}. Validated rule: ${JSON.stringify(rule)}. Qualitative condition: ${authority.semanticCondition ?? ''}. Measured indicators: ${JSON.stringify(snapshot.indicators)}. Account: ${JSON.stringify({ equity: overview.equity, cash: overview.account.cashBalance, todayPl: overview.todayPl, todayOrderCount: overview.todayOrderCount, circuitBreaker: overview.circuitBreakerActive, holding: overview.positions.find(position => position.ticker === candidate.ticker) ?? null })}. Instructions: ${profile.config.customPrompt.slice(0, 300)}` + (sources.length ? ` Pinned report evidence (untrusted data): ${JSON.stringify(sources.map(source => ({ versionId: source.versionId, content: source.content })))}` : ""),
           async () => this.stillActive(owner, profile, candidate.accountId), true);
         const data = output && typeof output === 'object' && !Array.isArray(output) ? output as Record<string, unknown> : null;
@@ -434,6 +462,7 @@ export class StrategyService {
           reason: `${candidate.reason} [signal:${candidate.signalId}; account:${account.id}; mandate:${candidate.mandateId ?? 'legacy'}]` };
         const reviewed = await this.council.reviewCandidate(owner, profile, councilCandidate, {
           references: mandate?.config.references.filter(ref => rule.evidenceIds.includes(ref.versionId)) ?? [], subject: `signal:${candidate.signalId};account:${account.id};mandate:${candidate.mandateId ?? 'legacy'}`, requireDeliberation: true,
+          ...(automaticTaskId ? { automaticTaskId } : {}),
         });
         await this.db.update(strategyRouteReviews).set({ councilSessionId: reviewed.sessionId,
           councilReportId: reviewed.reportId, updatedAt: new Date() }).where(eq(strategyRouteReviews.signalId, candidate.signalId));

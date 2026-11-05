@@ -19,6 +19,8 @@ import { RecoveryCodeCard } from './RecoveryCodeCard';
 import SettingsGuide from './SettingsGuide';
 import SettingsNavigation from './SettingsNavigation';
 import SystemUpdateCard from './SystemUpdateCard';
+import ResearchParticipantsPanel from './ResearchParticipantsPanel';
+import { useSimpleExperience } from '@/hooks/use-simple-experience';
 import { resolveSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from './settings-navigation';
 import './settings.css';
 
@@ -81,12 +83,13 @@ export default function SettingsPage() {
 
 function SettingsSectionContent({ section, active }: { section: SettingsSection; active: boolean }) {
   const { t } = useTranslation();
+  const { enabled: simple } = useSimpleExperience();
   switch (section) {
     case 'models': return <div className="space-y-6">
       <ModelConnectionsPanel active={active} />
       <IntegrationSettingsPanel section="models" active={active} />
     </div>;
-    case 'agents': return <div className="space-y-6"><LocalAgentsPanel /><ResearchMemorySettings /></div>;
+    case 'agents': return <div className="space-y-6">{simple && <ResearchParticipantsPanel />}<LocalAgentsPanel /><ResearchMemorySettings /></div>;
     case 'data': return <IntegrationSettingsPanel section="data" active={active} />;
     case 'budget': return <BudgetPanel />;
     case 'rules': return <StrategyRulesPage embedded active={active} />;

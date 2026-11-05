@@ -3,7 +3,7 @@ import { and, eq, gte, inArray, or } from 'drizzle-orm';
 import type { MemoryFenceTransaction } from '../research-memory/research-memory.fence';
 import { strategyMandates, strategyRouteReviews, strategyReservations } from '../../database/strategy-mandates.schema';
 import { strategySignals } from '../../database/strategy.schema';
-import { paperOrders, paperPositions } from '../../database/schema';
+import { paperOrders, paperPositions, paperTrades } from '../../database/schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { routeStrategyCandidate } from './strategy-route.rules';
 import type { StrategyCandidate, StrategyRule } from '../../../shared/strategy.interface';
@@ -14,6 +14,7 @@ import { councilReports } from '../../database/council.schema';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { paperRiskDay } from './paper-risk-day';
+import type { AutonomousMandateRule } from '../../../shared/investment-policy.interface';
 
 /** Recomputed under the paper account lock, including other still-live candidates. */
 export async function mandateExposure(tx: MemoryFenceTransaction, owner: string, accountId: string,
@@ -86,10 +87,12 @@ export async function assertMandateExecution(tx: MemoryFenceTransaction, owner: 
     throw new BadRequestException('Mandate daily turnover limit exceeded');
   }
   const councilIds = versions.flatMap(version => version.source?.type === 'council' ? [version.source.id] : []);
+  const [priorTrade] = candidate.parentPolicyId && candidate.side === 'buy' ? await tx.select({ id: paperTrades.id }).from(paperTrades).where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, accountId), eq(paperTrades.ticker, candidate.ticker))).limit(1) : [];
+  const requiresFirstBuyCouncil = Boolean((authorized as AutonomousMandateRule).requiresIndependentReview && !priorTrade);
   const reports = councilIds.length ? await tx.select().from(councilReports).where(and(eq(councilReports.owner, owner), inArray(councilReports.id, councilIds))).for('share') : [];
   const required = routeStrategyCandidate({ ...exposure, hardBlock: null, side: candidate.side, protectiveStop: false,
     deterministic: authorized.reviewMode !== 'ai', semanticCondition: authorized.semanticCondition ?? '',
-    conflict: Boolean(portfolioRisk?.councilReason) || reports.some(report => report.dissent.length > 0),
+    conflict: requiresFirstBuyCouncil || Boolean(portfolioRisk?.councilReason) || reports.some(report => report.dissent.length > 0),
     liquidityRisk: measuredLiquidityRisk(snapshot, candidate.quantity + (exposure.pendingBuyUsd + exposure.rollingBuyUsd) / unitUsd),
     hardPositionCapPct: Math.min(config.limits.maxPositionPct, rule.maxPositionPct), policy: config.routePolicy });
   const [review] = await tx.select().from(strategyRouteReviews).where(and(eq(strategyRouteReviews.owner, owner),

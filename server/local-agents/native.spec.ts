@@ -15,6 +15,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 if (args.includes('--version')) { console.log('fixture-cli 1.2.3'); process.exit(0); }
+if (args.includes('mcp') && args.includes('list')) {
+  console.log(JSON.stringify([{name:'unrelated',enabled:!args.includes('mcp_servers.unrelated.enabled=false')}]));process.exit(0);
+}
 if (args.includes('status')) {
   const state = fs.readFileSync(path.join(process.env.CODEX_HOME, 'auth-state'), 'utf8');
   if (state === 'hang') { setInterval(() => {}, 1000); }
@@ -89,6 +92,10 @@ test('native research uses stdin, inherited auth home and fixed safe Codex argv 
     assert.ok(captured.args.indexOf('--search') < captured.args.indexOf('exec'));
     assert.equal(captured.args[captured.args.indexOf('--sandbox') + 1], 'read-only');
     assert.equal(captured.args.includes('--ignore-user-config'), false);
+    assert.ok(captured.args.includes('features.apps=false'),'text-only research disables global apps');
+    assert.ok(captured.args.includes('features.plugins=false'),'text-only research disables global plugins');
+    assert.ok(captured.args.includes('features.hooks=false'),'text-only research disables global hooks');
+    assert.ok(captured.args.includes('mcp_servers.unrelated.enabled=false'),'text-only research disables unrelated MCP');
     assert.equal(captured.env.CODEX_HOME, root);
     assert.equal(captured.env.JWT_SECRET, undefined);
     assert.equal(captured.env.SQUABBLE_COMPANION_TOKEN, undefined);

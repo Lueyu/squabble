@@ -51,6 +51,7 @@ import { strategyMandates, strategyReservations } from '../../database/strategy-
 import { simulationLotRejection } from './simulation-order.rules';
 import { requireActivePaperAccount } from './simulation-account';
 import { assertMandateExecution } from './strategy-mandate.fence';
+import { investmentExecutionFence, assertLegacyInvestmentWrite } from './investment-policy.fence';
 import { evaluatePortfolioRisk, preparePortfolioRiskInputs, readPortfolioRiskSnapshot } from './strategy-portfolio-risk';
 import { simulationCash, simulationSeeds } from '../../database/simulation-experiments.schema';
 import { recordSimulationCashFill, settleSimulationCash } from './simulation-ledger';
@@ -148,11 +149,13 @@ export class PaperTradingService {
 
   /** Legacy reset endpoint now creates an independent cash experiment; history is retained. */
   async resetAccount(userId: string, initialCash?: number): Promise<PaperAccount> {
+    await assertLegacyInvestmentWrite(this.db, userId);
     if (initialCash !== undefined && (!Number.isFinite(initialCash) || initialCash <= 0)) {
       throw new BadRequestException('Initial cash must be positive');
     }
     const created = await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
+      await assertLegacyInvestmentWrite(tx, userId);
       await tx.update(paperAccounts).set({ isActive: false, botEnabled: false, updatedAt: new Date() }).where(eq(paperAccounts.owner, userId));
       await tx.update(builderProfiles).set({ status: 'paused', version: sql`${builderProfiles.version} + 1`, updatedAt: new Date() })
         .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.status, 'active')));
@@ -357,6 +360,10 @@ export class PaperTradingService {
         .where(and(eq(paperAccounts.id, initialAccount.id), eq(paperAccounts.owner, userId)))
         .for('update');
       if (!lockedAccount || !lockedAccount.isActive || (expectedAccountId && lockedAccount.id !== expectedAccountId)) throw new BadRequestException('Paper account changed during execution');
+      if (source === 'agent' && !strategySignalId) {
+        const investment = await investmentExecutionFence(tx, userId, lockedAccount.id, { ticker: dto.ticker, side: dto.side, market: price.market }, source);
+        if (investment.block) return { memoryBlock: investment.block };
+      }
       const execution = executionEconomics(price.price, quantity, dto.side, lockedAccount.executionModel?.feeBps ?? 0, lockedAccount.executionModel?.slippageBps ?? 0);
       if (approvedPendingOrderId) {
         const [pending] = await tx.select().from(paperOrders).where(and(eq(paperOrders.id, approvedPendingOrderId), eq(paperOrders.accountId, lockedAccount.id), eq(paperOrders.owner, userId))).for('update');
@@ -395,6 +402,8 @@ export class PaperTradingService {
         const [plan] = signal ? await tx.select().from(strategyPlans).where(and(eq(strategyPlans.id, signal.planId),
           eq(strategyPlans.owner, userId))).for('update') : [];
         const candidate = signal?.candidate;
+        const investment = await investmentExecutionFence(tx, userId, lockedAccount.id, { ticker: dto.ticker, side: dto.side, market: price.market }, source, candidate);
+        if (investment.block) return { memoryBlock: investment.block };
         strategyRule = plan?.rules.find((rule) => rule.id === signal?.ruleId) ?? null;
         const now = Date.now();
         if (!signal || signal.state !== 'approved' || signal.orderId || !candidate || !plan || !strategyRule
@@ -452,10 +461,10 @@ export class PaperTradingService {
             await settleStrategyReservation(tx, userId, signal.id, 'released', memoryBlock);
             return { memoryBlock };
           }
-          if (builderProfile.config.tickers.length && !builderProfile.config.tickers.includes(dto.ticker)) {
+          if (!investment.policy && builderProfile.config.tickers.length && !builderProfile.config.tickers.includes(dto.ticker)) {
             throw new BadRequestException('Ticker is outside the current investor allowlist');
           }
-          if (!builderProfile.config.tickers.length) {
+          if (!investment.policy && !builderProfile.config.tickers.length) {
             const owned = await tx.select({ id: holdings.id }).from(holdings).where(and(eq(holdings.owner, userId), eq(holdings.ticker, dto.ticker))).limit(1);
             const watched = await tx.select({ id: watchlist.id }).from(watchlist).where(and(eq(watchlist.owner, userId), eq(watchlist.ticker, dto.ticker))).limit(1);
             const held = await tx.select({ id: paperPositions.id }).from(paperPositions).where(and(eq(paperPositions.accountId, lockedAccount.id), eq(paperPositions.ticker, dto.ticker))).limit(1);
@@ -844,6 +853,7 @@ export class PaperTradingService {
   /** Enable/disable the bot for the caller's account. */
   async toggleBot(userId: string, enabled: boolean): Promise<PaperAccount> {
     const account = await this.requireAccount(userId);
+    await assertLegacyInvestmentWrite(this.db, userId, account.id);
     if (!enabled) {
       const active = await this.builder.getActiveProfile(userId);
       if (active) await this.builder.pauseProfile(userId, active.id);
@@ -855,6 +865,7 @@ export class PaperTradingService {
       await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.id, account.id), eq(paperAccounts.isActive, true))).for('update');
       if (!current) throw new BadRequestException('Paper account changed');
+      await assertLegacyInvestmentWrite(tx, userId, account.id);
       const [row] = await tx.update(paperAccounts).set({ botEnabled: enabled, updatedAt: new Date() })
         .where(eq(paperAccounts.id, account.id)).returning();
       return row;
@@ -935,6 +946,7 @@ export class PaperTradingService {
   }> {
     const account = await this.requireAccount(userId);
     if (expectedAccountId && account.id !== expectedAccountId) throw new BadRequestException('Paper account changed');
+    await assertLegacyInvestmentWrite(this.db, userId, account.id);
     if (!account.botEnabled) {
       throw new BadRequestException('Bot is not enabled');
     }

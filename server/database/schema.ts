@@ -931,3 +931,6 @@ export const userApiSettings = pgTable("user_api_settings", {
 });
 export * from './research-memory.schema';
 export * from './research-workflow.schema';
+export * from './simple-experience.schema';
+export * from './investment-policy.schema';
+export * from './simple-council.schema';

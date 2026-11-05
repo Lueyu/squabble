@@ -6,6 +6,25 @@ import type { ResearchWorkflowConfig } from '../../../shared/research-workflow.i
 export interface DialogueTurn { memberId: string; phase: Exclude<CouncilPhase, 'progress'> }
 export interface ResearchRequest { kind: CouncilResearchKind; query?: string }
 export interface CouncilCheckpoint {
+  automaticTaskId?: string;
+  simple?: {
+    stage: 'independent' | 'discussion' | 'supplement' | 'completed' | 'waiting';
+    supplementRounds: number;
+    executors: import('../../../shared/simple-conversation.interface').ActualExecutor[];
+    unavailable: Array<{ memberId: string; reason: string }>;
+    outcome?: import('../../../shared/simple-conversation.interface').DebateOutcome;
+    contextLabel?: string;
+    contextDate?: string;
+    /** Frozen common facts: private member sources are only added after release. */
+    commonEvidence?: CouncilEvidence[];
+    commonMessageIds?: string[];
+    stockFactsPrepared?: boolean;
+    privateEvidence?: Record<string, CouncilEvidence[]>;
+    startedAt?: string;
+    calls?: number;
+    automaticTaskId?: string;
+    steeringRevision?: number;
+  };
   workflow?: ResearchWorkflowConfig;
   cycleId: string;
   turns: DialogueTurn[];
@@ -18,7 +37,7 @@ export interface CouncilCheckpoint {
     turn: number; revision: number; dispatchStarted: boolean; awaitingInput?: boolean; lastUserMessageId?: string };
 }
 export interface CouncilMessageMetadata extends Pick<CouncilMessage,
-  'references' | 'memory' | 'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown' | 'response'> {
+  'actualExecutor' | 'claims' | 'respondsToClaims' | 'stanceChange' | 'evidenceCheckStatus' | 'references' | 'memory' | 'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown' | 'response'> {
   cycleId?: string;
   researchEvent?: ResearchEvent;
   turn?: number;

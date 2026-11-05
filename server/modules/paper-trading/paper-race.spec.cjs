@@ -25,6 +25,7 @@ const PaperTradingService = loadService('server/modules/paper-trading/paper-trad
   './simulation-order.rules': { simulationLotRejection: () => null },
   './paper-risk-day': { paperRiskDay: date => date.toISOString().slice(0, 10), paperRiskTimezone: async () => 'UTC' },
   './strategy-mandate.fence': { assertMandateExecution: unexpectedStrategyMemory },
+  './investment-policy.fence': { investmentExecutionFence: async () => ({ policy: null, block: null }), assertLegacyInvestmentWrite: async () => undefined },
   './strategy-reservation': { settleStrategyReservation: unexpectedStrategyMemory },
   './strategy-portfolio-risk': { preparePortfolioRiskInputs: unexpectedStrategyMemory, readPortfolioRiskSnapshot: unexpectedStrategyMemory, evaluatePortfolioRisk: unexpectedStrategyMemory },
   './simulation-corporate-actions': { readCorporateActionGaps: async () => [], persistCorporateActionGaps: unexpectedStrategyMemory },

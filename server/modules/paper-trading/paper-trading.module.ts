@@ -31,13 +31,21 @@ import { SimulationExperimentsService } from './simulation-experiments.service';
 import { SimulationExperimentsController } from './simulation-experiments.controller';
 import { StrategyMonitorService } from './strategy-monitor.service';
 import { StrategyDailyAdjustments } from './strategy-daily-adjustments';
+import { InvestmentPolicyService } from './investment-policy.service';
+import { InvestmentPolicyController } from './investment-policy.controller';
+import { AutomaticResearchBudgetService } from './automatic-research-budget.service';
+import { AutonomousResearchService } from './autonomous-research.service';
+import { AutonomousResearchScheduler } from './autonomous-research.scheduler';
+import { AutonomousPlanCompiler } from './autonomous-plan.compiler';
+import { ResearchDiscoveryService } from '../research-tools/research-discovery.service';
 
 @Module({
   imports: [HttpModule, QuoteModule, FxModule, NotificationModule, MultiAgentModule, CouncilModule, LocalAgentsModule, ResearchDocumentsModule],
-  controllers: [PaperTradingController, AgentBuilderController, StrategyMandateController, SimulationExperimentsController],
+  controllers: [PaperTradingController, AgentBuilderController, StrategyMandateController, SimulationExperimentsController,InvestmentPolicyController],
   providers: [PaperTradingService, AgentBuilderService, BuilderCadenceService, BotScheduler,
     TradingMarketService, StrategyStore, StrategyModelService, StrategyService, StrategyNotificationsService, StrategyScheduler,
-    StrategyMandateService, SimulationExperimentsService, StrategyMonitorService, StrategyDailyAdjustments],
-  exports: [PaperTradingService],
+    StrategyMandateService, SimulationExperimentsService, StrategyMonitorService, StrategyDailyAdjustments,InvestmentPolicyService,AutomaticResearchBudgetService,
+    AutonomousResearchService,AutonomousResearchScheduler,AutonomousPlanCompiler,ResearchDiscoveryService],
+  exports: [PaperTradingService,InvestmentPolicyService,AutomaticResearchBudgetService],
 })
 export class PaperTradingModule {}

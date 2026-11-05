@@ -24,6 +24,7 @@ export const strategyPlans = pgTable('strategy_plans', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export const strategySignals = pgTable('strategy_signals', {
+  parentPolicyId: uuid('parent_policy_id'), parentPolicyRevision: integer('parent_policy_revision'), cycleId: uuid('cycle_id'),
   id: uuid('id').primaryKey(), owner: text('owner').notNull(), profileId: uuid('profile_id').notNull(),
   planId: uuid('plan_id').notNull(), ruleId: text('rule_id').notNull(), kind: text('kind').notNull(),
   state: text('state').notNull(), candidate: jsonb('candidate').$type<StrategyCandidate>().notNull(),

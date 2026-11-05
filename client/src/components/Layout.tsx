@@ -45,6 +45,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Skeleton } from '@/components/ui/skeleton';
 import { Mascot } from '@/components/Mascot';
 import { AppearancePicker } from '@/components/AppearancePicker';
+import { useSimpleExperience } from '@/hooks/use-simple-experience';
+import { simpleNavigation } from '@/utils/simple-experience';
 
 /**
  * Sidebar navigation entries. `end: true` marks the index route so it is only
@@ -85,7 +87,13 @@ function Layout() {
   const inSettings = location.pathname === '/settings' || location.pathname.startsWith('/settings/');
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
-  const navGroups = [
+  const { enabled: simple } = useSimpleExperience();
+  const simpleItems = simple ? simpleNavigation(i18n.language).map((item, index) => ({ ...item, icon: [LayoutDashboard, Users, FlaskConical][index], literal: true })) : [];
+  const allItems = simple ? [...simpleItems, ...navItems.filter(item => ['/holdings', '/import', '/settings'].includes(item.path))] : navItems;
+  const navGroups = simple ? [
+    { label: zh ? '日常' : 'Every day', items: simpleItems },
+    { label: zh ? '持仓与设置' : 'Portfolio & settings', items: navItems.filter(item => ['/holdings', '/import', '/settings'].includes(item.path)) },
+  ] : [
     { label: zh ? '我的投资' : 'Portfolio', items: navItems.slice(0, 4) },
     { label: zh ? '研究与实验' : 'Research & lab', items: navItems.slice(4, 10) },
     { label: zh ? '偏好设置' : 'Preferences', items: navItems.slice(10) },
@@ -141,8 +149,8 @@ function Layout() {
                 key={item.path}
                 to={item.path}
                 end={item.end}
-                aria-label={t(item.label)}
-                title={t(item.label)}
+                aria-label={'literal' in item ? item.label : t(item.label)}
+                title={'literal' in item ? item.label : t(item.label)}
                 className={({ isActive }) =>
                   `app-nav-link flex items-center px-3 py-2 text-sm transition-colors ${
                     isActive
@@ -152,7 +160,7 @@ function Layout() {
                 }
               >
                 <item.icon size={18} />
-                <span>{t(item.label)}</span>
+                <span>{'literal' in item ? item.label : t(item.label)}</span>
               </NavLink>
                 ))}
               </div>
@@ -216,16 +224,16 @@ function Layout() {
             </button>
             <div className="app-page-title">
               {(() => {
-                const match = navItems.find((item) => {
+                const match = allItems.find((item) => {
                   if (item.end) return location.pathname === item.path;
                   return location.pathname.startsWith(item.path);
                 });
-                return match ? t(match.label) : t('layout.appName');
+                return match ? ('literal' in match ? match.label : t(match.label)) : t('layout.appName');
               })()}
             </div>
           </div>
           <div className="app-topbar-actions">
-            <div className="app-market-status"><MarketStatusIndicator /></div>
+            <div className="app-market-status"><MarketStatusIndicator simple={simple} /></div>
             <AppearancePicker />
           </div>
         </header>
@@ -248,8 +256,8 @@ function Layout() {
  * shows "交易中" (green) when at least one market is in continuous trading,
  * otherwise "休市". Also exposes a refresh button that forces a quote refetch.
  */
-function MarketStatusIndicator() {
-  const { t } = useTranslation();
+function MarketStatusIndicator({simple=false}:{simple?:boolean}) {
+  const { t,i18n } = useTranslation();
   const [anyTrading, setAnyTrading] = useState(false);
 
   useEffect(() => {
@@ -262,7 +270,7 @@ function MarketStatusIndicator() {
     return () => clearInterval(timer);
   }, []);
 
-  const statusLabel = anyTrading ? t('layout.trading') : t('layout.closed');
+  const statusLabel = simple ? (i18n.language.startsWith('zh') ? (anyTrading?'市场开市':'市场休市') : (anyTrading?'Market open':'Markets closed')) : anyTrading ? t('layout.trading') : t('layout.closed');
   const statusColor = anyTrading ? 'text-success' : 'text-muted-foreground';
 
   return (

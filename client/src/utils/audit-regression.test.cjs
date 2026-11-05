@@ -45,6 +45,7 @@ function harness(file, options = {}) {
       toDate: (v) => v ? new Date(v) : null,
     },
     '@/hooks/use-market-quotes': { useMarketQuotes: () => ({ quotes: {}, marketStatus: {}, marketErrors: {}, refresh() {} }) },
+    '@/hooks/use-simple-experience': { useSimpleExperience: () => ({ enabled: false }) },
     './JournalSectionCard': {
       JournalSectionCard: 'JournalSectionCard',
       sections: ['marketSummary', 'portfolioSummary', 'actions', 'plan', 'lessons'].map((key) => ({ key })),

@@ -9,6 +9,9 @@
  */
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
+import { useSimpleExperience } from '@/hooks/use-simple-experience';
+import { questionPath } from '@/utils/simple-experience';
 import { Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { WatchItem, Signal } from '@shared/api.interface';
@@ -124,7 +127,8 @@ function DetailDialog({
   onUpdated,
   onDeleted,
 }: DetailDialogProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { enabled: simple } = useSimpleExperience();
   const [editMode, setEditMode] = useState(false);
   const [formData, setFormData] = useState<WatchFormData>(toFormData(item));
   const [submitting, setSubmitting] = useState(false);
@@ -211,6 +215,7 @@ function DetailDialog({
               </span>
             </DialogTitle>
           </DialogHeader>
+          {simple && !editMode && item && <div className="flex flex-wrap gap-2"><Button size="sm" asChild><Link to={questionPath({ ticker: item.ticker })}>{i18n.language.startsWith('zh') ? '问问大家' : 'Ask the team'}</Link></Button><Button size="sm" variant="outline" asChild><Link to={`/analysis?ticker=${encodeURIComponent(item.ticker)}`}>{i18n.language.startsWith('zh') ? '当前分析' : 'Current analysis'}</Link></Button></div>}
 
           {!editMode ? (
             <div className="space-y-4">

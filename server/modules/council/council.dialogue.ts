@@ -4,6 +4,10 @@ import { byteExcerpt, type CouncilEvidence, type CouncilOpinion, parseOpinion } 
 import type { CouncilCheckpoint, DialogueTurn, ResearchRequest } from './council.types';
 
 export interface DiscussionContribution {
+  claims?: import('../../../shared/simple-conversation.interface').PublicClaim[];
+  respondsToClaims?: string[];
+  stanceChange?: import('../../../shared/simple-conversation.interface').StanceChange;
+  evidenceCheckStatus?: 'unverified' | 'verified' | 'disputed' | 'unavailable';
   content: string;
   response?: CouncilResponse;
   evidenceIds: string[];
@@ -45,7 +49,10 @@ function parseResponse(value: unknown): CouncilResponse | undefined {
   return response;
 }
 
-export function newCheckpoint(members: CouncilMember[]): CouncilCheckpoint {
+export function newCheckpoint(members: CouncilMember[], options?: { independent?: boolean }): CouncilCheckpoint {
+  if (options?.independent) return { cycleId: randomUUID(), turns: members.map(member => ({ memberId: member.id, phase: 'opening' })),
+    nextTurn: 0, toolKindsUsed: [], pendingResearch: [],
+    simple: { stage: members.length ? 'independent' : 'waiting', supplementRounds: 0, executors: [], unavailable: [] } };
   const reviewers = members.filter((member) => member.role !== 'manager');
   const manager = members.find((member) => member.role === 'manager');
   if (!manager || !reviewers.length) throw new Error('A research team requires members and a moderator');
@@ -108,7 +115,22 @@ export function parseContribution(value: unknown, validIds: Set<string>, turn: D
       : { decision: 'wait' as const, summary: reportContent, dissent: strings(data.dissent, 8),
         nextReviewCondition: typeof data.nextReviewCondition === 'string' ? data.nextReviewCondition.slice(0, 1000) : '', evidenceIds: data.evidenceIds as string[] }
     : null;
+  const claims = Array.isArray(data.claims) ? data.claims.slice(0, 8).map((raw: unknown) => {
+    if (!raw || typeof raw !== 'object') throw new Error('Invalid public claim');
+    const claim = raw as Record<string, unknown>;
+    if (typeof claim.id !== 'string' || !/^[\w:-]{1,100}$/u.test(claim.id) || typeof claim.statement !== 'string'
+      || !claim.statement.trim() || claim.statement.length > 2000 || !Array.isArray(claim.evidenceIds)
+      || claim.evidenceIds.some(id => typeof id !== 'string' || !validIds.has(id))) throw new Error('Invalid public claim');
+    return { id: claim.id, statement: claim.statement.trim(), evidenceIds: claim.evidenceIds as string[] };
+  }) : undefined;
+  const change = data.stanceChange as Record<string, unknown> | undefined;
+  if (change && (!['retained', 'changed', 'unconfirmed'].includes(String(change.status)) || typeof change.reason !== 'string'
+    || !change.reason.trim() || change.reason.length > 2000)) throw new Error('Invalid public stance change');
   return { content, ...(response ? { response } : {}), evidenceIds: data.evidenceIds as string[],
+    ...(claims ? { claims } : {}), respondsToClaims: strings(data.respondsToClaims, 8),
+    ...(change ? { stanceChange: { status: change.status as 'retained' | 'changed' | 'unconfirmed', reason: String(change.reason).trim() } } : {}),
+    evidenceCheckStatus: ['unverified', 'verified', 'disputed', 'unavailable'].includes(String(data.evidenceCheckStatus))
+      ? data.evidenceCheckStatus as DiscussionContribution['evidenceCheckStatus'] : 'unverified',
     reasoningSummary: strings(data.reasoningSummary, 4), questions: strings(data.questions, 3), researchRequests,
     opinion, researchStance: candidate ? null : stance };
 }

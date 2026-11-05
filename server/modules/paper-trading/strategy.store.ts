@@ -14,6 +14,7 @@ import { captureStrategyMemory, carryPlanBreaches, strategyMemoryBlock } from '.
 import { requireActivePaperAccount } from './simulation-account';
 import { reserveStrategyCandidate, settleStrategyReservation } from './strategy-reservation';
 import { strategyMandates } from '../../database/strategy-mandates.schema';
+import { investmentExecutionFence } from './investment-policy.fence';
 
 export type StrategyTaskRow = typeof strategyTasks.$inferSelect;
 export type StrategyPlanRow = typeof strategyPlans.$inferSelect;
@@ -128,9 +129,12 @@ export class StrategyStore {
     await lockMemoryOwner(tx, owner);
     const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true))).for('update');
     if (!account || candidate.accountId && candidate.accountId !== account.id) return false;
+    const investment = await investmentExecutionFence(tx, owner, account.id, candidate, 'agent', candidate);
+    if (investment.block) return false;
     const [row] = await tx.insert(strategySignals).values({ id: candidate.signalId, owner, profileId: profile.id,
+      parentPolicyId: candidate.parentPolicyId, parentPolicyRevision: candidate.parentPolicyRevision, cycleId: candidate.cycleId,
       planId: candidate.planId, ruleId: candidate.ruleId, kind: candidate.protectiveStop
-        ? `stop:${candidate.protectionId ?? 'plan'}:${candidate.protectionVersion ?? 1}:${candidate.quoteAt}`
+        ? `stop:${candidate.protectionId ?? 'plan'}:${candidate.protectionVersion ?? 1}:${candidate.quoteAt}${candidate.parentPolicyRevision ? ':policy-' + candidate.parentPolicyRevision : ''}`
         : `entry:${candidate.reviewAttempt ?? 1}`,
       state: candidate.protectiveStop ? 'approved' : 'reviewing', candidate, reason: candidate.reason })
       .onConflictDoNothing().returning({ id: strategySignals.id });

@@ -82,6 +82,14 @@ Override `SERVER_PORT=3000` and `CLIENT_DEV_PORT=8080` in `.env.local` if needed
 | **Portfolio import** | CSV with auto column mapping (5 broker presets). Select up to 20 screenshots for sequential recognition by a connected image-capable local agent or vision API. Remove unwanted images, then review the combined, editable results before one import confirmation. |
 | **Notifications** | Webhook, Bark, ServerChan, SMTP, Telegram. Every fill and risk event, pushed to you. |
 
+## Simplified experience (opt-in rollout)
+
+Set `SQUABBLE_SIMPLE_EXPERIENCE=true` on the server to use **Today**, **Research room** and **AI investment**. Today shows portfolio facts and current analysis; ask a question directly to bring connected agents into a discussion. Members submit this round's initial research before seeing each other's findings, then challenge specific evidence and retain unresolved disagreements. No report-version or strategy-publication workflow is required.
+
+AI investment starts from an explicitly confirmed holdings/cash snapshot and manages one independent paper account. The team can discover securities within your confirmed markets and limits. Clear rules use the fast path; ambiguous or material decisions receive additional research. New-stock purchases require two distinct execution sources. Chat restrictions take effect only after you confirm the impact card. **Pause automatic trading stops every automatic buy and sell, including protective exits.** Resume reassesses current conditions; it never replays missed orders.
+
+Existing ledgers and historical decision evidence are preserved. Existing automatic accounts require explicit adoption before switching to the new authorization. The default performance comparison is the same starting holdings held unchanged. Missing prices, FX, asset verification or source data remain visible gaps. See the [product specification](docs/squabble-simple-product.zh-CN.md) and [delivery notes](docs/simple-experience-delivery.md) for defaults, rollout and verification.
+
 ## Connect native research agents
 
 Open **Settings → Local research agents** to use Codex, Claude Code, Gemini CLI,
