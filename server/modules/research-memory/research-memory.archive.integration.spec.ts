@@ -44,6 +44,12 @@ async function seed(db: ReturnType<typeof drizzle>, owner: string, options: { co
     report: { ...report, createdAt: report.createdAt.toISOString() } } };
 }
 
+async function makeJobsDue(client: postgres.Sql) {
+  // PostgreSQL schedules with microsecond precision; workers compare a separate JavaScript millisecond clock.
+  // Explicitly advance queued fixtures past their due time without waiting for either clock.
+  await client`UPDATE research_archive_jobs SET next_attempt_at = '2000-01-01T00:00:00Z' WHERE state = 'queued'`;
+}
+
 test('publication queues the exact report atomically and records successful versus failed outcomes', { skip: !process.env.MEMORY_TEST_DATABASE_URL },
   async () => fixture(async ({ db, client, owner }) => {
     const council = new CouncilService(db, {} as never, {} as never, {} as never, {} as never);
@@ -69,8 +75,9 @@ test('workers recover leases, fence stale completions and keep source deletion a
   async () => fixture(async ({ db, client, owner, jobs, memory }) => {
     const source = await seed(db, owner);
     await enqueueResearchArchive(db, source.report, 'AAPL');
+    await makeJobsDue(client);
     const first = (await jobs.claim())!;
-    await client`UPDATE research_archive_jobs SET lease_until = now() - interval '1 second' WHERE id = ${first.id}`;
+    await client`UPDATE research_archive_jobs SET lease_until = '2000-01-01T00:00:00Z' WHERE id = ${first.id}`;
     const restarted = new ResearchArchiveService(db, memory), second = (await restarted.claim())!;
     assert.notEqual(first.leaseToken, second.leaseToken);
     await jobs.runClaim(first.id, first.leaseToken!);
@@ -81,11 +88,12 @@ test('workers recover leases, fence stale completions and keep source deletion a
     const archived = (await memory.list(owner, { ticker: 'AAPL' })).memories[0];
     await memory.deleteMemory(owner, archived.id);
     await client`UPDATE research_archive_jobs SET state = 'failed' WHERE id = ${first.id}`;
-    await jobs.retry(owner, first.id); await jobs.tick();
+    await jobs.retry(owner, first.id); await makeJobsDue(client); await jobs.tick();
     assert.equal((await jobs.list(owner)).jobs[0].error, 'MEMORY_DELETED');
     assert.equal((await memory.list(owner, { ticker: 'AAPL' })).memories.length, 0);
     const gone = await seed(db, owner); await enqueueResearchArchive(db, gone.report, 'AAPL');
     await db.delete(councilSessions).where(eq(councilSessions.id, gone.session.id));
+    await makeJobsDue(client);
     await jobs.tick();
     assert.equal((await jobs.list(owner)).jobs.find(row => row.reportId === gone.report.id)?.error, 'MEMORY_SOURCE_NOT_FOUND');
   }));
@@ -94,19 +102,22 @@ test('final archival transaction rolls back on completion failure and cannot rev
   async () => fixture(async ({ db, client, owner, jobs, memory }) => {
     const source = await seed(db, owner); await enqueueResearchArchive(db, source.report, 'AAPL');
     await client`ALTER TABLE research_archive_jobs ADD CONSTRAINT completion_failure_fixture CHECK (state <> 'succeeded')`;
+    await makeJobsDue(client);
     await jobs.tick();
     assert.equal((await db.select().from(researchMemories)).length, 0, 'failure after archive writes must roll the entire archive back');
     await client`ALTER TABLE research_archive_jobs DROP CONSTRAINT completion_failure_fixture`;
-    await client`UPDATE research_archive_jobs SET next_attempt_at = now()`;
+    await makeJobsDue(client);
     await jobs.tick();
     const archived = (await memory.list(owner, { ticker: 'AAPL' })).memories[0];
     const job = (await jobs.list(owner)).jobs[0];
     await client`UPDATE research_archive_jobs SET state = 'failed' WHERE id = ${job.id}`;
     await jobs.retry(owner, job.id);
+    await makeJobsDue(client);
     await Promise.all([jobs.tick(), memory.deleteMemory(owner, archived.id)]);
     assert.equal((await memory.list(owner, { ticker: 'AAPL' })).memories.length, 0);
     assert.equal((await db.select().from(researchMemories))[0].summary, '');
     const gone = await seed(db, owner); await enqueueResearchArchive(db, gone.report, 'AAPL');
+    await makeJobsDue(client);
     const claim = (await jobs.claim())!;
     let running: Promise<void> | undefined;
     await client.begin(async tx => {
@@ -139,15 +150,16 @@ test('active theses survive 101 newer reports and list/recall query counts stay 
   }));
 
 test('manual import continues beyond 100 records while automatic jobs respect live preferences', { skip: !process.env.MEMORY_TEST_DATABASE_URL },
-  async () => fixture(async ({ db, owner, jobs, memory }) => {
+  async () => fixture(async ({ db, client, owner, jobs, memory }) => {
     const source = await seed(db, owner);
     await enqueueResearchArchive(db, source.report, 'AAPL');
     await memory.updatePreferences(owner, { autoArchive: false, recallEnabled: true });
+    await makeJobsDue(client);
     await jobs.tick();
     const failed = (await jobs.list(owner, { state: 'failed' })).jobs[0];
     assert.equal(failed.error, 'MEMORY_AUTO_ARCHIVE_DISABLED');
     await assert.rejects(jobs.retry(randomUUID(), failed.id), /MEMORY_ARCHIVE_NOT_FOUND/);
-    await jobs.retry(owner, failed.id); await jobs.tick();
+    await jobs.retry(owner, failed.id); await makeJobsDue(client); await jobs.tick();
     assert.equal((await memory.list(owner, { ticker: 'AAPL' })).memories.length, 1);
     assert.equal((await memory.list(owner, { ticker: 'AAPL' })).theses.length, 0, 'manual import never invents extracted claims');
     await db.insert(councilReports).values(Array.from({ length: 105 }, (_, index) => ({ ...source.report, id: randomUUID(), version: index + 2 })));
@@ -162,6 +174,7 @@ test('manual import continues beyond 100 records while automatic jobs respect li
     let seen = 0; cursor = undefined;
     do { const page = await jobs.list(owner, { limit: 17, cursor }); seen += page.jobs.length; cursor = page.nextCursor ?? undefined; } while (cursor);
     assert.equal(seen, 106);
+    await makeJobsDue(client);
     for (let index = 0; index < 21; index++) await jobs.tick();
     assert.equal((await jobs.list(owner)).counts.succeeded, 106);
     const archived = (await memory.list(owner, { ticker: 'AAPL' })).memories[0];
@@ -246,18 +259,19 @@ test('transient archive failures back off, stop after bounded attempts and suppo
     const source = await seed(db, owner); await enqueueResearchArchive(db, source.report, 'AAPL');
     await client`ALTER TABLE research_memories ADD CONSTRAINT fail_archive_fixture CHECK (false)`;
     for (let index = 0; index < 5; index++) {
+      await makeJobsDue(client);
       await jobs.tick();
       const job = (await jobs.list(owner)).jobs[0];
       assert.equal(job.attempts, index + 1); assert.equal(job.error, 'MEMORY_ARCHIVE_FAILED');
       if (index < 4) {
         assert.equal(job.state, 'queued'); assert.ok(Date.parse(job.nextAttemptAt) > Date.now());
         await jobs.tick(); assert.equal((await jobs.list(owner)).jobs[0].attempts, index + 1);
-        await client`UPDATE research_archive_jobs SET next_attempt_at = now()`;
       } else assert.equal(job.state, 'failed');
     }
     await client`ALTER TABLE research_memories DROP CONSTRAINT fail_archive_fixture`;
     const id = (await jobs.list(owner)).jobs[0].id;
     await Promise.all([jobs.retry(owner, id), jobs.retry(owner, id)]);
+    await makeJobsDue(client);
     const claims = await Promise.all([jobs.claim(), new ResearchArchiveService(db, jobs['memory']).claim()]);
     assert.equal(claims.filter(Boolean).length, 1);
     const claim = claims.find(Boolean)!;

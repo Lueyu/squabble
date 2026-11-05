@@ -4,6 +4,15 @@ This guide is for changing Squabble's code. To use the product, start with
 the [desktop app or clean local Docker installation](self-hosting.md).
 For pull requests, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
+## Current development phase
+
+The project is in a web-only phase based on `fe9df6c`. Desktop development,
+testing and packaging are paused until explicitly resumed. The required PR
+checks are **Lint & typecheck**, **Agent tests** and **Docker image build**.
+Web, server, client, database integration and local-agent tests remain active.
+Desktop runtime tests and installer packaging are not required during this
+phase; their code and commands remain available for manual recovery.
+
 ## Requirements
 
 - Node.js >= 22, npm >= 10
@@ -100,11 +109,14 @@ reverse proxy or tunnel.
 npm run lint          # eslint + stylelint + full typecheck (also runs in CI)
 npm run test:server   # Nest service/rule tests; database suites need the variables below
 npm run test:client   # client state and component behavior
-npm run test:desktop  # bundled database, lifecycle and loopback security checks
 npm run test:local-agents # native CLI fixtures and companion ownership/lease checks
 npm run test:memory-eval  # fixed retrieval corpus plus required operation/request regressions
 npm run type:check    # typecheck only
 ```
+
+For deliberate desktop recovery, `npm run test:desktop` still covers the bundled
+database, lifecycle and loopback security. It is outside the web-only phase's
+required verification until desktop development is explicitly resumed.
 
 Database integration suites use `BUDGET_TEST_DATABASE_URL`, `COUNCIL_TEST_DATABASE_URL`, `AUTH_TEST_DATABASE_URL`, `STRATEGY_TEST_DATABASE_URL`, and `MEMORY_TEST_DATABASE_URL`. Set them to a **disposable test database** initialized with `01_schema.sql` and additive migrations `03`–`25`; do not point them at personal or production data. Without these variables, database cases are explicitly skipped. CI provisions PostgreSQL and runs them, including concurrent reservations, user isolation, first-account registration, discussion revisions, memory archival and atomic paper execution. Verify the database/schema and expected tables after initialization; a successful shell exit alone does not establish that migrations ran.
 
@@ -130,12 +142,15 @@ uv run pytest -q      # offline suite, no live network access
 ```
 
 CI (`.github/workflows/ci.yml`) runs on pushes to `main` and pull requests
-targeting `main`: webapp lint, typecheck and server/client tests; Python agent
+targeting `main`: webapp lint, typecheck, server/client tests, database integration,
+memory evaluation, development startup and local-agent tests; Python agent
 tests; and a Docker image build.
 
-The separate desktop workflow builds Windows x64, macOS x64, and macOS arm64
-installers. It runs the desktop tests and verifies a fresh packaged app can
-start its own database and API before publishing version-tagged installers.
+The separate **Desktop installers** workflow is manual-only (`workflow_dispatch`)
+during this phase. Pushes, PRs and version tags do not trigger it. Its Windows
+x64, macOS x64 and macOS arm64 tests, fresh packaged database/API smoke tests,
+installer builds and version-tagged release path are retained for manual recovery.
+These desktop jobs are not required PR checks until desktop development resumes.
 
 ## Native research agents
 

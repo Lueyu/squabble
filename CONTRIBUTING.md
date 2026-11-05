@@ -28,6 +28,16 @@ requests:
 The project was originally developed on the Miaoda (aPaaS) cloud; that
 coupling has been fully removed, so there is no mirror/sync workflow anymore.
 
+## Current development phase
+
+The project is in a web-only development phase, with `fe9df6c` as the baseline.
+Desktop development, testing and packaging are paused until explicitly resumed.
+Desktop code and the full **Desktop installers** workflow remain available for
+manual recovery through `workflow_dispatch`; pushes, pull requests and version
+tags do not start it automatically. Desktop checks and installer builds are
+not required for PRs during this phase. Web, server, client, database and
+local-agent verification remain in scope.
+
 ## ✅ How changes reach `main`
 
 1. Create a branch from the current `main` and open a pull request targeting
@@ -35,10 +45,9 @@ coupling has been fully removed, so there is no mirror/sync workflow anymore.
 2. Keep one feature or fix in each PR. Explain the behavior change, how you
    tested it, and any effect on existing local data, database migrations,
    desktop installers or Docker deployments. Use the PR template.
-3. Wait for all six required GitHub checks to pass: **Lint & typecheck**,
-   **Agent tests**, **Docker image build**, **Windows x64**, **macOS x64** and
-   **macOS arm64**. The PR must be up to date with `main`. Documentation-only
-   PRs run these checks too.
+3. Wait for all three required GitHub checks to pass: **Lint & typecheck**,
+   **Agent tests** and **Docker image build**. The PR must be up to date with
+   `main`. Documentation-only PRs run these checks too.
 4. Resolve review conversations before merging. Our team convention is for
    maintainers to coordinate merge decisions. GitHub does not currently
    require an approval, so collaborators with write access must honor this
@@ -58,12 +67,15 @@ npm ci                     # install the versions in package-lock.json
 npm run lint               # eslint + typecheck + stylelint
 npm run test:server        # offline server tests
 npm run test:client        # client behavior tests
-npm run test:desktop       # desktop lifecycle and companion tests (Windows/macOS)
 npm run test:local-agents  # native runtime, pairing and durable task tests
 ```
 
 These checks must pass for application changes. For documentation changes,
 check local links, rendered Markdown and commands against the current scripts.
+Database integration and memory evaluation remain covered by web CI; see the
+[development guide](docs/development.md) for disposable database prerequisites.
+`npm run test:desktop` and installer packaging are retained for manual recovery
+and become required again only when desktop development is explicitly resumed.
 Native-agent tests use fixture executables and disposable task directories;
 verification must not start paid research or use personal provider sessions.
 For Python agent changes also run:
