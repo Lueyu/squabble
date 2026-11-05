@@ -185,6 +185,59 @@ export class PaperTradingService {
   }
 
   /** Full overview for the paper page: account, positions, curve, feeds. */
+  /**
+   * Mirror the caller's real portfolio into the paper account.
+   * Copies every real holding (ticker, shares, cost) into paper positions,
+   * sets cash to zero (all capital is "deployed"), and clears prior paper data.
+   */
+  async mirrorRealPortfolio(userId: string): Promise<PaperAccount> {
+    const account = await this.requireAccount(userId);
+    const realHoldings = await this.db
+      .select()
+      .from(holdings)
+      .where(eq(holdings.owner, userId));
+
+    if (realHoldings.length === 0) {
+      throw new BadRequestException('No real holdings to mirror');
+    }
+
+    // Clear existing paper positions, orders, trades and events.
+    await this.db.delete(paperTrades).where(eq(paperTrades.accountId, account.id));
+    await this.db.delete(paperOrders).where(eq(paperOrders.accountId, account.id));
+    await this.db.delete(paperEvents).where(eq(paperEvents.accountId, account.id));
+    await this.db.delete(paperSnapshots).where(eq(paperSnapshots.accountId, account.id));
+    await this.db.delete(paperPositions).where(eq(paperPositions.accountId, account.id));
+
+    // Copy real holdings into paper positions.
+    for (const h of realHoldings) {
+      const info = this.quoteService.detectMarket(h.ticker);
+      await this.db.insert(paperPositions).values({
+        owner: userId,
+        accountId: account.id,
+        ticker: h.ticker,
+        market: (h.market as 'US' | 'HK' | 'CN') ?? info.market,
+        currency: (h.currency as 'USD' | 'HKD' | 'CNY') ?? info.currency,
+        company: h.company ?? null,
+        shares: h.shares,
+        avgCost: h.buyPrice ?? '0',
+      });
+    }
+
+    // Cash is zero: the mirror assumes all capital is in the positions.
+    const [updated] = await this.db
+      .update(paperAccounts)
+      .set({ cashBalance: '0', updatedAt: new Date() })
+      .where(eq(paperAccounts.id, account.id))
+      .returning();
+
+    await this.recordEvent(userId, account.id, 'account_reset', {
+      action: 'mirror-real-portfolio',
+      positions: realHoldings.length,
+    });
+
+    return this.mapAccount(updated);
+  }
+
   async getOverview(userId: string): Promise<PaperOverview> {
     const account = await this.requireAccount(userId);
     const positions = await this.db

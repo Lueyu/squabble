@@ -37,6 +37,7 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  Copy,
 } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
 import { useChartTheme } from '@/hooks/use-chart-theme';
@@ -48,6 +49,7 @@ import {
   togglePaperBot,
   updatePaperGuardrails,
   resetPaperAccount,
+  mirrorRealPortfolio,
   fetchNotificationChannels,
   createNotificationChannel,
   deleteNotificationChannel,
@@ -189,6 +191,17 @@ function PaperPage() {
     },
   });
 
+  const mirrorMutation = useMutation({
+    mutationFn: () => mirrorRealPortfolio(),
+    onSuccess: (account) => {
+      toast.success(t('paper.mirrorSuccess'));
+      invalidate();
+    },
+    onError: (e: unknown) => {
+      toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? t('paper.mirrorFailed'));
+    },
+  });
+
   const busy = overviewQuery.isLoading;
   const botOn = overview?.account.botEnabled ?? false;
 
@@ -206,6 +219,14 @@ function PaperPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => mirrorMutation.mutate()}
+            disabled={mirrorMutation.isPending}
+          >
+            <Copy size={16} className="mr-1" />
+            {mirrorMutation.isPending ? t('paper.mirroring') : t('paper.mirrorReal')}
+          </Button>
           <Button variant="outline" onClick={() => setOrderOpen(true)}>
             {t('ui.paper.manualOrder')}
           </Button>

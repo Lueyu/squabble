@@ -880,6 +880,15 @@ export async function resetPaperAccount(initialCash?: number): Promise<PaperAcco
 }
 
 /**
+ * Paper trading: mirror the caller's real portfolio into the paper account.
+ * Copies every real holding (ticker, shares, cost) and sets cash to zero.
+ */
+export async function mirrorRealPortfolio(): Promise<PaperAccount> {
+  const response = await http({ url: '/api/paper/mirror-real', method: 'POST' });
+  return response.data;
+}
+
+/**
  * Paper trading: lazily create the caller's paper account.
  */
 export async function ensurePaperAccount(): Promise<PaperAccount> {

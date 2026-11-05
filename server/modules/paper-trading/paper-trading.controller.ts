@@ -42,6 +42,13 @@ export class PaperTradingController {
     return this.paper.resetAccount(req.userContext.userId, body.initialCash);
   }
 
+  /** Mirror the caller's real portfolio into the paper account. */
+  @NeedLogin()
+  @Post('mirror-real')
+  async mirrorReal(@Req() req: Request) {
+    return this.paper.mirrorRealPortfolio(req.userContext.userId);
+  }
+
   /** Place a manual order (market orders only in V1). */
   @NeedLogin()
   @Post('orders')

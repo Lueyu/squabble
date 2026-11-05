@@ -16,15 +16,17 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  ChevronLeft,
-  ChevronRight,
-  Calendar,
-  AlertTriangle,
-  BarChart3,
-  Sparkles,
-  Bot,
-  LayoutGrid,
-  ArrowRight,
+ChevronLeft,
+ChevronRight,
+Calendar,
+AlertTriangle,
+BarChart3,
+Sparkles,
+Bot,
+LayoutGrid,
+ArrowRight,
+MessageSquare,
+FlaskConical,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -726,6 +728,7 @@ function DeepReportCard({
   onClick: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const companyName = displayCompanyName(run.tickerName, run.ticker, i18n.language);
   const hasThreeTargets =
     run.targetBear != null || run.targetBase != null || run.targetBull != null;
@@ -845,15 +848,39 @@ function DeepReportCard({
           </div>
         ) : null}
 
-        {/* Footer: generated time + CTA */}
+        {/* Footer: generated time + CTAs */}
         <div className="flex items-center justify-between pt-1 border-t border-border/50">
           <span className="text-xs text-muted-foreground font-mono-nums">
             {formatDateTime(run.completedAt)}
           </span>
-          <span className="flex items-center gap-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-            {t('analysisFlow.openReport')}
-            <ArrowRight size={12} />
-          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/council?reportId=${run.id}`);
+              }}
+              className="flex items-center gap-0.5 rounded-md px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-500/10 dark:text-blue-400"
+            >
+              <MessageSquare size={12} />
+              {t('analysisFlow.discussReport')}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate('/paper');
+              }}
+              className="flex items-center gap-0.5 rounded-md px-2 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+            >
+              <FlaskConical size={12} />
+              {t('analysisFlow.paperTrade')}
+            </button>
+            <span className="flex items-center gap-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+              {t('analysisFlow.openReport')}
+              <ArrowRight size={12} />
+            </span>
+          </div>
         </div>
       </CardContent>
     </Card>
