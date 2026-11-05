@@ -1,8 +1,12 @@
 import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
 import type { ResearchToolScope } from '../../../shared/research-tools.interface';
+import type { NativeAgentImage } from '../../../shared/native-image.interface';
 
 export interface LocalAgentTaskRef { taskId: string; contextId: string }
 export interface LocalAgentExecution {
+  image?: NativeAgentImage;
+  /** Transient cancellation for screenshot dispatch; never serialized with the task. */
+  signal?: AbortSignal;
   researchScope?: ResearchToolScope;
   agentId: string;
   messageId: string;
@@ -34,6 +38,8 @@ export class LocalAgentError extends Error {
 export function nativeFailureCode(error: unknown): string {
   if (error instanceof LocalAgentError) return error.code;
   const codes: Record<string, string> = {
+    NATIVE_AGENT_INVALID_IMAGE: 'LOCAL_INVALID_INPUT',
+    NATIVE_AGENT_IMAGE_UNSUPPORTED: 'LOCAL_IMAGE_UNSUPPORTED',
     NATIVE_AGENT_LOGIN_REQUIRED: 'LOCAL_LOGIN_REQUIRED',
     NATIVE_AGENT_INVALID_CONFIGURATION: 'LOCAL_INVALID_CONFIGURATION',
     NATIVE_AGENT_CONFIGURATION_UNSUPPORTED: 'LOCAL_CONFIGURATION_UNSUPPORTED',

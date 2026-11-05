@@ -2,6 +2,19 @@
 
 吵股支持 **Codex、Claude Code、Gemini CLI、Antigravity、OpenCode、Kimi** 和社区 **Doubao CLI**。设置页会显示安装、登录和连接状态。首次登录在对应 CLI 终端完成，之后点击连接即可。研究使用该 CLI 的账号，可能产生服务商用量或费用。
 
+## 持仓截图导入 / Portfolio screenshot import
+
+持仓导入的截图页优先选择已连接、空闲且支持图片附件的 Agent，当前为 Codex 和 OpenCode。
+可选择模型；模型本身须支持视觉输入。其他 Agent 或旧版桌面助手未声明图片能力时，页面提供视觉 API 选项。
+上传 PNG、JPEG 或 WebP（最大 8MiB），开始识别后可查看状态、取消任务；返回的持仓需核对、编辑并确认才会写入。
+用量耗尽、限流、登录失效和超时分别提示；不会自动切换供应商或重复调用。任务结果在 20 分钟后或服务器重启后失效。
+
+The screenshot importer prefers a connected, idle image-capable agent: currently Codex or OpenCode.
+Choose a vision-capable model, or switch explicitly to a vision API. PNG, JPEG and WebP up to 8MiB are supported.
+Recognition runs as a cancellable background job; review and edit the rows before confirming import.
+Usage limits, rate limits, expired login and timeouts have distinct messages, with no automatic provider fallback or retry.
+Job results expire after 20 minutes or a server restart. Local-agent execution may use the provider's cloud and billing.
+
 ## 每位成员的模型与推理设置
 
 打开投研讨论室的成员编辑面板，选择本地 Agent 后可选择模型及其支持的推理选项。

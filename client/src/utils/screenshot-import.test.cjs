@@ -1,0 +1,277 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const { test } = require('node:test');
+const ts = require('typescript');
+
+const root = path.resolve(__dirname, '../../..');
+function load(file, imports = {}) {
+  const source = fs.readFileSync(path.join(root, file), 'utf8');
+  const compiled = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
+  } }).outputText;
+  const exports = {};
+  vm.runInNewContext(compiled, { exports, require: name => imports[name], Number, Date, Set });
+  return exports;
+}
+function helpers() {
+  const file = 'client/src/pages/Import/screenshot-import.ts';
+  return fs.existsSync(path.join(root, file)) ? load(file, {
+    '@shared/native-image.interface': { MAX_NATIVE_IMAGE_BYTES: 8 * 1024 * 1024 },
+  }) : {};
+}
+const agent = (patch = {}) => ({ id: 'codex', connected: true, available: true, busy: false, imageInput: true, ...patch });
+const job = (patch = {}) => ({ id: 'request-1', status: 'running', phase: 'recognizing', executor: 'local', ...patch });
+const request = () => ({ requestId: 'request-1', executor: 'local', agentId: 'codex', image: { mimeType: 'image/png', data: 'image' } });
+const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+
+test('screenshot routing prefers only idle, available, connected agents with explicit image support', () => {
+  const { preferredScreenshotAgent } = helpers();
+  assert.equal(typeof preferredScreenshotAgent, 'function');
+  assert.equal(preferredScreenshotAgent([agent({ imageInput: undefined }), agent({ busy: true }), agent({ connected: false }), agent({ available: false })]), undefined);
+  assert.equal(preferredScreenshotAgent([agent({ id: 'busy', busy: true }), agent({ id: 'ready' })]).id, 'ready');
+});
+
+test('image payload keeps its real MIME and rejects unsupported, empty or oversized uploads', () => {
+  const { screenshotImage } = helpers();
+  assert.equal(typeof screenshotImage, 'function');
+  for (const mimeType of ['image/png', 'image/jpeg', 'image/webp']) {
+    assert.equal(screenshotImage({ type: mimeType, size: 10 }, `data:${mimeType};base64,YWJj`).mimeType, mimeType);
+  }
+  for (const file of [{ type: 'image/gif', size: 10 }, { type: 'image/png', size: 0 }, { type: 'image/png', size: 8 * 1024 * 1024 + 1 }]) {
+    assert.throws(() => screenshotImage(file, 'data:image/png;base64,YWJj'), /INVALID_IMAGE/);
+  }
+  assert.throws(() => screenshotImage({ type: 'image/png', size: 10 }, 'data:image/jpeg;base64,YWJj'), /INVALID_IMAGE/);
+});
+
+test('duplicate starts cannot dispatch twice and unknown submission outcome recovers by GET only', async () => {
+  const { ScreenshotJobController } = helpers();
+  assert.equal(typeof ScreenshotJobController, 'function');
+  const pending = deferred(); const calls = [];
+  const controller = new ScreenshotJobController({
+    create: value => { calls.push(['POST', value.requestId]); return pending.promise; },
+    get: async id => { calls.push(['GET', id]); return job(); }, cancel: async () => job({ status: 'cancelled' }),
+  });
+  controller.attach(() => {});
+  const started = controller.start(request());
+  await controller.start({ ...request(), requestId: 'duplicate' });
+  pending.reject(new Error('connection lost'));
+  await started;
+  assert.equal(controller.snapshot.uncertain, true);
+  await controller.start(request());
+  await controller.refresh();
+  assert.equal(JSON.stringify(calls), JSON.stringify([['POST', 'request-1'], ['GET', 'request-1']]));
+  assert.equal(controller.snapshot.job.status, 'running');
+});
+
+test('old results cannot populate a replacement image and stale accepted submission is cancelled', async () => {
+  const { ScreenshotJobController } = helpers();
+  assert.equal(typeof ScreenshotJobController, 'function');
+  const pending = deferred(); const cancelled = [];
+  const controller = new ScreenshotJobController({ create: () => pending.promise, get: async () => job(),
+    cancel: async id => { cancelled.push(id); return job({ status: 'cancelled' }); } });
+  controller.attach(() => {});
+  const started = controller.start(request());
+  controller.reset();
+  pending.resolve(job({ status: 'completed', result: { broker: null, rows: [{ ticker: 'OLD', shares: 1 }] } }));
+  await started;
+  assert.equal(controller.snapshot.job, null);
+  assert.equal(controller.snapshot.requestId, null);
+  assert.ok(cancelled.includes('request-1'));
+});
+
+test('a poll that completes after cancellation cannot replace cancelled state', async () => {
+  const { ScreenshotJobController } = helpers();
+  assert.equal(typeof ScreenshotJobController, 'function');
+  const pending = deferred();
+  const controller = new ScreenshotJobController({ create: async () => job(), get: () => pending.promise,
+    cancel: async () => job({ status: 'cancelled', phase: 'done' }) });
+  controller.attach(() => {});
+  await controller.start(request());
+  const polling = controller.refresh();
+  await controller.cancel();
+  pending.resolve(job({ status: 'completed', phase: 'done' }));
+  await polling;
+  assert.equal(controller.snapshot.job.status, 'cancelled');
+});
+
+test('unmount invalidates results and polling failures never resubmit provider work', async () => {
+  const { ScreenshotJobController } = helpers();
+  assert.equal(typeof ScreenshotJobController, 'function');
+  const pending = deferred(); let posts = 0; let notified = 0;
+  const controller = new ScreenshotJobController({ create: async () => { posts++; return job(); }, get: () => pending.promise,
+    cancel: async () => job({ status: 'cancelled' }) });
+  controller.attach(() => { notified++; });
+  await controller.start(request());
+  const polling = controller.refresh(); controller.dispose(); const before = notified;
+  pending.reject(new Error('offline')); await polling;
+  assert.equal(posts, 1); assert.equal(notified, before);
+});
+
+test('legacy API keys are removed and new keys are never persisted', () => {
+  const { loadScreenshotProvider, saveScreenshotProvider } = helpers();
+  assert.equal(typeof loadScreenshotProvider, 'function');
+  const storage = new Map([['sq-ocr-key', 'old-secret']]);
+  const localStorage = { getItem: key => storage.get(key), removeItem: key => storage.delete(key), setItem: (key, value) => storage.set(key, value) };
+  const provider = loadScreenshotProvider(localStorage);
+  assert.equal(provider.apiKey, 'old-secret'); assert.equal(storage.has('sq-ocr-key'), false);
+  saveScreenshotProvider(localStorage, { apiKey: 'new-secret', model: 'vision', baseUrl: 'https://example.test/v1' });
+  assert.equal(storage.has('sq-ocr-key'), false);
+});
+
+test('review validation accepts unknown cost but requires valid shares, ticker and per-share cost', () => {
+  const { validScreenshotRows } = helpers();
+  assert.equal(typeof validScreenshotRows, 'function');
+  assert.equal(validScreenshotRows([{ ticker: 'TEST', shares: '2.5', avgCost: null, currency: 'USD' }]), true);
+  for (const patch of [{ ticker: '' }, { shares: '' }, { shares: 0 }, { shares: -1 }, { shares: Infinity }, { avgCost: -1 }]) {
+    assert.equal(validScreenshotRows([{ ticker: 'TEST', shares: 2, avgCost: null, ...patch }]), false);
+  }
+});
+
+function screenshotPage(agents = [agent()], acceptedJob = job()) {
+  const file = 'client/src/pages/Import/ScreenshotImport.tsx';
+  assert.ok(fs.existsSync(path.join(root, file)), 'Screenshot component exists');
+  const states = []; const refs = []; const effects = []; const calls = [];
+  let stateCursor = 0, refCursor = 0, effectCursor = 0;
+  const jsx = (type, props) => ({ type, props });
+  const imports = {
+    react: {
+      useState(initial) { const index = stateCursor++; if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial;
+        return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; },
+      useRef(initial) { const index = refCursor++; return refs[index] ??= { current: initial }; },
+      useEffect(fn, deps) { const index = effectCursor++; const previous = effects[index];
+        if (!previous || deps.some((value, i) => value !== previous.deps[i])) effects[index] = { fn, deps, pending: true, cleanup: previous?.cleanup }; },
+    },
+    'react/jsx-runtime': { jsx, jsxs: jsx },
+    'react-i18next': { useTranslation: () => ({ t: key => key }) },
+    '@tanstack/react-query': { useQuery: () => ({ data: agents, isPending: false }), useQueryClient: () => ({ invalidateQueries: () => {} }) },
+    '@/api': { createScreenshotJob: async value => { calls.push(['create', value]); return acceptedJob; },
+      fetchScreenshotJob: async () => job(), cancelScreenshotJob: async () => job({ status: 'cancelled' }),
+      commitImport: async value => { calls.push(['commit', value]); return { created: 1, skipped: 0, failed: [] }; } },
+    '@/api/local-agents': { fetchLocalAgents: async () => agents },
+    './screenshot-import': helpers(),
+    '@/utils/local-agent-settings': { agentSettingsProblem: () => null, cleanAgentSettings: value => value },
+    sonner: { toast: { error() {}, success() {} } },
+  };
+  for (const name of ['button', 'card', 'input', 'label', 'badge']) imports[`@/components/ui/${name}`] = new Proxy({}, { get: (_, key) => String(key) });
+  imports['lucide-react'] = new Proxy({}, { get: (_, key) => String(key) });
+  const source = fs.readFileSync(path.join(root, file), 'utf8');
+  const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const exports = {}; const readers = [];
+  vm.runInNewContext(compiled, { exports, require: name => imports[name], Date,
+    crypto: { randomUUID: () => 'request-1' }, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+    localStorage: { getItem: () => null, removeItem() {}, setItem() {} },
+    FileReader: class { constructor() { readers.push(this); } readAsDataURL() {} abort() {} },
+  });
+  const render = () => { stateCursor = 0; refCursor = 0; effectCursor = 0; return exports.default(); };
+  const flush = () => { for (const effect of effects) if (effect.pending) { effect.pending = false; effect.cleanup?.(); effect.cleanup = effect.fn(); } };
+  return { render, flush, calls, readers };
+}
+function nodes(tree) { return Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : []; }
+function content(tree) { return Array.isArray(tree) ? tree.map(content).join('') : tree && typeof tree === 'object' ? content(tree.props?.children) : tree == null ? '' : String(tree); }
+
+test('screenshot UI defaults to local image agent and exposes API fields only after a manual switch', () => {
+  const page = screenshotPage(); let tree = page.render(); page.flush(); tree = page.render();
+  assert.ok(!nodes(tree).some(node => node.props.id === 'screenshot-api-key'));
+  nodes(tree).find(node => node.props.id === 'screenshot-executor').props.onChange({ target: { value: 'vision' } });
+  assert.ok(nodes(page.render()).some(node => node.props.id === 'screenshot-api-key'));
+});
+
+test('image changes invalidate late FileReader callbacks and never import without explicit confirmation', async () => {
+  const page = screenshotPage(); page.render(); page.flush(); let tree = page.render();
+  const fileInput = () => nodes(tree).find(node => node.type === 'input' && node.props.type === 'file');
+  fileInput().props.onChange({ target: { files: [{ name: 'first.png', type: 'image/png', size: 10 }], value: 'first.png' } });
+  tree = page.render();
+  fileInput().props.onChange({ target: { files: [{ name: 'second.webp', type: 'image/webp', size: 10 }], value: 'second.webp' } });
+  page.readers[0].result = 'data:image/png;base64,b2xk'; page.readers[0].onload();
+  assert.equal(nodes(page.render()).filter(node => node.type === 'img').length, 0);
+  page.readers[1].result = 'data:image/webp;base64,bmV3'; page.readers[1].onload(); tree = page.render();
+  assert.equal(nodes(tree).find(node => node.type === 'img').props.src, 'data:image/webp;base64,bmV3');
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  assert.equal(page.calls.filter(call => call[0] === 'create').length, 1);
+  assert.equal(page.calls[0][1].image.mimeType, 'image/webp');
+  assert.equal(page.calls.filter(call => call[0] === 'commit').length, 0);
+});
+
+test('completed extraction requires review and explicit confirmation; editing clears the review acknowledgement', async () => {
+  const page = screenshotPage([agent()], job({ status: 'completed', phase: 'done', result: {
+    broker: 'Fixture Broker', rows: [{ ticker: 'TEST', company: 'Example', shares: 2, avgCost: null, currency: 'USD' }],
+  } }));
+  page.render(); page.flush(); let tree = page.render();
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
+    files: [{ name: 'holdings.png', type: 'image/png', size: 10 }], value: '',
+  } });
+  page.readers[0].result = 'data:image/png;base64,YWJj'; page.readers[0].onload(); tree = page.render();
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  page.render(); page.flush(); tree = page.render();
+  const confirm = () => nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.confirmImport'));
+  assert.equal(confirm().props.disabled, true);
+  await confirm().props.onClick();
+  assert.equal(page.calls.filter(call => call[0] === 'commit').length, 0);
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } });
+  tree = page.render(); assert.equal(confirm().props.disabled, false);
+  nodes(tree).find(node => node.props['aria-label'] === 'import.screenshotFlow.rowCompany').props.onChange({ target: { value: 'Corrected name' } });
+  tree = page.render(); assert.equal(confirm().props.disabled, true);
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } });
+  tree = page.render(); await confirm().props.onClick();
+  const commits = page.calls.filter(call => call[0] === 'commit');
+  assert.equal(commits.length, 1); assert.equal(commits[0][1].rows[0].avgCost, null);
+  assert.equal(commits[0][1].rows[0].company, 'Corrected name');
+});
+
+test('unsupported or busy local agents expose the API fallback without starting it', () => {
+  const page = screenshotPage([agent({ busy: true }), agent({ imageInput: false })]);
+  page.render(); page.flush(); const tree = page.render();
+  assert.ok(nodes(tree).some(node => node.props.id === 'screenshot-api-key'));
+  assert.equal(page.calls.length, 0);
+});
+
+test('screenshot API wrappers use job IDs for reads and cancellation', async () => {
+  const calls = [];
+  const api = load('client/src/api/index.ts', { './http': { default: async options => { calls.push(options); return { data: job() }; } }, '../utils/logger': {} });
+  await api.createScreenshotJob(request()); await api.fetchScreenshotJob('request /1'); await api.cancelScreenshotJob('request /1');
+  assert.equal(calls[0].method, 'POST'); assert.equal(calls[0].data.requestId, 'request-1');
+  assert.equal(calls[1].method, 'GET'); assert.equal(calls[1].url, '/api/import/screenshot-jobs/request%20%2F1');
+  assert.equal(calls[2].method, 'DELETE'); assert.equal(calls[2].url, calls[1].url);
+});
+
+test('all screenshot error codes have matching Chinese and English messages without displaying raw provider errors', () => {
+  const { SCREENSHOT_ERROR_CODES, screenshotErrorCode } = helpers();
+  const zh = JSON.parse(fs.readFileSync(path.join(root, 'client/src/i18n/zh-CN.json'), 'utf8')).import.screenshotFlow;
+  const en = JSON.parse(fs.readFileSync(path.join(root, 'client/src/i18n/en.json'), 'utf8')).import.screenshotFlow;
+  assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort());
+  for (const code of SCREENSHOT_ERROR_CODES) { assert.ok(zh.errors[code], code); assert.ok(en.errors[code], code); }
+  assert.equal(screenshotErrorCode({ response: { data: { error: { message: 'LOCAL_USAGE_LIMIT' } } } }), 'LOCAL_USAGE_LIMIT');
+  assert.equal(screenshotErrorCode({ response: { data: { message: 'private provider response' } } }), 'UNKNOWN');
+});
+
+test('global HTTP error envelopes retain recognized business codes behind generic error codes', () => {
+  const { screenshotErrorCode } = helpers();
+  assert.equal(screenshotErrorCode({ response: { status: 400, data: { error: {
+    code: 'BAD_REQUEST', message: 'INVALID_IMAGE', details: {},
+  } } } }), 'INVALID_IMAGE');
+  assert.equal(screenshotErrorCode({ response: { status: 404, data: { error: {
+    code: 'NOT_FOUND', message: 'JOB_NOT_FOUND', details: {},
+  } } } }), 'JOB_NOT_FOUND');
+  assert.equal(screenshotErrorCode({ response: { data: { code: 'BAD_REQUEST', error: { code: 'INVALID_REQUEST' } } } }), 'INVALID_REQUEST');
+  assert.equal(screenshotErrorCode({ response: { data: { code: 'BAD_REQUEST', error: { code: 'BAD_REQUEST' }, message: 'INVALID_IMAGE' } } }), 'INVALID_IMAGE');
+});
+
+test('a lost submission followed by the global 404 envelope exposes explicit new-attempt recovery without redispatch', async () => {
+  const { ScreenshotJobController } = helpers();
+  let posts = 0;
+  const controller = new ScreenshotJobController({ create: async () => { posts++; throw new Error('connection lost'); },
+    get: async () => { throw { response: { status: 404, data: { error: { code: 'NOT_FOUND', message: 'JOB_NOT_FOUND' } } } }; },
+    cancel: async () => job({ status: 'cancelled' }),
+  });
+  controller.attach(() => {});
+  await controller.start(request()); await controller.refresh();
+  assert.equal(controller.snapshot.error, 'JOB_NOT_FOUND');
+  assert.equal(controller.snapshot.missing, true);
+  assert.equal(controller.snapshot.uncertain, true);
+  assert.equal(controller.snapshot.requestId, 'request-1');
+  await controller.start(request()); assert.equal(posts, 1);
+  controller.reset(); assert.equal(controller.snapshot.requestId, null);
+});

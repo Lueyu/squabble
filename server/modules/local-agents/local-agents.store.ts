@@ -8,8 +8,11 @@ import type { ResearchActivity, ResearchEventPage } from '../../../shared/resear
 import type { ResearchToolBundle, ResearchToolRequest, ResearchToolResult, ResearchToolScope } from '../../../shared/research-tools.interface';
 import { appendResearchEvents, recordTaskLifecycle } from './research-journal';
 import { researchFailure } from '../research-tools/research-tools.output';
+import type { NativeAgentImage } from '../../../shared/native-image.interface';
+import { nativeImageCapability, validateNativeImage } from '../../local-agents/native-image';
 
 export interface AgentTask {
+  hasImage?: boolean;
   researchScope?: ResearchToolScope; researchBundle?: ResearchToolBundle;
   events?: ResearchEventPage['events']; eventSequence?: number; eventIds?: string[]; eventsTruncated?: boolean;
   toolCalls?: Record<string, { fingerprint: string; result?: ResearchToolResult }>;
@@ -59,6 +62,7 @@ export class LocalAgentStore {
   private tail: Promise<unknown> = Promise.resolve();
   private loaded = false;
   private readonly pairs = new Map<string, { owner: string; expiresAt: number }>();
+  private readonly images = new Map<string, { owner: string; image: NativeAgentImage; signal?: AbortSignal }>();
   readonly sharedNative: boolean;
   constructor(readonly root: string, options: { sharedNative?: boolean } = {}) {
     this.sharedNative = options.sharedNative ?? false;
@@ -118,6 +122,11 @@ export class LocalAgentStore {
       }
       this.state = next;
       return structuredClone(value);
+    }).finally(() => {
+      for (const [id] of this.images) {
+        const task = this.state.tasks[id];
+        if (!task || !active(task) || task.state === 'cancelling') this.images.delete(id);
+      }
     });
     this.tail = result.catch(() => undefined);
     return result;
@@ -216,12 +225,27 @@ export class LocalAgentStore {
     return this.access(false, (state) => Object.values(state.tasks).find((task) => task.owner === owner && task.messageId === messageId));
   }
   task(owner: string, id: string): Promise<AgentTask> { return this.access(false, (state) => ownedTask(state, owner, id)); }
+  imageFor(owner: string, id: string): Promise<NativeAgentImage> {
+    return this.access(false, state => {
+      const task = ownedTask(state, owner, id);
+      const entry = this.images.get(id);
+      if (!task.hasImage || !entry || entry.owner !== owner) return fail('LOCAL_INVALID_INPUT');
+      if (entry.signal?.aborted) return fail('LOCAL_CANCELLED');
+      return entry.image;
+    });
+  }
   busy(owner: string, agentId: string): Promise<boolean> { return this.access(false, (state) => Object.values(state.tasks).some((task) => this.inProviderScope(task, owner, agentId) && active(task))); }
 
   stage(owner: string, agentId: string, provider: LocalAgentProvider, messageId: string, prompt: string,
     kind: 'run' | 'login' = 'run', inputSettings?: NativeAgentConfiguration,
-    research?: { scope: ResearchToolScope; bundle: ResearchToolBundle }): Promise<AgentTask> {
+    research?: { scope: ResearchToolScope; bundle: ResearchToolBundle }, inputImage?: NativeAgentImage, imageSignal?: AbortSignal): Promise<AgentTask> {
     const agentSettings = parseNativeAgentConfiguration(inputSettings);
+    let image: NativeAgentImage | undefined;
+    if (inputImage !== undefined) {
+      if (imageSignal?.aborted) return Promise.reject(new LocalAgentError('LOCAL_CANCELLED'));
+      try { image = validateNativeImage(inputImage); } catch { return Promise.reject(new LocalAgentError('LOCAL_INVALID_INPUT')); }
+      if (kind !== 'run' || !nativeImageCapability(provider)) return Promise.reject(new LocalAgentError('LOCAL_IMAGE_UNSUPPORTED'));
+    }
     return this.access(true, (state) => {
       const existing = Object.values(state.tasks).find((task) => task.owner === owner && task.messageId === messageId);
       if (existing) return existing;
@@ -231,23 +255,30 @@ export class LocalAgentStore {
         if (!device || Date.now() - device.lastSeen > 15_000) fail('LOCAL_COMPANION_OFFLINE');
         if (!device!.agents.some((agent) => agent.provider === provider)) fail('LOCAL_VERSION_UNSUPPORTED');
         if (kind === 'run' && !device!.providers.includes(provider)) fail('LOCAL_AGENT_NOT_FOUND');
+        if (image && device!.agents.find(agent => agent.provider === provider)?.imageInput !== true) fail('LOCAL_IMAGE_UNSUPPORTED');
         validateNativeAgentConfiguration(agentSettings, device?.agents.find((agent) => agent.provider === provider));
       } else if (!this.sharedNative && state.nativeOwner !== owner || (kind === 'run' && !state.nativeProviders.includes(provider))) fail('LOCAL_AGENT_NOT_FOUND');
       const task: AgentTask = { id: randomUUID(), owner, agentId, provider, deviceId: device?.id, kind, messageId, prompt,
+        ...(image ? { hasImage: true } : {}),
         ...(agentSettings ? { agentSettings } : {}),
         ...(research ? { researchScope: research.scope, researchBundle: research.bundle } : {}),
         state: 'staged', createdAt: Date.now(), updatedAt: Date.now() };
       state.tasks[task.id] = task;
+      if (image) this.images.set(task.id, { owner, image, signal: imageSignal });
       return task;
     });
   }
   activate(owner: string, id: string): Promise<void> {
-    return this.access(true, (state) => { const task = ownedTask(state, owner, id); if (task.state === 'staged') { task.state = 'queued'; task.updatedAt = Date.now(); } });
+    return this.access(true, (state) => { const task = ownedTask(state, owner, id); if (task.state === 'staged') {
+      if (this.images.get(id)?.signal?.aborted) requestCancellation(task);
+      else { task.state = 'queued'; task.updatedAt = Date.now(); }
+    } });
   }
   takeNative(owner: string, id: string): Promise<boolean> {
     return this.access(true, (state) => {
       const task = ownedTask(state, owner, id);
       if (task.deviceId || task.state !== 'queued') return false;
+      if (this.images.get(id)?.signal?.aborted) { requestCancellation(task); return false; }
       task.state = 'running'; task.updatedAt = Date.now(); return true;
     });
   }
@@ -349,8 +380,9 @@ export class LocalAgentStore {
     });
   }
 
-  poll(token: string, request: CompanionPoll): Promise<CompanionPollResult> {
-    return this.access(true, (state) => {
+  async poll(token: string, request: CompanionPoll): Promise<CompanionPollResult> {
+    const pendingImages = new Map<string, { owner: string; signal?: AbortSignal }>();
+    const result = await this.access(true, (state) => {
       const tokenHash = hash(token);
       const device = state.devices.find((item) => item.tokenHash.length === tokenHash.length && timingSafeEqual(Buffer.from(item.tokenHash), Buffer.from(tokenHash)));
       if (!device) return fail('LOCAL_COMPANION_UNAUTHORIZED');
@@ -366,16 +398,17 @@ export class LocalAgentStore {
         if (!task || task.deviceId !== device.id || task.owner !== device.owner) continue;
         if (recordLateUncertainty(task, update)) continue;
         if (!['running', 'cancelling'].includes(task.state)) continue;
-        appendResearchEvents(task, update.events ?? []);
+        if (!task.hasImage) appendResearchEvents(task, update.events ?? []);
         if (task.state === 'cancelling' && update.state === 'running') continue;
         if (task.state === 'cancelling' && update.state === 'completed') {
           task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED';
-        } else if (update.state === 'completed' && task.kind === 'run' && !update.text?.trim()) {
+        } else if (update.state === 'completed' && task.kind === 'run' && (!update.text?.trim()
+          || task.hasImage && !!this.images.get(task.id)?.image.data && update.text.includes(this.images.get(task.id)!.image.data))) {
           task.state = 'failed'; task.error = 'LOCAL_INVALID_RESULT';
         } else {
           task.state = update.state;
-          if (update.progress !== undefined) task.progress = update.progress.slice(0, 500);
-          if (update.text !== undefined) task.text = update.text;
+          if (update.progress !== undefined && !task.hasImage) task.progress = update.progress.slice(0, 500);
+          if (update.text !== undefined && (!task.hasImage || update.state === 'completed')) task.text = update.text;
           if (update.usageTokens !== undefined) task.usageTokens = update.usageTokens;
           if (update.state === 'failed') task.error = update.error ?? 'LOCAL_TASK_FAILED';
           if (update.state === 'cancelled') task.error = 'LOCAL_CANCELLED';
@@ -383,6 +416,7 @@ export class LocalAgentStore {
         task.updatedAt = now;
       }
       const commands: CompanionPollResult['commands'] = [];
+      let commandBytes = 0;
       const cancelTaskIds: string[] = [];
       for (const task of Object.values(state.tasks)) if (task.deviceId === device.id) {
         // Helpers terminate disconnected work within 30s and all work within 10 minutes.
@@ -393,18 +427,44 @@ export class LocalAgentStore {
             task.state = 'failed'; task.error = 'LOCAL_VERSION_UNSUPPORTED'; task.updatedAt = now;
             continue;
           }
+          const image = task.hasImage ? this.images.get(task.id) : undefined;
+          if (image?.signal?.aborted) { requestCancellation(task); continue; }
+          if (task.hasImage && (!nativeImageCapability(task.provider)
+            || device.agents.find(agent => agent.provider === task.provider)?.imageInput !== true)) {
+            task.state = 'failed'; task.error = 'LOCAL_IMAGE_UNSUPPORTED'; task.updatedAt = now; continue;
+          }
+          if (task.hasImage && (!image || image.owner !== task.owner)) {
+            task.state = 'failed'; task.error = 'LOCAL_INVALID_INPUT'; task.updatedAt = now; continue;
+          }
           try { validateNativeAgentConfiguration(task.agentSettings, device.agents.find((agent) => agent.provider === task.provider)); }
           catch {
             task.state = 'failed'; task.error = 'LOCAL_CONFIGURATION_UNSUPPORTED'; task.updatedAt = now;
             continue;
           }
-          task.state = 'running'; task.updatedAt = now;
-          commands.push({ id: task.id, kind: task.kind, provider: task.provider,
+          const command: CompanionPollResult['commands'][number] = { id: task.id, kind: task.kind, provider: task.provider,
+            ...(image ? { image: image.image, hasImage: true } : {}),
             ...(task.researchBundle ? { researchTools: task.researchBundle } : {}),
-            ...(task.kind === 'run' ? { prompt: task.prompt, ...(task.agentSettings ? { agentSettings: task.agentSettings } : {}) } : {}) });
+            ...(task.kind === 'run' ? { prompt: task.prompt, ...(task.agentSettings ? { agentSettings: task.agentSettings } : {}) } : {}) };
+          const bytes = Buffer.byteLength(JSON.stringify(command));
+          if (commandBytes + bytes > 12 * 1024 * 1024 - 128_000) continue;
+          task.state = 'running'; task.updatedAt = now;
+          if (image) pendingImages.set(task.id, { owner: image.owner, signal: image.signal });
+          commands.push(command); commandBytes += bytes;
         }
       }
       return { commands, cancelTaskIds: cancelTaskIds.slice(-1000) };
     });
+    // Persistence yields to cancellation. Recheck before returning any image to the
+    // transport, and confirm cancellation while the command is still unsent.
+    for (;;) {
+      const cancelled = result.commands.filter(command => pendingImages.has(command.id)
+        && (pendingImages.get(command.id)!.signal?.aborted || !this.images.has(command.id)));
+      if (!cancelled.length) return result;
+      const ids = new Set(cancelled.map(command => command.id));
+      result.commands = result.commands.filter(command => !ids.has(command.id));
+      result.cancelTaskIds = [...new Set([...result.cancelTaskIds, ...ids])].slice(-1000);
+      await Promise.all(cancelled.map(command => this.update(pendingImages.get(command.id)!.owner, command.id,
+        { state: 'cancelled', error: 'LOCAL_CANCELLED' })));
+    }
   }
 }

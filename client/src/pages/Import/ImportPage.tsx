@@ -9,13 +9,13 @@
  *  2. Robinhood CSV — a preset over the same flow: known headers are mapped
  *     automatically.
  *  3. 截图识别导入 — upload a brokerage screenshot, extract rows with the
- *     user's own multimodal LLM key (stored only in this browser, like the
- *     Finnhub token), review the editable extraction, then commit.
+ *     connected image-capable agent or a transient vision API key, review
+ *     the editable extraction, then explicitly confirm the import.
  *
  * Import history card lists recent runs with per-row failure reasons.
  */
 import { useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
 import {
@@ -26,20 +26,17 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
-  Wand2,
 } from 'lucide-react';
 
-import { commitImport, extractScreenshot, fetchImportHistory } from '@/api';
-import type { ImportRowCandidate, ImportSource, OcrExtractResult } from '@shared/api.interface';
+import { commitImport, fetchImportHistory } from '@/api';
+import type { ImportRowCandidate } from '@shared/api.interface';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from 'react-i18next';
-
-/** localStorage keys for the OCR provider config (browser-only, like Finnhub). */
-const OCR_LS = { baseUrl: 'sq-ocr-base', model: 'sq-ocr-model', apiKey: 'sq-ocr-key' };
+import ScreenshotImport from './ScreenshotImport';
 
 /** Field keys the CSV mapper can assign. */
 type MapField = 'ticker' | 'shares' | 'avgCost' | 'company';
@@ -133,21 +130,7 @@ function rowsFromMatrix(matrix: string[][], mapping: Partial<Record<MapField, nu
     .filter((r) => r.ticker !== '');
 }
 
-/** localStorage helpers for the OCR provider config. */
-const ocrConfig = {
-  load() {
-    return {
-      baseUrl: localStorage.getItem(OCR_LS.baseUrl) ?? 'https://ark.cn-beijing.volces.com/api/v3',
-      model: localStorage.getItem(OCR_LS.model) ?? '',
-      apiKey: localStorage.getItem(OCR_LS.apiKey) ?? '',
-    };
-  },
-  save(v: { baseUrl?: string; model?: string; apiKey?: string }) {
-    if (v.baseUrl !== undefined) localStorage.setItem(OCR_LS.baseUrl, v.baseUrl);
-    if (v.model !== undefined) localStorage.setItem(OCR_LS.model, v.model);
-    if (v.apiKey !== undefined) localStorage.setItem(OCR_LS.apiKey, v.apiKey);
-  },
-};
+/** localStorage helpers for screenshot settings live in screenshot-import.ts. */
 
 function ImportPage() {
   const { t } = useTranslation();
@@ -173,7 +156,7 @@ function ImportPage() {
         </Button>
       </div>
 
-      {mode === 'csv' ? <CsvImport /> : <OcrImport />}
+      {mode === 'csv' ? <CsvImport /> : <ScreenshotImport />}
       <ImportHistoryCard />
     </div>
   );
@@ -378,181 +361,6 @@ function CsvImport() {
               </div>
             )}
           </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------
-// Screenshot OCR flow
-// ---------------------------------------------------------------------
-
-function OcrImport() {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [imageBase64, setImageBase64] = useState('');
-  const [ocrResult, setOcrResult] = useState<OcrExtractResult | null>(null);
-  const [rows, setRows] = useState<ImportRowCandidate[]>([]);
-  const [provider, setProvider] = useState(() => ocrConfig.load());
-  const [extracting, setExtracting] = useState(false);
-  const [committing, setCommitting] = useState(false);
-
-  const readFile = (file: File) => {
-    setOcrResult(null);
-    setRows([]);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? '');
-      setImageBase64(dataUrl.split(',')[1] ?? '');
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const extract = async () => {
-    if (!imageBase64) {
-      toast.warning(t('import.selectScreenshotFirst'));
-      return;
-    }
-    if (!provider.apiKey.trim() || !provider.model.trim()) {
-      toast.warning(t('import.needKey'));
-      return;
-    }
-    try {
-      setExtracting(true);
-      ocrConfig.save(provider);
-      const r = await extractScreenshot({
-        imageBase64,
-        apiKey: provider.apiKey.trim(),
-        baseUrl: provider.baseUrl.trim() || undefined,
-        model: provider.model.trim(),
-      });
-      setOcrResult(r);
-      setRows(r.rows);
-      toast.success(t('import.extractSuccess', { count: r.rows.length, broker: r.broker ? ` (${r.broker})` : '' }));
-    } catch (error) {
-      toast.error((error as { response?: { data?: { message?: string } } })?.response?.data?.message ?? t('import.extractFailed'));
-    } finally {
-      setExtracting(false);
-    }
-  };
-
-  const commit = async () => {
-    try {
-      setCommitting(true);
-      const r = await commitImport({ source: 'ocr', rows });
-      toast.success(t('import.importComplete', { created: r.created, skipped: r.skipped }));
-      setRows([]);
-      setOcrResult(null);
-      setImageBase64('');
-      queryClient.invalidateQueries({ queryKey: ['import'] });
-      queryClient.invalidateQueries({ queryKey: ['holdings'] });
-    } catch (error) {
-      toast.error((error as { response?: { data?: { message?: string } } })?.response?.data?.message ?? t('import.importFailed'));
-    } finally {
-      setCommitting(false);
-    }
-  };
-
-  const updateRow = (i: number, patch: Partial<ImportRowCandidate>) => {
-    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm">{t('import.screenshotImport')}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 p-4">
-        <p className="text-xs text-muted-foreground">
-          {t('import.ocrHint')}
-        </p>
-
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t('import.apiEndpoint')}</Label>
-            <Input
-              className="h-9"
-              placeholder="https://ark.cn-beijing.volces.com/api/v3"
-              value={provider.baseUrl}
-              onChange={(e) => setProvider((p) => ({ ...p, baseUrl: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t('import.visionModel')}</Label>
-            <Input
-              className="h-9"
-              placeholder="e.g. doubao-1.5-vision-pro / gpt-4o-mini"
-              value={provider.model}
-              onChange={(e) => setProvider((p) => ({ ...p, model: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t('import.apiKey')}</Label>
-            <Input
-              className="h-9"
-              type="password"
-              placeholder={t('import.apiKeyNote')}
-              value={provider.apiKey}
-              onChange={(e) => setProvider((p) => ({ ...p, apiKey: e.target.value }))}
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-            <Camera size={14} className="mr-1" /> {t('import.selectScreenshot')}
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0])}
-          />
-          <Button size="sm" onClick={extract} disabled={extracting || !imageBase64}>
-            {extracting ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Wand2 size={14} className="mr-1" />}
-            {extracting ? t('import.extracting') : t('import.extract')}
-          </Button>
-          {imageBase64 && (
-            <img
-              src={`data:image/jpeg;base64,${imageBase64}`}
-              alt={t('ui.import.screenshotPreview')}
-              className="h-16 rounded-md border border-border object-cover"
-            />
-          )}
-        </div>
-
-        {rows.length > 0 && (
-          <>
-            <div className="max-h-56 overflow-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-muted/50">
-                  <tr className="text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">{t('ui.import.editableTicker')}</th>
-                    <th className="px-3 py-2 font-medium">{t('ui.import.nameColumn')}</th>
-                    <th className="px-3 py-2 font-medium">{t('ui.import.editableShares')}</th>
-                    <th className="px-3 py-2 font-medium">{t('ui.import.editableCost')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i} className="border-t">
-                      <td className="px-2 py-1"><Input className="h-8" value={r.ticker} onChange={(e) => updateRow(i, { ticker: e.target.value })} /></td>
-                      <td className="px-2 py-1 text-xs text-muted-foreground">{r.company ?? '—'}</td>
-                      <td className="w-28 px-2 py-1"><Input className="h-8 font-mono-nums" type="number" value={String(r.shares)} onChange={(e) => updateRow(i, { shares: Number(e.target.value) })} /></td>
-                      <td className="w-28 px-2 py-1"><Input className="h-8 font-mono-nums" type="number" value={r.avgCost == null ? '' : String(r.avgCost)} onChange={(e) => updateRow(i, { avgCost: e.target.value === '' ? null : Number(e.target.value) })} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Button onClick={commit} disabled={committing}>
-              {committing ? <Loader2 size={14} className="mr-1 animate-spin" /> : <CheckCircle2 size={14} className="mr-1" />}
-              {t('import.confirmImport', { count: rows.length })}
-            </Button>
-          </>
         )}
       </CardContent>
     </Card>

@@ -1,5 +1,6 @@
 import type { ResearchActivity } from './research-events.interface';
 import type { ResearchToolBundle, ResearchToolCapability } from './research-tools.interface';
+import type { NativeAgentImage } from './native-image.interface';
 /** Native runtimes are selected from a fixed catalog; clients never supply executable paths. */
 export const LOCAL_AGENT_PROVIDERS = ['codex', 'claude', 'gemini', 'antigravity', 'opencode', 'kimi', 'doubao'] as const;
 export type LocalAgentProvider = typeof LOCAL_AGENT_PROVIDERS[number];
@@ -7,6 +8,7 @@ export interface NativeAgentConfiguration { model?: string; reasoningEffort?: st
 export interface NativeAgentModel { id: string; name: string; reasoningEfforts?: string[] }
 export type NativeAgentState = 'not_installed' | 'login_required' | 'ready' | 'error';
 export interface NativeAgentStatus {
+  imageInput?: boolean;
   researchTools?: ResearchToolCapability;
   provider: LocalAgentProvider;
   name: string;
@@ -32,6 +34,8 @@ export interface LocalAgentsStatus {
 }
 export interface LocalAgentPairing { code: string; expiresAt: string }
 export interface CompanionCommand {
+  image?: NativeAgentImage;
+  hasImage?: boolean;
   researchTools?: ResearchToolBundle;
   id: string;
   kind: 'run' | 'login';
@@ -46,7 +50,7 @@ export interface CompanionUpdate {
   progress?: string;
   text?: string;
   usageTokens?: number | null;
-  error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED' | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED' | 'LOCAL_USAGE_LIMIT' | 'LOCAL_RATE_LIMIT';
+  error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED' | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED' | 'LOCAL_USAGE_LIMIT' | 'LOCAL_RATE_LIMIT' | 'LOCAL_IMAGE_UNSUPPORTED' | 'LOCAL_INVALID_INPUT';
 }
 export interface CompanionPoll {
   agents: NativeAgentStatus[];

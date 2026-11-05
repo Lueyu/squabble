@@ -11,7 +11,9 @@ import { researchFailure, validResearchBundle, validResearchRequest, validResear
 const NATIVE_PROVIDERS = ['codex', 'claude', 'gemini', 'antigravity', 'opencode', 'kimi', 'doubao'] as const;
 export type NativeProvider = typeof NATIVE_PROVIDERS[number];
 interface NativeAgentConfiguration { model?: string; reasoningEffort?: string }
+interface NativeAgentImage { mimeType: 'image/png' | 'image/jpeg' | 'image/webp'; data: string }
 export interface NativeAgentStatus {
+  imageInput?: boolean;
   provider: NativeProvider;
   name: string;
   state: 'not_installed' | 'login_required' | 'ready' | 'error';
@@ -29,11 +31,13 @@ export interface NativeRuntime {
   runNativeAgent(provider: NativeProvider, prompt: string, options: {
     root: string; signal: AbortSignal; onProgress: (text: string) => void;
     agentSettings?: NativeAgentConfiguration;
+    image?: NativeAgentImage;
     researchTools?: ResearchToolBundle & { call: (request: ResearchToolRequest, signal: AbortSignal) => Promise<ResearchToolResult> };
     onEvent?: (event: ResearchActivity) => void;
   }): Promise<{ text: string; usageTokens: number | null }>;
 }
 interface Command {
+  image?: NativeAgentImage; hasImage?: boolean;
   id: string; kind: 'run' | 'login'; provider: NativeProvider; prompt?: string;
   agentSettings?: NativeAgentConfiguration; researchTools?: ResearchToolBundle;
 }
@@ -45,7 +49,8 @@ interface Update {
   usageTokens?: number | null;
   events?: ResearchActivity[];
   error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED'
-    | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED' | 'LOCAL_USAGE_LIMIT' | 'LOCAL_RATE_LIMIT';
+    | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED' | 'LOCAL_USAGE_LIMIT' | 'LOCAL_RATE_LIMIT'
+    | 'LOCAL_IMAGE_UNSUPPORTED' | 'LOCAL_INVALID_INPUT';
 }
 interface UpdateSnapshot { source: Update; wire: Update }
 interface Pairing {
@@ -68,6 +73,8 @@ export interface CompanionStatus {
 
 const MAX_TEXT = 512_000;
 const MAX_POLL_BYTES = 900_000;
+const MAX_COMMAND_BYTES = 12 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PROCESSED_TASKS = 10_000;
 const OFFLINE_LIMIT_MS = 30_000;
 const TASK_ID = /^[a-zA-Z0-9_-]{1,128}$/u;
@@ -121,10 +128,26 @@ function pollResponse(value: unknown): value is { commands: Command[]; cancelTas
       && typeof command.id === 'string' && TASK_ID.test(command.id)
       && NATIVE_PROVIDERS.some((provider) => provider === command.provider)
       && validConfiguration(command.agentSettings)
+      && (command.hasImage === undefined || typeof command.hasImage === 'boolean')
+      && (command.image === undefined || validImage(command.image))
       && (command.researchTools === undefined || validResearchBundle(command.researchTools))
-      && ((command.kind === 'login' && command.prompt === undefined && command.agentSettings === undefined && command.researchTools === undefined)
+      && ((command.kind === 'login' && command.prompt === undefined && command.agentSettings === undefined && command.researchTools === undefined
+        && command.image === undefined && command.hasImage !== true)
         || (command.kind === 'run' && typeof command.prompt === 'string'
           && command.prompt.length > 0 && command.prompt.length <= MAX_TEXT)));
+}
+
+// The desktop package has its own rootDir; mirror the native boundary validation.
+function validImage(value: unknown): value is NativeAgentImage {
+  if (!object(value) || Object.keys(value).some(key => key !== 'mimeType' && key !== 'data')
+    || !['image/png', 'image/jpeg', 'image/webp'].includes(String(value.mimeType)) || typeof value.data !== 'string'
+    || !value.data.length || value.data.length > 4 * Math.ceil(MAX_IMAGE_BYTES / 3)
+    || value.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value.data)) return false;
+  const bytes = Buffer.from(value.data, 'base64');
+  if (bytes.length > MAX_IMAGE_BYTES || bytes.toString('base64') !== value.data) return false;
+  return value.mimeType === 'image/png' ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : value.mimeType === 'image/jpeg' ? bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
+      : bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
 }
 
 function validConfiguration(value: unknown): value is NativeAgentConfiguration | undefined {
@@ -139,6 +162,8 @@ function validConfiguration(value: unknown): value is NativeAgentConfiguration |
 
 function nativeFailureCode(error: unknown): Update['error'] {
   const codes: Record<string, NonNullable<Update['error']>> = {
+    NATIVE_AGENT_INVALID_IMAGE: 'LOCAL_INVALID_INPUT',
+    NATIVE_AGENT_IMAGE_UNSUPPORTED: 'LOCAL_IMAGE_UNSUPPORTED',
     NATIVE_AGENT_LOGIN_REQUIRED: 'LOCAL_LOGIN_REQUIRED',
     NATIVE_AGENT_INVALID_CONFIGURATION: 'LOCAL_INVALID_CONFIGURATION',
     NATIVE_AGENT_CONFIGURATION_UNSUPPORTED: 'LOCAL_CONFIGURATION_UNSUPPORTED',
@@ -346,7 +371,7 @@ export class LocalAgentCompanion {
       if (generation !== this.generation) return;
       if (response.status === 401 || response.status === 403) { await this.forget(); return; }
       if (!response.ok) throw new Error('Companion poll failed');
-      const result = await readJson(response);
+      const result = await readJson(response, MAX_COMMAND_BYTES);
       if (!pollResponse(result) || JSON.stringify(result).includes(pairing.token)) throw new Error('Invalid companion response');
       if (generation !== this.generation) return;
       this.lastSuccess = this.now();
@@ -457,14 +482,18 @@ export class LocalAgentCompanion {
         update({ id: command.id, state: controller.signal.aborted ? 'cancelled' : 'completed' });
         return;
       }
+      if (command.hasImage && !command.image) throw new Error('NATIVE_AGENT_INVALID_IMAGE');
+      if (command.image && (this.agents.find(agent => agent.provider === command.provider)?.imageInput !== true
+        || !['codex', 'opencode'].includes(command.provider))) throw new Error('NATIVE_AGENT_IMAGE_UNSUPPORTED');
       const result = await this.options.native.runNativeAgent(command.provider, command.prompt ?? '', {
         root: join(this.options.dataDir, 'tasks', command.id), signal: controller.signal,
         agentSettings: command.agentSettings,
+        ...(command.image ? { image: command.image } : {}),
         ...(command.researchTools ? { researchTools: { ...command.researchTools,
           call: (request: ResearchToolRequest, signal: AbortSignal) => this.callResearchTool(command, pairing, request,
             AbortSignal.any([controller.signal, signal])) } } : {}),
         onEvent: (event) => {
-          if (!acceptingEvents || this.pairing !== pairing) return;
+          if (!acceptingEvents || this.pairing !== pairing || command.image) return;
           const buffer = this.events.get(command.id) ?? new ResearchEventBuffer();
           buffer.append(event, pairing.token);
           if (buffer.length) {
@@ -473,11 +502,12 @@ export class LocalAgentCompanion {
           }
         },
         onProgress: (progress) => {
-          if (!controller.signal.aborted) update({ id: command.id, state: 'running', progress: progress.slice(0, 500) });
+          if (!controller.signal.aborted && !command.image) update({ id: command.id, state: 'running', progress: progress.slice(0, 500) });
         },
       });
       if (controller.signal.aborted) { update({ id: command.id, state: 'cancelled' }); return; }
       if (Buffer.byteLength(result.text, 'utf8') > MAX_TEXT) throw new Error('Native result too large');
+      if (command.image && result.text.includes(command.image.data)) throw new Error('NATIVE_AGENT_INVALID_IMAGE');
       update({ id: command.id, state: 'completed', text: result.text,
         usageTokens: Number.isSafeInteger(result.usageTokens) && Number(result.usageTokens) >= 0 ? result.usageTokens : null });
     } catch (error) {
