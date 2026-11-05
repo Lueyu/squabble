@@ -177,7 +177,8 @@ export class CouncilWorkflowExecutor {
       if (!value) { try { value = JSON.parse(result.text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')); } catch { throw new Error('DELIVERY_INVALID'); } }
     } else {
       const options = { taskId: row.taskId, purpose: `council:${task.key}:${attempt.kind}:${member.id}`, maxOutputTokens: review ? batch.length ? 1000 : 600 : 2400,
-        retryPolicy: 'none' as const, timeoutMs: 120_000, connectionId: member.connectionId, shouldContinue: () => this.active(row) };
+        retryPolicy: 'none' as const, timeoutMs: 120_000, connectionId: member.connectionId,
+        route: { mode: 'api' as const }, shouldContinue: () => this.active(row) };
       const result = member.model === 'slow' ? await this.deps.llm.chatSlowJSON(prompt, row.owner, options)
         : await this.deps.llm.chatFastJSON(prompt, row.owner, options);
       value = result.data; tokens = result.tokens; taskId = attempt.id;

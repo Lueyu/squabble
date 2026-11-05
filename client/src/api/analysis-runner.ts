@@ -1,9 +1,10 @@
 import http from './http';
 import type { AgentRunWithRating, BatchRunRequest, BatchRunResult, DailyBatchResult } from '@shared/api.interface';
+import type { ModelRoute } from '@shared/model-route.interface';
 
-export async function runPortfolioAnalysis(language: 'zh-CN' | 'en'): Promise<DailyBatchResult> {
+export async function runPortfolioAnalysis(language: 'zh-CN' | 'en', route?: ModelRoute): Promise<DailyBatchResult> {
   const response = await http<DailyBatchResult>({
-    url: '/api/multi-agent/daily-batch', method: 'POST', data: { language },
+    url: '/api/multi-agent/daily-batch', method: 'POST', data: { language, ...(route ? { route } : {}) },
   });
   return response.data;
 }

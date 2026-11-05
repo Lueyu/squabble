@@ -26,6 +26,9 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { NativeSelect } from '@/components/ui/native-select';
+import { fetchLocalAgents } from '@/api/local-agents';
+import { AGENT_MODEL_MAX_LENGTH, agentReasoningEfforts, agentSettingsProblem, cleanAgentSettings } from '@/utils/local-agent-settings';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,10 +45,12 @@ import {
   removeLlmIntegration,
   saveFinancialIntegration,
   saveLlmIntegration,
+  saveLlmRoute,
   testFinancialIntegration,
   testLlmIntegration,
   type IntegrationSettings,
   type IntegrationTestResult,
+  type ModelRoute,
   type UpdateLlmIntegrationRequest,
 } from '@/api/settings';
 
@@ -103,9 +108,18 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
     queryFn: fetchIntegrationSettings,
     retry: false,
   });
+  const agentsQuery = useQuery({
+    queryKey: ['settings', 'local-agents'], queryFn: fetchLocalAgents,
+    enabled: section === 'models' && active, retry: false, refetchInterval: 10000,
+  });
+  const [routeDraft, setRouteDraft] = useState<ModelRoute>(settingsQuery.data?.llm.route ?? { mode: 'basic' });
+  const [routeDirty, setRouteDirty] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [customRouteModel, setCustomRouteModel] = useState(false);
 
   useEffect(() => {
     if (!settingsQuery.data) return;
+    if (!routeDirty) setRouteDraft(settingsQuery.data.llm.route ?? { mode: 'basic' });
     if (!llmDirty) {
       setLlmDraft({
         baseUrl: settingsQuery.data.llm.baseUrl ?? '',
@@ -115,7 +129,7 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
       });
     }
     if (!financialDirty) setFinancialKey('');
-  }, [settingsQuery.data, llmDirty, financialDirty]);
+  }, [settingsQuery.data, llmDirty, financialDirty, routeDirty]);
 
   function syncSettings(saved: IntegrationSettings): void {
     queryClient.setQueryData(['settings', 'integrations'], saved);
@@ -144,6 +158,17 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
       setLlmError(message.startsWith('API base URL must use HTTPS')
         ? t('ui.settings.llm.invalidUrl') : message);
     },
+  });
+  const saveRoute = useMutation<IntegrationSettings, Error, ModelRoute>({
+    mutationFn: saveLlmRoute, retry: false,
+    onSuccess: (saved) => {
+      syncSettings(saved);
+      setRouteDraft(saved.llm.route);
+      setRouteDirty(false);
+      setRouteError(null);
+      toast.success(t('ui.settings.saved'));
+    },
+    onError: (error) => setRouteError(getErrorMessage(error, t('ui.settings.saveFailed'))),
   });
   const saveFinancial = useMutation<IntegrationSettings, Error, { provider: 'finnhub'; apiKey?: string }>({
     mutationFn: saveFinancialIntegration,
@@ -219,6 +244,48 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
 
   const llm = settingsQuery.data?.llm;
   const financial = settingsQuery.data?.financial;
+  const agents = agentsQuery.data ?? [];
+  const selectedAgent = routeDraft.mode === 'local' ? agents.find(agent => agent.id === routeDraft.agentId) : undefined;
+  const routeModel = routeDraft.mode === 'local' ? routeDraft.agentSettings?.model ?? '' : '';
+  const routeEffort = routeDraft.mode === 'local' ? routeDraft.agentSettings?.reasoningEffort ?? '' : '';
+  const routeModels = selectedAgent?.models ?? [];
+  const routeModelSupported = selectedAgent?.models !== undefined;
+  const showCustomRouteModel = customRouteModel || Boolean(routeModel && !routeModels.some(model => model.id === routeModel));
+  const routeEfforts = agentReasoningEfforts(selectedAgent, routeModel);
+  const routeEffortInvalid = Boolean(routeEffort && !routeEfforts?.includes(routeEffort));
+  const apiConfigured = Boolean(llm?.hasApiKey && !llm?.needsReentry);
+
+  function updateRoute(route: ModelRoute): void {
+    setRouteDraft(route);
+    setRouteDirty(true);
+    setRouteError(null);
+  }
+
+  function handleSaveRoute(): void {
+    if (routeDraft.mode === 'api' && !apiConfigured) {
+      setRouteError(t('modelRoute.apiUnavailable'));
+      return;
+    }
+    if (routeDraft.mode === 'local') {
+      if (!selectedAgent?.available || !selectedAgent.connected) {
+        setRouteError(t('modelRoute.agentUnavailable'));
+        return;
+      }
+      if (selectedAgent.busy) {
+        setRouteError(t('modelRoute.agentBusy'));
+        return;
+      }
+      const problem = agentSettingsProblem(routeDraft.agentSettings, selectedAgent);
+      if (problem) {
+        setRouteError(t(`modelRoute.${problem}`));
+        return;
+      }
+      saveRoute.mutate({ mode: 'local', agentId: selectedAgent.id,
+        agentSettings: cleanAgentSettings(routeDraft.agentSettings) });
+      return;
+    }
+    saveRoute.mutate(routeDraft);
+  }
 
   function updateLlm(field: keyof LlmDraft, value: string): void {
     setLlmDraft((current: LlmDraft) => ({ ...current, [field]: value }));
@@ -267,7 +334,7 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
 
   return (
     <div className="space-y-5">
-      {section === 'models' && llm?.engine === 'basic' && (
+      {section === 'models' && llm?.route?.mode === 'basic' && (
         <Card className="border-success/30 bg-success/5">
           <CardContent className="flex flex-col items-start gap-4 pt-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0 flex-1 space-y-1">
@@ -295,6 +362,109 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
       ) : (
         <>
           {section === 'models' && <Card className="min-w-0">
+            <CardHeader>
+              <CardTitle className="text-lg">{t('modelRoute.title')}</CardTitle>
+              <CardDescription>{t('modelRoute.subtitle')}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="llm-default-route">{t('modelRoute.default')}</Label>
+                <NativeSelect id="llm-default-route" className="w-full" value={routeDraft.mode}
+                  onChange={(event) => {
+                    const mode = event.target.value;
+                    setCustomRouteModel(false);
+                    updateRoute(mode === 'local' ? { mode: 'local', agentId: agents.find(agent => agent.available && agent.connected)?.id ?? '' }
+                      : mode === 'api' ? { mode: 'api' } : { mode: 'basic' });
+                  }}>
+                  <option value="basic">{t('modelRoute.basic')}</option>
+                  <option value="api" disabled={!apiConfigured}>{t('modelRoute.api')}</option>
+                  <option value="local">{t('modelRoute.local')}</option>
+                </NativeSelect>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {t(`modelRoute.${routeDraft.mode}Hint`)}
+                </p>
+                {!apiConfigured && <p className="text-xs leading-5 text-muted-foreground">{t('modelRoute.apiSetupHint')}</p>}
+              </div>
+              {routeDraft.mode === 'local' && <div className="space-y-4 rounded-lg border border-border p-4">
+                {agentsQuery.isLoading && <p role="status" className="text-sm text-muted-foreground">{t('modelRoute.loadingAgents')}</p>}
+                {agentsQuery.isError && <p role="alert" className="text-sm text-destructive">{t('modelRoute.agentsLoadFailed')}</p>}
+                {!agentsQuery.isLoading && !agents.length && <p className="text-sm text-muted-foreground">{t('modelRoute.noAgents')}</p>}
+                <div className="space-y-2">
+                  <Label htmlFor="llm-route-agent">{t('modelRoute.agent')}</Label>
+                  <NativeSelect id="llm-route-agent" className="w-full" value={routeDraft.agentId}
+                    onChange={(event) => { setCustomRouteModel(false); updateRoute({ mode: 'local', agentId: event.target.value }); }}>
+                    {!agents.some(agent => agent.id === routeDraft.agentId) &&
+                      <option value={routeDraft.agentId}>{routeDraft.agentId
+                        ? `${routeDraft.agentId} · ${t('modelRoute.unavailable')}` : t('modelRoute.chooseAgent')}</option>}
+                    {agents.map(agent => <option key={agent.id} value={agent.id} disabled={!agent.available || !agent.connected}>
+                      {agent.name}{!agent.available || !agent.connected
+                        ? ` · ${t('modelRoute.unavailable')}`
+                        : agent.busy ? ` · ${t('modelRoute.busy')}` : ''}
+                    </option>)}
+                  </NativeSelect>
+                  {selectedAgent && (!selectedAgent.available || !selectedAgent.connected || selectedAgent.busy) &&
+                    <p className="text-xs text-amber-600">{t(selectedAgent.busy && selectedAgent.available
+                      ? 'modelRoute.agentBusy' : 'modelRoute.agentUnavailable')}</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="llm-route-model">{t('modelRoute.model')}</Label>
+                  <NativeSelect id="llm-route-model" className="w-full" disabled={!routeModelSupported}
+                    value={!routeModelSupported ? '' : showCustomRouteModel ? '__custom_model__' : routeModel}
+                    onChange={(event) => {
+                      const custom = event.target.value === '__custom_model__';
+                      setCustomRouteModel(custom);
+                      const model = custom ? '' : event.target.value;
+                      updateRoute({ ...routeDraft, agentSettings: {
+                        model, reasoningEffort: agentReasoningEfforts(selectedAgent, model)?.includes(routeEffort) ? routeEffort : undefined,
+                      } });
+                    }}>
+                    <option value="">{t('modelRoute.agentDefault')}</option>
+                    {routeModels.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+                    {routeModelSupported && <option value="__custom_model__">{t('modelRoute.customModel')}</option>}
+                  </NativeSelect>
+                  {routeModelSupported && showCustomRouteModel && <Input id="llm-route-custom-model"
+                    value={routeModel} maxLength={AGENT_MODEL_MAX_LENGTH} autoComplete="off" spellCheck={false}
+                    placeholder={t('modelRoute.modelId')}
+                    onChange={(event) => updateRoute({ ...routeDraft, agentSettings: {
+                      model: event.target.value,
+                      reasoningEffort: agentReasoningEfforts(selectedAgent, event.target.value)?.includes(routeEffort) ? routeEffort : undefined,
+                    } })} />}
+                  <p className="text-xs text-muted-foreground">{t(routeModelSupported
+                    ? 'modelRoute.modelHint' : 'modelRoute.modelUnsupportedHint')}</p>
+                  {!routeModelSupported && routeModel && <Button type="button" size="sm" variant="outline"
+                    onClick={() => { setCustomRouteModel(false); updateRoute({ ...routeDraft, agentSettings: {
+                      ...routeDraft.agentSettings, model: undefined, reasoningEffort: undefined,
+                    } }); }}>{t('modelRoute.agentDefault')}</Button>}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="llm-route-effort">{t('modelRoute.reasoning')}</Label>
+                  <NativeSelect id="llm-route-effort" className="w-full" value={routeEffortInvalid ? '' : routeEffort}
+                    disabled={!routeEfforts?.length}
+                    onChange={(event) => updateRoute({ ...routeDraft,
+                      agentSettings: { ...routeDraft.agentSettings, reasoningEffort: event.target.value || undefined },
+                    })}>
+                    <option value="">{t('modelRoute.agentDefault')}</option>
+                    {routeEfforts?.map(effort => <option key={effort} value={effort}>{effort}</option>)}
+                  </NativeSelect>
+                  {routeEffortInvalid && <p className="text-xs text-destructive">{t('modelRoute.reasoningInvalid')}</p>}
+                  {routeEffortInvalid && <Button type="button" size="sm" variant="outline"
+                    onClick={() => updateRoute({ ...routeDraft, agentSettings: {
+                      ...routeDraft.agentSettings, reasoningEffort: undefined,
+                    } })}>{t('modelRoute.agentDefault')}</Button>}
+                </div>
+                <p className="text-xs leading-5 text-muted-foreground">{t('modelRoute.localBilling')}</p>
+                <Link to="/settings/agents" className="text-xs text-primary hover:underline">{t('modelRoute.manageAgents')}</Link>
+              </div>}
+              {routeError && <p role="alert" className="text-sm text-destructive">{routeError}</p>}
+              <div className="border-t border-border pt-5">
+                <Button type="button" onClick={handleSaveRoute} disabled={saveRoute.isPending}>
+                  {saveRoute.isPending && <LoaderCircle className="animate-spin" />}
+                  {t('modelRoute.save')}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>}
+          {section === 'models' && <Card className="min-w-0">
             <CardHeader className="gap-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -305,7 +475,7 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
                   </div>
                 </div>
                 <Badge variant={llm?.hasApiKey ? 'secondary' : 'outline'}>
-                  {t(llm?.needsReentry
+                  {llm?.source === 'local' ? t(llm.hasApiKey ? 'ui.settings.savedKey' : 'ui.settings.source.none') : t(llm?.needsReentry
                     ? 'ui.settings.source.needsReentry'
                     : llm?.source === 'builtin' ? 'integrations.basicBadge'
                     : `ui.settings.source.${llm?.source ?? 'none'}`)}
@@ -314,7 +484,7 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
             </CardHeader>
             <CardContent className="space-y-5">
               <p className="text-sm leading-6 text-muted-foreground">
-                {t(llm?.engine === 'basic' ? 'integrations.basicScope' : 'integrations.llmScope')}
+                {t('modelRoute.apiConfigHint')}
               </p>
               {llm?.needsReentry && (
                 <p role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm leading-6 text-foreground">
@@ -546,7 +716,7 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
             <AlertDialogTitle>{t('ui.settings.removeTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(deleteTarget === 'llm'
-                ? 'integrations.removeLlm'
+                ? 'modelRoute.removeLlm'
                 : 'integrations.removeFinancial')}
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -38,6 +38,74 @@ const BUDGET_ERRORS: Record<string, SafeErrorText> = {
   ],
 };
 const MODEL_ERRORS: Record<string, SafeErrorText> = {
+  LLM_BASIC_ROUTE: [
+    'Basic analysis uses data and rules. Select an API model or connected local Agent for model tasks.',
+    '基础分析使用数据和规则。模型任务请选择 API 模型或已连接的本地 Agent。',
+  ],
+  LOCAL_UNAVAILABLE: [
+    'The selected local Agent is unavailable. Reconnect it in Model Settings, then retry.',
+    '所选本地 Agent 不可用。请在模型设置中重新连接后重试。',
+  ],
+  LOCAL_AGENT_NOT_FOUND: [
+    'The selected local Agent is no longer connected. Choose a connected Agent in Model Settings.',
+    '所选本地 Agent 已断开连接。请在模型设置中选择已连接的 Agent。',
+  ],
+  LOCAL_LOGIN_REQUIRED: [
+    'The selected local Agent needs sign-in. Sign in and reconnect it in Model Settings.',
+    '所选本地 Agent 需要登录。请登录后在模型设置中重新连接。',
+  ],
+  LOCAL_BUSY: [
+    'The selected local Agent is busy. Retry when its current task finishes.',
+    '所选本地 Agent 正忙。请等待当前任务完成后重试。',
+  ],
+  LOCAL_CANCELLED: [
+    'The local Agent task was cancelled.',
+    '本地 Agent 任务已取消。',
+  ],
+  LOCAL_PAUSED: [
+    'The local Agent task stopped. Confirm it has finished before retrying.',
+    '本地 Agent 任务已停止。请确认任务结束后再重试。',
+  ],
+  LOCAL_INTERRUPTED: [
+    'The local Agent disconnected during the task. Reconnect it and start a new analysis.',
+    '本地 Agent 在任务期间断开连接。请重新连接并开始新的分析。',
+  ],
+  LOCAL_COMPANION_OFFLINE: [
+    'The local Agent companion is offline. Reconnect the companion and retry.',
+    '本地 Agent 伴侣程序已离线。请重新连接后重试。',
+  ],
+  LOCAL_DISPATCH_UNCERTAIN: [
+    'The local Agent task may still be running. Check its status before starting a new analysis.',
+    '本地 Agent 任务可能仍在运行。开始新分析前请检查其状态。',
+  ],
+  LOCAL_VERSION_UNSUPPORTED: [
+    'The local Agent version is unsupported. Update it and reconnect in Model Settings.',
+    '本地 Agent 版本不受支持。请更新后在模型设置中重新连接。',
+  ],
+  LOCAL_INVALID_RESULT: [
+    'The local Agent returned an invalid result. Check its model settings and retry.',
+    '本地 Agent 返回了无效结果。请检查模型设置后重试。',
+  ],
+  LOCAL_INVALID_CONFIGURATION: [
+    'The local Agent model or reasoning setting is invalid. Check Model Settings.',
+    '本地 Agent 的模型或推理设置无效。请检查模型设置。',
+  ],
+  LOCAL_CONFIGURATION_UNSUPPORTED: [
+    'The selected local Agent does not support that model or reasoning setting. Check Model Settings.',
+    '所选本地 Agent 不支持该模型或推理设置。请检查模型设置。',
+  ],
+  LOCAL_USAGE_LIMIT: [
+    'The local Agent account reached its usage limit. Check the Agent account before retrying.',
+    '本地 Agent 账户已达到用量上限。请检查 Agent 账户后重试。',
+  ],
+  LOCAL_RATE_LIMIT: [
+    'The local Agent is rate limited. Wait before retrying.',
+    '本地 Agent 遇到频率限制。请稍后重试。',
+  ],
+  LOCAL_TASK_FAILED: [
+    'The local Agent task failed. Check its connection and retry.',
+    '本地 Agent 任务失败。请检查连接后重试。',
+  ],
   LLM_REQUEST_TIMEOUT: [
     'The model response timed out. Its reserved usage remains counted because the provider may have processed the request. Completed discussion turns are retained; check provider status before explicitly continuing.',
     '模型响应超时；供应商可能已处理请求，因此保留本次预留用量。已完成的讨论发言仍会保留，请检查供应商状态后再手动继续。',

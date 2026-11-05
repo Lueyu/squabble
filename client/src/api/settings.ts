@@ -2,6 +2,7 @@ import http from './http';
 import type {
   IntegrationSettings,
   IntegrationTestResult,
+  ModelRoute,
   UpdateFinancialIntegrationRequest,
   UpdateLlmIntegrationRequest,
 } from '@shared/api.interface';
@@ -9,6 +10,7 @@ import type {
 export type {
   IntegrationSettings,
   IntegrationTestResult,
+  ModelRoute,
   UpdateFinancialIntegrationRequest,
   UpdateLlmIntegrationRequest,
 } from '@shared/api.interface';
@@ -24,6 +26,11 @@ export async function saveLlmIntegration(
   request: UpdateLlmIntegrationRequest,
 ): Promise<IntegrationSettings> {
   const response = await http.put<IntegrationSettings>(`${BASE_URL}/llm`, request);
+  return response.data;
+}
+
+export async function saveLlmRoute(route: ModelRoute): Promise<IntegrationSettings> {
+  const response = await http.put<IntegrationSettings>(`${BASE_URL}/llm-route`, route);
   return response.data;
 }
 

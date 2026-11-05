@@ -20,7 +20,8 @@ export class StrategyModelService {
       const text = result.text.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '');
       return JSON.parse(text) as unknown;
     }
-    const options = { connectionId: member?.connectionId, taskId, purpose, retryPolicy: 'none' as const,
+    const options = { connectionId: member?.connectionId, route: member ? { mode: 'api' as const } : undefined,
+      taskId, purpose, retryPolicy: 'none' as const,
       maxOutputTokens: fast ? 1200 : 6000, shouldContinue };
     const messages = [{ role: 'system' as const, content: 'You assist with simulated PAPER trading. No real orders. Return strictly valid JSON; do not fabricate evidence or indicators.' },
       { role: 'user' as const, content: prompt }];

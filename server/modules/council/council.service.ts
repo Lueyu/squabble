@@ -160,8 +160,8 @@ export class CouncilService implements OnModuleInit {
     const members = this.members(previous.profileSnapshot);
     await this.validateMembers(userId, members);
     await this.preflightWorkflowBudget(previous, retryKeys);
-    if (members.some((member) => member.connectionId || member.executionMode === 'local')) {
-      const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId)));
+    if (members.some((member) => member.executionMode !== 'local')) {
+      const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId, { mode: 'api' })));
       if (configured.some((value) => !value)) throw new BadRequestException('Configure a model connection for every team member before starting');
     }
     const { row, started } = await this.db.transaction(async (tx) => {
@@ -288,7 +288,7 @@ export class CouncilService implements OnModuleInit {
       eq(councilSessions.cacheKey, key), gte(councilSessions.createdAt, new Date(Date.now() - 24 * 3600_000))))
       .orderBy(desc(councilSessions.createdAt)).limit(8);
     const modelConfigured = (await Promise.all(this.members(profile.config)
-      .map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId)))).every(Boolean);
+      .map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId, { mode: 'api' })))).every(Boolean);
     for (const row of rows) {
       const session = await this.hydrate(userId, row);
       const report = session.reports.at(-1);
@@ -364,7 +364,8 @@ export class CouncilService implements OnModuleInit {
       let claimId: string | null = null;
       try {
         const members = this.members(row.profileSnapshot);
-        if (!members.some((member) => member.connectionId || member.executionMode === 'local') && !(await this.llm.isConfigured(userId))) {
+        if (members.every((member) => member.executionMode !== 'local')
+          && !(await this.llm.isConfigured(userId, undefined, { mode: 'api' }))) {
           await this.publish(userId, row, { decision: 'wait', summary: row.language === 'en'
             ? 'Basic mode: no model is configured. No AI discussion occurred. Configure a model to discuss the verified sources.'
             : '基础模式：尚未配置模型，未进行 AI 讨论。配置模型后可共同讨论已核实资料。',
@@ -500,7 +501,7 @@ export class CouncilService implements OnModuleInit {
     const options = { taskId: row.taskId, purpose: `council:${turn.phase}:${member.id}`,
       maxOutputTokens: turn.phase === 'summary' ? 2400 : 1800,
       retryPolicy: 'none' as const, timeoutMs: 120_000,
-      connectionId: member.connectionId, shouldContinue: async () => {
+      connectionId: member.connectionId, route: { mode: 'api' as const }, shouldContinue: async () => {
         const latest = await this.requireSession(userId, row.id);
         return latest.status === 'running' && latest.revision === row.revision;
       } };

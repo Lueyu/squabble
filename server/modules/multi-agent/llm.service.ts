@@ -17,14 +17,19 @@
  *  - slow (doubao-pro-32k by default): higher quality, larger context; used for
  *    debate, critique, and rating aggregation.
  */
-import { Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
+import { ModuleRef } from '@nestjs/core';
 import axios from 'axios';
 import { SettingsService } from '../settings/settings.service';
 import { normalizePublicLlmBaseUrl, publicHttpsAgent } from '../settings/settings-security';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
+import type { ModelRoute } from '../../../shared/model-route.interface';
+import { LocalAgentsService } from '../local-agents/local-agents.service';
+import { parseModelRoute } from '../settings/model-route.rules';
 
 export interface LlmCallOptions {
+  route?: ModelRoute;
   connectionId?: string;
   taskId?: string;
   purpose?: string;
@@ -74,6 +79,8 @@ interface ChatResponse {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Native Agent usage may be unavailable; zero tokens must not imply known zero cost. */
+  usageKnown?: boolean;
 }
 
 interface ProviderChatPayload {
@@ -83,6 +90,7 @@ interface ProviderChatPayload {
 
 @Injectable()
 export class LlmService {
+  private static readonly localQueues = new Map<string, Promise<void>>();
   private readonly logger = new Logger(LlmService.name);
   private readonly timeoutMs = 60_000;
   /** Number of retries after the initial attempt (so max total = 1 + 2 = 3). */
@@ -91,12 +99,46 @@ export class LlmService {
   constructor(
     private readonly settings: SettingsService,
     private readonly budgets: LlmBudgetService,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
+  private localAgents(): LocalAgentsService {
+    try {
+      const agents = this.moduleRef?.get(LocalAgentsService, { strict: false });
+      if (agents) return agents;
+    } catch { /* The local Agent module is optional in reduced test modules. */ }
+    throw new Error('LOCAL_UNAVAILABLE');
+  }
+
+  private async routeFor(userId: string, route?: ModelRoute): Promise<ModelRoute> {
+    if (route) return parseModelRoute(route);
+    if (typeof this.settings.getDefaultModelRoute === 'function') return this.settings.getDefaultModelRoute(userId);
+    if (typeof this.settings.getSettings === 'function') {
+      return (await this.settings.getSettings(userId)).llm.engine === 'basic' ? { mode: 'basic' } : { mode: 'api' };
+    }
+    return { mode: 'api' };
+  }
+
+  async validateRoute(userId: string, route: ModelRoute): Promise<void> {
+    const selected = parseModelRoute(route);
+    if (selected.mode === 'local') return this.localAgents().validate(userId, selected.agentId, selected.agentSettings);
+    if (selected.mode === 'api' && !await this.settings.getLlmConfig(userId)) throw new Error('No LLM API key configured');
+  }
+
   /** A broken saved key is still configured: callers must not silently downgrade it. */
-  async isConfigured(userId: string, connectionId?: string): Promise<boolean> {
+  async isConfigured(userId: string, connectionId?: string, route?: ModelRoute): Promise<boolean> {
     if (connectionId) return Boolean(await this.settings.getLlmConfig(userId, connectionId));
-    return (await this.settings.getSettings(userId)).llm.engine === 'llm';
+    const selected = await this.routeFor(userId, route);
+    if (selected.mode === 'local') {
+      try { await this.localAgents().validate(userId, selected.agentId, selected.agentSettings); return true; }
+      catch { return false; }
+    }
+    if (selected.mode === 'basic') return false;
+    if (await this.settings.getLlmConfig(userId)) return true;
+    // A saved but unreadable key still requires attention; do not treat it as
+    // permission to silently switch an existing model workflow to Basic.
+    return typeof this.settings.getSettings === 'function'
+      && (await this.settings.getSettings(userId)).llm.needsReentry === true;
   }
 
   async validateConnectionIds(userId: string, ids: string[]): Promise<void> {
@@ -104,13 +146,21 @@ export class LlmService {
   }
 
   /** Public execution metadata only; credentials never enter reports. */
-  async getExecutionInfo(userId: string): Promise<{
+  async getExecutionInfo(userId: string, route?: ModelRoute): Promise<{
     provider: string;
     modelFast: string;
     modelSlow: string;
   } | null> {
+    const selected = await this.routeFor(userId, route);
+    if (selected.mode === 'basic') return null;
+    if (selected.mode === 'local') return { provider: 'local', modelFast: selected.agentSettings?.model || selected.agentId,
+      modelSlow: selected.agentSettings?.model || selected.agentId };
+    if (route) {
+      const config = await this.settings.getLlmConfig(userId);
+      if (!config) throw new Error('No LLM API key configured');
+      return { provider: config.source, modelFast: config.fastModel, modelSlow: config.slowModel };
+    }
     const { llm } = await this.settings.getSettings(userId);
-    if (llm.engine === 'basic') return null;
     return { provider: llm.source, modelFast: llm.fastModel, modelSlow: llm.slowModel };
   }
 
@@ -125,12 +175,12 @@ export class LlmService {
   }
 
   /** JSON-mode chat on the fast model; returns parsed object + token count. */
-  async chatFastJSON(messages: ChatMessage[], userId: string, options?: LlmCallOptions): Promise<{ data: unknown; tokens: number }> {
+  async chatFastJSON(messages: ChatMessage[], userId: string, options?: LlmCallOptions): Promise<{ data: unknown; tokens: number; tokensKnown?: boolean }> {
     return this.chatJSON(messages, 'fast', userId, options);
   }
 
   /** JSON-mode chat on the slow model; returns parsed object + token count. */
-  async chatSlowJSON(messages: ChatMessage[], userId: string, options?: LlmCallOptions): Promise<{ data: unknown; tokens: number }> {
+  async chatSlowJSON(messages: ChatMessage[], userId: string, options?: LlmCallOptions): Promise<{ data: unknown; tokens: number; tokensKnown?: boolean }> {
     return this.chatJSON(messages, 'slow', userId, options);
   }
 
@@ -145,6 +195,9 @@ export class LlmService {
     userId: string,
     options: LlmCallOptions = {},
   ): Promise<ChatResponse> {
+    const route = options.connectionId ? { mode: 'api' as const } : await this.routeFor(userId, options.route);
+    if (route.mode === 'basic') throw new Error('LLM_BASIC_ROUTE');
+    if (route.mode === 'local') return this.chatLocal(messages, userId, route, options);
     const config = await this.settings.getLlmConfig(userId, options.connectionId);
     if (!config) throw new Error('No LLM API key configured');
     const baseUrl = config.source === 'user'
@@ -227,6 +280,39 @@ export class LlmService {
     throw new Error('Unreachable');
   }
 
+  private async chatLocal(messages: ChatMessage[], userId: string, route: Extract<ModelRoute, { mode: 'local' }>,
+    options: LlmCallOptions): Promise<ChatResponse> {
+    const key = route.agentId;
+    const previous = LlmService.localQueues.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const done = new Promise<void>(resolve => { release = resolve; });
+    const queued = previous.catch(() => undefined).then(() => done);
+    LlmService.localQueues.set(key, queued);
+    try {
+      await previous.catch(() => undefined);
+      if (options.shouldContinue && !await options.shouldContinue()) throw new Error('LLM request cancelled');
+      const agents = this.localAgents();
+      await agents.validate(userId, route.agentId, route.agentSettings);
+      const taskId = options.taskId ?? randomUUID();
+      const purpose = options.purpose ?? randomUUID();
+      const messageId = createHash('sha256').update(JSON.stringify([userId, taskId, purpose, route.agentId])).digest('hex');
+      const result = await agents.execute(userId, {
+        agentId: route.agentId, agentSettings: route.agentSettings, messageId,
+        prompt: messages.map(message => `${message.role.toUpperCase()}:\n${message.content}`).join('\n\n'),
+        onTask: async () => undefined, onProgress: async () => undefined,
+        shouldContinue: options.shouldContinue ?? (async () => true),
+      });
+      if (options.shouldContinue && !await options.shouldContinue()) throw new Error('LLM request cancelled');
+      if (!result.text.trim()) throw new ModelResponseError('LLM_EMPTY_RESPONSE');
+      const known = typeof result.usageTokens === 'number';
+      return { content: result.text, promptTokens: 0, completionTokens: 0,
+        totalTokens: typeof result.usageTokens === 'number' ? result.usageTokens : 0, usageKnown: known };
+    } finally {
+      release();
+      if (LlmService.localQueues.get(key) === queued) LlmService.localQueues.delete(key);
+    }
+  }
+
   /**
    * JSON-mode wrapper: prepend a system message forcing strict JSON output,
    * then clean + parse the response. Cleaning steps:
@@ -241,7 +327,7 @@ export class LlmService {
     tier: 'fast' | 'slow',
     userId: string,
     options?: LlmCallOptions,
-  ): Promise<{ data: unknown; tokens: number }> {
+  ): Promise<{ data: unknown; tokens: number; tokensKnown?: boolean }> {
     const systemMsg: ChatMessage = {
       role: 'system',
       content: '你必须严格按照用户要求的 JSON 格式输出，不要添加任何解释、说明或 markdown 格式。只输出合法的 JSON 字符串。',
@@ -264,14 +350,16 @@ export class LlmService {
 
     try {
       const parsed = JSON.parse(cleaned);
-      return { data: parsed, tokens: result.totalTokens };
+      return { data: parsed, tokens: result.totalTokens,
+        ...(result.usageKnown === undefined ? {} : { tokensKnown: result.usageKnown }) };
     } catch (parseError) {
       // Fallback: extract the first balanced-looking JSON object from the text.
       const match = cleaned.match(/\{[\s\S]*\}/);
       if (match) {
         try {
           const parsed = JSON.parse(match[0]);
-          return { data: parsed, tokens: result.totalTokens };
+          return { data: parsed, tokens: result.totalTokens,
+            ...(result.usageKnown === undefined ? {} : { tokensKnown: result.usageKnown }) };
         } catch {
           // fall through to final throw
         }

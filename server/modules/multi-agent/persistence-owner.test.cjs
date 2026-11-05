@@ -15,11 +15,13 @@ function load(name) {
   }).outputText;
   const exported = { exports: {} };
   const dependencies = {
-    '@nestjs/common': { Injectable: () => target => target, Inject: () => () => undefined,
+    '@nestjs/common': { Injectable: () => target => target, Inject: () => () => undefined, Optional: () => () => undefined,
       Logger: class {}, BadRequestException: Error, NotFoundException: Error },
     '../../common/platform': { DRIZZLE_DATABASE: 'db' },
     'drizzle-orm': { eq: (a, b) => [a, b], and: (...conditions) => conditions, inArray: () => true },
     '@server/database/schema': tables,
+    '../settings/settings.service': { SettingsService: class {} },
+    '../settings/model-route.rules': { parseModelRoute: value => value },
   };
   new Function('require', 'module', 'exports', compiled)(id => {
     if (id === './analysis-report') return load('analysis-report.ts');
