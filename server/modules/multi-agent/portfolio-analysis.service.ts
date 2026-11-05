@@ -258,7 +258,12 @@ export class PortfolioAnalysisService implements OnApplicationBootstrap {
         if (!await this.stillRunning(userId, id)) throw new Error('LLM request cancelled');
         await this.writeProgress(userId, id, progress('validating', language === 'en' ? 'Checking report evidence' : '正在核对报告依据', 90));
         try { report = parsePortfolioReport(JSON.stringify(result.data), snapshot); }
-        catch { throw new Error('PORTFOLIO_INVALID_REPORT'); }
+        catch (error) {
+          const reason = error instanceof Error ? error.message : '';
+          const category = reason.match(/URL|length|field|evidence|ticker|JSON|holding/iu)?.[0].toLowerCase() ?? 'structure';
+          this.logger.warn(`Portfolio report validation rejected (${category}); no model retry started`);
+          throw new Error('PORTFOLIO_INVALID_REPORT');
+        }
         tokensUsed = result.tokensKnown === false ? null : result.tokens;
         usageKnown = result.tokensKnown !== false;
       }

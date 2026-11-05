@@ -46,11 +46,20 @@ test('rejects malformed JSON, extra fields, and unbounded prose', () => {
   assert.throws(() => parsePortfolioReport(JSON.stringify({ ...valid, summary: 'x'.repeat(2001) }), snapshot), /length/i);
 });
 
-test('rejects unsupported citations, uncited judgments, and external URLs', () => {
+test('rejects unsupported citations and uncited judgments', () => {
   const first = valid.holdings[0];
   assert.throws(() => parsePortfolioReport(JSON.stringify({ ...valid, holdings: [{ ...first, evidenceRefs: ['holding:AAPL:revenue'] }, valid.holdings[1]] }), snapshot), /evidence/i);
   assert.throws(() => parsePortfolioReport(JSON.stringify({ ...valid, holdings: [{ ...first, evidenceRefs: [] }, valid.holdings[1]] }), snapshot), /evidence/i);
-  assert.throws(() => parsePortfolioReport(JSON.stringify({ ...valid, summary: 'See https://example.com/unverified' }), snapshot), /URL/i);
+});
+
+test('public background links in prose do not invalidate a complete report or become verified evidence', () => {
+  const actions = ['核对适当性说明：https://www.investor.gov/introduction-investing/investing-basics/investment-products'];
+  const report = parsePortfolioReport(JSON.stringify({ ...valid, actions }), snapshot);
+  assert.deepEqual(report.actions, actions);
+  assert.deepEqual(report.holdings[0].evidenceRefs, valid.holdings[0].evidenceRefs);
+  for (const summary of ['javascript:alert(1)', 'data:text/html,unsafe', 'https://user:password@example.com', 'https://example.com?api_key=secret']) {
+    assert.throws(() => parsePortfolioReport(JSON.stringify({ ...valid, summary }), snapshot), /URL/i);
+  }
 });
 
 test('never treats missing snapshot values as supporting evidence', () => {

@@ -29,8 +29,17 @@ function safeText(value: unknown, label: string, maxLength: number): string {
     throw new Error(`${label} must be nonempty text within length limit ${maxLength}`);
   }
   const text = value.trim();
-  if (/https?:\/\/|www\.|(?:mailto|javascript|data):/iu.test(text)) {
-    throw new Error(`${label} contains an external URL`);
+  // The UI renders prose as text. Background links are not fetched or promoted
+  // to evidence; rejecting all links would discard otherwise complete research.
+  if (/(?:mailto|javascript|data):/iu.test(text)) {
+    throw new Error(`${label} contains an unsafe URL`);
+  }
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"\u3000-\u303f\uff00-\uffef]+/giu)) {
+    let url: URL;
+    try { url = new URL(match[0]); } catch { throw new Error(`${label} contains an invalid URL`); }
+    if (url.username || url.password || [...url.searchParams.keys()].some(key => /token|api[_-]?key|authorization|secret|password|signature/iu.test(key))) {
+      throw new Error(`${label} contains a credential-bearing URL`);
+    }
   }
   if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/u.test(text)) {
     throw new Error(`${label} contains control characters`);

@@ -1,10 +1,8 @@
 name: Desktop installers
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
+  # Desktop development is paused during the web-only phase (baseline fe9df6c).
+  # Keep the full workflow available for deliberate manual recovery.
   workflow_dispatch:
 
 permissions:
