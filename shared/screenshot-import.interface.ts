@@ -20,7 +20,7 @@ export interface ScreenshotJob {
   id: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   phase: 'queued' | 'recognizing' | 'validating' | 'done';
-  executor: 'local' | 'vision';
+  executor: 'local' | 'vision' | 'unknown';
   createdAt: string;
   updatedAt: string;
   result?: OcrExtractResult;

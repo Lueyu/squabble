@@ -78,3 +78,23 @@ test('bounded lifetime does not replay missing jobs and invalid images never dis
   assert.equal(calls, 1);
   await service.onModuleDestroy();
 });
+
+test('cancellation before a delayed POST registration fences the paid call for that owner and request ID', async () => {
+  let calls = 0;
+  const service = setup(async () => { calls++; return { text: reply }; });
+  const dto = request();
+  const cancelled = service.cancel('alice', dto.requestId);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.executor, 'unknown');
+  assert.equal(service.get('alice', dto.requestId).status, 'cancelled');
+  assert.throws(() => service.get('bob', dto.requestId), /JOB_NOT_FOUND/);
+  const late = service.start('alice', dto);
+  assert.equal(late.status, 'cancelled');
+  await tick();
+  assert.equal(calls, 0);
+  service.start('bob', dto);
+  await tick();
+  assert.equal(service.get('bob', dto.requestId).status, 'completed');
+  assert.equal(calls, 1);
+  await service.onModuleDestroy();
+});

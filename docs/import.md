@@ -29,18 +29,25 @@ by the import API. Use Generic CSV and map the columns for those exports.
 
 For a broker that cannot export a suitable CSV:
 
-1. Take a screenshot of your broker app's holdings page
+1. Take one to five screenshots of your broker app's holdings pages
    (同花顺 / 东方财富 / 雪球 / 富途 / 老虎 / Robinhood …).
-2. Choose **截图识别**, configure a vision-capable model with a compatible
-   Chat Completions endpoint, using the model ID from your provider's console.
-   This optional flow requires a model API key; CSV import does not.
-3. Hit **开始识别**, review the editable extraction, then import.
+2. Choose **截图识别** and select the screenshots (PNG/JPEG/WebP, at most 8 MiB
+   each and 24 MiB total). A connected image-capable local agent is preferred;
+   you can instead configure a vision-capable model with a compatible Chat
+   Completions endpoint and a model API key. CSV import does not require one.
+3. Hit **开始识别**. Each screenshot starts one task in sequence and may consume
+   provider usage. If a task fails or its submission is uncertain, later
+   screenshots pause. Check the original task by ID when needed, then explicitly
+   resume or skip the remaining files. Successful rows remain available.
+4. Review the combined editable rows and their source filenames. Remove or
+   correct duplicate tickers and keep at most 200 rows, then confirm one import.
 
-**Privacy** (see [privacy.md](privacy.md)): OCR configuration and its key are
-saved in this browser's local storage. When you request extraction, the key
-and full screenshot pass through the instance's server to your chosen model
-provider. The OCR handler does not persist the input image or key in the
-database; confirmed extracted holdings and import history are stored there.
-An operator's infrastructure or the provider can have separate logging and
-retention policies. Crop account identifiers and unrelated personal details
-before upload. OCR storage is separate from the encrypted LLM/Finnhub settings.
+**Privacy** (see [privacy.md](privacy.md)): The vision API URL and model may be
+saved in local storage; the API key stays in this page's memory. Each selected
+image starts a separate recognition task. The selected local agent may send the
+image to its model provider, or the image and key pass through the app backend
+to the configured vision API. Screenshots and keys are handled temporarily;
+confirmed holdings and import history are stored. Native agent task records may
+retain extracted text under their existing history policy. Crop account
+identifiers and unrelated personal details before upload, and check your
+provider's separate logging and retention policies.

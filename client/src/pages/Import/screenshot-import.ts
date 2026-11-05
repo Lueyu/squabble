@@ -7,12 +7,24 @@ export function screenshotAgentReady(agent: LocalAgentConnection): boolean {
   return agent.connected && agent.available && !agent.busy && agent.imageInput === true;
 }
 
+/** The previous job can leave a cached busy flag until the agent list refreshes. */
+export function screenshotAgentQueueReady(agent: LocalAgentConnection): boolean {
+  return agent.connected && agent.available && agent.imageInput === true;
+}
+
 export function preferredScreenshotAgent(agents: LocalAgentConnection[]): LocalAgentConnection | undefined {
   return agents.find(screenshotAgentReady);
 }
 
 export function screenshotFileValid(file: Pick<File, 'type' | 'size'>): boolean {
   return ['image/png', 'image/jpeg', 'image/webp'].includes(file.type) && file.size > 0 && file.size <= MAX_NATIVE_IMAGE_BYTES;
+}
+
+export function screenshotSelectionError(files: Pick<File, 'type' | 'size'>[]): 'FILE_COUNT' | 'TOTAL_SIZE' | 'INVALID_IMAGE' | null {
+  if (files.length < 1 || files.length > 5) return 'FILE_COUNT';
+  if (files.some(file => !screenshotFileValid(file))) return 'INVALID_IMAGE';
+  if (files.reduce((size, file) => size + file.size, 0) > 24 * 1024 * 1024) return 'TOTAL_SIZE';
+  return null;
 }
 
 export function screenshotImage(file: Pick<File, 'type' | 'size'>, dataUrl: string): NativeAgentImage {
@@ -44,9 +56,25 @@ export function saveScreenshotProvider(storage: ProviderStorage, provider: Scree
 }
 
 export function validScreenshotRows(rows: ImportRowCandidate[]): boolean {
-  return rows.length > 0 && rows.every(row => row.ticker.trim().length > 0
+  return Array.isArray(rows) && rows.length > 0 && rows.every(row => row && typeof row.ticker === 'string' && row.ticker.trim().length > 0
     && Number.isFinite(Number(row.shares)) && Number(row.shares) > 0
     && (row.avgCost == null || row.avgCost === '' || (Number.isFinite(Number(row.avgCost)) && Number(row.avgCost) >= 0)));
+}
+
+export function screenshotReviewProblem(rows: ImportRowCandidate[]): 'ROW_LIMIT' | 'DUPLICATE_TICKER' | 'INVALID_ROWS' | null {
+  if (rows.length > 200) return 'ROW_LIMIT';
+  if (!validScreenshotRows(rows)) return 'INVALID_ROWS';
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const raw = row.ticker.trim().toUpperCase();
+    const hk = /^(\d{1,5})(?:\.HK)?$/.exec(raw);
+    const cn = /^(\d{6})(?:\.(?:SH|SS|SZ|BJ))?$/.exec(raw);
+    const key = hk && (raw.endsWith('.HK') || /^\d{4,5}$/.test(raw)) ? `HK:${Number(hk[1])}`
+      : cn ? `CN:${cn[1]}` : `US:${raw}`;
+    if (seen.has(key)) return 'DUPLICATE_TICKER';
+    seen.add(key);
+  }
+  return null;
 }
 
 export const SCREENSHOT_ERROR_CODES = new Set([
@@ -177,5 +205,142 @@ export class ScreenshotJobController {
       const missing = screenshotErrorCode(error) === 'JOB_NOT_FOUND';
       this.emit({ cancelling: false, uncertain: true, missing, error: missing ? 'JOB_NOT_FOUND' : 'CANCEL_FAILED' });
     }
+  }
+}
+
+export interface ScreenshotBatchItem { filename: string; image: NativeAgentImage; dataUrl?: string }
+export interface ScreenshotBatchFile { filename: string; status: 'queued' | 'running' | 'success' | 'failed' | 'cancelled'; error?: string }
+export type ScreenshotBatchRow = ImportRowCandidate & { sourceFile: string };
+export interface ScreenshotBatchState {
+  files: ScreenshotBatchFile[];
+  rows: ScreenshotBatchRow[];
+  task: ScreenshotJobState;
+  paused: boolean;
+  stopped: boolean;
+  started: boolean;
+  pauseReason: 'ROUTE_UNAVAILABLE' | null;
+}
+
+/** Dispatches one existing screenshot job at a time; only GET can recover an uncertain POST. */
+export class ScreenshotBatchController {
+  readonly job: ScreenshotJobController;
+  snapshot: ScreenshotBatchState;
+  private items: ScreenshotBatchItem[] = [];
+  private activeIndex: number | null = null;
+  private pauseAfterRecovery = false;
+  private requestFor?: (item: ScreenshotBatchItem, index: number) => ScreenshotExtractRequest;
+  private canContinue?: () => boolean;
+  private listener?: (state: ScreenshotBatchState) => void;
+  private disposed = false;
+
+  constructor(api: ScreenshotJobApi) {
+    this.job = new ScreenshotJobController(api);
+    this.snapshot = { files: [], rows: [], task: this.job.snapshot, paused: false, stopped: false, started: false, pauseReason: null };
+  }
+
+  attach(listener: (state: ScreenshotBatchState) => void): void {
+    this.disposed = false;
+    this.listener = listener;
+    this.job.attach(task => this.onTask(task));
+    listener(this.snapshot);
+  }
+
+  private emit(patch: Partial<ScreenshotBatchState>): void {
+    this.snapshot = { ...this.snapshot, ...patch };
+    if (!this.disposed) this.listener?.(this.snapshot);
+  }
+
+  private file(index: number, patch: Partial<ScreenshotBatchFile>): void {
+    this.emit({ files: this.snapshot.files.map((file, i) => i === index ? { ...file, ...patch } : file) });
+  }
+
+  private onTask(task: ScreenshotJobState): void {
+    this.emit({ task });
+    const index = this.activeIndex;
+    if (index == null || this.disposed || this.snapshot.stopped) return;
+    if (task.job?.status === 'completed') {
+      this.activeIndex = null;
+      if (this.pauseAfterRecovery) this.emit({ paused: true });
+      this.pauseAfterRecovery = false;
+      const rows = task.job.result?.rows;
+      if (!rows || !validScreenshotRows(rows)) {
+        this.file(index, { status: 'failed', error: 'INVALID_RESULT' });
+        this.emit({ paused: true });
+        return;
+      }
+      this.emit({ rows: [...this.snapshot.rows, ...rows.map(row => ({ ...row, avgCost: row.avgCost ?? null, sourceFile: this.items[index].filename }))] });
+      this.file(index, { status: 'success' });
+      if (!this.snapshot.paused) this.advance();
+    } else if (task.job?.status === 'failed' || task.job?.status === 'cancelled' || (task.error && !task.uncertain && !screenshotJobActive(task.job))) {
+      this.activeIndex = null;
+      this.pauseAfterRecovery = false;
+      this.file(index, { status: task.job?.status === 'cancelled' ? 'cancelled' : 'failed', error: task.error ?? undefined });
+      this.emit({ paused: true });
+    } else if (task.uncertain || task.error === 'POLL_FAILED') {
+      this.pauseAfterRecovery = true;
+      this.emit({ paused: true });
+    } else if (this.pauseAfterRecovery && screenshotJobActive(task.job) && this.snapshot.paused) {
+      this.emit({ paused: false });
+    }
+  }
+
+  replace(items: ScreenshotBatchItem[]): void {
+    this.activeIndex = null;
+    this.pauseAfterRecovery = false;
+    this.job.reset();
+    this.items = items;
+    this.requestFor = undefined;
+    this.canContinue = undefined;
+    this.emit({ files: items.map(item => ({ filename: item.filename, status: 'queued' })), rows: [],
+      task: this.job.snapshot, paused: false, stopped: false, started: false, pauseReason: null });
+  }
+
+  start(requestFor: (item: ScreenshotBatchItem, index: number) => ScreenshotExtractRequest, canContinue: () => boolean = () => true): Promise<void> {
+    if (this.disposed || this.snapshot.started || !this.items.length) return Promise.resolve();
+    this.requestFor = requestFor;
+    this.canContinue = canContinue;
+    this.emit({ started: true });
+    return this.advance();
+  }
+
+  private advance(): Promise<void> {
+    if (this.disposed || this.snapshot.paused || this.snapshot.stopped || this.activeIndex != null || !this.requestFor) return Promise.resolve();
+    const index = this.snapshot.files.findIndex(file => file.status === 'queued');
+    if (index < 0) return Promise.resolve();
+    if (!this.canContinue?.()) { this.emit({ paused: true, pauseReason: 'ROUTE_UNAVAILABLE' }); return Promise.resolve(); }
+    this.job.reset();
+    this.activeIndex = index;
+    this.file(index, { status: 'running' });
+    return this.job.start(this.requestFor(this.items[index], index));
+  }
+
+  async recover(): Promise<void> { await this.job.refresh(); }
+
+  resume(): void {
+    if (this.disposed || this.snapshot.stopped || !this.snapshot.paused || this.activeIndex != null || this.snapshot.task.uncertain) return;
+    this.emit({ paused: false, pauseReason: null });
+    void this.advance();
+  }
+
+  skipRemaining(): void {
+    if (this.activeIndex != null) return;
+    this.emit({ files: this.snapshot.files.map(file => file.status === 'queued' ? { ...file, status: 'cancelled' } : file), paused: false, pauseReason: null });
+  }
+
+  cancel(): void {
+    if (this.disposed) return;
+    const hadActive = this.activeIndex != null;
+    this.emit({ stopped: true, paused: false, pauseReason: null, files: this.snapshot.files.map(file =>
+      file.status === 'queued' || file.status === 'running' ? { ...file, status: 'cancelled' } : file) });
+    this.activeIndex = null;
+    this.pauseAfterRecovery = false;
+    if (hadActive) void this.job.cancel();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.listener = undefined;
+    this.activeIndex = null;
+    this.job.dispose();
   }
 }

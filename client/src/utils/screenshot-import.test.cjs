@@ -33,6 +33,20 @@ test('screenshot routing prefers only idle, available, connected agents with exp
   assert.equal(preferredScreenshotAgent([agent({ id: 'busy', busy: true }), agent({ id: 'ready' })]).id, 'ready');
 });
 
+test('a selected batch agent may look busy with its own completed task while the next file is dispatched', async () => {
+  const { ScreenshotBatchController, screenshotAgentQueueReady } = helpers();
+  assert.equal(screenshotAgentQueueReady(agent({ busy: true })), true);
+  assert.equal(screenshotAgentQueueReady(agent({ available: false })), false);
+  const calls = []; const selected = agent();
+  const batch = new ScreenshotBatchController({ create: async value => { calls.push(value.requestId); selected.busy = true;
+    return job({ id: value.requestId, status: 'completed', result: { rows: [{ ticker: value.requestId, shares: 1 }] } }); },
+  get: async () => job(), cancel: async () => job({ status: 'cancelled' }) });
+  batch.attach(() => {}); batch.replace(['a', 'b'].map(filename => ({ filename, image: request().image })));
+  await batch.start((item, index) => ({ ...request(), requestId: `job-${index}`, image: item.image }), () => screenshotAgentQueueReady(selected));
+  await new Promise(setImmediate);
+  assert.equal(JSON.stringify(calls), JSON.stringify(['job-0', 'job-1']));
+});
+
 test('image payload keeps its real MIME and rejects unsupported, empty or oversized uploads', () => {
   const { screenshotImage } = helpers();
   assert.equal(typeof screenshotImage, 'function');
@@ -129,16 +143,122 @@ test('review validation accepts unknown cost but requires valid shares, ticker a
   }
 });
 
-function screenshotPage(agents = [agent()], acceptedJob = job()) {
+test('batch selection enforces count, total size and each image format without partial acceptance', () => {
+  const { screenshotSelectionError } = helpers();
+  const file = (name, size = 10, type = 'image/png') => ({ name, size, type });
+  assert.equal(screenshotSelectionError([file('a'), file('b')]), null);
+  assert.equal(screenshotSelectionError([]), 'FILE_COUNT');
+  assert.equal(screenshotSelectionError(Array.from({ length: 6 }, (_, i) => file(String(i)))), 'FILE_COUNT');
+  assert.equal(screenshotSelectionError([file('a', 8 * 1024 * 1024), file('b', 8 * 1024 * 1024), file('c', 8 * 1024 * 1024), file('d', 1)]), 'TOTAL_SIZE');
+  assert.equal(screenshotSelectionError([file('a', 10, 'image/gif')]), 'INVALID_IMAGE');
+});
+
+test('review rejects normalized duplicate tickers including Hong Kong aliases and more than 200 rows', () => {
+  const { screenshotReviewProblem } = helpers();
+  const row = ticker => ({ ticker, shares: 1, avgCost: null });
+  assert.equal(screenshotReviewProblem([row('0700'), row('700.HK')]), 'DUPLICATE_TICKER');
+  assert.equal(screenshotReviewProblem([row('AAPL'), row(' aapl ')]), 'DUPLICATE_TICKER');
+  assert.equal(screenshotReviewProblem([row('600519.SS'), row('600519.SH')]), 'DUPLICATE_TICKER');
+  assert.equal(screenshotReviewProblem([row('AAPL'), row('MSFT')]), null);
+  assert.equal(screenshotReviewProblem(Array.from({ length: 201 }, (_, i) => row(`T${i}`))), 'ROW_LIMIT');
+});
+
+test('batch recognition runs in order, pauses after failure and preserves earlier rows until explicitly resumed', async () => {
+  const { ScreenshotBatchController } = helpers();
+  const calls = []; const pending = [];
+  const batch = new ScreenshotBatchController({
+    create: value => { calls.push(value.requestId); const next = deferred(); pending.push(next); return next.promise; },
+    get: async () => job(), cancel: async () => job({ status: 'cancelled' }),
+  });
+  batch.attach(() => {});
+  batch.replace(['a.png', 'b.png', 'c.png'].map(filename => ({ filename, image: { mimeType: 'image/png', data: filename } })));
+  batch.start((item, index) => ({ ...request(), requestId: `job-${index}`, image: item.image }));
+  assert.equal(JSON.stringify(calls), JSON.stringify(['job-0']));
+  pending[0].resolve(job({ id: 'job-0', status: 'completed', result: { rows: [{ ticker: 'AAPL', shares: 1 }] } }));
+  await pending[0].promise; await new Promise(setImmediate);
+  assert.equal(JSON.stringify(calls), JSON.stringify(['job-0', 'job-1']), JSON.stringify(batch.snapshot));
+  pending[1].resolve(job({ id: 'job-1', status: 'failed', error: { code: 'NO_HOLDINGS' } }));
+  await pending[1].promise; await new Promise(setImmediate);
+  assert.equal(batch.snapshot.paused, true);
+  assert.equal(batch.snapshot.rows[0].sourceFile, 'a.png');
+  assert.equal(batch.snapshot.files[2].status, 'queued');
+  batch.resume();
+  assert.equal(JSON.stringify(calls), JSON.stringify(['job-0', 'job-1', 'job-2']));
+});
+
+test('uncertain batch submission requires GET recovery and cancel fences pending work', async () => {
+  const { ScreenshotBatchController } = helpers();
+  const calls = []; const pending = deferred();
+  const batch = new ScreenshotBatchController({ create: value => { calls.push(['POST', value.requestId]); return pending.promise; },
+    get: async id => { calls.push(['GET', id]); return job({ id, status: 'completed', result: { rows: [{ ticker: 'MSFT', shares: 2 }] } }); },
+    cancel: async id => { calls.push(['DELETE', id]); return job({ id, status: 'cancelled' }); } });
+  batch.attach(() => {});
+  batch.replace(['a', 'b'].map(filename => ({ filename, image: request().image })));
+  batch.start((item, index) => ({ ...request(), requestId: `job-${index}`, image: item.image }));
+  pending.reject(new Error('lost')); await pending.promise.catch(() => {}); await new Promise(setImmediate);
+  assert.equal(batch.snapshot.paused, true);
+  await batch.recover();
+  assert.equal(batch.snapshot.rows.length, 1);
+  assert.equal(calls.filter(call => call[0] === 'POST').length, 1);
+  batch.cancel();
+  assert.equal(batch.snapshot.files[1].status, 'cancelled');
+  batch.resume();
+  assert.equal(calls.filter(call => call[0] === 'POST').length, 1);
+});
+
+test('recovered running job resumes GET polling without dispatching the next screenshot', async () => {
+  const { ScreenshotBatchController } = helpers();
+  const calls = []; let reads = 0;
+  const batch = new ScreenshotBatchController({
+    create: async value => { calls.push(['POST', value.requestId]); if (value.requestId === 'job-0') throw new Error('lost');
+      return job({ id: value.requestId, status: 'completed', result: { rows: [{ ticker: 'MSFT', shares: 1 }] } }); },
+    get: async id => { calls.push(['GET', id]); reads++; return reads === 1 ? job({ id, status: 'running' })
+      : job({ id, status: 'completed', result: { rows: [{ ticker: 'AAPL', shares: 1 }] } }); },
+    cancel: async id => job({ id, status: 'cancelled' }),
+  });
+  batch.attach(() => {});
+  batch.replace(['a', 'b'].map(filename => ({ filename, image: request().image })));
+  await batch.start((item, index) => ({ ...request(), requestId: `job-${index}`, image: item.image }));
+  assert.equal(batch.snapshot.paused, true);
+  await batch.recover();
+  assert.equal(batch.snapshot.paused, false);
+  assert.equal(calls.filter(call => call[0] === 'POST').length, 1);
+  await batch.recover();
+  assert.equal(batch.snapshot.paused, true);
+  assert.equal(calls.filter(call => call[0] === 'POST').length, 1);
+  batch.resume();
+  await new Promise(setImmediate);
+  assert.equal(calls.filter(call => call[0] === 'POST').length, 2);
+  assert.equal(batch.snapshot.rows.length, 2);
+});
+
+test('malformed completed result pauses the batch instead of treating it as successful', async () => {
+  const { ScreenshotBatchController } = helpers();
+  const calls = [];
+  const batch = new ScreenshotBatchController({ create: async value => { calls.push(value.requestId);
+    return job({ id: value.requestId, status: 'completed', result: { rows: [{ shares: 1 }] } }); },
+  get: async () => job(), cancel: async () => job({ status: 'cancelled' }) });
+  batch.attach(() => {});
+  batch.replace(['a', 'b'].map(filename => ({ filename, image: request().image })));
+  await batch.start((item, index) => ({ ...request(), requestId: `job-${index}`, image: item.image }));
+  assert.equal(batch.snapshot.files[0].status, 'failed');
+  assert.equal(batch.snapshot.files[0].error, 'INVALID_RESULT');
+  assert.equal(batch.snapshot.files[1].status, 'queued');
+  assert.equal(batch.snapshot.rows.length, 0);
+  assert.equal(calls.length, 1);
+});
+
+function screenshotPage(agents = [agent()], acceptedJob = job(), deferState = false) {
   const file = 'client/src/pages/Import/ScreenshotImport.tsx';
   assert.ok(fs.existsSync(path.join(root, file)), 'Screenshot component exists');
-  const states = []; const refs = []; const effects = []; const calls = [];
+  const states = []; const refs = []; const effects = []; const calls = []; const pendingUpdates = [];
   let stateCursor = 0, refCursor = 0, effectCursor = 0;
   const jsx = (type, props) => ({ type, props });
   const imports = {
     react: {
       useState(initial) { const index = stateCursor++; if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial;
-        return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; },
+        return [states[index], value => { const update = () => { states[index] = typeof value === 'function' ? value(states[index]) : value; };
+          if (deferState) pendingUpdates.push(update); else update(); }]; },
       useRef(initial) { const index = refCursor++; return refs[index] ??= { current: initial }; },
       useEffect(fn, deps) { const index = effectCursor++; const previous = effects[index];
         if (!previous || deps.some((value, i) => value !== previous.deps[i])) effects[index] = { fn, deps, pending: true, cleanup: previous?.cleanup }; },
@@ -146,7 +266,7 @@ function screenshotPage(agents = [agent()], acceptedJob = job()) {
     'react/jsx-runtime': { jsx, jsxs: jsx },
     'react-i18next': { useTranslation: () => ({ t: key => key }) },
     '@tanstack/react-query': { useQuery: () => ({ data: agents, isPending: false }), useQueryClient: () => ({ invalidateQueries: () => {} }) },
-    '@/api': { createScreenshotJob: async value => { calls.push(['create', value]); return acceptedJob; },
+    '@/api': { createScreenshotJob: async value => { calls.push(['create', value]); return typeof acceptedJob === 'function' ? acceptedJob(value) : acceptedJob; },
       fetchScreenshotJob: async () => job(), cancelScreenshotJob: async () => job({ status: 'cancelled' }),
       commitImport: async value => { calls.push(['commit', value]); return { created: 1, skipped: 0, failed: [] }; } },
     '@/api/local-agents': { fetchLocalAgents: async () => agents },
@@ -160,14 +280,16 @@ function screenshotPage(agents = [agent()], acceptedJob = job()) {
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS,
     target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const exports = {}; const readers = [];
+  let requestNumber = 0;
   vm.runInNewContext(compiled, { exports, require: name => imports[name], Date,
-    crypto: { randomUUID: () => 'request-1' }, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+    crypto: { randomUUID: () => `request-${++requestNumber}` }, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     localStorage: { getItem: () => null, removeItem() {}, setItem() {} },
     FileReader: class { constructor() { readers.push(this); } readAsDataURL() {} abort() {} },
   });
   const render = () => { stateCursor = 0; refCursor = 0; effectCursor = 0; return exports.default(); };
   const flush = () => { for (const effect of effects) if (effect.pending) { effect.pending = false; effect.cleanup?.(); effect.cleanup = effect.fn(); } };
-  return { render, flush, calls, readers };
+  const flushState = () => { while (pendingUpdates.length) pendingUpdates.shift()(); };
+  return { render, flush, flushState, calls, readers };
 }
 function nodes(tree) { return Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : []; }
 function content(tree) { return Array.isArray(tree) ? tree.map(content).join('') : tree && typeof tree === 'object' ? content(tree.props?.children) : tree == null ? '' : String(tree); }
@@ -219,6 +341,71 @@ test('completed extraction requires review and explicit confirmation; editing cl
   const commits = page.calls.filter(call => call[0] === 'commit');
   assert.equal(commits.length, 1); assert.equal(commits[0][1].rows[0].avgCost, null);
   assert.equal(commits[0][1].rows[0].company, 'Corrected name');
+});
+
+test('completed rows survive deferred React state updates after the batch count advances', async () => {
+  const page = screenshotPage([agent()], job({ status: 'completed', result: { rows: [{ ticker: 'TEST', shares: 1 }] } }), true);
+  page.render(); page.flush(); page.flushState(); let tree = page.render();
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
+    files: [{ name: 'holdings.png', type: 'image/png', size: 10 }], value: '',
+  } });
+  page.readers[0].result = 'data:image/png;base64,YWJj'; page.readers[0].onload();
+  page.flushState(); tree = page.render();
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  page.flushState(); tree = page.render(); page.flush(); page.flushState(); tree = page.render();
+  assert.ok(nodes(tree).some(node => node.props['aria-label'] === 'import.screenshotFlow.rowTicker'));
+});
+
+test('three selected screenshots run sequentially and failed middle file needs explicit skip before partial import', async () => {
+  const page = screenshotPage([agent()], value => value.requestId === 'request-2'
+    ? job({ id: value.requestId, status: 'failed', error: { code: 'NO_HOLDINGS' } })
+    : job({ id: value.requestId, status: 'completed', result: { rows: [{ ticker: 'AAPL', shares: 2 }] } }));
+  page.render(); page.flush(); let tree = page.render();
+  const input = nodes(tree).find(node => node.type === 'input' && node.props.type === 'file');
+  assert.equal(input.props.multiple, true);
+  input.props.onChange({ target: { files: ['a.png', 'b.png', 'c.png'].map(name => ({ name, type: 'image/png', size: 10 })), value: '' } });
+  for (let i = 0; i < 3; i++) { page.readers[i].result = 'data:image/png;base64,YWJj'; page.readers[i].onload(); }
+  tree = page.render();
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  await new Promise(setImmediate);
+  tree = page.render(); page.flush(); tree = page.render();
+  assert.equal(page.calls.filter(call => call[0] === 'create').length, 2);
+  assert.ok(content(tree).includes('a.png'));
+  assert.ok(content(tree).includes('b.png'));
+  assert.ok(content(tree).includes('c.png'));
+  const confirm = () => nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.confirmImport'));
+  assert.equal(confirm().props.disabled, true);
+  nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.screenshotFlow.skipRemaining')).props.onClick();
+  tree = page.render();
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } });
+  tree = page.render(); await confirm().props.onClick();
+  const commits = page.calls.filter(call => call[0] === 'commit');
+  assert.equal(commits.length, 1);
+  assert.equal(commits[0][1].filename, 'a.png, b.png, c.png');
+  assert.equal(commits[0][1].rows.length, 1);
+  assert.equal(Object.hasOwn(commits[0][1].rows[0], 'sourceFile'), false);
+});
+
+test('duplicate tickers across completed screenshots block the shared commit', async () => {
+  const page = screenshotPage([agent()], value => job({ id: value.requestId, status: 'completed', result: {
+    rows: [{ ticker: value.requestId === 'request-1' ? '0700' : '700.HK', shares: 1 }],
+  } }));
+  page.render(); page.flush(); let tree = page.render();
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
+    files: ['one.png', 'two.png'].map(name => ({ name, type: 'image/png', size: 10 })), value: '',
+  } });
+  for (let i = 0; i < 2; i++) { page.readers[i].result = 'data:image/png;base64,YWJj'; page.readers[i].onload(); }
+  tree = page.render();
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  await new Promise(setImmediate);
+  tree = page.render(); page.flush(); tree = page.render();
+  assert.ok(content(tree).includes('import.screenshotFlow.duplicateTickers'));
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } });
+  tree = page.render();
+  const confirm = nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.confirmImport'));
+  assert.equal(confirm.props.disabled, true);
+  await confirm.props.onClick();
+  assert.equal(page.calls.filter(call => call[0] === 'commit').length, 0);
 });
 
 test('unsupported or busy local agents expose the API fallback without starting it', () => {

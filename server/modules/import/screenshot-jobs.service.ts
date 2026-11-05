@@ -18,6 +18,8 @@ const SAFE_ERRORS = new Set(['INVALID_RESULT', 'NO_HOLDINGS', 'INVALID_API_CONFI
 @Injectable()
 export class ScreenshotJobsService implements OnModuleDestroy {
   private readonly jobs = new Map<string, JobRecord>();
+  /** A DELETE can arrive before a delayed POST. Hold its ID so the POST cannot start a paid task. */
+  private readonly cancelledBeforeStart = new Map<string, number>();
   private readonly now: () => number;
   private readonly sweep: ReturnType<typeof setInterval>;
   private stopping = false;
@@ -32,6 +34,11 @@ export class ScreenshotJobsService implements OnModuleDestroy {
   private prune() {
     const before = this.now() - (this.options.ttlMs ?? 20 * 60_000);
     for (const [key, job] of this.jobs) if (!job.active && Date.parse(job.view.updatedAt) < before) this.jobs.delete(key);
+    for (const [key, at] of this.cancelledBeforeStart) if (at < before) this.cancelledBeforeStart.delete(key);
+  }
+  private cancelledView(id: string, at: number): ScreenshotJob {
+    const time = new Date(at).toISOString();
+    return { id, status: 'cancelled', phase: 'done', executor: 'unknown', createdAt: time, updatedAt: time };
   }
   private snapshot(job: JobRecord): ScreenshotJob { return structuredClone(job.view); }
   private update(job: JobRecord, patch: Partial<ScreenshotJob>) {
@@ -43,9 +50,24 @@ export class ScreenshotJobsService implements OnModuleDestroy {
     if (!job) throw new NotFoundException('JOB_NOT_FOUND');
     return job;
   }
-  get(owner: string, id: string) { return this.snapshot(this.find(owner, id)); }
+  get(owner: string, id: string) {
+    this.prune();
+    const cancelledAt = this.cancelledBeforeStart.get(this.key(owner, id));
+    return cancelledAt === undefined ? this.snapshot(this.find(owner, id)) : this.cancelledView(id, cancelledAt);
+  }
   cancel(owner: string, id: string) {
-    const job = this.find(owner, id);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new BadRequestException('INVALID_REQUEST');
+    this.prune();
+    const key = this.key(owner, id);
+    const job = this.jobs.get(key);
+    if (!job) {
+      const prior = this.cancelledBeforeStart.get(key);
+      if (prior !== undefined) return this.cancelledView(id, prior);
+      if (this.cancelledBeforeStart.size >= 1_000) this.cancelledBeforeStart.delete(this.cancelledBeforeStart.keys().next().value!);
+      const at = this.now();
+      this.cancelledBeforeStart.set(key, at);
+      return this.cancelledView(id, at);
+    }
     if (job.view.status === 'queued' || job.view.status === 'running') {
       this.update(job, { status: 'cancelled', phase: 'done' });
       job.abort.abort();
@@ -58,6 +80,9 @@ export class ScreenshotJobsService implements OnModuleDestroy {
     if (!input || typeof input !== 'object' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId ?? '')) {
       throw new BadRequestException('INVALID_REQUEST');
     }
+    this.prune();
+    const cancelledAt = this.cancelledBeforeStart.get(this.key(owner, input.requestId));
+    if (cancelledAt !== undefined) return this.cancelledView(input.requestId, cancelledAt);
     let image: ScreenshotExtractRequest['image'];
     try { image = validateNativeImage(input.image); } catch { throw new BadRequestException('INVALID_IMAGE'); }
     let dto: ScreenshotExtractRequest;
@@ -134,5 +159,6 @@ export class ScreenshotJobsService implements OnModuleDestroy {
     for (const job of this.jobs.values()) job.abort.abort();
     await Promise.allSettled([...this.jobs.values()].map(job => job.done));
     this.jobs.clear();
+    this.cancelledBeforeStart.clear();
   }
 }
