@@ -163,7 +163,7 @@ export class CouncilService implements OnModuleInit {
     const members = this.members(previous.profileSnapshot);
     await this.validateMembers(userId, members);
     await this.preflightWorkflowBudget(previous, retryKeys);
-    if (members.some((member) => member.executionMode !== 'local')) {
+    if (members.some((member) => member.connectionId || member.executionMode === 'local')) {
       const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId, { mode: 'api' })));
       if (configured.some((value) => !value)) throw new BadRequestException('Configure a model connection for every team member before starting');
     }
@@ -376,7 +376,7 @@ export class CouncilService implements OnModuleInit {
       let claimId: string | null = null;
       try {
         const members = this.members(row.profileSnapshot);
-        if (members.every((member) => member.executionMode !== 'local')
+        if (!members.some((member) => member.connectionId || member.executionMode === 'local')
           && !(await this.llm.isConfigured(userId, undefined, { mode: 'api' }))) {
           await this.publish(userId, row, { decision: 'wait', summary: row.language === 'en'
             ? 'Basic mode: no model is configured. No AI discussion occurred. Configure a model to discuss the verified sources.'

@@ -25,7 +25,7 @@ import { SettingsService } from '../settings/settings.service';
 import { normalizePublicLlmBaseUrl, publicHttpsAgent } from '../settings/settings-security';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import type { ModelRoute } from '../../../shared/model-route.interface';
-import { LocalAgentsService } from '../local-agents/local-agents.service';
+import type { LocalAgentsService } from '../local-agents/local-agents.service';
 import { LocalAgentError } from '../local-agents/local-agents.types';
 import { parseModelRoute } from '../settings/model-route.rules';
 
@@ -116,7 +116,10 @@ export class LlmService {
 
   private localAgents(): LocalAgentsService {
     try {
-      const agents = this.moduleRef?.get(LocalAgentsService, { strict: false });
+      // Keep research-tool dependencies out of module initialization.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const token = (require('../local-agents/local-agents.service') as typeof import('../local-agents/local-agents.service')).LocalAgentsService;
+      const agents = this.moduleRef?.get<LocalAgentsService>(token, { strict: false });
       if (agents) return agents;
     } catch { /* The local Agent module is optional in reduced test modules. */ }
     throw new Error('LOCAL_UNAVAILABLE');

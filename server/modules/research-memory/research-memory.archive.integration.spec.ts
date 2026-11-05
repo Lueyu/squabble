@@ -269,7 +269,7 @@ test('transient archive failures back off, stop after bounded attempts and suppo
 test('genuine cycles reselect memory while pause and task retry retain version pins', { skip: !process.env.MEMORY_TEST_DATABASE_URL },
   async () => fixture(async ({ db, owner, memory }) => {
     const source = await seed(db, owner); await memory.archiveReport(owner, source.input);
-    const council = new CouncilService(db, { validateConnectionIds: async () => {} } as never,
+    const council = new CouncilService(db, { validateConnectionIds: async () => {}, isConfigured: async () => true } as never,
       {} as never, {} as never, {} as never, undefined, undefined, memory);
     council['launch'] = () => {};
     const created = await council.createSession(owner, { ticker: 'AAPL', language: 'en', goal: 'comprehensive', recallEnabled: true });

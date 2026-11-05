@@ -18,7 +18,7 @@ import {
 import { ModelConnectionsService } from './model-connections.service';
 import { ModuleRef } from '@nestjs/core';
 import type { ModelRoute } from '../../../shared/model-route.interface';
-import { LocalAgentsService } from '../local-agents/local-agents.service';
+import type { LocalAgentsService } from '../local-agents/local-agents.service';
 import { parseModelRoute } from './model-route.rules';
 
 export interface ResolvedLlmConfig {
@@ -79,7 +79,10 @@ export class SettingsService {
 
   private localAgents(): LocalAgentsService {
     try {
-      const agents = this.moduleRef?.get(LocalAgentsService, { strict: false });
+      // Resolve lazily: native research tools themselves depend on SettingsService.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const token = (require('../local-agents/local-agents.service') as typeof import('../local-agents/local-agents.service')).LocalAgentsService;
+      const agents = this.moduleRef?.get<LocalAgentsService>(token, { strict: false });
       if (agents) return agents;
     } catch { /* Module may be unavailable in a reduced server configuration. */ }
     throw new BadRequestException('LOCAL_UNAVAILABLE');
