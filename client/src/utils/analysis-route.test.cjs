@@ -50,13 +50,14 @@ test('route validation blocks missing, unavailable, busy, and invalid local choi
   assert.equal(analysisRouteProblem({ mode: 'basic' }, [], false), null);
 });
 
-test('portfolio API sends the optional route in the daily batch body', async () => {
+test('portfolio API sends the optional route to one portfolio report run', async () => {
   const calls = [];
-  const { runPortfolioAnalysis } = load('client/src/api/analysis-runner.ts', {
-    './http': { default: async request => { calls.push(request); return { data: { totalCreated: 1, errors: [] } }; } },
+  const { createPortfolioReportRun } = load('client/src/api/portfolio-report.ts', {
+    './http': { default: async request => { calls.push(request); return { data: { id: 'portfolio-1' } }; } },
   });
-  await runPortfolioAnalysis('en', { mode: 'basic' });
-  await runPortfolioAnalysis('zh-CN');
+  await createPortfolioReportRun('en', { mode: 'basic' });
+  await createPortfolioReportRun('zh-CN');
+  assert.equal(calls[0].url, '/api/multi-agent/portfolio-runs');
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0].data)), { language: 'en', route: { mode: 'basic' } });
   assert.deepEqual(JSON.parse(JSON.stringify(calls[1].data)), { language: 'zh-CN' });
 });

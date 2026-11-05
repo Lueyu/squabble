@@ -66,7 +66,7 @@ Logs are under `logs/`; inspect them if startup fails. The individual
 `dev:server` and `dev:client` commands do not use that supervisor; provide the
 required environment variables in their shell when running them separately.
 
-The app applies additive migrations `03` through `15` on startup. They do not
+The app applies additive migrations `03` through `20` on startup. They do not
 create the base schema. Neither Docker configuration publishes PostgreSQL on
 the host, so a source development server cannot reach it at `localhost:5432`
 without an explicit local port mapping.
@@ -124,6 +124,15 @@ installers. It runs the desktop tests and verifies a fresh packaged app can
 start its own database and API before publishing version-tagged installers.
 
 ## Native research agents
+
+Daily Analysis stores one owner-scoped portfolio report run for the full
+holdings snapshot. The selected global model route or page override is frozen
+with that snapshot. A local Agent receives one task for all holdings; the app
+polls public progress and persists a combined report with per-holding judgments.
+Cancellation and service restart do not replay the model request. The separate
+single-stock run and research discussion room keep their existing flows.
+Migration `20_portfolio_report.sql` adds the report table without rewriting
+holdings or older analyses.
 
 Use [Settings to connect a supported research agent](local-agents.md). Desktop starts the
 backend with `LOCAL_AGENTS_MODE=native` and a private `LOCAL_AGENTS_DATA_DIR` under its

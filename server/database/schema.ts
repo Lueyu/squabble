@@ -12,7 +12,7 @@
  * insert.
  */
 import { sql } from 'drizzle-orm';
-import { boolean, date, foreignKey, index, integer, jsonb, numeric, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
+import { boolean, check, date, foreignKey, index, integer, jsonb, numeric, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
 
 export const customTimestamptz = customType<{
   data: Date;
@@ -842,6 +842,31 @@ export const agentSessions = pgTable("agent_sessions", {
   updatedAt: customTimestamptz("updated_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 export const agentSessionsTable = agentSessions;
+
+/** Owner-scoped lifecycle and persisted result of a portfolio analysis run. */
+export const portfolioAnalysisRuns = pgTable("portfolio_analysis_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  owner: userProfile("owner").notNull(),
+  status: varchar("status", { length: 20 }).default("pending").notNull(),
+  route: jsonb("route").notNull(),
+  snapshot: jsonb("snapshot").notNull(),
+  progress: jsonb("progress").notNull(),
+  report: jsonb("report"),
+  usageKnown: boolean("usage_known").default(false).notNull(),
+  tokensUsed: integer("tokens_used"),
+  errorMessage: text("error_message"),
+  createdAt: customTimestamptz("created_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: customTimestamptz("updated_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  startedAt: customTimestamptz("started_at", { precision: 3 }),
+  completedAt: customTimestamptz("completed_at", { precision: 3 }),
+}, (table) => [
+  check("portfolio_analysis_runs_status_check", sql`${table.status} IN ('pending', 'running', 'cancelling', 'completed', 'failed', 'cancelled')`),
+  index("idx_portfolio_analysis_runs_owner_created").on(table.owner, table.createdAt),
+  index("idx_portfolio_analysis_runs_owner_status").on(table.owner, table.status),
+  uniqueIndex("idx_portfolio_analysis_runs_one_active_owner").on(table.owner)
+    .where(sql`${table.status} IN ('pending', 'running', 'cancelling')`),
+]);
+export const portfolioAnalysisRunsTable = portfolioAnalysisRuns;
 
 /** User-configured beginner agent; one active profile per owner. */
 export const builderProfiles = pgTable("builder_profiles", {

@@ -66,6 +66,17 @@ export class LocalAgentsService implements OnModuleDestroy {
     return { mode, items, companion: { connected: mode === 'companion' && online, ...(device ? { name: device.name } : {}) } };
   }
   async list(owner: string): Promise<LocalAgentConnection[]> { return (await this.status(owner)).items.filter((item) => item.connected); }
+  /** Wait until an acknowledged cancellation has released its native or companion task slot. */
+  async waitForTaskSettlement(owner: string, taskId: string, timeoutMs = 30_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const active = this.running.get(taskId);
+      const task = await this.store.task(owner, taskId);
+      if (!active && ['completed', 'failed', 'cancelled'].includes(task.state)) return true;
+      await wait(300);
+    }
+    return false;
+  }
   async validate(owner: string, id: string, agentSettings?: NativeAgentConfiguration, requiresImage = false): Promise<void> {
     const item = (await this.status(owner)).items.find((entry) => entry.id === id);
     if (!item?.connected) throw new LocalAgentError('LOCAL_AGENT_NOT_FOUND');

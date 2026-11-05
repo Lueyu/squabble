@@ -37,12 +37,14 @@ import { ResearchToolsBudgetService } from './research-tools-budget.service';
 import { PipelineService } from './pipeline.service';
 import { PortfolioContextService } from './portfolio-context.service';
 import { BatchService } from './batch.service';
+import { PortfolioAnalysisService } from './portfolio-analysis.service';
+import { PortfolioAnalysisController } from './portfolio-analysis.controller';
 import { QuoteModule } from '@server/modules/quote/quote.module';
 import { FxModule } from '@server/modules/fx/fx.module';
 
 @Module({
   imports: [QuoteModule, FxModule],
-  controllers: [MultiAgentController],
+  controllers: [MultiAgentController, PortfolioAnalysisController],
   providers: [
     MultiAgentService,
     LlmService,
@@ -54,6 +56,7 @@ import { FxModule } from '@server/modules/fx/fx.module';
     PipelineService,
     PortfolioContextService,
     BatchService,
+    PortfolioAnalysisService,
   ],
   exports: [LlmService, EvidenceService, PortfolioContextService, MultiAgentService],
 })

@@ -6,10 +6,12 @@ import { Bot, ArrowRight, LoaderCircle, RefreshCw, Search, X } from 'lucide-reac
 import { isAxiosError } from 'axios';
 import { toast } from 'sonner';
 import type { AgentRunStatus } from '@shared/api.interface';
+import type { PortfolioReportRun } from '@shared/portfolio-report.interface';
 import type { NativeAgentConfiguration } from '@shared/local-agents.interface';
 import { fetchIntegrationSettings } from '@/api/settings';
 import { fetchLocalAgents } from '@/api/local-agents';
-import { cancelAnalysisRun, fetchRecentAnalysisRuns, runPortfolioAnalysis, runStockAnalysis } from '@/api/analysis-runner';
+import { cancelAnalysisRun, fetchRecentAnalysisRuns, runStockAnalysis } from '@/api/analysis-runner';
+import { cancelPortfolioReportRun, createPortfolioReportRun, listPortfolioReportRuns } from '@/api/portfolio-report';
 import { AGENT_MODEL_MAX_LENGTH, agentReasoningEfforts } from '@/utils/local-agent-settings';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +22,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { displayCompanyName } from '@/utils/company-name';
 import AgentRunDetailModal from '@/components/MultiAgent/AgentRunDetailModal';
 import { analysisRouteOverride, analysisRouteProblem, type AnalysisRouteChoice } from './analysis-route';
+import { isPortfolioReportActive, recentPortfolioReports, visiblePortfolioRun } from '@/utils/portfolio-report';
+import { formatDateTime } from '@/utils/format';
 
 const ACTIVE: AgentRunStatus[] = ['pending', 'fetching', 'debating', 'critiquing', 'risk_check'];
 const STATUS_KEYS: Record<AgentRunStatus, string> = {
@@ -55,6 +59,12 @@ export default function AnalysisRunner({ onFinished }: { onFinished: () => void 
     queryKey: ['analysis', 'recent-runs'], queryFn: fetchRecentAnalysisRuns,
     refetchInterval: (query) => (query.state.data?.activeTotal ?? 0) > 0 ? 2500 : false,
   });
+  const portfolioRuns = useQuery({
+    queryKey: ['analysis', 'portfolio-runs'], queryFn: () => listPortfolioReportRuns(6),
+    refetchInterval: query => query.state.data?.items.some(run => isPortfolioReportActive(run.status)) ? 2500 : false,
+  });
+  const latestPortfolioRun = visiblePortfolioRun(portfolioRuns.data?.items ?? []);
+  const recentReports = recentPortfolioReports(portfolioRuns.data?.items ?? [], latestPortfolioRun?.id);
   const completed = (runs.data?.items ?? [])
     .map(run => `${run.id}:${run.status}`).join('|');
   useEffect(() => {
@@ -81,30 +91,44 @@ export default function AnalysisRunner({ onFinished }: { onFinished: () => void 
   const reasoningEfforts = agentReasoningEfforts(selectedAgent, agentSettings.model);
   const busy = (runs.data?.activeTotal ?? 0) > 0;
   const start = useMutation({
-    mutationFn: async (symbol?: string) => {
-      const result = symbol
-        ? await runStockAnalysis({ scope: 'custom', tiered: false, tickers: [symbol], language, ...(override ? { route: override } : {}) })
-        : await runPortfolioAnalysis(language, override);
-      return { count: 'totalCreated' in result ? result.totalCreated : result.created, errors: result.errors };
-    },
+    mutationFn: async (symbol: string) => runStockAnalysis({ scope: 'custom', tiered: false, tickers: [symbol], language, ...(override ? { route: override } : {}) }),
     onMutate: () => setSubmitError(''),
     onSuccess: (result) => {
       setSingleOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['analysis', 'recent-runs'] });
-      if (result.count > 0) toast.success(t('analysisFlow.submitted', { count: result.count }));
+      if (result.created > 0) toast.success(t('analysisFlow.submitted', { count: result.created }));
       else if (!result.errors.length) setSubmitError(t('analysisFlow.noTickers'));
       if (result.errors.length) setSubmitError(`${t('analysisFlow.partial')}: ${result.errors.map(item => `${item.ticker}: ${item.error}`).join('; ')}`);
       onFinished();
     },
     onError: (error) => setSubmitError(requestError(error, t('analysisFlow.failed'))),
   });
+  const portfolioStart = useMutation({
+    mutationFn: () => createPortfolioReportRun(language, override),
+    onMutate: () => setSubmitError(''),
+    onSuccess: run => {
+      queryClient.setQueryData<{ items: PortfolioReportRun[] }>(['analysis', 'portfolio-runs'], current => ({
+        items: [run, ...(current?.items ?? []).filter(item => item.id !== run.id)].slice(0, 6),
+      }));
+      void queryClient.invalidateQueries({ queryKey: ['analysis', 'portfolio-runs'] });
+    },
+    onError: error => setSubmitError(requestError(error, t('analysisFlow.portfolio.startFailed'))),
+  });
+  const portfolioCancel = useMutation({
+    mutationFn: cancelPortfolioReportRun,
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['analysis', 'portfolio-runs'] }); },
+    onError: () => toast.error(t('analysisFlow.failed')),
+  });
   const cancel = useMutation({
     mutationFn: cancelAnalysisRun,
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['analysis', 'recent-runs'] }); },
     onError: () => toast.error(t('analysisFlow.failed')),
   });
-  const disabled = start.isPending || busy || runs.isPending || runs.isError || settings.isPending || settings.isError
+  const routeDisabled = settings.isPending || settings.isError
     || (routeNeedsAgents && (localAgents.isPending || localAgents.isError)) || Boolean(routeProblem);
+  const disabled = start.isPending || busy || runs.isPending || runs.isError || routeDisabled;
+  const portfolioBusy = latestPortfolioRun && isPortfolioReportActive(latestPortfolioRun.status);
+  const portfolioDisabled = routeDisabled || portfolioStart.isPending || portfolioRuns.isPending || portfolioRuns.isError || Boolean(portfolioBusy);
   const submitStock = (event: React.FormEvent) => {
     event.preventDefault();
     const symbol = ticker.trim().toUpperCase();
@@ -168,9 +192,9 @@ export default function AnalysisRunner({ onFinished }: { onFinished: () => void 
         {routeProblem && <p role="alert" className="text-sm text-destructive">{t(`analysisFlow.routeProblems.${routeProblem}`)}</p>}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={() => start.mutate(undefined)} disabled={disabled} className="h-auto min-h-9 whitespace-normal text-left">
-              {start.isPending || busy ? <LoaderCircle className="mr-2 size-4 shrink-0 animate-spin" /> : <Bot className="mr-2 size-4 shrink-0" />}
-              {t(busy ? 'analysisFlow.running' : 'analysisFlow.runPortfolio')}
+            <Button onClick={() => portfolioStart.mutate()} disabled={portfolioDisabled} className="h-auto min-h-9 whitespace-normal text-left">
+              {portfolioStart.isPending || portfolioBusy ? <LoaderCircle className="mr-2 size-4 shrink-0 animate-spin" /> : <Bot className="mr-2 size-4 shrink-0" />}
+              {t(portfolioStart.isPending || portfolioBusy ? 'analysisFlow.running' : 'analysisFlow.runPortfolio')}
             </Button>
             <Button variant="outline" onClick={() => setSingleOpen(true)} disabled={disabled}>
               <Search className="mr-2 size-4" />{t('analysisFlow.runStock')}
@@ -187,6 +211,40 @@ export default function AnalysisRunner({ onFinished }: { onFinished: () => void 
         {settings.isError && <p role="alert" className="text-sm text-destructive">{t('analysisFlow.missingSettings')}</p>}
         {route?.mode === 'api' && llm?.needsReentry && <p role="alert" className="text-sm text-destructive">{t('analysisFlow.keyUnavailable')}</p>}
         {submitError && <p role="alert" className="break-words text-sm text-destructive">{submitError}</p>}
+        <div className="border-t border-border pt-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">{t('analysisFlow.portfolio.title')}</h2>
+            <Button size="icon" variant="ghost" aria-label={t('analysisFlow.refresh')} onClick={() => void portfolioRuns.refetch()}>
+              <RefreshCw className={`size-3.5 ${portfolioRuns.isFetching ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+          {portfolioRuns.isError && <p role="alert" className="text-xs text-destructive">{t('analysisFlow.portfolio.loadFailed')}</p>}
+          {latestPortfolioRun ? <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg bg-muted/40 px-3 py-2" aria-live="polite">
+            <div className="min-w-0 flex-1 basis-36">
+              <p className="text-sm font-semibold">{t('analysisFlow.portfolio.description')}</p>
+              <p className="text-xs text-muted-foreground">{t(`analysisFlow.portfolio.${latestPortfolioRun.status}`)}</p>
+              {isPortfolioReportActive(latestPortfolioRun.status) && <p className="mt-1 text-xs text-muted-foreground">{latestPortfolioRun.progress.message}</p>}
+              {isPortfolioReportActive(latestPortfolioRun.status) && <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border" role="progressbar" aria-valuenow={latestPortfolioRun.progress.percent} aria-valuemin={0} aria-valuemax={100}>
+                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${latestPortfolioRun.progress.percent}%` }} />
+              </div>}
+              {latestPortfolioRun.errorMessage && <p className="mt-1 break-words text-xs text-destructive">{latestPortfolioRun.errorMessage}</p>}
+            </div>
+            {isPortfolioReportActive(latestPortfolioRun.status) && <>
+              <LoaderCircle className="size-4 animate-spin text-primary" />
+              {latestPortfolioRun.status !== 'cancelling' && <Button size="icon" variant="ghost" aria-label={t('analysisFlow.cancel')} disabled={portfolioCancel.isPending} onClick={() => portfolioCancel.mutate(latestPortfolioRun.id)}><X className="size-4" /></Button>}
+            </>}
+            {latestPortfolioRun.report && <Button asChild variant="ghost" size="sm"><Link to={`/analysis/portfolio-report/${encodeURIComponent(latestPortfolioRun.id)}`}>{t('analysisFlow.portfolio.openReport')}<ArrowRight className="ml-1 size-3.5" /></Link></Button>}
+          </div> : !portfolioRuns.isPending && !portfolioRuns.isError && <p className="text-xs text-muted-foreground">{t('analysisFlow.portfolio.empty')}</p>}
+          {recentReports.length > 0 && <div className="mt-3 space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground">{t('analysisFlow.portfolio.recentReports')}</h3>
+            <ul className="max-h-52 space-y-1 overflow-y-auto">
+              {recentReports.map(run => <li key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-xs">
+                <span>{formatDateTime(run.createdAt)}</span>
+                <Button asChild variant="ghost" size="sm"><Link to={`/analysis/portfolio-report/${encodeURIComponent(run.id)}`}>{t('analysisFlow.portfolio.openReport')}<ArrowRight className="ml-1 size-3.5" /></Link></Button>
+              </li>)}
+            </ul>
+          </div>}
+        </div>
         <div className="border-t border-border pt-3">
           <div className="mb-2 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">{t('analysisFlow.recent')}</h2>

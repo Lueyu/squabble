@@ -20,6 +20,7 @@ import HoldingsPage from './pages/Holdings/HoldingsPage';
 import WatchlistPage from './pages/Watchlist/WatchlistPage';
 import AnalysisPage from './pages/Analysis/AnalysisPage';
 import DeepReportPage from './pages/Analysis/DeepReportPage';
+import PortfolioReportPage from './pages/Analysis/PortfolioReportPage';
 import JournalPage from './pages/Journal/JournalPage';
 import TransactionsPage from './pages/Transactions/TransactionsPage';
 import SettingsPage from './pages/Settings/SettingsPage';
@@ -66,6 +67,7 @@ const RoutesComponent = () => {
         <Route path="agent-builder" element={<AgentBuilderPage />} />
         <Route path="council" element={<CouncilPage />} />
         <Route path="analysis/deep-report/:runId" element={<DeepReportPage />} />
+        <Route path="analysis/portfolio-report/:runId" element={<PortfolioReportPage />} />
         <Route path="journal" element={<JournalPage />} />
         <Route path="transactions" element={<TransactionsPage />} />
         <Route path="settings/*" element={<SettingsPage />} />

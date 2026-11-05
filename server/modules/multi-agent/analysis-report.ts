@@ -38,6 +38,10 @@ const BUDGET_ERRORS: Record<string, SafeErrorText> = {
   ],
 };
 const MODEL_ERRORS: Record<string, SafeErrorText> = {
+  PORTFOLIO_INVALID_REPORT: [
+    'The Agent returned an incomplete or unsupported portfolio report. No conclusion was saved. Check its model settings before starting a new report.',
+    'Agent 返回的组合报告不完整或包含不支持的内容，未保存结论。请检查模型设置后重新开始报告。',
+  ],
   LLM_BASIC_ROUTE: [
     'Basic analysis uses data and rules. Select an API model or connected local Agent for model tasks.',
     '基础分析使用数据和规则。模型任务请选择 API 模型或已连接的本地 Agent。',

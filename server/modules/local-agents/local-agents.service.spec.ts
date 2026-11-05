@@ -82,13 +82,16 @@ test('pausing native research cancels the runtime and never returns its late rep
   const service = new LocalAgentsService({
     detectNativeAgents: async () => [{ ...providerCatalog.codex, state: 'ready' }], openNativeLogin: async () => undefined,
     runNativeAgent: async (_provider, _prompt, run) => new Promise((resolve) => {
-      run.signal.addEventListener('abort', () => { aborted = true; resolve({ text: 'Late report', usageTokens: 1 }); }, { once: true });
+      run.signal.addEventListener('abort', () => { aborted = true;
+        setTimeout(() => resolve({ text: 'Late report', usageTokens: 1 }), 120); }, { once: true });
     }),
   }, new LocalAgentStore(directory));
   try {
     await service.connect('alice', 'native-codex');
     await assert.rejects(service.execute('alice', { ...options(), shouldContinue: async () => false }), /LOCAL_PAUSED/);
     assert.equal(aborted, true);
+    const taskId = (await service.store.findMessage('alice', 'message-1'))!.id;
+    assert.equal(await service.waitForTaskSettlement('alice', taskId, 2000), true);
     await service.onModuleDestroy();
     assert.equal((await service.store.findMessage('alice', 'message-1'))?.state, 'cancelled');
   } finally {

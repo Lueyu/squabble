@@ -26,6 +26,7 @@ import { normalizePublicLlmBaseUrl, publicHttpsAgent } from '../settings/setting
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import type { ModelRoute } from '../../../shared/model-route.interface';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
+import { LocalAgentError } from '../local-agents/local-agents.types';
 import { parseModelRoute } from '../settings/model-route.rules';
 
 export interface LlmCallOptions {
@@ -39,6 +40,8 @@ export interface LlmCallOptions {
   timeoutMs?: number;
   /** Checked before every paid attempt, including transport retries. */
   shouldContinue?: () => Promise<boolean>;
+  /** Public task progress only; never raw private reasoning. */
+  onProgress?: (message: string) => Promise<void>;
 }
 
 class ProviderHttpError extends Error {
@@ -123,6 +126,11 @@ export class LlmService {
     const selected = parseModelRoute(route);
     if (selected.mode === 'local') return this.localAgents().validate(userId, selected.agentId, selected.agentSettings);
     if (selected.mode === 'api' && !await this.settings.getLlmConfig(userId)) throw new Error('No LLM API key configured');
+  }
+
+  async isLocalRouteBusy(userId: string, agentId: string): Promise<boolean> {
+    const status = await this.localAgents().status(userId);
+    return status.items.find(item => item.id === agentId)?.busy ?? true;
   }
 
   /** A broken saved key is still configured: callers must not silently downgrade it. */
@@ -296,12 +304,20 @@ export class LlmService {
       const taskId = options.taskId ?? randomUUID();
       const purpose = options.purpose ?? randomUUID();
       const messageId = createHash('sha256').update(JSON.stringify([userId, taskId, purpose, route.agentId])).digest('hex');
-      const result = await agents.execute(userId, {
+      let result: Awaited<ReturnType<LocalAgentsService['execute']>>;
+      try { result = await agents.execute(userId, {
         agentId: route.agentId, agentSettings: route.agentSettings, messageId,
         prompt: messages.map(message => `${message.role.toUpperCase()}:\n${message.content}`).join('\n\n'),
-        onTask: async () => undefined, onProgress: async () => undefined,
+        onTask: async () => undefined, onProgress: options.onProgress ?? (async () => undefined),
         shouldContinue: options.shouldContinue ?? (async () => true),
-      });
+      }); } catch (error) {
+        if (options.purpose === 'portfolio-report' && error instanceof LocalAgentError
+          && error.code === 'LOCAL_PAUSED' && error.taskId
+          && await agents.waitForTaskSettlement(userId, error.taskId)) {
+          throw new LocalAgentError('LOCAL_CANCELLED', error.taskId, error.contextId);
+        }
+        throw error;
+      }
       if (options.shouldContinue && !await options.shouldContinue()) throw new Error('LLM request cancelled');
       if (!result.text.trim()) throw new ModelResponseError('LLM_EMPTY_RESPONSE');
       const known = typeof result.usageTokens === 'number';
