@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import { investmentCycles, investmentPolicies } from '../../database/investment-policy.schema';
+import { automaticResearchTasks, investmentCycles, investmentPolicies } from '../../database/investment-policy.schema';
 import { builderProfiles, paperAccounts, paperPositions, paperTrades } from '../../database/schema';
 import { simulationSeeds } from '../../database/simulation-experiments.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
@@ -45,16 +45,36 @@ export class AutonomousResearchService {
       const schedule = await this.market.getSchedule(market);
       if (!schedule.calendarVerified || !schedule.isTradingDay || !schedule.closesAt || !schedule.opensAt
         || Date.now() < Date.parse(schedule.opensAt) - 60 * 60000 || Date.now() >= Date.parse(schedule.closesAt)) continue;
+      // Connection discovery stays outside the transaction and never dispatches research.
+      const available = await this.team.resolveMembers(policy.owner).catch(() => ({ members: [], executors: [] }));
+      const verifiedSources = [...new Set(available.executors.filter(e => e.identityVerified === true).map(e => e.identity))].sort();
       await this.db.transaction(async tx => {
         await lockMemoryOwner(tx, policy.owner);
         const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, policy.owner), eq(paperAccounts.id, policy.accountId))).for('update');
         const [unexpired] = await tx.select().from(investmentPolicies).where(eq(investmentPolicies.id, policy.id)).for('update');
         const current = await expireInvestmentConstraints(tx, unexpired);
         if (!account?.isActive || !account.botEnabled || current.status !== 'running') return;
-        const existing = await tx.select().from(investmentCycles).where(and(eq(investmentCycles.policyId, current.id), eq(investmentCycles.policyRevision, current.revision), eq(investmentCycles.market, market), eq(investmentCycles.marketDate, schedule.tradingDate)));
+        const existing = await tx.select().from(investmentCycles).where(and(eq(investmentCycles.policyId, current.id), eq(investmentCycles.policyRevision, current.revision), eq(investmentCycles.market, market), eq(investmentCycles.marketDate, schedule.tradingDate))).orderBy(desc(investmentCycles.createdAt));
         const phase = Date.now() < Date.parse(schedule.opensAt!) ? 'preopen' : 'open';
-        if (existing.some(c => ['completed', 'researching', 'queued', 'uncertain'].includes(c.state)
-          || c.eventKey === `market:${schedule.tradingDate}:${phase}`
+        if (existing.some(c => ['researching', 'queued', 'uncertain'].includes(c.state))) return;
+        const latest = existing.find(c => !['cancelled', 'superseded'].includes(c.state));
+        const waiting = latest?.state === 'waiting' ? latest : undefined;
+        if (waiting?.result.reason === 'CONNECT_AVAILABLE_AI') {
+          if (!available.members.length) return;
+          const dispatched = await tx.select({ id: automaticResearchTasks.id }).from(automaticResearchTasks).where(and(eq(automaticResearchTasks.owner, policy.owner), sql`${automaticResearchTasks.key} LIKE ${'%' + waiting.id + '%'}`)).limit(1);
+          if (dispatched.length) return; // A claimed task can include paid web work even when model calls are zero.
+          await tx.update(investmentCycles).set({ state: 'queued', leaseToken: null, leaseUntil: null, result: { ...waiting.result, reason: 'AI_CONNECTED_REEVALUATION' }, updatedAt: new Date() }).where(eq(investmentCycles.id, waiting.id));
+          return;
+        }
+        if (waiting?.result.reason === 'WAITING_INDEPENDENT_REVIEW') {
+          const previousSources = Array.isArray(waiting.input.actualExecutors) ? [...new Set(waiting.input.actualExecutors.flatMap(e => e && typeof e === 'object' && e.identityVerified === true && typeof e.identity === 'string' ? [e.identity] : []))].sort() : [];
+          if (verifiedSources.length < 2 || investmentHash(verifiedSources) === investmentHash(previousSources)) return;
+          const [recovery] = await tx.insert(investmentCycles).values({ owner: policy.owner, accountId: account.id, policyId: current.id, policyRevision: current.revision, market,
+            marketDate: schedule.tradingDate, trigger: 'team_available', eventKey: `team:${waiting.id}:${investmentHash(verifiedSources)}`, priority: waiting.priority, input: { recoveredFromCycleId: waiting.id } }).onConflictDoNothing().returning();
+          if (recovery) await tx.update(investmentCycles).set({ state: 'superseded', result: { ...waiting.result, recoveredByCycleId: recovery.id }, updatedAt: new Date() }).where(eq(investmentCycles.id, waiting.id));
+          return;
+        }
+        if (existing.some(c => c.state === 'completed' || c.eventKey === `market:${schedule.tradingDate}:${phase}`
           || c.state === 'waiting' && /BUDGET|INDEPENDENT_REVIEW/u.test(String(c.result.reason)))) return;
         await tx.insert(investmentCycles).values({ owner: policy.owner, accountId: account.id, policyId: current.id, policyRevision: current.revision, market,
           marketDate: schedule.tradingDate, trigger: 'market_open', eventKey: `market:${schedule.tradingDate}:${phase}`, priority: 1 }).onConflictDoNothing();

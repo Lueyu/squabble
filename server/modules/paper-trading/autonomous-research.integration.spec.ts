@@ -39,7 +39,8 @@ test('real durable discovery and independent review activate a new-stock composi
     const preview = await policyService.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'autonomous-preview' });
     await policyService.start(owner, { previewId: preview.id, requestKey: 'autonomous-start', markets: ['US'], adoptAccountId: legacy.id });
     const members = ['one', 'two'].map((id, i) => ({ id, name: id, role: i ? 'manager' : 'researcher', model: i ? 'slow' : 'fast', instructions: '', connectionId: randomUUID() }));
-    const team = { resolveMembers: async () => ({ members, executors: members.map(m => ({ memberId: m.id, identity: m.id + ':provider:model', identityVerified: true, connection: m.id, provider: 'fixture', model: 'model' })) }) };
+    let connected = false;
+    const team = { resolveMembers: async () => ({ members: connected ? members : [], executors: connected ? members.map(m => ({ memberId: m.id, identity: m.id + ':provider:model', identityVerified: true, connection: m.id, provider: 'fixture', model: 'model' })) : [] }) };
     const security = { ticker: 'ABC', market: 'US', currency: 'USD', assetType: 'stock', sourceUrl: 'https://www.sec.gov/fixture', identitySourceUrl: 'https://www.nasdaq.com/fixture', summary: 'Fictional ordinary stock', observedAt: new Date().toISOString(), providerSymbol: 'ABC', lotSize: 1, leveraged: false, inverse: false };
     let calls = 0;
     const model = { json: async (_owner: string, _member: { model: string }, _task: string, purpose: string, prompt: string, _current: unknown, fast: boolean) => {
@@ -60,6 +61,14 @@ test('real durable discovery and independent review activate a new-stock composi
       model as never, { collectResearch: async () => [{ title: 'Fictional measured filing', content: 'Sourced fictional numbers', sourceUrl: security.sourceUrl }] } as never,
       market as never, docs, new AutonomousPlanCompiler(db, docs));
     const [cycle] = await db.select().from(investmentCycles);
+    await service.runCycle(owner, cycle.id);
+    assert.equal((await db.select().from(investmentCycles))[0].result.reason, 'CONNECT_AVAILABLE_AI');
+    await service.queueCurrentMarkets();
+    assert.equal((await db.select().from(investmentCycles)).length, 1, 'no connection does not create repeated empty cycles');
+    connected = true;
+    await Promise.all([service.queueCurrentMarkets(), service.queueCurrentMarkets()]);
+    assert.equal((await db.select().from(investmentCycles))[0].state, 'queued', 'connecting AI in the same phase safely requeues the unpaid original cycle');
+    assert.equal((await db.select().from(investmentCycles)).length, 1);
     await Promise.all([service.runCycle(owner, cycle.id), service.runCycle(owner, cycle.id)]);
     assert.equal(calls, 12, JSON.stringify(await db.select().from(investmentCycles)));
     const [mandate] = await db.select().from(strategyMandates);

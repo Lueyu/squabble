@@ -66,7 +66,8 @@ export class InvestmentPolicyService {
       this.db.select().from(strategyMandates).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, account.id))).orderBy(desc(strategyMandates.createdAt)).limit(1),
       this.db.select().from(strategyMonitorState).where(and(eq(strategyMonitorState.owner, owner), eq(strategyMonitorState.accountId, account.id))),
     ]) : [[], [], [], []];
-    const cycles = policy ? await this.db.select().from(investmentCycles).where(eq(investmentCycles.policyId, policy.id)).orderBy(desc(investmentCycles.createdAt)).limit(3) : [];
+    const cycles = policy ? await this.db.selectDistinctOn([investmentCycles.market]).from(investmentCycles).where(and(eq(investmentCycles.owner, owner), eq(investmentCycles.policyId, policy.id), eq(investmentCycles.policyRevision, policy.revision), ne(investmentCycles.state, 'cancelled'), ne(investmentCycles.state, 'superseded')))
+      .orderBy(investmentCycles.market, desc(investmentCycles.createdAt), desc(investmentCycles.updatedAt)) : [];
     const waiting = cycles.find(c => ['waiting', 'uncertain', 'failed'].includes(c.state));
     const performance = account ? await this.simulations.review(owner, account.id).catch(() => null) : null;
     const decisions = account ? await this.db.select().from(strategyRouteReviews).where(and(eq(strategyRouteReviews.owner, owner), eq(strategyRouteReviews.accountId, account.id))) : [];
