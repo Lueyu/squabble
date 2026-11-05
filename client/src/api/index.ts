@@ -21,6 +21,7 @@
  */
 import http from './http';
 import { logger } from '../utils/logger';
+import type { ScreenshotExtractRequest, ScreenshotJob } from '@shared/screenshot-import.interface';
 
 /**
  * Fetch the dashboard aggregate overview (totals, allocation, etc.).
@@ -945,6 +946,23 @@ export async function extractScreenshot(
   dto: OcrExtractDto,
 ): Promise<OcrExtractResult> {
   const response = await http({ url: '/api/import/ocr/extract', method: 'POST', data: dto, timeout: 120000 });
+  return response.data;
+}
+
+/** Start a transient screenshot job. requestId provides server-side idempotency. */
+export async function createScreenshotJob(dto: ScreenshotExtractRequest): Promise<ScreenshotJob> {
+  const response = await http({ url: '/api/import/screenshot-jobs', method: 'POST', data: dto });
+  return response.data;
+}
+
+/** Read-only recovery also works when the initial POST response was lost. */
+export async function fetchScreenshotJob(id: string): Promise<ScreenshotJob> {
+  const response = await http({ url: `/api/import/screenshot-jobs/${encodeURIComponent(id)}`, method: 'GET' });
+  return response.data;
+}
+
+export async function cancelScreenshotJob(id: string): Promise<ScreenshotJob> {
+  const response = await http({ url: `/api/import/screenshot-jobs/${encodeURIComponent(id)}`, method: 'DELETE' });
   return response.data;
 }
 

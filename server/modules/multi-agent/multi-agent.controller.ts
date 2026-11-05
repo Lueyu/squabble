@@ -75,6 +75,7 @@ import type {
   DailyBatchResult,
   AnalysisLanguage,
 } from '@shared/api.interface';
+import type { ModelRoute } from '../../../shared/model-route.interface';
 
 /** Query-string shape for GET /runs. All values arrive as strings from HTTP;
  *  numeric fields are parsed to int in the handler. */
@@ -160,9 +161,9 @@ export class MultiAgentController {
    */
   @Post('daily-batch')
   @NeedLogin()
-  async createDailyBatch(@Req() req: Request, @Body() dto?: { language?: AnalysisLanguage }): Promise<DailyBatchResult> {
+  async createDailyBatch(@Req() req: Request, @Body() dto?: { language?: AnalysisLanguage; route?: ModelRoute }): Promise<DailyBatchResult> {
     const { userId } = req.userContext;
-    return this.batchService.createDailyBatch(userId, dto?.language);
+    return this.batchService.createDailyBatch(userId, dto?.language, dto?.route);
   }
 
   /**

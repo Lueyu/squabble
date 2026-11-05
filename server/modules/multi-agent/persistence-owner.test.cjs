@@ -15,11 +15,13 @@ function load(name) {
   }).outputText;
   const exported = { exports: {} };
   const dependencies = {
-    '@nestjs/common': { Injectable: () => target => target, Inject: () => () => undefined,
+    '@nestjs/common': { Injectable: () => target => target, Inject: () => () => undefined, Optional: () => () => undefined,
       Logger: class {}, BadRequestException: Error, NotFoundException: Error },
     '../../common/platform': { DRIZZLE_DATABASE: 'db' },
     'drizzle-orm': { eq: (a, b) => [a, b], and: (...conditions) => conditions, inArray: () => true },
     '@server/database/schema': tables,
+    '../settings/settings.service': { SettingsService: class {} },
+    '../settings/model-route.rules': { parseModelRoute: value => value },
   };
   new Function('require', 'module', 'exports', compiled)(id => {
     if (id === './analysis-report') return load('analysis-report.ts');
@@ -82,4 +84,22 @@ test('retry cleanup stays scoped to failed owner/run and refuses an already publ
   reportExists = true;
   await assert.rejects(service.resetFailedRunArtifacts('alice', 'failed-run'), /report already exists/);
   assert.equal(removed.length, 5);
+});
+
+test('public evidence cannot assert provider verification, while internal provider persistence keeps metadata', async () => {
+  const written = [];
+  const db = { insert: () => ({ values: rows => { written.push(...rows); return { returning: async () => rows }; } }) };
+  const { MultiAgentService } = load('multi-agent.service.ts');
+  const service = new MultiAgentService(db);
+  service.ensureRunOwner = async () => undefined;
+  service.mapEvidence = value => value;
+  const metadata = { sources: [{ origin: 'provider', verification: 'server-verified', facts: [{ value: 100 }] }] };
+  const evidence = { role: 'fundamental', evidenceType: 'financial', title: 'Filing', content: 'Revenue',
+    sourceUrl: 'https://example.test/filing', fetchedAt: new Date().toISOString(), metadata };
+  await service.addEvidence('alice', 'run', [evidence]);
+  assert.equal(written[0].metadata?.sources[0].verification, 'unverified');
+  assert.deepEqual(written[0].metadata.sources[0].facts, []);
+  assert.equal(typeof service.addProviderEvidence, 'function');
+  await service.addProviderEvidence('alice', 'run', [evidence]);
+  assert.deepEqual(written[1].metadata, metadata);
 });

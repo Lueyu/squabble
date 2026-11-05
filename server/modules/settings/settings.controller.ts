@@ -11,6 +11,7 @@ import { LlmService } from '../multi-agent/llm.service';
 import { SettingsService } from './settings.service';
 import { BudgetExceededException } from '../llm-budget/llm-budget.rules';
 import { safeAnalysisError } from '../multi-agent/analysis-report';
+import type { ModelRoute } from '../../../shared/model-route.interface';
 
 @NeedLogin()
 @Controller('api/settings/integrations')
@@ -36,6 +37,11 @@ export class SettingsController {
   @Delete('llm')
   clearLlm(@Req() req: Request): Promise<IntegrationSettings> {
     return this.settings.clearLlm(req.userContext.userId);
+  }
+
+  @Put('llm-route')
+  saveLlmRoute(@Req() req: Request, @Body() body: ModelRoute): Promise<IntegrationSettings> {
+    return this.settings.saveLlmRoute(req.userContext.userId, body);
   }
 
   @Post('llm/test')

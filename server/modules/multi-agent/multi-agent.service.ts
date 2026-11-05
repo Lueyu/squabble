@@ -28,6 +28,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and, desc, inArray, gte, lt, sql } from 'drizzle-orm';
@@ -70,9 +71,13 @@ import type {
   AgentRunWithRating,
 } from '@shared/api.interface';
 import { buildPipelineReport, normalizeAnalysisLanguage, safeAnalysisError, type AnalysisExecutionInfo } from './analysis-report';
+import { SettingsService } from '../settings/settings.service';
+import { parseModelRoute } from '../settings/model-route.rules';
+import type { ModelRoute } from '../../../shared/model-route.interface';
 
 /** Internal row shape for bulk evidence inserts (snake_case DB columns). */
 interface EvidenceInsert {
+  metadata: import('@shared/research-evidence.interface').EvidenceMetadata | null;
   runId: string;
   owner: string;
   createdBy: string;
@@ -90,7 +95,8 @@ interface EvidenceInsert {
 export class MultiAgentService {
   private readonly logger = new Logger(MultiAgentService.name);
 
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    @Optional() private readonly settings?: SettingsService) {}
 
   /** Create a new run row in `pending` status. Does not start the pipeline. */
   async createRun(userId: string, dto: CreateAgentRunDto): Promise<AgentRun> {
@@ -100,6 +106,9 @@ export class MultiAgentService {
     } catch (error) {
       throw new BadRequestException(error instanceof Error ? error.message : 'Invalid analysis language');
     }
+    const modelRoute = dto.modelRoute === undefined
+      ? await this.settings?.getDefaultModelRoute(userId) ?? null
+      : parseModelRoute(dto.modelRoute);
     const [row] = await this.db
       .insert(agentRuns)
       .values({
@@ -109,6 +118,7 @@ export class MultiAgentService {
         triggerType: dto.triggerType,
         runMode: dto.runMode ?? 'full',
         language,
+        modelRoute,
         status: 'pending',
         owner: userId,
         createdBy: userId,
@@ -242,6 +252,21 @@ export class MultiAgentService {
 
   /** Bulk-insert evidence rows for a run (owner-checked). */
   async addEvidence(userId: string, runId: string, items: CreateEvidenceDto[]): Promise<AgentEvidence[]> {
+    const observedAt = new Date().toISOString();
+    return this.insertEvidence(userId, runId, items.map(item => ({ ...item, metadata: { sources: [{
+      origin: 'agent', verification: 'unverified', provider: null, kind: 'other', sourceUrl: item.sourceUrl ?? null,
+      sourceRevision: null, supersedesSourceRevision: null, revisionReason: null, publishedAt: null, publicationPrecision: null,
+      observedAt, observationBasis: 'server', facts: [] }] } })));
+  }
+
+  /** Internal deterministic collection path. The controller never accepts caller-supplied provider metadata. */
+  async addProviderEvidence(userId: string, runId: string,
+    items: Array<CreateEvidenceDto & { metadata?: import('@shared/research-evidence.interface').EvidenceMetadata }>): Promise<AgentEvidence[]> {
+    return this.insertEvidence(userId, runId, items);
+  }
+
+  private async insertEvidence(userId: string, runId: string,
+    items: Array<CreateEvidenceDto & { metadata?: import('@shared/research-evidence.interface').EvidenceMetadata }>): Promise<AgentEvidence[]> {
     await this.ensureRunOwner(userId, runId);
     if (items.length === 0) return [];
 
@@ -257,6 +282,7 @@ export class MultiAgentService {
       sourceName: it.sourceName ?? null,
       fetchedAt: new Date(it.fetchedAt),
       relevanceScore: it.relevanceScore !== undefined ? String(it.relevanceScore) : null,
+      metadata: it.metadata ?? null,
     }));
 
     const inserted = await this.db.insert(agentEvidence).values(values).returning();
@@ -1247,6 +1273,7 @@ export class MultiAgentService {
       status: row.status as AgentRun['status'],
       modelFast: row.modelFast,
       modelSlow: row.modelSlow,
+      modelRoute: row.modelRoute as ModelRoute | null,
       tokensUsed: row.tokensUsed ?? 0,
       costEstimate: row.costEstimate?.toString() ?? '0',
       startedAt: row.startedAt ? row.startedAt.toISOString() : null,
@@ -1275,6 +1302,7 @@ export class MultiAgentService {
       sourceUrl: row.sourceUrl,
       sourceName: row.sourceName,
       fetchedAt: row.fetchedAt.toISOString(),
+      metadata: row.metadata ?? null,
       relevanceScore: row.relevanceScore?.toString() ?? null,
       createdAt: row.createdAt.toISOString(),
     };

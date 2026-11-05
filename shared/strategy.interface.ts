@@ -33,6 +33,7 @@ export interface StrategyRule {
   rationale: string;
 }
 export interface DailyStrategyPlan {
+  memoryInventory?: import('./research-monitor.interface').StrategyMemoryInventory | null;
   id: string; profileId: string; profileVersion: number; version: number;
   market: Market; marketDate: string; status: 'active' | 'superseded' | 'expired';
   rules: StrategyRule[]; sessionIds: string[]; reportIds: string[];

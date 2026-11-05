@@ -1,3 +1,4 @@
+import { unverifiedAgentMetadata } from '../research-memory/research-memory.temporal';
 import { randomUUID } from 'node:crypto';
 import { localAgentLimitMessage } from '../../../shared/local-agent-errors';
 import type { CouncilCandidate, CouncilMember } from '@shared/council.interface';
@@ -34,7 +35,7 @@ export function agentContribution(result: { data?: unknown; text: string }, evid
       const url = new URL(raw.url);
       if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.href.length > 2048) continue;
       sources.push({ id: randomUUID(), title: `${language === 'en' ? '[Agent source · unverified]' : '[Agent 来源 · 未独立核验]'} ${raw.title.slice(0, 170)}`, content: raw.content.slice(0, 2000), sourceUrl: url.href,
-        sourceName: 'Native agent · unverified', role: 'news', evidenceType: 'other', relevanceScore: 0, fetchedAt: new Date().toISOString() });
+        metadata: unverifiedAgentMetadata(url.href, new Date().toISOString()), sourceName: 'Native agent · unverified', role: 'news', evidenceType: 'other', relevanceScore: 0, fetchedAt: new Date().toISOString() });
     } catch { /* Invalid source URLs are not published. */ }
   }
   const known = new Set(evidence.map((item) => item.id));

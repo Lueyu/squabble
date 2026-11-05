@@ -15,10 +15,13 @@ import type { ResearchActivity } from '../../shared/research-events.interface';
 import type { ResearchToolCapability } from '../../shared/research-tools.interface';
 import { createResearchToolBridge, type NativeResearchTools, type ResearchToolBridge } from './tool-bridge';
 import { injectResearchTools, isolateCodexResearch, researchSnapshotPrompt, researchToolCapability } from './tool-config';
+import type { NativeAgentImage } from '../../shared/native-image.interface';
+import { attachNativeImage, nativeImageCapability, validateNativeImage } from './native-image';
 
 export interface NativeRunOptions {
   root: string; signal: AbortSignal; onProgress: (text: string) => void; agentSettings?: NativeAgentConfiguration;
   researchTools?: NativeResearchTools;
+  image?: NativeAgentImage;
   onEvent?: (event: ResearchActivity) => void;
 }
 export interface NativeRuntimeOptions extends NativeResolverOptions {
@@ -46,7 +49,7 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
     async detectNativeAgents(): Promise<NativeAgentStatus[]> {
       return Promise.all(LOCAL_AGENT_PROVIDERS.map(async (provider: LocalAgentProvider): Promise<NativeAgentStatus> => {
         const status: NativeAgentStatus = { ...providerCatalog[provider], ...defaultCapabilities(provider), state: 'not_installed',
-          researchTools: researchToolCapability(provider) };
+          researchTools: researchToolCapability(provider), imageInput: nativeImageCapability(provider) };
         const launch: NativeLaunch | null = resolveCommand(provider);
         if (!launch) return status;
         const probe: NativeProbe = probeFor(launch, provider);
@@ -87,13 +90,15 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
     async runNativeAgent(provider: LocalAgentProvider, prompt: string, run: NativeRunOptions): Promise<{ text: string; usageTokens: number | null }> {
       if (run.signal.aborted) throw new Error('NATIVE_AGENT_CANCELLED');
       if (!prompt.trim() || Buffer.byteLength(prompt, 'utf8') > 256 * 1024) throw new Error('NATIVE_AGENT_INVALID_PROMPT');
+      const image = run.image === undefined ? undefined : validateNativeImage(run.image);
+      if (image && !nativeImageCapability(provider)) throw new Error('NATIVE_AGENT_IMAGE_UNSUPPORTED');
       const settings: NativeAgentConfiguration = normalizedConfiguration(run.agentSettings);
       const launch: NativeLaunch = command(provider);
       const workspace = await createNativeWorkspace(run.root);
       let bridge: ResearchToolBridge | undefined;
       try {
         const probe: NativeProbe = probeFor(launch, provider, settings.model);
-        const tools = run.researchTools && (run.researchTools.snapshot.trim() || run.researchTools.descriptors.length) ? run.researchTools : undefined;
+        const tools = !image && run.researchTools && (run.researchTools.snapshot.trim() || run.researchTools.descriptors.length) ? run.researchTools : undefined;
         let capability: ResearchToolCapability = researchToolCapability(provider);
         if (tools) {
           try {
@@ -103,6 +108,7 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
         }
         let invocation = await researchInvocation(provider, tools ? researchSnapshotPrompt(prompt, tools.snapshot) : prompt,
           settings, workspace.cwd, env(provider, settings.model), options, probe);
+        if (image) invocation = await attachNativeImage(provider, invocation, image, workspace.cwd);
         if (tools && capability.mode === 'mcp' && tools.descriptors.length) {
           bridge = await createResearchToolBridge(tools, run.signal);
           try { invocation = await injectResearchTools(provider, invocation, bridge, tools.descriptors.map(tool => tool.name), probe, workspace.cwd, run.signal); }
@@ -112,7 +118,7 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
             throw new Error('NATIVE_AGENT_TOOL_ISOLATION_FAILED');
           }
         }
-        if (tools && provider === 'codex' && !bridge) {
+        if ((tools || image) && provider === 'codex' && !bridge) {
           try { invocation = await isolateCodexResearch(invocation, probe, workspace.cwd, run.signal); }
           catch { throw new Error(run.signal.aborted ? 'NATIVE_AGENT_CANCELLED' : 'NATIVE_AGENT_TOOL_ISOLATION_FAILED'); }
         }

@@ -181,7 +181,7 @@ jobs:
             throw 'Packaged application did not start its API'
           }
           $result = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-          if ($result.healthy -ne $true -or $result.registrationOpen -ne $true) { throw 'Packaged API returned an invalid first-run result' }
+          if ($result.healthy -ne $true -or $result.authMode -ne 'local' -or $result.registrationOpen -ne $false -or $result.anonymousAccess -ne $true) { throw 'Packaged API returned an invalid first-run result' }
           if ((Split-Path -Path $result.defaultDataRoot -Leaf) -ne 'Squabble') { throw 'Default user data directory does not use the product name' }
           if (Test-Path -LiteralPath (Join-Path $dataRoot 'postgres/postmaster.pid')) { throw 'Packaged PostgreSQL did not stop cleanly' }
       - name: Start packaged Windows application as standard user

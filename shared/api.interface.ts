@@ -442,6 +442,7 @@ export interface AgentRun {
   status: AgentRunStatus;
   modelFast: string | null;
   modelSlow: string | null;
+  modelRoute?: ModelRoute | null;
   tokensUsed: number;
   costEstimate: string;
   startedAt: string | null;
@@ -458,6 +459,7 @@ export interface AgentRun {
 }
 
 export interface AgentEvidence {
+  metadata?: import('./research-evidence.interface').EvidenceMetadata | null;
   id: string;
   runId: string;
   role: EvidenceRole;
@@ -562,6 +564,7 @@ export interface CreateAgentRunDto {
   triggerType: AgentRunTrigger;
   runMode?: AgentRunMode;
   language?: AnalysisLanguage;
+  modelRoute?: ModelRoute;
 }
 
 export interface UpdateAgentRunDto {
@@ -843,6 +846,7 @@ export interface HumanDecisionDto {
 
 export interface BatchRunRequest {
   language?: AnalysisLanguage;
+  route?: ModelRoute;
   scope: 'holdings' | 'watchlist' | 'all' | 'custom';
   tickers?: string[];
   tiered: boolean;
@@ -1181,9 +1185,13 @@ export interface RecordBuilderFillDto {
 }
 
 /** User-owned provider credentials are never returned by the API. */
+export type { ModelRoute } from './model-route.interface';
+import type { ModelRoute } from './model-route.interface';
+
 export interface IntegrationSettings {
   llm: {
-    source: 'user' | 'server' | 'builtin';
+    source: 'user' | 'server' | 'builtin' | 'local';
+    route: ModelRoute;
     /** Basic mode uses public data and deterministic rules, not a language model. */
     engine: 'basic' | 'llm';
     available: boolean;

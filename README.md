@@ -28,7 +28,7 @@ Most portfolio trackers show numbers. Squabble argues about them.
 
 - **AI research reports.** A bull and a bear debate your holdings. A critic removes weak arguments. Your risk rules run as hard gates. The result is a 14-section report with both sides preserved.
 - **AI paper trading.** Opt into daily team research, a dated trading plan, scheduled market checks and a fast model review before automatic simulated fills. Configure push notifications and hard risk limits. Manual and MCP agent orders remain available.
-- **Your data stays yours.** Self-hosted. Zero telemetry. Only a username and password — no phone number, no email verification.
+- **Your data stays yours.** Self-hosted. Zero telemetry. Desktop and source local workspaces open without a Squabble login; account mode remains available.
 
 ## Install
 
@@ -38,7 +38,8 @@ Most portfolio trackers show numbers. Squabble argues about them.
 2. Download the installer for your system (`.exe` for Windows, `.dmg` for macOS).
 3. Run the installer. Everything is bundled — PostgreSQL, the server, and the app.
 
-After install, Squabble opens in its own window. Your data stays on your machine.
+After install, Squabble opens directly into a local workspace in its own window.
+Your data stays on your machine. Existing data is preserved; see the [upgrade and workspace selection notes](docs/self-hosting.md#local-workspace-and-existing-data).
 
 ### Web app (Docker)
 
@@ -66,6 +67,7 @@ npm run dev
 
 Before the first launch, configure PostgreSQL and a private `JWT_SECRET` in `.env.local` using `.env.example`.
 After `Ready:` appears, open **http://127.0.0.1:8080** for the source-backed UI with hot reload.
+The example enables `AUTH_MODE=local`: no Squabble login is needed. Keep `SERVER_HOST=127.0.0.1` and `TRUST_PROXY=false`; use `AUTH_MODE=account` for account-based access. See the [development guide](docs/development.md#local-workspace-mode) for existing data and allowed frontend origins.
 Each `npm run dev` stops the previous development session, reclaims both configured ports and their process trees, rebuilds the server, and refreshes Vite's cache. Ctrl+C stops the current session.
 Override `SERVER_PORT=3000` and `CLIENT_DEV_PORT=8080` in `.env.local` if needed. The frontend never silently switches to another port.
 
@@ -75,8 +77,9 @@ Override `SERVER_PORT=3000` and `CLIENT_DEV_PORT=8080` in `.env.local` if needed
 |---|---|
 | **Portfolio tracking** | US/HK/CN holdings, cash, P&L and net-value curves. USD/HKD/CNY conversion built in. |
 | **AI research** | Bull-bear debate, critic review, risk gates. 14-section report. Versioned, with losing arguments kept. |
+| **Research memory** | Versioned theses with evidence, counterevidence, invalidation conditions and time boundaries. Inspect which complete memory items were sent to each research attempt. Agent acceptance and your confirmation remain separate. |
 | **Paper trading** | AI bot with hard risk limits (daily-loss breaker, per-order cap). Manual and MCP agent orders. |
-| **Portfolio import** | CSV with auto column mapping (5 broker presets). Screenshot OCR via your own AI key. |
+| **Portfolio import** | CSV with auto column mapping (5 broker presets). Select up to 20 screenshots for sequential recognition by a connected image-capable local agent or vision API. Remove unwanted images, then review the combined, editable results before one import confirmation. |
 | **Notifications** | Webhook, Bark, ServerChan, SMTP, Telegram. Every fill and risk event, pushed to you. |
 
 ## Connect native research agents
@@ -89,6 +92,9 @@ from web Settings; confirm the local address in the desktop dialog. Keep the app
 open while researching. Each member can select a model and the reasoning options
 supported by its agent, or inherit the existing defaults. [Setup and usage details](docs/local-agents.md).
 
+In local workspace mode, native agent connections belong to this installation and
+do not require a Squabble account. Provider CLI sign-in remains separate.
+
 Compatible Codex and Claude Code versions automatically receive task-scoped,
 read-only research tools; other runtimes receive a dated evidence snapshot with
 the limitation shown in Settings. The discussion chat shows public work summaries,
@@ -97,15 +103,43 @@ tool outcomes, elapsed time and sources. No MCP JSON or extra connection steps a
 Each role's research is collapsed above its reply. Replies separate the conclusion,
 supporting evidence, risks and next checks; longer analysis remains expandable.
 
+## Research memory
+
+Open the book icon in a discussion to inspect that stock's research dossier.
+Start with active theses and their invalidation conditions, then expand evidence,
+known dates, counterevidence and version history. Agent acceptance and your own
+confirmation are separate; neither turns an unknown source field into a verified fact.
+
+Later research ranks eligible memory for the current task and sends whole thesis
+units within the request budget. The activity details distinguish prepared and
+submitted items, versions and omissions; submission does not prove model use.
+
+Reports are archived in the background. The dossier shows pending or failed jobs,
+supports retry and imports eligible historical reports without a model call.
+Older reports without structured theses remain report history. Turning off
+automatic archival still allows an explicit manual import or retry.
+
+Price, SMA20, RSI14 and daily volume-ratio conditions can be monitored within an
+enabled daily paper strategy; indicators use completed daily bars. Unconfigured or
+unsupported conditions remain visible, and missing data is unknown. A triggered
+condition stays in that thesis version's history. After a breach, new risk requires dependencies
+established by a reviewed replacement or deliberate user revision; a price rebound
+does not erase the original event.
+
 ## Daily strategies and automatic paper trading
 
 In **Agent Builder**, enable the research team and **Daily strategy**, choose the
 fast reviewer, configure notifications, then save and activate the profile.
 The team prepares a plan before each market opens. During continuous trading,
 the program checks its conditions and computes indicators; the fast reviewer
-can approve, wait or veto. The ledger checks the current plan, price, funds,
+can approve, wait or veto. The ledger checks the current plan, thesis dependencies, price, funds,
 position limits and risk rules again before a simulated fill. Protective stops
 use deterministic rules. Notifications are queued independently of orders.
+
+After upgrading, stored plans without a memory dependency inventory need a fresh
+validated plan before adding risk; protective exits remain available. A new plan
+with structured theses waits for their archival. If automatic archival is off,
+use the dossier's manual import or retry instead of repeating the research.
 
 Existing profiles keep their previous mode until you opt in. The server must
 remain running. Public Yahoo quotes may be delayed; indicators use completed

@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ShieldCheck } from 'lucide-react';
+import { getAuthMode } from '@/api/auth-mode';
 
 export default function PrivacyPage() {
   const { t, i18n } = useTranslation();
+  const localWorkspace = getAuthMode() === 'local';
   const guideUrl = i18n.language.startsWith('zh')
     ? 'https://github.com/Lueyu/squabble/blob/main/docs/privacy.zh-CN.md'
     : 'https://github.com/Lueyu/squabble/blob/main/docs/privacy.md';
@@ -32,8 +34,8 @@ export default function PrivacyPage() {
           <a href={guideUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline underline-offset-4">
             {t('privacy.fullGuide')}
           </a>
-          <Link to="/login" className="font-medium text-primary underline underline-offset-4">
-            {t('privacy.back')}
+          <Link to={localWorkspace ? '/' : '/login'} className="font-medium text-primary underline underline-offset-4">
+            {t(localWorkspace ? 'privacy.backToWorkspace' : 'privacy.back')}
           </Link>
         </nav>
       </article>

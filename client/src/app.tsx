@@ -10,7 +10,8 @@
  * under `api/`, and shared layout under `components/Layout.tsx`.
  */
 import React, { useEffect } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { getAuthMode } from './api/auth-mode';
 import { initAgentAPI } from './utils/agent-api';
 
 import Layout from './components/Layout';
@@ -19,6 +20,7 @@ import HoldingsPage from './pages/Holdings/HoldingsPage';
 import WatchlistPage from './pages/Watchlist/WatchlistPage';
 import AnalysisPage from './pages/Analysis/AnalysisPage';
 import DeepReportPage from './pages/Analysis/DeepReportPage';
+import PortfolioReportPage from './pages/Analysis/PortfolioReportPage';
 import JournalPage from './pages/Journal/JournalPage';
 import TransactionsPage from './pages/Transactions/TransactionsPage';
 import SettingsPage from './pages/Settings/SettingsPage';
@@ -42,6 +44,7 @@ import NotFound from './pages/NotFound/NotFound';
  * @returns The React element tree for the whole application.
  */
 const RoutesComponent = () => {
+  const localWorkspace = getAuthMode() === 'local';
   // One-time side effect: expose the in-page agent bridge so the host
   // container can call into this SPA.
   useEffect(() => {
@@ -50,9 +53,9 @@ const RoutesComponent = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/recover" element={<RecoverPage />} />
+      <Route path="/login" element={localWorkspace ? <Navigate to="/" replace /> : <LoginPage />} />
+      <Route path="/register" element={localWorkspace ? <Navigate to="/" replace /> : <RegisterPage />} />
+      <Route path="/recover" element={localWorkspace ? <Navigate to="/" replace /> : <RecoverPage />} />
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route element={<Layout />}>
         <Route index element={<DashboardPage />} />
@@ -64,6 +67,7 @@ const RoutesComponent = () => {
         <Route path="agent-builder" element={<AgentBuilderPage />} />
         <Route path="council" element={<CouncilPage />} />
         <Route path="analysis/deep-report/:runId" element={<DeepReportPage />} />
+        <Route path="analysis/portfolio-report/:runId" element={<PortfolioReportPage />} />
         <Route path="journal" element={<JournalPage />} />
         <Route path="transactions" element={<TransactionsPage />} />
         <Route path="settings/*" element={<SettingsPage />} />

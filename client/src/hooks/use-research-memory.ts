@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ResearchMemoryQuery, UpdateResearchThesis } from '@shared/research-memory.interface';
 import { deleteResearchMemory, deleteResearchThesis, fetchResearchMemory, fetchResearchMemoryPreferences,
-  fetchResearchThesisVersions, saveResearchMemoryPreferences, updateResearchMemory, updateResearchThesis } from '@/api/research-memory';
+  fetchResearchThesisVersions, fetchResearchThesis, fetchResearchMemoryById, saveResearchMemoryPreferences, updateResearchMemory, updateResearchThesis } from '@/api/research-memory';
 
 export function useResearchMemory(query: ResearchMemoryQuery) {
   return useQuery({ queryKey: ['research-memory', 'list', query], queryFn: () => fetchResearchMemory(query),
@@ -13,6 +13,14 @@ export function useResearchMemoryPreferences() {
 export function useResearchThesisVersions(id: string | null) {
   return useQuery({ queryKey: ['research-memory', 'versions', id],
     queryFn: () => fetchResearchThesisVersions(id!), enabled: Boolean(id) });
+}
+export function useResearchMemoryById(id: string | null) {
+  return useQuery({ queryKey: ['research-memory', 'memory', id], queryFn: () => fetchResearchMemoryById(id!),
+    enabled: Boolean(id), refetchInterval: 5_000, retry: false });
+}
+export function useResearchThesis(id: string | null) {
+  return useQuery({ queryKey: ['research-memory', 'thesis', id], queryFn: () => fetchResearchThesis(id!),
+    enabled: Boolean(id), refetchInterval: 5_000, retry: false });
 }
 export function useResearchMemoryActions() {
   const client = useQueryClient();

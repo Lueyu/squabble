@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { BuilderConfig } from '@shared/api.interface';
 import type { CouncilCandidate, CouncilMember, CouncilRole, CouncilResearchKind } from '@shared/council.interface';
+import { evidencePromptMetadata } from '../research-memory/research-memory.temporal';
 
 export interface CouncilEvidence {
+  metadata?: import('@shared/research-evidence.interface').EvidenceMetadata;
   id: string;
   role: string;
   evidenceType: string;
@@ -95,15 +97,23 @@ export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
       : item.researchKind ? 2 : item.evidenceType === 'price' ? 3 : item.evidenceType === 'financial' ? 4
         : item.evidenceType === 'news' ? 5 : 6;
   let remaining = budget;
+  let financialIncluded = false;
+  let priceIncluded = false;
   return evidence.filter((item) => item.sourceName !== 'Data Unavailable' && item.relevanceScore > 0)
     .sort((left, right) => priority(left) - priority(right)).flatMap((item) => {
       const compact = budget <= 1300;
       const excerpt = { id: item.id, title: byteExcerpt(item.title, compact ? 60 : 90),
         content: byteExcerpt(item.content, item.evidenceType === 'financial' ? compact ? 350 : 600 : compact ? 160 : 300),
         source: byteExcerpt(item.sourceName ?? '', compact ? 32 : 50),
-        fetchedAt: item.fetchedAt };
+        fetchedAt: item.fetchedAt, ...(item.metadata ? { metadata: evidencePromptMetadata(item.metadata) } : {}) };
       const bytes = Buffer.byteLength(JSON.stringify(excerpt), 'utf8');
-      if (bytes > remaining) return [];
+      // The local excerpt share cannot erase the only typed financial statement.
+      // Keep its complete fact/source/time metadata and let the full request gate decide whether it fits.
+      const financial = item.metadata?.sources.some(source => source.kind === 'financial' && source.facts.length);
+      const essential = !financialIncluded && financial || !priceIncluded && item.evidenceType === 'price';
+      if (bytes > remaining && !essential) return [];
+      if (financial) financialIncluded = true;
+      if (item.evidenceType === 'price') priceIncluded = true;
       remaining -= bytes;
       return [excerpt];
     });

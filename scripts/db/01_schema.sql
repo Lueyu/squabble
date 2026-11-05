@@ -17,6 +17,7 @@ CREATE TABLE "agent_audit_log" (
 );
 
 CREATE TABLE "agent_evidence" (
+  "metadata" jsonb,
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"run_id" uuid NOT NULL,
 	"role" varchar(30) NOT NULL,
@@ -64,6 +65,7 @@ CREATE TABLE "agent_runs" (
 	"status" varchar(20) DEFAULT 'pending' NOT NULL,
 	"model_fast" varchar(50),
 	"model_slow" varchar(50),
+	"model_route" jsonb,
 	"tokens_used" integer DEFAULT 0,
 	"cost_estimate" numeric DEFAULT '0',
 	"started_at" timestamptz (3),
@@ -576,3 +578,66 @@ CREATE INDEX "idx_agent_sessions_owner" ON "agent_sessions" USING btree ("owner"
 -- Extend paper_orders with agent attribution and approval flow.
 ALTER TABLE "paper_orders" ADD COLUMN IF NOT EXISTS "session_id" uuid;
 ALTER TABLE "paper_orders" ADD COLUMN IF NOT EXISTS "agent_name" varchar(64);
+
+-- Persisted owner-scoped portfolio analysis runs.
+CREATE TABLE "portfolio_analysis_runs" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"owner" text NOT NULL,
+	"status" varchar(20) DEFAULT 'pending' NOT NULL,
+	"route" jsonb NOT NULL,
+	"snapshot" jsonb NOT NULL,
+	"progress" jsonb NOT NULL,
+	"report" jsonb,
+	"usage_known" boolean DEFAULT false NOT NULL,
+	"tokens_used" integer,
+	"error_message" text,
+	"created_at" timestamptz (3) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	"updated_at" timestamptz (3) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	"started_at" timestamptz (3),
+	"completed_at" timestamptz (3),
+	CONSTRAINT "portfolio_analysis_runs_status_check" CHECK ("status" IN ('pending', 'running', 'cancelling', 'completed', 'failed', 'cancelled'))
+);
+CREATE INDEX "idx_portfolio_analysis_runs_owner_created" ON "portfolio_analysis_runs" USING btree ("owner","created_at");
+CREATE INDEX "idx_portfolio_analysis_runs_owner_status" ON "portfolio_analysis_runs" USING btree ("owner","status");
+CREATE UNIQUE INDEX "idx_portfolio_analysis_runs_one_active_owner" ON "portfolio_analysis_runs" USING btree ("owner") WHERE "status" IN ('pending', 'running', 'cancelling');
+CREATE TABLE IF NOT EXISTS research_archive_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  report_id uuid NOT NULL, session_id uuid NOT NULL, report_version integer NOT NULL,
+  ticker varchar(20) NOT NULL, topic varchar(120) NOT NULL,
+  intent varchar(10) NOT NULL CHECK (intent IN ('automatic','manual')),
+  state varchar(10) NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','succeeded','failed')),
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0), error text,
+  lease_token uuid, lease_until timestamptz, next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS research_archive_jobs_report_idx ON research_archive_jobs(owner, report_id, report_version);
+CREATE INDEX IF NOT EXISTS research_archive_jobs_due_idx ON research_archive_jobs(state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS research_archive_jobs_owner_idx ON research_archive_jobs(owner, id);
+-- Rules are versioned, and breach events are immutable across later observations.
+CREATE TABLE IF NOT EXISTS research_monitor_rules (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, root_id uuid NOT NULL,
+  thesis_id uuid NOT NULL, thesis_version integer NOT NULL, version integer NOT NULL,
+  ticker text NOT NULL, market text NOT NULL, origin text NOT NULL, report_id uuid NOT NULL, report_version integer NOT NULL,
+  condition jsonb NOT NULL, enabled boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS research_monitor_rule_version_idx ON research_monitor_rules(owner, root_id, version);
+CREATE INDEX IF NOT EXISTS research_monitor_thesis_idx ON research_monitor_rules(owner, thesis_id, thesis_version);
+CREATE TABLE IF NOT EXISTS research_monitor_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, rule_id uuid NOT NULL, rule_version integer NOT NULL,
+  thesis_id uuid NOT NULL, thesis_version integer NOT NULL, observation_key text NOT NULL, observation jsonb NOT NULL,
+  state text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), sequence integer NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS research_monitor_observation_idx ON research_monitor_events(owner, rule_id, rule_version, thesis_version, observation_key);
+CREATE INDEX IF NOT EXISTS research_monitor_breach_idx ON research_monitor_events(owner, thesis_id, thesis_version, state);
+CREATE INDEX IF NOT EXISTS research_monitor_latest_idx ON research_monitor_events(owner, rule_id, sequence DESC, created_at DESC, id DESC);
+CREATE TABLE IF NOT EXISTS research_thesis_replacements (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, thesis_id uuid NOT NULL, thesis_version integer NOT NULL,
+  previous_id uuid NOT NULL, previous_version integer NOT NULL, reason text NOT NULL,
+  cycle_id uuid NOT NULL, task_id uuid NOT NULL, attempt_id uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS research_thesis_replacement_idx ON research_thesis_replacements(owner, thesis_id, thesis_version);
+-- NULL preserves unknown legacy dependency state until a fresh validated plan is captured.
+ALTER TABLE IF EXISTS strategy_plans ADD COLUMN IF NOT EXISTS memory_inventory jsonb;
+
+
+CREATE TABLE IF NOT EXISTS research_memory_preferences (owner text PRIMARY KEY, auto_archive boolean NOT NULL DEFAULT true, recall_enabled boolean NOT NULL DEFAULT true);

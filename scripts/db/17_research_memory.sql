@@ -16,7 +16,7 @@ CREATE INDEX IF NOT EXISTS research_memories_owner_symbol_idx ON research_memori
 CREATE TABLE IF NOT EXISTS research_theses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
   memory_id uuid NOT NULL REFERENCES research_memories(id), content jsonb NOT NULL,
-  status varchar(12) NOT NULL DEFAULT 'candidate' CHECK (status IN ('candidate','confirmed','dismissed','expired')),
+  status varchar(12) NOT NULL DEFAULT 'candidate' CHECK (status IN ('candidate','accepted','confirmed','dismissed','expired')),
   version integer NOT NULL DEFAULT 1 CHECK (version > 0), excluded boolean NOT NULL DEFAULT false,
   expires_at timestamptz, deleted_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS research_thesis_versions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
   thesis_id uuid NOT NULL REFERENCES research_theses(id) ON DELETE CASCADE,
   version integer NOT NULL CHECK (version > 0), content jsonb NOT NULL,
-  status varchar(12) NOT NULL CHECK (status IN ('candidate','confirmed','dismissed','expired')),
-  action varchar(12) NOT NULL CHECK (action IN ('candidate','confirm','edit','dismiss','expire','exclude')),
+  status varchar(12) NOT NULL CHECK (status IN ('candidate','accepted','confirmed','dismissed','expired')),
+  action varchar(12) NOT NULL CHECK (action IN ('candidate','accept','confirm','edit','dismiss','expire','exclude')),
   excluded boolean NOT NULL, expires_at timestamptz, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS research_thesis_versions_idx ON research_thesis_versions(owner, thesis_id, version);

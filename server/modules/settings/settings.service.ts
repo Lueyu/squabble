@@ -16,6 +16,10 @@ import {
   normalizePublicLlmBaseUrl,
 } from './settings-security';
 import { ModelConnectionsService } from './model-connections.service';
+import { ModuleRef } from '@nestjs/core';
+import type { ModelRoute } from '../../../shared/model-route.interface';
+import type { LocalAgentsService } from '../local-agents/local-agents.service';
+import { parseModelRoute } from './model-route.rules';
 
 export interface ResolvedLlmConfig {
   source: 'user' | 'server';
@@ -70,7 +74,36 @@ export class SettingsService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly quotes: QuoteService,
     @Optional() private readonly connections?: ModelConnectionsService,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
+
+  private localAgents(): LocalAgentsService {
+    try {
+      // Resolve lazily: native research tools themselves depend on SettingsService.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const token = (require('../local-agents/local-agents.service') as typeof import('../local-agents/local-agents.service')).LocalAgentsService;
+      const agents = this.moduleRef?.get<LocalAgentsService>(token, { strict: false });
+      if (agents) return agents;
+    } catch { /* Module may be unavailable in a reduced server configuration. */ }
+    throw new BadRequestException('LOCAL_UNAVAILABLE');
+  }
+
+  async getDefaultModelRoute(userId: string): Promise<ModelRoute> {
+    const row = await this.rowFor(userId);
+    if (row?.llmRoute) return parseModelRoute(row.llmRoute);
+    return row?.llmApiKeyEnc || process.env.DOUBAO_API_KEY ? { mode: 'api' } : { mode: 'basic' };
+  }
+
+  async saveLlmRoute(userId: string, input: unknown): Promise<IntegrationSettings> {
+    const route = parseModelRoute(input);
+    if (route.mode === 'api' && !await this.getLlmConfig(userId)) {
+      throw new BadRequestException('No LLM API key configured');
+    }
+    if (route.mode === 'local') await this.localAgents().validate(userId, route.agentId, route.agentSettings);
+    await this.db.insert(userApiSettings).values({ owner: userId, llmRoute: route })
+      .onConflictDoUpdate({ target: userApiSettings.owner, set: { llmRoute: route, updatedAt: new Date() } });
+    return this.getSettings(userId);
+  }
 
   private encryptionSecret(): string {
     const dedicated = process.env.SETTINGS_ENCRYPTION_KEY;
@@ -103,34 +136,41 @@ export class SettingsService {
     const userLlmKey = this.tryDecrypt(row?.llmApiKeyEnc);
     const serverLlmKey = process.env.DOUBAO_API_KEY || null;
     const finnhubKey = this.tryDecrypt(row?.finnhubApiKeyEnc);
+    const route = row?.llmRoute ? parseModelRoute(row.llmRoute)
+      : row?.llmApiKeyEnc || serverLlmKey ? { mode: 'api' as const } : { mode: 'basic' as const };
+    const local = route.mode === 'local';
+    let localAvailable = false;
+    if (local) {
+      try {
+        await this.localAgents().validate(userId, route.agentId, route.agentSettings);
+        localAvailable = true;
+      } catch { localAvailable = false; }
+    }
+    const llm = userLlmKey ? {
+      source: 'user' as const, engine: 'llm' as const, available: true,
+      baseUrl: row?.llmBaseUrl || DEFAULT_LLM_BASE_URL,
+      fastModel: row?.llmFastModel || DEFAULT_FAST_MODEL,
+      slowModel: row?.llmSlowModel || DEFAULT_SLOW_MODEL,
+      hasApiKey: true, maskedApiKey: maskedKey(userLlmKey),
+    } : row?.llmApiKeyEnc ? {
+      source: 'user' as const, engine: 'llm' as const, available: false,
+      baseUrl: row.llmBaseUrl || DEFAULT_LLM_BASE_URL,
+      fastModel: row.llmFastModel || DEFAULT_FAST_MODEL,
+      slowModel: row.llmSlowModel || DEFAULT_SLOW_MODEL,
+      hasApiKey: false, needsReentry: true,
+    } : {
+      source: serverLlmKey ? 'server' as const : 'builtin' as const,
+      engine: serverLlmKey ? 'llm' as const : 'basic' as const,
+      available: true,
+      baseUrl: serverLlmKey ? process.env.DOUBAO_BASE_URL || DEFAULT_LLM_BASE_URL : '',
+      fastModel: serverLlmKey ? process.env.DOUBAO_MODEL_FAST || DEFAULT_FAST_MODEL : '',
+      slowModel: serverLlmKey ? process.env.DOUBAO_MODEL_SLOW || DEFAULT_SLOW_MODEL : '',
+      hasApiKey: Boolean(serverLlmKey),
+    };
     return {
-      llm: userLlmKey ? {
-        source: 'user',
-        engine: 'llm',
-        available: true,
-        baseUrl: row?.llmBaseUrl || DEFAULT_LLM_BASE_URL,
-        fastModel: row?.llmFastModel || DEFAULT_FAST_MODEL,
-        slowModel: row?.llmSlowModel || DEFAULT_SLOW_MODEL,
-        hasApiKey: true,
-        maskedApiKey: maskedKey(userLlmKey),
-      } : row?.llmApiKeyEnc ? {
-        source: 'user',
-        engine: 'llm',
-        available: false,
-        baseUrl: row.llmBaseUrl || DEFAULT_LLM_BASE_URL,
-        fastModel: row.llmFastModel || DEFAULT_FAST_MODEL,
-        slowModel: row.llmSlowModel || DEFAULT_SLOW_MODEL,
-        hasApiKey: false,
-        needsReentry: true,
-      } : {
-        source: serverLlmKey ? 'server' : 'builtin',
-        engine: serverLlmKey ? 'llm' : 'basic',
-        available: true,
-        baseUrl: serverLlmKey ? process.env.DOUBAO_BASE_URL || DEFAULT_LLM_BASE_URL : '',
-        fastModel: serverLlmKey ? process.env.DOUBAO_MODEL_FAST || DEFAULT_FAST_MODEL : '',
-        slowModel: serverLlmKey ? process.env.DOUBAO_MODEL_SLOW || DEFAULT_SLOW_MODEL : '',
-        hasApiKey: Boolean(serverLlmKey),
-      },
+      llm: local ? { ...llm, source: 'local', engine: 'llm', available: localAvailable, route }
+        : route.mode === 'basic' ? { ...llm, source: 'builtin', engine: 'basic', available: true, route }
+          : { ...llm, engine: 'llm', available: llm.hasApiKey && llm.available, route },
       financial: {
         source: row?.finnhubApiKeyEnc ? 'user' : 'builtin',
         provider: row?.finnhubApiKeyEnc ? 'finnhub' : 'public',
@@ -230,12 +270,14 @@ export class SettingsService {
   }
 
   async clearLlm(userId: string): Promise<IntegrationSettings> {
+    const route = await this.getDefaultModelRoute(userId);
     await this.db.update(userApiSettings)
       .set({
         llmBaseUrl: null,
         llmFastModel: null,
         llmSlowModel: null,
         llmApiKeyEnc: null,
+        ...(route.mode === 'api' ? { llmRoute: null } : {}),
         updatedAt: new Date(),
       })
       .where(eq(userApiSettings.owner, userId));

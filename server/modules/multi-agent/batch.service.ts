@@ -18,13 +18,16 @@
  *  - createDailyBatch: convenience that runs all holdings + buy-signal watchlist
  *    items in tiered mode.
  */
-import { Injectable, Inject, Logger, OnApplicationBootstrap, OnModuleInit, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, Logger, OnApplicationBootstrap, OnModuleInit, BadRequestException, Optional } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { holdings, watchlist, agentRuns } from '@server/database/schema';
 import { MultiAgentService } from './multi-agent.service';
 import { PipelineService } from './pipeline.service';
 import { PortfolioContextService } from './portfolio-context.service';
+import { SettingsService } from '../settings/settings.service';
+import { LlmService } from './llm.service';
+import type { ModelRoute } from '../../../shared/model-route.interface';
 import { normalizeAnalysisLanguage, safeAnalysisError } from './analysis-report';
 import type {
   BatchRunRequest,
@@ -41,6 +44,7 @@ interface QueueItem {
   userId: string;
   ticker: string;
   runMode: AgentRunMode;
+  route?: ModelRoute;
 }
 
 @Injectable()
@@ -59,12 +63,16 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
   private summaryQueue: QueueItem[] = [];
   private activeTargets = new Set<string>();
   private targetByRun = new Map<string, string>();
+  private routeByRun = new Map<string, ModelRoute | undefined>();
+  private runningLocalAgents = new Map<string, number>();
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly multiAgentService: MultiAgentService,
     private readonly pipelineService: PipelineService,
     private readonly portfolioContextService: PortfolioContextService,
+    @Optional() private readonly settings?: SettingsService,
+    @Optional() private readonly llm?: LlmService,
   ) {}
 
   /**
@@ -77,7 +85,9 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
       if (!target) return;
       this.activeTargets.delete(target);
       this.targetByRun.delete(runId);
-      this.releaseSlot(mode);
+      const route = this.routeByRun.get(runId);
+      this.routeByRun.delete(runId);
+      this.releaseSlot(mode, route);
       this.processQueue();
     });
   }
@@ -102,6 +112,7 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
       const target = this.targetByRun.get(runId);
       if (target) this.activeTargets.delete(target);
       this.targetByRun.delete(runId);
+      this.routeByRun.delete(runId);
       return;
     }
   }
@@ -126,6 +137,8 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
     } catch (error) {
       throw new BadRequestException(error instanceof Error ? error.message : 'Invalid analysis language');
     }
+    const route = req.route ?? await this.settings?.getDefaultModelRoute(userId);
+    if (route && this.llm) await this.llm.validateRoute(userId, route);
     const targets = await this.resolveTargets(userId, req);
     const result: BatchRunResult = {
       created: 0,
@@ -150,6 +163,7 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
           triggerType: 'manual',
           runMode: target.runMode,
           language,
+          modelRoute: route,
         });
 
         const item: BatchRunItem = {
@@ -161,16 +175,18 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
         result.runs.push(item);
         result.created += 1;
         this.targetByRun.set(run.id, targetKey);
+        this.routeByRun.set(run.id, route);
 
         const queueItem: QueueItem = {
           runId: run.id,
           userId,
           ticker: target.ticker,
           runMode: target.runMode,
+          route,
         };
 
-        if (this.canStart(target.runMode)) {
-          this.acquireSlot(target.runMode);
+        if (this.canStart(target.runMode, route)) {
+          this.acquireSlot(target.runMode, route);
           this.pipelineService.startPipeline(run.id, userId, target.runMode);
           item.status = 'fetching';
           result.running += 1;
@@ -195,16 +211,18 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
    * Daily routine: tiered run over all holdings, plus a tiered run over
    * watchlist tickers that carry a buy/strong-buy signal.
    */
-  async createDailyBatch(userId: string, language?: AnalysisLanguage): Promise<{
+  async createDailyBatch(userId: string, language?: AnalysisLanguage, requestedRoute?: ModelRoute): Promise<{
     holdingsRuns: BatchRunItem[];
     watchlistRuns: BatchRunItem[];
     totalCreated: number;
     errors: Array<{ ticker: string; error: string }>;
   }> {
+    const route = requestedRoute ?? await this.settings?.getDefaultModelRoute(userId);
     const holdingsResult = await this.createBatch(userId, {
       scope: 'holdings',
       tiered: true,
       language,
+      route,
     });
 
     const watchlistItems = await this.getWatchlistTargets(userId);
@@ -220,6 +238,7 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
       tickers: buySignals.map((w) => w.ticker),
       tiered: true,
       language,
+      route,
     });
 
     return {
@@ -237,17 +256,19 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
    */
   processQueue(): void {
     while (this.fullRunning < this.MAX_FULL_CONCURRENT && this.fullQueue.length > 0) {
-      const item = this.fullQueue.shift();
-      if (!item) break;
-      this.fullRunning += 1;
+      const index = this.fullQueue.findIndex(item => this.canStart(item.runMode, item.route));
+      if (index < 0) break;
+      const [item] = this.fullQueue.splice(index, 1);
+      this.acquireSlot(item.runMode, item.route);
       this.logger.log(`Dequeued full run: ${item.ticker} (${item.runId})`);
       this.pipelineService.startPipeline(item.runId, item.userId, item.runMode);
     }
 
     while (this.summaryRunning < this.MAX_SUMMARY_CONCURRENT && this.summaryQueue.length > 0) {
-      const item = this.summaryQueue.shift();
-      if (!item) break;
-      this.summaryRunning += 1;
+      const index = this.summaryQueue.findIndex(item => this.canStart(item.runMode, item.route));
+      if (index < 0) break;
+      const [item] = this.summaryQueue.splice(index, 1);
+      this.acquireSlot(item.runMode, item.route);
       this.logger.log(`Dequeued summary run: ${item.ticker} (${item.runId})`);
       this.pipelineService.startPipeline(item.runId, item.userId, item.runMode);
     }
@@ -379,21 +400,28 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   /** @returns true if a new run of the given mode can start immediately. */
-  private canStart(mode: AgentRunMode): boolean {
+  private canStart(mode: AgentRunMode, route?: ModelRoute): boolean {
+    if (route?.mode === 'local' && (this.runningLocalAgents.get(route.agentId) ?? 0) > 0) return false;
     if (mode === 'full') return this.fullRunning < this.MAX_FULL_CONCURRENT;
     return this.summaryRunning < this.MAX_SUMMARY_CONCURRENT;
   }
 
   /** Reserve a concurrency slot for the given mode. */
-  private acquireSlot(mode: AgentRunMode): void {
+  private acquireSlot(mode: AgentRunMode, route?: ModelRoute): void {
     if (mode === 'full') this.fullRunning += 1;
     else this.summaryRunning += 1;
+    if (route?.mode === 'local') this.runningLocalAgents.set(route.agentId, (this.runningLocalAgents.get(route.agentId) ?? 0) + 1);
   }
 
   /** Release a concurrency slot after a run finishes (floored at 0). */
-  private releaseSlot(mode: AgentRunMode): void {
+  private releaseSlot(mode: AgentRunMode, route?: ModelRoute): void {
     if (mode === 'full') this.fullRunning = Math.max(0, this.fullRunning - 1);
     else this.summaryRunning = Math.max(0, this.summaryRunning - 1);
+    if (route?.mode === 'local') {
+      const remaining = (this.runningLocalAgents.get(route.agentId) ?? 1) - 1;
+      if (remaining > 0) this.runningLocalAgents.set(route.agentId, remaining);
+      else this.runningLocalAgents.delete(route.agentId);
+    }
   }
 
   /** Append an item to the appropriate per-mode queue. */

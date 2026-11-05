@@ -14,8 +14,10 @@ import { __express as hbsExpressEngine } from 'hbs';
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { RequestHandler } from 'express';
+import { importBodyParsers } from './modules/import/screenshot-body-parser';
 import { AppModule } from './app.module';
 import { staticAssets } from './common/platform/static-assets.middleware';
+import { isLocalWorkspaceMode, localWorkspaceRequestGuard, validateLocalWorkspaceConfig } from './modules/auth/local-workspace';
 
 /**
  * Builds and starts the NestJS server.
@@ -27,11 +29,15 @@ import { staticAssets } from './common/platform/static-assets.middleware';
  * defaults.
  */
 async function bootstrap() {
+  validateLocalWorkspaceConfig();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     abortOnError: process.env.NODE_ENV !== 'development',
+    bodyParser: false,
   });
   app.enableShutdownHooks();
   if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
+
+  if (isLocalWorkspaceMode()) app.use(localWorkspaceRequestGuard());
 
   if (process.env.SQUABBLE_DESKTOP_ORIGIN) {
     // The desktop shell serves the SPA on a private loopback origin. Reject
@@ -42,9 +48,9 @@ async function bootstrap() {
     app.use(desktopRequestGuard(process.env.SQUABBLE_DESKTOP_ORIGIN));
   }
 
-  // JSON bodies up to 1MB (deep reports can be large); urlencoded for parity.
-  app.useBodyParser('json', { limit: '1mb' });
-  app.useBodyParser('urlencoded', { limit: '1mb', extended: true });
+  // Only screenshot uploads need space for an 8MiB image encoded as base64.
+  // Other bodies remain limited to 1MB. Keep every parser on the same version.
+  app.use(...importBodyParsers());
 
   // Serve the built SPA bundle (hashed assets, favicon, logo) from dist/client.
   app.use(staticAssets(join(process.cwd(), 'dist/client')));

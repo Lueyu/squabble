@@ -115,7 +115,7 @@ export class AgentBuilderService {
         catch { throw new BadRequestException('Connect the selected fast reviewer before activating'); }
       } else {
         await this.llm.validateConnectionIds(userId, reviewer?.connectionId ? [reviewer.connectionId] : []);
-        if (!await this.llm.isConfigured(userId, reviewer?.connectionId)) {
+        if (!await this.llm.isConfigured(userId, reviewer?.connectionId, { mode: 'api' })) {
           throw new BadRequestException('Configure a fast model or select a connected native fast reviewer');
         }
       }
@@ -131,7 +131,7 @@ export class AgentBuilderService {
         }
       }
       await this.llm.validateConnectionIds(userId, members.flatMap((member) => member.executionMode !== 'local' && member.connectionId ? [member.connectionId] : []));
-      const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId)));
+      const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId, { mode: 'api' })));
       if (configured.some((value) => !value)) throw new BadRequestException('Configure a model connection for every council member');
     } else if (config.customPrompt && !(await this.llm.isConfigured(userId))) {
       throw new BadRequestException('Configure a model for the council, or select basic rules mode');

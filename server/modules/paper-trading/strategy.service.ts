@@ -18,6 +18,8 @@ import type { StrategyCandidate, StrategyMarketRuntime, StrategyRuntime, Strateg
 import type { CouncilReport } from '../../../shared/council.interface';
 import { strategyPlanPrompt } from './strategy-prompt';
 import { marketDate } from './trading-cadence';
+import { ResearchMonitorService } from '../research-memory/research-memory.monitor.service';
+import { sameMonitorSymbol } from '../research-memory/research-memory.monitor.rules';
 
 @Injectable()
 export class StrategyService {
@@ -129,9 +131,16 @@ export class StrategyService {
     if (previous?.lastCheckAt && now.getTime() - Date.parse(previous.lastCheckAt) < config.monitorSeconds * 1000) return;
     runtime.state = 'monitoring';
     let outsideBand = false;
+    const memoryTriggers: Array<{ ticker: string; reason: string }> = [];
     for (const ticker of [...new Set(plan.rules.map((rule) => rule.ticker))].filter((symbol) => tickers.includes(symbol))) {
       const snapshot = await this.market.getSnapshot(ticker, now);
       runtime.lastQuoteAt = snapshot.quoteTimestamp;
+      const inventory = plan.memoryInventory ?? { state: 'unknown' as const, dependencies: [], reason: 'MEMORY_LEGACY_PLAN_REVIEW_REQUIRED' };
+      const breached = await new ResearchMonitorService(this.db).observe(owner, inventory, snapshot, profile.id);
+      const memoryBlock = await this.store.memoryBlock(owner, inventory, ticker);
+      outsideBand ||= breached || Boolean(memoryBlock);
+      if (breached || memoryBlock) memoryTriggers.push({ ticker, reason: memoryBlock ?? 'MEMORY_CONDITION_BREACHED' });
+      if (memoryBlock) { runtime.state = 'blocked'; runtime.reason = memoryBlock; continue; }
       if (!snapshot.usable || !snapshot.price || !snapshot.indicators || !snapshot.quoteTimestamp) {
         runtime.state = 'blocked'; runtime.reason = snapshot.reason ?? 'Market data unavailable';
         if (profile.config.notifyOnProposal) await this.store.enqueue(owner, profile.id,
@@ -163,11 +172,14 @@ export class StrategyService {
     if (outsideBand && task.state === 'completed' && task.attempt < config.maxEventReplansPerDay
       && now.getTime() - task.createdAt.getTime() >= config.eventReplanCooldownMinutes * 60000) {
       const replan = await this.store.claimTask(owner, profile, market, schedule.tradingDate, task.attempt + 1);
-      if (replan) { await this.startDiscussion(owner, profile, replan, tickers); runtime.reason = 'Price left strategy bounds; bounded event replan started'; }
+      if (replan) { await this.startDiscussion(owner, profile, replan, tickers, memoryTriggers.length ? JSON.stringify({ triggers: memoryTriggers.slice(0, 3),
+        dependencies: plan.memoryInventory?.dependencies.filter(ref => memoryTriggers.some(trigger => sameMonitorSymbol(trigger.ticker, ref.ticker))).slice(0, 3)
+          .map(ref => ({ thesisId: ref.thesisId, version: ref.version, ticker: ref.ticker })) }) : undefined);
+        runtime.reason = 'Price left strategy bounds; bounded event replan started'; }
     }
     return finish();
   }
-  private async startDiscussion(owner: string, profile: BuilderProfile, task: StrategyTaskRow, tickers: string[]): Promise<void> {
+  private async startDiscussion(owner: string, profile: BuilderProfile, task: StrategyTaskRow, tickers: string[], memoryTrigger?: string): Promise<void> {
     const ids: string[] = [];
     try {
       for (const ticker of tickers) {
@@ -178,7 +190,7 @@ export class StrategyService {
         ids.push(session.id);
         await this.store.updateTask(task.id, 'claimed', null, ids);
         await this.council.addMessage(owner, session.id,
-          `Prepare deep daily research for ${task.marketDate} ${task.market}. Discuss evidence, disagreement, catalysts, measured indicators, entry/exit conditions, price invalidation and protective stops for ${ticker}. This is PAPER-only planning, not an order approval. Investor rules: ${profile.config.customPrompt.slice(0, 800)}. A deterministic validated strategy will later be derived from the final report; unsupported facts must be identified.`);
+          `Prepare deep daily research for ${task.marketDate} ${task.market}. Discuss evidence, disagreement, catalysts, measured indicators, entry/exit conditions, price invalidation and protective stops for ${ticker}. This is PAPER-only planning, not an order approval. Investor rules: ${profile.config.customPrompt.slice(0, 800)}. A deterministic validated strategy will later be derived from the final report; unsupported facts must be identified.${memoryTrigger ? ` Triggered thesis review: ${memoryTrigger}. A prior breach stays latched. Only an explicitly reviewed replacement of an actually supplied thesis/version can resolve it.` : ''}`);
       }
       await this.store.updateTask(task.id, 'discussing', null, ids);
       if (ids[0]) {
@@ -206,7 +218,6 @@ export class StrategyService {
       await this.council.runSession(owner, idle.id);
       return;
     }
-    if (!await this.store.claimExtraction(task.id)) return;
     try {
       const selectedSessions = sessions.filter((session) => tickers.includes(session.ticker));
       const reports = selectedSessions.map((session) => session.reports.filter((report) => report.revision === session.revision).at(-1))
@@ -216,6 +227,13 @@ export class StrategyService {
         || reports[index].coverage?.revision !== session.revision || reports[index].coverage?.tasks.some(t => t.state !== 'accepted' || !t.acceptedAttemptId)))) {
         throw new Error('Research tasks have not all passed review; no new strategy can be generated');
       }
+      const inventory = await this.store.inspectMemory(owner, reports.map(report => report.id));
+      const memoryBlock = await this.store.memoryBlock(owner, inventory);
+      if (memoryBlock) {
+        await this.store.updateTask(task.id, 'discussing', memoryBlock);
+        return;
+      }
+      if (!await this.store.claimExtraction(task.id)) return;
       const snapshots = await Promise.all(selectedSessions.map(async (session) => ({ ...await this.market.getSnapshot(session.ticker), ticker: session.ticker })));
       const packed = strategyPlanPrompt(profile, reports, snapshots, schedule.closesAt!);
       const output = await this.model.json(owner, profile.config.council?.members.find((member) => member.role === 'manager'), task.id,

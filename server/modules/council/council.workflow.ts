@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilSessions } from '../../database/council.schema';
 import type { CouncilMember } from '../../../shared/council.interface';
+import type { ThesisCandidateInput } from '../../../shared/research-memory.interface';
 import type { ResearchCoverage, ResearchSkillPin, ResearchTask, ResearchTaskKind } from '../../../shared/research-workflow.interface';
 import { analysisErrorCode, safeAnalysisError } from '../multi-agent/analysis-report';
 import { agentErrorMessage } from './council.native';
@@ -18,7 +19,7 @@ export interface WorkflowCallbacks {
   get(owner: string, id: string): Promise<Session>;
   members(row: Session): CouncilMember[];
   snapshot(row: Session): Promise<{ evidence: CouncilEvidence[]; sourceRunId: string | null }>;
-  publish(row: Session, opinion: CouncilOpinion, coverage: ResearchCoverage, stance?: 'positive' | 'balanced' | 'cautious'): Promise<boolean>;
+  publish(row: Session, opinion: CouncilOpinion, coverage: ResearchCoverage, stance?: 'positive' | 'balanced' | 'cautious', theses?: ThesisCandidateInput[]): Promise<boolean>;
   pin(key: ResearchTaskKind): ResearchSkillPin[];
 }
 
@@ -72,6 +73,13 @@ export class CouncilWorkflow {
           await this.store.markRemote(row, task, attempt.id, { reviewGroupId: attempt.id });
           await this.store.markRemote(row, secondary, secondaryAttempt.id, { reviewGroupId: attempt.id });
         }
+        const copyBatchInventory = async () => {
+          if (!secondary || !secondaryAttempt) return;
+          const primary = (await this.store.list(owner, id, task.cycleId)).find(item => item.id === task.id)
+            ?.attempts.find(item => item.id === attempt.id);
+          if (primary?.memory) await this.store.markRemote(row, secondary, secondaryAttempt.id, {
+            memory: { ...primary.memory, sharedRequestAttemptId: attempt.id }, dispatched: primary.dispatched });
+        };
         const latest = await this.callbacks.get(owner, id);
         try {
           if (latest.revision !== attempt.revision || latest.status !== 'running' || latest.checkpoint?.cycleId !== task.cycleId) {
@@ -80,14 +88,22 @@ export class CouncilWorkflow {
             return;
           }
           const output = await this.executor.execute(latest, task, attempt, member, currentTasks, batch);
+          await copyBatchInventory();
           await this.store.finish(row, task, attempt, member, output);
           if (secondary && secondaryAttempt) await this.store.finish(row, secondary, secondaryAttempt, member, {
             review: output.batchReviews!.find(r => r.taskId === secondary.id), tokens: 0,
             externalUsageUnknown: false, taskId: attempt.id,
           });
         } catch (error) {
+          await copyBatchInventory();
           const code = error instanceof Error ? error.message : '';
-          const reason = code.startsWith('LOCAL_') ? agentErrorMessage(code, row.language)
+          const reason = code === 'RESEARCH_CONTEXT_LIMIT' ? row.language === 'en'
+            ? 'The complete instructions or deliverable exceed the research context limit. Shorten the request or split the task, then retry. Nothing was submitted.'
+            : '完整指令或交付内容超过研究上下文上限。请缩短请求或拆分任务后重试，本次未提交。'
+            : code === 'MEMORY_CONTEXT_CHANGED' ? row.language === 'en'
+              ? 'Memory changed before submission. Start a new research cycle to refresh its versions.'
+              : '记忆在提交前发生变化。请开始新一轮研究以刷新版本。'
+            : code.startsWith('LOCAL_') ? agentErrorMessage(code, row.language)
             : /^(DELIVERY_|REVIEW_)/.test(code) ? (row.language === 'en'
               ? 'The deliverable did not meet the required structure or citation checks. No result was accepted. Retry explicitly after checking the model.'
               : '交付内容未通过结构或引用校验，未采纳为结论。请检查模型后手动重试。') : safeAnalysisError(error, row.language);
@@ -117,7 +133,9 @@ export class CouncilWorkflow {
         await this.callbacks.publish(row, { decision: 'wait', summary: partial + [response.thesis,
           ...response.evidencePoints, ...response.risks, ...response.nextChecks, response.details].filter(Boolean).join('\n\n'),
           dissent: tasks.flatMap(t => t.delivery?.gaps ?? (t.reason ? [t.reason] : [])).slice(0, 12),
-          nextReviewCondition: response.nextChecks.join('\n'), evidenceIds: summary.delivery.evidenceIds }, coverage, summary.delivery.researchStance);
+          nextReviewCondition: response.nextChecks.join('\n'), evidenceIds: summary.delivery.evidenceIds }, coverage, summary.delivery.researchStance,
+        summary.delivery.thesisCandidates?.map(candidate => ({ ...candidate, provenance: { origin: 'agent',
+          workflow: { cycleId: summary.cycleId, taskId: summary.id, attemptId: summary.acceptedAttemptId! } } })));
         return;
       }
       const runnable: ResearchTask[] = [];

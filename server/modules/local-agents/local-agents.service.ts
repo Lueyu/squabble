@@ -12,6 +12,10 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import type { ResearchToolRequest, ResearchToolResult } from '../../../shared/research-tools.interface';
 import { researchFailure } from '../research-tools/research-tools.output';
 import { createHash } from 'node:crypto';
+import { isLocalWorkspaceMode } from '../auth/local-workspace';
+import { nativeImageCapability, validateNativeImage } from '../../local-agents/native-image';
+import type { NativeAgentImage } from '../../../shared/native-image.interface';
+import { researchSnapshotPrompt } from '../../local-agents/tool-config';
 
 interface Runtime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -24,7 +28,7 @@ const wait = (ms: number) => new Promise<void>((resolveWait) => setTimeout(resol
 export class LocalAgentsService implements OnModuleDestroy {
   readonly store: LocalAgentStore;
   private readonly runtime: Runtime;
-  private readonly running = new Map<string, { owner: string; agentId: string; abort: AbortController; done: Promise<void> }>();
+  private readonly running = new Map<string, { owner: string; agentId: string; abort: AbortController; done: Promise<void>; entered?: boolean }>();
   private readonly logins = new Set<LocalAgentProvider>();
   private detection?: { until: number; promise: Promise<NativeAgentStatus[]> };
   private stopping = false;
@@ -34,7 +38,8 @@ export class LocalAgentsService implements OnModuleDestroy {
     @Optional() @Inject('LOCAL_AGENT_STORE') store?: LocalAgentStore,
     @Optional() private readonly researchTools?: ResearchToolsService) {
     this.runtime = runtime ?? { detectNativeAgents, openNativeLogin, runNativeAgent };
-    this.store = store ?? new LocalAgentStore(resolve(process.env.LOCAL_AGENTS_DATA_DIR || join(homedir(), '.squabble', 'local-agents')));
+    this.store = store ?? new LocalAgentStore(resolve(process.env.LOCAL_AGENTS_DATA_DIR || join(homedir(), '.squabble', 'local-agents')),
+      { sharedNative: isLocalWorkspaceMode() });
   }
   get mode(): 'native' | 'companion' {
     if (process.env.SQUABBLE_DESKTOP_ORIGIN) return 'native';
@@ -56,16 +61,28 @@ export class LocalAgentsService implements OnModuleDestroy {
     const items: LocalAgentConnection[] = await Promise.all(LOCAL_AGENT_PROVIDERS.map(async (provider) => {
       const native = detected.find((entry) => entry.provider === provider) ?? { ...providerCatalog[provider], state: 'error' as const };
       const id = `${mode}-${provider}`;
-      return { ...native, id, connected: connected.includes(provider), available: online && native.state === 'ready' && connected.includes(provider),
+      return { ...native, imageInput: native.imageInput === true && nativeImageCapability(provider), id, connected: connected.includes(provider), available: online && native.state === 'ready' && connected.includes(provider),
         busy: [...this.running.values()].some((run) => run.agentId === id) || await this.store.busy(owner, id), source: mode };
     }));
     return { mode, items, companion: { connected: mode === 'companion' && online, ...(device ? { name: device.name } : {}) } };
   }
   async list(owner: string): Promise<LocalAgentConnection[]> { return (await this.status(owner)).items.filter((item) => item.connected); }
-  async validate(owner: string, id: string, agentSettings?: NativeAgentConfiguration): Promise<void> {
+  /** Wait until an acknowledged cancellation has released its native or companion task slot. */
+  async waitForTaskSettlement(owner: string, taskId: string, timeoutMs = 30_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const active = this.running.get(taskId);
+      const task = await this.store.task(owner, taskId);
+      if (!active && ['completed', 'failed', 'cancelled'].includes(task.state)) return true;
+      await wait(300);
+    }
+    return false;
+  }
+  async validate(owner: string, id: string, agentSettings?: NativeAgentConfiguration, requiresImage = false): Promise<void> {
     const item = (await this.status(owner)).items.find((entry) => entry.id === id);
     if (!item?.connected) throw new LocalAgentError('LOCAL_AGENT_NOT_FOUND');
     if (!item.available) throw new LocalAgentError(item.state === 'login_required' ? 'LOCAL_LOGIN_REQUIRED' : 'LOCAL_UNAVAILABLE');
+    if (requiresImage && item.imageInput !== true) throw new LocalAgentError('LOCAL_IMAGE_UNSUPPORTED');
     validateNativeAgentConfiguration(agentSettings, item);
   }
   async connect(owner: string, id: string): Promise<void> {
@@ -80,8 +97,8 @@ export class LocalAgentsService implements OnModuleDestroy {
     const provider = providerFromId(id, this.mode);
     if (this.mode === 'native') await this.store.disconnectNative(owner, provider);
     else await this.store.disconnectCompanion(owner, provider);
-    for (const [taskId, execution] of this.running) {
-      if (execution.owner === owner && (await this.store.task(owner, taskId)).agentId === id) execution.abort.abort();
+    for (const execution of this.running.values()) {
+      if (execution.agentId === id && (execution.owner === owner || this.store.sharedNative && id.startsWith('native-'))) execution.abort.abort();
     }
   }
   async login(owner: string, id: string): Promise<void> {
@@ -102,29 +119,67 @@ export class LocalAgentsService implements OnModuleDestroy {
     return this.store.createPairing(owner);
   }
 
-  private async launch(task: AgentTask): Promise<void> {
-    if (this.stopping || this.running.has(task.id) || !await this.store.takeNative(task.owner, task.id)) return;
+  private async imageMayContinue(options: LocalAgentExecution): Promise<boolean> {
+    return !options.signal?.aborted && await options.shouldContinue() && !options.signal?.aborted;
+  }
+
+  private async launch(task: AgentTask, options: LocalAgentExecution, onSubmitted?: () => Promise<void>): Promise<void> {
+    if (this.stopping || this.running.has(task.id) || !['staged', 'queued'].includes(task.state)) return;
+    if (task.hasImage && !await this.imageMayContinue(options)) {
+      await this.store.cancel(task.owner, task.id);
+      throw new LocalAgentError('LOCAL_CANCELLED', task.id, task.id);
+    }
+    if (!await this.store.takeNative(task.owner, task.id)) return;
+    let image: NativeAgentImage | undefined;
+    if (task.hasImage) {
+      try {
+        image = await this.store.imageFor(task.owner, task.id);
+        if (!await this.imageMayContinue(options)) throw new LocalAgentError('LOCAL_CANCELLED');
+      } catch (error) {
+        // This task owns the slot but no CLI was invoked: cancellation is confirmed.
+        const code = options.signal?.aborted ? 'LOCAL_CANCELLED' : nativeFailureCode(error);
+        await this.store.update(task.owner, task.id, { state: code === 'LOCAL_CANCELLED' ? 'cancelled' : 'failed', error: code });
+        throw new LocalAgentError(code, task.id, task.id);
+      }
+    }
     const abort = new AbortController();
+    const signal = task.hasImage && options.signal ? AbortSignal.any([abort.signal, options.signal]) : abort.signal;
     let progressWrites: Promise<void> = Promise.resolve();
     const done = (async () => {
       try {
-        const result = await this.runtime.runNativeAgent(task.provider, task.prompt, { root: join(this.store.root, 'workspaces', task.id), signal: abort.signal,
-          agentSettings: task.agentSettings,
+        let execution: ReturnType<Runtime['runNativeAgent']> | undefined;
+        let uncertain = false;
+        try { await this.store.handoff(task.owner, task.id, async isCurrent => {
+          if (task.hasImage && !await this.imageMayContinue(options)) throw new LocalAgentError('LOCAL_CANCELLED');
+          if ((await this.store.task(task.owner, task.id)).state !== 'running' || signal.aborted || !isCurrent()) throw new LocalAgentError('LOCAL_CANCELLED');
+          // Runtime entry is synchronous here: no awaited receipt write opens another revocation window.
+          execution = this.runtime.runNativeAgent(task.provider, task.prompt, { root: join(this.store.root, 'workspaces', task.id), signal,
+          agentSettings: task.agentSettings, ...(image ? { image } : {}),
           ...(task.researchBundle ? { researchTools: { ...task.researchBundle,
             call: (request: ResearchToolRequest, signal: AbortSignal) => this.callResearchTool(task.owner, task.id, request, signal) } } : {}),
-          onEvent: event => { progressWrites = progressWrites.then(() => this.store.appendEvents(task.owner, task.id, [event])); },
-          onProgress: (text: string) => { progressWrites = progressWrites.then(() => this.store.update(task.owner, task.id, { progress: text.slice(0, 500) })); } });
+          onEvent: event => { if (!image) progressWrites = progressWrites.then(() => this.store.appendEvents(task.owner, task.id, [event])); },
+          onProgress: (text: string) => { if (!image) progressWrites = progressWrites.then(() => this.store.update(task.owner, task.id, { progress: text.slice(0, 500) })); } });
+          const running = this.running.get(task.id); if (running) running.entered = true;
+          // Completion is awaited outside the local handoff/fence, never inside a database transaction.
+          void execution.catch(() => undefined);
+          await this.store.markNativeEntry(task.owner, task.id);
+        }); } catch (error) { if (!execution) throw error; uncertain = true; }
+        try { await onSubmitted?.(); }
+        catch { uncertain = true; }
+        if (uncertain) { abort.abort(); await execution?.catch(() => undefined); throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN'); }
+        const result = await execution!;
         await progressWrites;
-        if (abort.signal.aborted) {
+        if (signal.aborted) {
           await this.store.update(task.owner, task.id, { state: 'cancelled', error: 'LOCAL_CANCELLED' });
           return;
         }
         if (!result.text?.trim() || Buffer.byteLength(result.text) > 512_000) throw new LocalAgentError('LOCAL_INVALID_RESULT');
+        if (image && result.text.includes(image.data)) throw new LocalAgentError('LOCAL_INVALID_RESULT');
         await this.store.update(task.owner, task.id, { state: 'completed', text: result.text, usageTokens: result.usageTokens });
       } catch (error) {
         await progressWrites.catch(() => undefined);
         const code = nativeFailureCode(error);
-        const cancelled = abort.signal.aborted && code !== 'LOCAL_DISPATCH_UNCERTAIN';
+        const cancelled = signal.aborted && code !== 'LOCAL_DISPATCH_UNCERTAIN';
         await this.store.update(task.owner, task.id, { state: cancelled ? 'cancelled' : 'failed',
           error: cancelled ? 'LOCAL_CANCELLED' : code });
       } finally { this.running.delete(task.id); }
@@ -137,33 +192,69 @@ export class LocalAgentsService implements OnModuleDestroy {
   async execute(owner: string, options: LocalAgentExecution): Promise<LocalAgentResult> {
     if (this.stopping) throw new LocalAgentError('LOCAL_UNAVAILABLE');
     const provider = providerFromId(options.agentId, this.mode);
+    let image;
+    try { image = options.image === undefined ? undefined : validateNativeImage(options.image); }
+    catch { throw new LocalAgentError('LOCAL_INVALID_INPUT'); }
     let task = options.remoteTaskId ? await this.store.task(owner, options.remoteTaskId) : await this.store.findMessage(owner, options.messageId);
     if (task && (task.agentId !== options.agentId || task.messageId !== options.messageId)) throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN');
+    if (task && image && !task.hasImage) throw new LocalAgentError('LOCAL_INVALID_INPUT');
+    const refs = (scope?: LocalAgentExecution['researchScope']) => JSON.stringify((scope?.memoryReferences ?? [])
+      .map(ref => `${ref.kind}:${ref.id}:${ref.version}`).sort());
+    if (task && refs(task.researchScope) !== refs(options.researchScope)) {
+      if (task.commandEmitted || task.runtimeEntered) throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
+      await this.store.cancel(owner, task.id);
+      throw new LocalAgentError('MEMORY_CONTEXT_CHANGED', task.id, task.id);
+    }
+    let clearHandoff: (() => void) | undefined;
+    const register = (id: string) => {
+      clearHandoff = this.store.registerHandoff(owner, id, async handoff => {
+        await options.onDispatch?.();
+        if (options.withHandoff) await options.withHandoff(handoff); else await handoff();
+      });
+    };
     if (!task) {
       // Cancellation changes the durable state before the OS has finished killing
       // the process tree. Its execution slot remains reserved until done settles.
       if ([...this.running.values()].some((run) => run.agentId === options.agentId)) throw new LocalAgentError('LOCAL_BUSY');
       const agentSettings = parseNativeAgentConfiguration(options.agentSettings);
-      await this.validate(owner, options.agentId, agentSettings);
+      await this.validate(owner, options.agentId, agentSettings, !!image);
       if (!options.prompt.trim() || Buffer.byteLength(options.prompt) > 256_000) throw new LocalAgentError('LOCAL_INVALID_INPUT');
       const research = options.researchScope && this.researchTools
         ? { scope: options.researchScope, bundle: await this.researchTools.bundle(owner, options.researchScope) } : undefined;
-      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research);
+      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research, image, options.signal, true);
       try {
         await options.onTask({ taskId: task.id, contextId: task.id });
-        await options.onDispatch?.();
+        await options.onDispatch?.({ inputBytes: Buffer.byteLength(researchSnapshotPrompt(options.prompt, research?.bundle.snapshot ?? ''), 'utf8') });
+        if (task.hasImage && !await this.imageMayContinue(options)) throw new LocalAgentError('LOCAL_CANCELLED', task.id, task.id);
+        register(task.id);
         await this.store.activate(owner, task.id);
-      } catch (error) { await this.store.cancel(owner, task.id); throw error; }
+      } catch (error) { clearHandoff?.(); await this.store.cancel(owner, task.id); throw error; }
     }
-    if (!task.deviceId) await this.launch(task);
+    let submission: Promise<void> | undefined;
+    const recordSubmission = async (delivery: 'runtime' | 'companion-command') => {
+      submission ??= Promise.resolve().then(() => options.onSubmitted?.(delivery))
+        .catch(() => { throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task!.id, task!.id); });
+      await submission;
+    };
+    try {
+    if (!clearHandoff) { register(task.id); await this.store.requireHandoff(owner, task.id); }
+    if (task.hasImage && ['staged', 'queued', 'running', 'cancelling'].includes(task.state) && !await this.imageMayContinue(options)) {
+      const cancellation = await this.store.cancel(owner, task.id);
+      this.running.get(task.id)?.abort.abort();
+      throw new LocalAgentError(cancellation === 'cancelled' || cancellation === 'completed' ? 'LOCAL_CANCELLED' : 'LOCAL_PAUSED', task.id, task.id);
+    }
+    if (!task.deviceId) await this.launch(task, options, () => recordSubmission('runtime'));
     let progress = '';
     for (;;) {
       task = await this.store.task(owner, task.id);
+      if (task.commandEmitted) await recordSubmission('companion-command');
+      if (task.runtimeEntered) await recordSubmission('runtime');
       if (task.state === 'completed') return { taskId: task.id, contextId: task.id, text: task.text || '', usageTokens: task.usageTokens ?? null };
       if (task.state === 'failed' || task.state === 'cancelled') throw new LocalAgentError(task.error || 'LOCAL_TASK_FAILED', task.id, task.id);
       if (task.state === 'staged') throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
       if (!await options.shouldContinue()) {
         const cancellation = await this.store.cancel(owner, task.id);
+        if ((await this.store.task(owner, task.id)).commandEmitted) await recordSubmission('companion-command');
         this.running.get(task.id)?.abort.abort();
         // A running upstream task must acknowledge its stop before the council
         // clears this task reference and permits a new assignment.
@@ -181,6 +272,22 @@ export class LocalAgentsService implements OnModuleDestroy {
       if (task.progress && task.progress !== progress) { progress = task.progress; await options.onProgress(progress); }
       await wait(300);
     }
+    } catch (error) {
+      // Revoke captured callbacks synchronously before any awaited journal cleanup.
+      clearHandoff?.();
+      const running = this.running.get(task.id);
+      const uncertain = !(error instanceof LocalAgentError) || error.code === 'LOCAL_DISPATCH_UNCERTAIN';
+      let abandoned: AgentTask;
+      try { abandoned = await this.store.abandon(owner, task.id, running?.entered, uncertain); }
+      catch { throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id); }
+      finally { running?.abort.abort(); }
+      if (abandoned.commandEmitted) await recordSubmission('companion-command');
+      if (abandoned.runtimeEntered || running?.entered) await recordSubmission('runtime');
+      if (uncertain && (abandoned.commandEmitted || abandoned.runtimeEntered || running?.entered)) {
+        throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
+      }
+      throw error;
+    } finally { clearHandoff?.(); }
   }
 
   /** The CLI only gets a task-specific local bridge; device/account credentials stay here. */

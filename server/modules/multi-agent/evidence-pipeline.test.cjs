@@ -34,12 +34,13 @@ function loadService(name) {
     'drizzle-orm': { eq: () => true, and: () => true },
     '@server/database/schema': { holdings, watchlist, agentRuns: {} },
     '../settings/settings.service': { SettingsService: class {} },
+    'node:crypto': require('node:crypto'),
     './research-tools-budget.service': { ResearchToolsBudgetService: class {} },
   };
   const localRequire = (id) => {
     if (Object.hasOwn(dependencies, id)) return dependencies[id];
     if (['./analysis-report', './evidence-language', './finnhub-evidence.service', './finnhub-financials',
-      './sec-evidence.service', './sec-financials', './research-web.service'].includes(id)) {
+      './sec-evidence.service', './sec-financials', './financial-evidence-metadata', './research-web.service'].includes(id)) {
       return loadService(`${id.slice(2)}.ts`);
     }
     throw new Error(`Unexpected import in test: ${id}`);
@@ -369,6 +370,15 @@ test('reported statements retain actual values, periods, filing provenance and r
       assert.ok(compactExcerpt.includes(value), `Council excerpt must retain ${value}`);
     }
     assert.equal(statements.sourceName, 'Finnhub API');
+    assert.equal(statements.metadata?.sources[0].verification, 'server-verified');
+    assert.equal(statements.metadata.sources[0].publicationPrecision, 'day');
+    assert.equal(statements.metadata.sources[0].publishedAt, financials.data[0].filedDate);
+    assert.equal(statements.metadata.sources[0].facts[0].value, 123456);
+    assert.equal(statements.metadata.sources[0].facts[0].currency, 'USD');
+    const cashFlow = statements.metadata.sources[0].facts.find(fact => fact.metric.endsWith('NetCashProvidedByUsedInOperatingActivities'));
+    assert.equal(cashFlow.periodStart, null, 'a quarter-wide report start cannot prove a cash-flow YTD duration');
+    assert.equal(cashFlow.periodEnd, financials.data[0].endDate);
+    assert.equal(cashFlow.instant, null, 'unknown duration is not a balance-sheet instant');
     assert.match(statements.sourceUrl, /^https:\/\/www.sec.gov\/Archives\//);
     assert.ok(!items.some((item) => item.title.includes('Financial statements unavailable')));
     assert.ok(items.some((item) => item.title.includes('Historical technical data unavailable')));
@@ -650,7 +660,7 @@ test('pipeline passes IDs returned by evidence persistence into the debate', asy
   };
   const multi = {
     getRun: async () => detail,
-    addEvidence: async () => savedEvidence,
+    addProviderEvidence: async () => savedEvidence,
     addArgument: async (_user, _run, argument) => {
       savedArguments.push(argument);
       detail.arguments.push({ ...argument, id: 'arg-id' });
@@ -742,7 +752,7 @@ test('free basic pipeline creates a real report without making any model calls',
   let collectedLanguage;
   const multi = {
     getRun: async () => detail,
-    addEvidence: async () => savedEvidence,
+    addProviderEvidence: async () => savedEvidence,
     getStrategyRules: async () => [],
     saveRiskGateResults: async (_user, _run, values) => { detail.riskGate = values; },
     saveRating: async (_user, _run, value) => { detail.rating = value; },
@@ -780,7 +790,7 @@ test('an explicitly configured model failure remains failed and never falls back
     getExecutionInfo: async () => ({ provider: 'user', modelFast: 'fast', modelSlow: 'slow' }),
     chatSlowJSON: async () => { throw new Error('Provider rejected credentials'); } },
   { collectEvidence: async () => [] }, { getPortfolioContext: async () => ({}) },
-  { getRun: async () => detail, addEvidence: async () => [], addAuditLog: async () => undefined,
+  { getRun: async () => detail, addProviderEvidence: async () => [], addAuditLog: async () => undefined,
     savePipelineReport: async () => { reports++; } });
   await pipeline.runPipeline('run-1', 'user-1');
   assert.equal(reports, 0);

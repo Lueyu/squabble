@@ -1,3 +1,16 @@
+const MEMORY: Record<string, [string, string]> = {
+  MEMORY_CONDITION_BREACHED: ['A thesis condition was breached. Await a reviewed replacement or a deliberate revision with a reason.', '论点条件已触发。等待已验收的替代论点，或填写原因后明确修订。'],
+  MEMORY_MONITOR_UNKNOWN: ['A configured condition has no usable observation. New risk is blocked.', '已配置条件暂无有效观测，新增风险已阻断。'],
+  MEMORY_DEPENDENCY_REVOKED: ['A thesis version or source changed or was removed. A new reviewed plan is required.', '依赖论点版本或来源已变更、撤回或删除，需要新的验收策略。'],
+  MEMORY_RECALL_DISABLED: ['This plan used recalled memory that is now disabled. Create a new plan without recall.', '当前策略使用了已停用的历史记忆。请生成不使用历史记忆的新策略。'],
+  MEMORY_DEPENDENCY_EXPIRED: ['A thesis reached its validity or review boundary. Await reviewed research.', '论点已到有效期或复核边界，等待研究复核。'],
+  MEMORY_ARCHIVE_PENDING: ['Structured claims are waiting for archival. The same research cycle will be reused.', '结构化论点等待归档完成，将复用当前研究周期。'],
+  MEMORY_ARCHIVE_FAILED: ['Claim archival failed. Retry it in the research dossier.', '论点归档失败，请在研究档案重试。'],
+  MEMORY_ARCHIVE_DISABLED: ['Structured claims need archival. Import the report manually to continue.', '结构化论点需要归档，请手动导入该报告后继续。'],
+  MEMORY_UNKNOWN: ['Thesis dependencies cannot be verified. Review the report and generate a new plan.', '无法核验论点依赖，请检查报告并生成新策略。'],
+  MEMORY_REPLACEMENT_REVIEW_REQUIRED: ['Replacement authority or the previous version changed. Another review is required.', '替代论点授权或旧版本已变化，需要重新复核。'],
+  MEMORY_REPLACEMENT_INVALID: ['Replacement lineage cannot be verified. New risk is blocked.', '无法核验替代论点关系，新增风险已阻断。'],
+};
 const ZH: Record<string, string> = {
   'Agent paused': 'Agent 已暂停',
   'Strategy check failed; no new order was executed': '策略检查失败，未执行新订单',
@@ -26,6 +39,7 @@ const ZH: Record<string, string> = {
   history_invalid: '历史行情数据无效', history_insufficient: '历史行情不足，无法计算指标', history_stale: '历史行情尚未更新',
 };
 export function strategyReason(reason: string, language?: string): string {
+  if (MEMORY[reason]) return MEMORY[reason][language === 'en' ? 0 : 1];
   if (reason.startsWith('dispatching:')) return language === 'en' ? 'Daily research discussion in progress' : '每日研究讨论进行中';
   if (language === 'en') return reason;
   if (reason.startsWith('PAPER filled:')) return reason.replace('PAPER filled:', '模拟盘已成交：');

@@ -10,11 +10,13 @@ function load(name) {
   }).outputText;
   const exported = { exports: {} };
   const dependencies = {
-    '@nestjs/common': { Injectable: () => target => target, Inject: () => () => undefined,
+    '@nestjs/common': { Injectable: () => target => target, Inject: () => () => undefined, Optional: () => () => undefined,
       Logger: class { log() {} }, BadRequestException: Error },
     '../../common/platform': { DRIZZLE_DATABASE: 'db' },
     'drizzle-orm': { eq: () => true, and: () => true },
     '@server/database/schema': { holdings: { name: 'holdings' }, watchlist: { name: 'watchlist' }, agentRuns: {} },
+    '../settings/settings.service': { SettingsService: class {} },
+    './llm.service': { LlmService: class {} },
     './analysis-report': () => load('analysis-report.ts'),
   };
   new Function('require', 'module', 'exports', compiled)(id => {
@@ -45,6 +47,49 @@ test('batch language reaches every run and active targets are deduplicated per o
   assert.equal(created[0].input.language, 'en');
   completed('1', 'alice', 'full');
   assert.equal((await service.createBatch('alice', request)).created, 1);
+});
+
+test('daily batch snapshots one selected local route across holdings and watchlist runs', async () => {
+  const { BatchService } = load('batch.service.ts');
+  const route = { mode: 'local', agentId: 'native-codex', agentSettings: { model: 'gpt-5' } };
+  const created = [];
+  const service = new BatchService({}, {
+    createRun: async (_owner, input) => {
+      created.push(input);
+      return { id: String(created.length), ticker: input.ticker, runMode: input.runMode, status: 'pending' };
+    },
+  }, { startPipeline() {}, onRunComplete() {} }, {},
+  { getDefaultModelRoute: async () => route }, { validateRoute: async () => undefined });
+  service.resolveTargets = async (_owner, req) => [{ ticker: req.scope === 'holdings' ? 'AAPL' : 'MSFT',
+    company: null, market: 'US', runMode: 'full' }];
+  service.getWatchlistTargets = async () => [{ ticker: 'MSFT', signal: 'Buy' }];
+  const result = await service.createDailyBatch('alice', 'en');
+  assert.equal(result.totalCreated, 2);
+  assert.deepEqual(created.map(run => run.modelRoute), [route, route]);
+});
+
+test('one local Agent runs one analysis at a time while API work can use another slot', async () => {
+  const { BatchService } = load('batch.service.ts');
+  const started = [];
+  let completed;
+  let nextId = 0;
+  const service = new BatchService({}, {
+    createRun: async (_owner, input) => ({ id: String(++nextId), ticker: input.ticker,
+      runMode: input.runMode, status: 'pending' }),
+  }, { startPipeline(id) { started.push(id); }, onRunComplete(callback) { completed = callback; } }, {},
+  undefined, { validateRoute: async () => undefined });
+  service.resolveTargets = async (_owner, req) => req.tickers.map(ticker => ({ ticker,
+    company: null, market: 'US', runMode: 'full' }));
+  service.onModuleInit();
+  const local = { mode: 'local', agentId: 'native-codex' };
+  const batch = await service.createBatch('alice', { scope: 'custom', tickers: ['A', 'B'], route: local });
+  assert.equal(batch.running, 1);
+  assert.equal(batch.queued, 1);
+  const api = await service.createBatch('alice', { scope: 'custom', tickers: ['C'], route: { mode: 'api' } });
+  assert.equal(api.running, 1);
+  assert.deepEqual(started, ['1', '3']);
+  completed('1', 'alice', 'full');
+  assert.deepEqual(started, ['1', '3', '2']);
 });
 
 test('invalid language and invalid ticker payloads fail before creating work', async () => {

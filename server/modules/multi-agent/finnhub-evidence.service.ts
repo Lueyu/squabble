@@ -191,19 +191,24 @@ export class FinnhubEvidenceService {
         && article.datetime * 1000 >= from.getTime()
         && article.datetime * 1000 <= to.getTime())
       .slice(0, MAX_NEWS_ITEMS)
-      .map((article) => {
+      .map((article): EvidenceInput => {
         const headline = cleanText(article.headline, 300);
         const summary = cleanText(article.summary, 500);
         const publisher = cleanText(article.source, 80);
         const publishedAt = new Date((article.datetime as number) * 1000).toISOString();
+        const sourceUrl = safeArticleUrl(article.url);
         return {
           role: 'news' as const,
           evidenceType: 'news' as const,
           title: headline,
           content: `Published: ${publishedAt}. ${publisher ? `Publisher: ${publisher}. ` : ''}${summary || 'Headline only; no article summary supplied.'}`,
-          sourceUrl: safeArticleUrl(article.url),
+          sourceUrl,
           sourceName: 'Finnhub API',
           relevanceScore: 0.65,
+          metadata: { sources: [{ origin: 'provider', verification: 'server-verified', provider: 'Finnhub API',
+            kind: 'news', sourceUrl: sourceUrl ?? null, publishedAt, publicationPrecision: 'instant',
+            observedAt: null, observationBasis: 'unknown', sourceRevision: null,
+            supersedesSourceRevision: null, revisionReason: null, facts: [] }] },
         };
       });
   }

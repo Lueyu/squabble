@@ -12,7 +12,7 @@
  * insert.
  */
 import { sql } from 'drizzle-orm';
-import { boolean, date, foreignKey, index, integer, jsonb, numeric, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
+import { boolean, check, date, foreignKey, index, integer, jsonb, numeric, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
 
 export const customTimestamptz = customType<{
   data: Date;
@@ -315,6 +315,7 @@ export const bullBearArguments = pgTable("bull_bear_arguments", {
 ]);
 
 export const agentEvidence = pgTable("agent_evidence", {
+  metadata: jsonb("metadata").$type<import('@shared/research-evidence.interface').EvidenceMetadata>(),
   id: uuid("id").primaryKey().defaultRandom(),
   runId: uuid("run_id").notNull(),
   role: varchar("role", { length: 30 }).notNull(),
@@ -352,6 +353,7 @@ export const agentRuns = pgTable("agent_runs", {
   status: varchar("status", { length: 20 }).notNull().default('pending'),
   modelFast: varchar("model_fast", { length: 50 }),
   modelSlow: varchar("model_slow", { length: 50 }),
+  modelRoute: jsonb("model_route"),
   tokensUsed: integer("tokens_used").default(0),
   costEstimate: numeric("cost_estimate").default('0'),
   startedAt: customTimestamptz("started_at", { precision: 3 }),
@@ -842,6 +844,31 @@ export const agentSessions = pgTable("agent_sessions", {
 });
 export const agentSessionsTable = agentSessions;
 
+/** Owner-scoped lifecycle and persisted result of a portfolio analysis run. */
+export const portfolioAnalysisRuns = pgTable("portfolio_analysis_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  owner: userProfile("owner").notNull(),
+  status: varchar("status", { length: 20 }).default("pending").notNull(),
+  route: jsonb("route").notNull(),
+  snapshot: jsonb("snapshot").notNull(),
+  progress: jsonb("progress").notNull(),
+  report: jsonb("report"),
+  usageKnown: boolean("usage_known").default(false).notNull(),
+  tokensUsed: integer("tokens_used"),
+  errorMessage: text("error_message"),
+  createdAt: customTimestamptz("created_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: customTimestamptz("updated_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  startedAt: customTimestamptz("started_at", { precision: 3 }),
+  completedAt: customTimestamptz("completed_at", { precision: 3 }),
+}, (table) => [
+  check("portfolio_analysis_runs_status_check", sql`${table.status} IN ('pending', 'running', 'cancelling', 'completed', 'failed', 'cancelled')`),
+  index("idx_portfolio_analysis_runs_owner_created").on(table.owner, table.createdAt),
+  index("idx_portfolio_analysis_runs_owner_status").on(table.owner, table.status),
+  uniqueIndex("idx_portfolio_analysis_runs_one_active_owner").on(table.owner)
+    .where(sql`${table.status} IN ('pending', 'running', 'cancelling')`),
+]);
+export const portfolioAnalysisRunsTable = portfolioAnalysisRuns;
+
 /** User-configured beginner agent; one active profile per owner. */
 export const builderProfiles = pgTable("builder_profiles", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -888,6 +915,7 @@ export const userApiSettings = pgTable("user_api_settings", {
   llmFastModel: varchar("llm_fast_model", { length: 120 }),
   llmSlowModel: varchar("llm_slow_model", { length: 120 }),
   llmApiKeyEnc: text("llm_api_key_enc"),
+  llmRoute: jsonb("llm_route"),
   finnhubApiKeyEnc: text("finnhub_api_key_enc"),
   createdAt: customTimestamptz("created_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: customTimestamptz("updated_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),

@@ -175,7 +175,7 @@ if ($Scenario -eq 'packaged-smoke') {
     throw 'Packaged application did not start its API'
   }
   $result = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-  if ($result.healthy -ne $true -or $result.registrationOpen -ne $true) {
+  if ($result.healthy -ne $true -or $result.authMode -ne 'local' -or $result.registrationOpen -ne $false -or $result.anonymousAccess -ne $true) {
     throw 'Packaged API returned an invalid first-run result'
   }
   if ((Split-Path -Path $result.defaultDataRoot -Leaf) -ne 'Squabble') {

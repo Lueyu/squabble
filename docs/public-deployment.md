@@ -12,6 +12,11 @@ The default Compose setup binds the app to your computer's loopback interface;
 it is intended for access from that computer. The optional demo setup uses
 fictional sample data and is not suitable for real accounts.
 
+Desktop and the source example use `AUTH_MODE=local` for direct workspace access.
+That mode requires loopback binding and no proxy trust; never publish it through
+a reverse proxy or tunnel. Docker retains account authentication. Any independently
+operated remote deployment must retain `AUTH_MODE=account` and its access controls.
+
 If you independently expose a modified installation to other people, you
 operate that service and hold their database and secrets. You are responsible
 for its security, backups, provider terms and an accurate privacy notice.

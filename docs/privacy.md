@@ -43,18 +43,25 @@ end-to-end encrypted.
 “Instance database” below means the database in your Docker installation or
 desktop application.
 
+Local workspace mode opens without a Squabble login and uses an internal or
+selected existing user identity to keep data ownership stable. Switching modes
+does not erase existing accounts or credentials. Access to that local app grants
+access to the selected workspace; account mode retains separate sign-in sessions.
+
 | Data | Storage and handling |
 |---|---|
 | Account | Username, display name, bcrypt password hash, SHA-256 recovery-code hash, session version, and timestamps in the instance database. Registration requires no phone number, real name, or verified email. Optional notification recipients may include an email address. |
 | Portfolio workspace | Holdings, cash accounts, transactions, watchlists, journals, snapshots, imported rows and import history in the instance database. Free-text fields can contain personal information you enter. |
 | Research and automation | Reports, evidence, model-generated arguments and summaries, risk checks, execution steps, run events, strategy rules, and Agent Builder preferences/prompts in the instance database. Reports distinguish basic rules from AI analysis. |
 | Council discussions | Full user notes, member names/preferences, frozen profile configuration and version, candidate orders, collected evidence snapshots, member replies and report versions in the instance database. Old revisions remain saved when new input invalidates them. An approved report can link to its paper order. |
+| Research memory | Archived report summaries, structured theses and their versions, evidence and source links, provenance, known fact/publication/observation times, assumptions, counterevidence and invalidation conditions in the instance database. Submission inventories record item IDs, versions, counts and omission reasons for research attempts; they do not prove that a model used the items or expose a local agent's private context. |
+| Memory operations and monitoring | Archive job state, attempts and errors; versioned monitor rules, observations and condition events; reviewed thesis replacement references and reasons; and paper-strategy dependency inventories in the instance database. Enabled paper strategies may queue condition notifications through the configured channels. |
 | Model budget | Per-user limits, optional estimated prices, model and task identifiers, request purpose, reserved/reported token counts, status and timestamps in the instance database. The budget ledger does not itself store prompt bodies. Failed or interrupted requests can retain their reserved usage. |
 | Paper trading | Paper accounts, positions, orders, trades, proposals, and manually recorded execution notes in the instance database. Paper records use separate tables from real holdings and transactions. |
 | Saved LLM and Finnhub credentials | Encrypted with AES-256-GCM in the instance database. Settings responses expose status and a masked suffix, not the full saved key. The server decrypts the key when making a provider request. |
 | Notification configuration | Destinations, webhook URLs, bot tokens, SMTP credentials, and other channel settings in the instance database. **These fields do not currently use the LLM/Finnhub credential-encryption mechanism** and are returned to the owning user's channel settings. |
-| Browser or desktop webview storage | Access and refresh tokens, interface preferences, and screenshot-recognition provider settings, including its API key, in local storage. In the desktop app, this storage belongs to Squabble's application data directory. The screenshot-recognition key is separate from the saved analysis key. |
-| Screenshot recognition | The image and recognition credentials pass through the instance server to the selected vision endpoint. The current extraction handler does not persist those inputs to the database; confirmed imported rows and import history are stored. |
+| Browser or desktop webview storage | Account-mode access and refresh tokens, interface preferences, and screenshot-recognition API URL/model may use local storage. Screenshot API keys now stay in page memory; opening the importer removes the legacy stored key after loading it for that page. The screenshot key is separate from saved analysis credentials. |
+| Screenshot recognition | Squabble holds images and one-call API keys in memory during recognition; native agents receive an image file in an owned temporary workspace, removed when execution ends. The CLI/provider may keep its own session history outside this workspace (notably OpenCode); Squabble does not control that retention. Job results expire from server memory after 20 minutes and do not survive server restart. Native task records can retain extracted text under the normal local-agent task history policy. Confirmed holdings and import history are stored. |
 | Operational data | The application writes browser-console and server logs. Authentication rate limiting keeps temporary IP-based counters in server memory. Operators, reverse proxies, hosts, and external providers may keep additional request or error logs. |
 
 There is no bundled analytics SDK or central usage-reporting service in this
@@ -70,7 +77,7 @@ third-party records.** A deployment can add its own monitoring.
 | Agent Builder AI review | When enabled, the model receives the custom prompt and candidate-signal context. Explicit rule evaluation itself does not require an LLM. |
 | Investment council | The configured model receives member preferences, profile/candidate context, selected evidence excerpts, full user notes included in the request, and previous member opinion excerpts for the manager. Pausing cannot retract a request already sent. Full discussion records and evidence snapshots remain stored on the instance even when only excerpts are sent. |
 | Finnhub research | When configured, Finnhub receives the API key and company/symbol queries for available research data. |
-| Screenshot recognition | The chosen vision endpoint receives the full submitted image, extraction prompt, and recognition API key through the instance server. Crop unrelated names, account numbers, and balances before submitting. |
+| Screenshot recognition | The selected local agent (currently Codex/OpenCode image adapters) or HTTPS vision endpoint receives the full image and extraction prompt. Local-agent execution uses that provider's account and can send data to its cloud service; it does not guarantee on-device inference. The vision route sends its key only to the chosen endpoint. Crop unrelated names, account numbers, and balances before submitting. Routes never switch or retry automatically. |
 | Notifications | Enabled Webhook, Bark, ServerChan, SMTP, or Telegram channels receive event messages and required routing/authentication information. Proposal messages may include the symbol, direction, paper quantity, and rationale. A channel test also sends a message. |
 | Connected agents | An agent you give a session token can receive data exposed by its permitted tools. Any external agent or model it uses has its own data handling. The optional legacy gateway is a separate operator-controlled integration. |
 
@@ -102,11 +109,14 @@ asks for re-entry; it does not silently switch to the operator's model.
   Agent Builder or disable its AI review/proposal notifications; revoke agent
   sessions you no longer use.
 - **Council and budget:** pause a discussion, disable the council for a Builder profile, and change per-user model limits. Pausing stops later work; an in-flight provider call may still finish. Full notes and report history are retained, and resuming does not reset the discussion's task allowance.
-- **Account recovery:** save the one-time recovery code offline. Recovery resets
+- **Research memory:** disable automatic archival or recall, exclude individual items, or delete memory and thesis records. Recall includes selected content in later requests to the configured model or local agent; exclusion and deletion control future use, and cannot retract requests already sent. Deleting a memory does not delete its original discussion report, provider copies, backups or historical submission inventories. Deletion tombstones prevent automatic archival from recreating the same memory.
+- **Archival and monitoring:** manual historical import and retry use stored reports without an additional extraction call. Disabling recall revokes recalled dependencies for future paper risk; individual exclusions, deletions and version changes are also checked before an automatic fill. Protective exits remain independent. Disabling a monitor rule stops future observations under that rule; it does not erase previous condition events or order history.
+- **Account recovery (account mode):** save the one-time recovery code offline. Recovery resets
   the password, replaces the code, and revokes earlier account and agent
   sessions. Generating a new code with your password replaces the old code and
   revokes earlier account sessions. There is no email-based recovery flow.
-- **This browser or desktop app:** sign out to clear session tokens. Clear the
+- **This browser or desktop app:** in account mode, sign out to clear session tokens.
+  Local mode has no sign-out action; close the app and control access to the computer. Clear the
   site's browser storage or the desktop app's webview storage to remove locally
   saved recognition credentials and preferences; signing out alone does not
   clear all of them.

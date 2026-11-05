@@ -34,6 +34,7 @@
  * on the run row for cost tracking.
  */
 import { Injectable, Inject, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and } from 'drizzle-orm';
 import { agentRuns } from '@server/database/schema';
@@ -52,6 +53,7 @@ import type {
 } from '@shared/api.interface';
 import { MultiAgentService } from './multi-agent.service';
 import { languageInstruction, englishRuleName, safeAnalysisError, analysisErrorCode } from './analysis-report';
+import type { ModelRoute } from '../../../shared/model-route.interface';
 
 @Injectable()
 export class PipelineService {
@@ -114,6 +116,8 @@ export class PipelineService {
     let tokensUsed = 0;
     let mode: AgentRunMode | null = null;
     let language: AnalysisLanguage = 'zh-CN';
+    // A manually restarted failed run must not reuse an earlier native task's result.
+    const attemptId = randomUUID();
     const addTokens = (n: number): void => {
       tokensUsed += n;
     };
@@ -126,8 +130,9 @@ export class PipelineService {
       if (runDetail.status === 'failed') await this.multiAgentService.resetFailedRunArtifacts(userId, runId);
       await this.setStatus(runId, userId, 'fetching', { startedAt: new Date(), errorMessage: null });
       const ticker = runDetail.ticker;
-      const useLlm = await this.llmService.isConfigured(userId);
-      const execution = useLlm ? await this.llmService.getExecutionInfo(userId) : null;
+      const route = runDetail.modelRoute ?? undefined;
+      const useLlm = route ? route.mode !== 'basic' : await this.llmService.isConfigured(userId);
+      const execution = useLlm ? await this.llmService.getExecutionInfo(userId, route) : null;
 
       if (await this.isCancelled(runId, userId)) return;
 
@@ -137,7 +142,7 @@ export class PipelineService {
       const evidence = await this.evidenceService.collectEvidence(ticker, userId, portfolio, language);
 
       // Persist facts and explicit gaps. Debate citations use only returned IDs.
-      const savedEvidence = await this.multiAgentService.addEvidence(
+      const savedEvidence = await this.multiAgentService.addProviderEvidence(
         userId,
         runId,
         evidence.map((e) => ({
@@ -149,6 +154,7 @@ export class PipelineService {
           sourceName: e.sourceName,
           fetchedAt: new Date().toISOString(),
           relevanceScore: e.relevanceScore,
+          metadata: e.metadata,
         })),
       );
 
@@ -157,7 +163,7 @@ export class PipelineService {
       // Phase 2: Bull/Bear debate
       this.logger.log(`Phase 2: Bull/Bear debate for ${ticker}`);
       if (useLlm) await this.setStatus(runId, userId, 'debating');
-      const debateTokens = useLlm ? await this.runDebatePhase(runId, userId, ticker, savedEvidence, language) : 0;
+      const debateTokens = useLlm ? await this.runDebatePhase(runId, userId, ticker, savedEvidence, language, route, attemptId) : 0;
       addTokens(debateTokens);
 
       if (await this.isCancelled(runId, userId)) return;
@@ -165,7 +171,7 @@ export class PipelineService {
       // Phase 3: Critique
       this.logger.log(`Phase 3: Critique for ${ticker}`);
       if (useLlm) await this.setStatus(runId, userId, 'critiquing');
-      const critiqueTokens = useLlm ? await this.runCritiquePhase(runId, userId, language) : 0;
+      const critiqueTokens = useLlm ? await this.runCritiquePhase(runId, userId, language, route, attemptId) : 0;
       addTokens(critiqueTokens);
 
       if (await this.isCancelled(runId, userId)) return;
@@ -204,7 +210,7 @@ export class PipelineService {
       // Phase 5: Rating aggregation
       this.logger.log(`Phase 5: Rating aggregation for ${ticker}`);
       const ratingTokens = useLlm
-        ? await this.runRatingPhase(runId, userId, ticker, hasHardFailure, rules, language)
+        ? await this.runRatingPhase(runId, userId, ticker, hasHardFailure, rules, language, route, attemptId)
         : await this.runBasicRatingPhase(runId, userId, ticker, language);
       addTokens(ratingTokens);
       if (await this.isCancelled(runId, userId)) return;
@@ -295,6 +301,8 @@ export class PipelineService {
     ticker: string,
     evidence: AgentEvidence[],
     language: AnalysisLanguage = 'zh-CN',
+    route?: ModelRoute,
+    attemptId?: string,
   ): Promise<number> {
     const facts = evidence.filter((item) => !this.isDataGap(item));
     const missing = evidence.filter((item) => this.isDataGap(item));
@@ -343,9 +351,11 @@ ${missingText || '（无）'}
     // Opening round: run bull and bear in parallel via the "slow" (pro) model.
     const [bullResult, bearResult] = await Promise.all([
       this.llmService.chatSlowJSON([{ role: 'system', content: languageInstruction(language) }, { role: 'user', content: bullPrompt }], userId,
-        { taskId: `analysis:${runId}`, purpose: 'analysis-bull-opening', maxOutputTokens: 1000 }),
+        { taskId: `analysis:${runId}`, purpose: `analysis-bull-opening${attemptId && route?.mode === 'local' ? `:${attemptId}` : ''}`, maxOutputTokens: 1000, route,
+          shouldContinue: async () => !(await this.isCancelled(runId, userId)) }),
       this.llmService.chatSlowJSON([{ role: 'system', content: languageInstruction(language) }, { role: 'user', content: bearPrompt }], userId,
-        { taskId: `analysis:${runId}`, purpose: 'analysis-bear-opening', maxOutputTokens: 1000 }),
+        { taskId: `analysis:${runId}`, purpose: `analysis-bear-opening${attemptId && route?.mode === 'local' ? `:${attemptId}` : ''}`, maxOutputTokens: 1000, route,
+          shouldContinue: async () => !(await this.isCancelled(runId, userId)) }),
     ]);
 
     totalTokens += bullResult.tokens + bearResult.tokens;
@@ -433,9 +443,11 @@ ${bearArgs.map((a, i) => `${i + 1}. ${a.point}`).join('\n')}
     try {
       const [bullRebuttal, bearRebuttal] = await Promise.all([
         this.llmService.chatSlowJSON([{ role: 'system', content: languageInstruction(language) }, { role: 'user', content: bullRebuttalPrompt }], userId,
-          { taskId: `analysis:${runId}`, purpose: 'analysis-bull-rebuttal', maxOutputTokens: 1000 }),
+          { taskId: `analysis:${runId}`, purpose: `analysis-bull-rebuttal${attemptId && route?.mode === 'local' ? `:${attemptId}` : ''}`, maxOutputTokens: 1000, route,
+            shouldContinue: async () => !(await this.isCancelled(runId, userId)) }),
         this.llmService.chatSlowJSON([{ role: 'system', content: languageInstruction(language) }, { role: 'user', content: bearRebuttalPrompt }], userId,
-          { taskId: `analysis:${runId}`, purpose: 'analysis-bear-rebuttal', maxOutputTokens: 1000 }),
+          { taskId: `analysis:${runId}`, purpose: `analysis-bear-rebuttal${attemptId && route?.mode === 'local' ? `:${attemptId}` : ''}`, maxOutputTokens: 1000, route,
+            shouldContinue: async () => !(await this.isCancelled(runId, userId)) }),
       ]);
 
       totalTokens += bullRebuttal.tokens + bearRebuttal.tokens;
@@ -487,7 +499,8 @@ ${bearArgs.map((a, i) => `${i + 1}. ${a.point}`).join('\n')}
    * weakest points. Output is stored verbatim as a round-3 debate record.
    * @returns tokens consumed.
    */
-  private async runCritiquePhase(runId: string, userId: string, language: AnalysisLanguage = 'zh-CN'): Promise<number> {
+  private async runCritiquePhase(runId: string, userId: string, language: AnalysisLanguage = 'zh-CN',
+    route?: ModelRoute, attemptId?: string): Promise<number> {
     const detail = await this.multiAgentService.getRun(userId, runId);
     const facts = detail.evidence.filter((item) => !this.isDataGap(item));
     const missing = detail.evidence.filter((item) => this.isDataGap(item));
@@ -528,7 +541,8 @@ ${bearArgs || '（无）'}`;
 
     const result = await this.llmService.chatSlow([
       { role: 'system', content: languageInstruction(language) }, { role: 'user', content: critiquePrompt },
-    ], userId, { taskId: `analysis:${runId}`, purpose: 'analysis-critique', maxOutputTokens: 1000 });
+    ], userId, { taskId: `analysis:${runId}`, purpose: `analysis-critique${attemptId && route?.mode === 'local' ? `:${attemptId}` : ''}`, maxOutputTokens: 1000, route,
+      shouldContinue: async () => !(await this.isCancelled(runId, userId)) });
 
     await this.multiAgentService.addDebateRecord(userId, runId, {
       round: 3,
@@ -558,6 +572,8 @@ ${bearArgs || '（无）'}`;
     hasHardFailure: boolean,
     rules: StrategyRule[],
     language: AnalysisLanguage = 'zh-CN',
+    route?: ModelRoute,
+    attemptId?: string,
   ): Promise<number> {
     const detail = await this.multiAgentService.getRun(userId, runId);
 
@@ -652,7 +668,8 @@ ${riskSummary}
 
     const result = await this.llmService.chatSlowJSON([
       { role: 'system', content: languageInstruction(language) }, { role: 'user', content: ratingPrompt },
-    ], userId, { taskId: `analysis:${runId}`, purpose: 'analysis-rating', maxOutputTokens: 1000 });
+    ], userId, { taskId: `analysis:${runId}`, purpose: `analysis-rating${attemptId && route?.mode === 'local' ? `:${attemptId}` : ''}`, maxOutputTokens: 1000, route,
+      shouldContinue: async () => !(await this.isCancelled(runId, userId)) });
 
     const data = result.data as Record<string, unknown>;
 

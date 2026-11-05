@@ -3,6 +3,7 @@ import { LOCAL_AGENT_PROVIDERS, type CompanionPoll, type LocalAgentProvider, typ
   type NativeAgentStatus } from '../../../shared/local-agents.interface';
 import { providerCatalog } from '../../../shared/local-agent-catalog';
 import { LocalAgentError } from './local-agents.types';
+import { nativeImageCapability } from '../../local-agents/native-image';
 
 export { providerCatalog };
 const provider = z.enum(LOCAL_AGENT_PROVIDERS);
@@ -39,6 +40,7 @@ const activity = z.object({ id: z.string().min(1).max(128), kind: z.enum(['task'
 }).strict();
 const pollRequest = z.object({
   agents: z.array(z.object({ provider, state: z.enum(['not_installed', 'login_required', 'ready', 'error']), version: z.string().max(120).optional(),
+    imageInput: z.boolean().optional(),
     researchTools: z.object({ mode: z.enum(['mcp', 'snapshot']), reason: z.enum(['supported', 'version_unsupported', 'runtime_unsupported']) }).strict().optional(),
     models: z.array(z.object({ id: configurationText(160), name: configurationText(160), reasoningEfforts: reasoningEfforts.optional() }).strict())
       .max(256).refine((models) => new Set(models.map((model) => model.id)).size === models.length).optional(),
@@ -46,14 +48,15 @@ const pollRequest = z.object({
   })).max(LOCAL_AGENT_PROVIDERS.length),
   updates: z.array(z.object({ id: z.string().uuid(), state: z.enum(['running', 'completed', 'failed', 'cancelled']),
     events: z.array(activity).max(64).optional(),
-    error: z.enum(['LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED', 'LOCAL_VERSION_UNSUPPORTED', 'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_TOOL_ISOLATION_FAILED', 'LOCAL_USAGE_LIMIT', 'LOCAL_RATE_LIMIT']).optional(),
+    error: z.enum(['LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED', 'LOCAL_VERSION_UNSUPPORTED', 'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_TOOL_ISOLATION_FAILED', 'LOCAL_USAGE_LIMIT', 'LOCAL_RATE_LIMIT', 'LOCAL_IMAGE_UNSUPPORTED', 'LOCAL_INVALID_INPUT']).optional(),
     progress: z.string().max(500).optional(), text: z.string().max(512_000).refine((value) => Buffer.byteLength(value) <= 512_000).optional(),
     usageTokens: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional() }).strict()).max(16),
 }).strict();
 export function parseCompanionPoll(input: unknown): CompanionPoll {
   const value = pollRequest.parse(input);
   if (new Set(value.agents.map((agent) => agent.provider)).size !== value.agents.length) throw new Error('Duplicate provider');
-  return { ...value, agents: value.agents.map((agent) => ({ ...providerCatalog[agent.provider], ...agent })) };
+  return { ...value, agents: value.agents.map((agent) => ({ ...providerCatalog[agent.provider], ...agent,
+    imageInput: agent.imageInput === true && nativeImageCapability(agent.provider) })) };
 }
 export function providerFromId(id: string, mode: 'native' | 'companion'): LocalAgentProvider {
   const parsed = provider.safeParse(id.startsWith(`${mode}-`) ? id.slice(mode.length + 1) : undefined);

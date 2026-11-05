@@ -159,6 +159,7 @@ export function nestEnvironment(
     DATABASE_URL: databaseUrl,
     JWT_SECRET: secrets.jwtSecret,
     SETTINGS_ENCRYPTION_KEY: secrets.settingsEncryptionKey,
+    AUTH_MODE: process.env.AUTH_MODE?.trim() || 'local',
     REGISTER_ENABLED: 'true',
     AGENT_GATEWAY_ENABLED: 'false',
     LOCAL_AGENTS_MODE: 'native',
