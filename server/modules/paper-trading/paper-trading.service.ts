@@ -59,6 +59,9 @@ import { strategyOutbox, strategyPlans, strategyProtections, strategySignals } f
 import { TradingMarketService } from './trading-market.service';
 import { strategyTriggerMatches } from './strategy.rules';
 import type { TradingMarketSnapshot } from '../../../shared/trading-market.interface';
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { strategyMemoryBlock } from '../research-memory/research-memory.dependencies';
+import { observeThesisMonitors } from '../research-memory/research-memory.monitor.service';
 import type { StrategyRule } from '../../../shared/strategy.interface';
 import type {
   BuilderProfile,
@@ -361,6 +364,7 @@ export class PaperTradingService {
     );
 
     const committed = await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
       const [lockedAccount] = await tx.select().from(paperAccounts)
         .where(and(eq(paperAccounts.id, initialAccount.id), eq(paperAccounts.owner, userId)))
         .for('update');
@@ -428,6 +432,13 @@ export class PaperTradingService {
           throw new BadRequestException('Entry plan is expired, superseded or price moved');
         }
         if (!protectiveStrategyStop) {
+          const inventory = plan.memoryInventory ?? { state: 'unknown' as const, dependencies: [], reason: 'MEMORY_LEGACY_PLAN_REVIEW_REQUIRED' };
+          await observeThesisMonitors(tx, userId, inventory, strategySnapshot!, builderProfile.id);
+          const memoryBlock = await strategyMemoryBlock(tx, userId, inventory, dto.ticker, new Date(), true);
+          if (memoryBlock) {
+            await tx.update(strategySignals).set({ state: 'blocked', reason: memoryBlock, updatedAt: new Date() }).where(eq(strategySignals.id, signal.id));
+            return { memoryBlock };
+          }
           if (builderProfile.config.tickers.length && !builderProfile.config.tickers.includes(dto.ticker)) {
             throw new BadRequestException('Ticker is outside the current investor allowlist');
           }
@@ -748,6 +759,7 @@ export class PaperTradingService {
           + (source === 'agent' ? '\n来源：AI 盯盘代理' : '\n来源：手动下单'),
       } as NotificationPayload };
     });
+    if ('memoryBlock' in committed) throw new BadRequestException(committed.memoryBlock);
     if (committed.notification) {
       await this.notifications.notifyUser(userId, committed.notification);
     }

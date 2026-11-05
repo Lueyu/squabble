@@ -58,6 +58,14 @@ test('SEC financials select one latest filing, matching monetary units and cumul
   assert.deepEqual(result.missingFields, []);
   const item = result.items[0];
   assert.equal(item.sourceName, 'SEC EDGAR');
+  assert.equal(item.metadata?.sources[0].verification, 'server-verified');
+  assert.equal(item.metadata.sources[0].publishedAt, filed);
+  assert.equal(item.metadata.sources[0].publicationPrecision, 'day');
+  assert.equal(item.metadata.sources[0].observedAt, null, 'pure parsing is not system observation');
+  assert.deepEqual(item.metadata.sources[0].facts[0], { entity: 'AAPL',
+    metric: 'us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax', value: 364357000000,
+    unit: 'currency', currency: 'USD', basis: 'us-gaap', actuality: 'actual',
+    periodStart: start, periodEnd: end, instant: null });
   assert.match(item.sourceUrl, /www\.sec\.gov\/Archives\/edgar\/data\/320193\/000032019326000020\//);
   for (const expected of ['364357000000', '101464000000', '116996000000', '275746000000',
     start, end, filed, accession, 'USD']) assert.ok(item.content.includes(expected), expected);

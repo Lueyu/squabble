@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CompanionPoll, CompanionPollResult, LocalAgentProvider, NativeAgentConfiguration, NativeAgentStatus } from '../../../shared/local-agents.interface';
-import { LocalAgentError } from './local-agents.types';
+import { LocalAgentError, nativeFailureCode, type LocalAgentHandoff } from './local-agents.types';
 import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from './local-agents.requests';
 import type { ResearchActivity, ResearchEventPage } from '../../../shared/research-events.interface';
 import type { ResearchToolBundle, ResearchToolRequest, ResearchToolResult, ResearchToolScope } from '../../../shared/research-tools.interface';
@@ -23,6 +23,9 @@ export interface AgentTask {
   state: 'staged' | 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
   createdAt: number; updatedAt: number; progress?: string; text?: string;
   usageTokens?: number | null; error?: string;
+  commandEmitted?: boolean;
+  runtimeEntered?: boolean;
+  handoffRequired?: boolean;
 }
 export interface AgentDevice {
   id: string; owner: string; name: string; tokenHash: string;
@@ -63,9 +66,25 @@ export class LocalAgentStore {
   private loaded = false;
   private readonly pairs = new Map<string, { owner: string; expiresAt: number }>();
   private readonly images = new Map<string, { owner: string; image: NativeAgentImage; signal?: AbortSignal }>();
+  private readonly handoffs = new Map<string, LocalAgentHandoff>();
   readonly sharedNative: boolean;
   constructor(readonly root: string, options: { sharedNative?: boolean } = {}) {
     this.sharedNative = options.sharedNative ?? false;
+  }
+
+  registerHandoff(owner: string, id: string, guard: LocalAgentHandoff): () => void {
+    const key = `${owner}:${id}`;
+    this.handoffs.set(key, guard);
+    return () => { if (this.handoffs.get(key) === guard) this.handoffs.delete(key); };
+  }
+  /** Never execute an asynchronous validation callback under the journal's mutation queue. */
+  async handoff(owner: string, id: string, emit: (isCurrent: () => boolean) => Promise<void>): Promise<void> {
+    const task = await this.task(owner, id);
+    const key = `${owner}:${id}`, guard = this.handoffs.get(key);
+    if (guard) return guard(() => emit(() => this.handoffs.get(key) === guard));
+    if (task.researchScope?.memoryReferences?.length) throw new LocalAgentError('MEMORY_CONTEXT_CHANGED');
+    if (task.handoffRequired) throw new LocalAgentError('LOCAL_PAUSED');
+    await emit(() => !this.handoffs.has(key) && !this.state.tasks[id]?.handoffRequired);
   }
 
   private async atomic(path: string, value: unknown): Promise<void> {
@@ -238,7 +257,9 @@ export class LocalAgentStore {
 
   stage(owner: string, agentId: string, provider: LocalAgentProvider, messageId: string, prompt: string,
     kind: 'run' | 'login' = 'run', inputSettings?: NativeAgentConfiguration,
-    research?: { scope: ResearchToolScope; bundle: ResearchToolBundle }, inputImage?: NativeAgentImage, imageSignal?: AbortSignal): Promise<AgentTask> {
+    research?: { scope: ResearchToolScope; bundle: ResearchToolBundle }, imageOrHandoff?: NativeAgentImage | boolean, imageSignal?: AbortSignal,
+    handoffRequired = typeof imageOrHandoff === 'boolean' && imageOrHandoff): Promise<AgentTask> {
+    const inputImage = typeof imageOrHandoff === 'boolean' ? undefined : imageOrHandoff;
     const agentSettings = parseNativeAgentConfiguration(inputSettings);
     let image: NativeAgentImage | undefined;
     if (inputImage !== undefined) {
@@ -262,11 +283,15 @@ export class LocalAgentStore {
         ...(image ? { hasImage: true } : {}),
         ...(agentSettings ? { agentSettings } : {}),
         ...(research ? { researchScope: research.scope, researchBundle: research.bundle } : {}),
+        ...(handoffRequired ? { handoffRequired: true } : {}),
         state: 'staged', createdAt: Date.now(), updatedAt: Date.now() };
       state.tasks[task.id] = task;
       if (image) this.images.set(task.id, { owner, image, signal: imageSignal });
       return task;
     });
+  }
+  requireHandoff(owner: string, id: string): Promise<void> {
+    return this.access(true, state => { ownedTask(state, owner, id).handoffRequired = true; });
   }
   activate(owner: string, id: string): Promise<void> {
     return this.access(true, (state) => { const task = ownedTask(state, owner, id); if (task.state === 'staged') {
@@ -281,6 +306,9 @@ export class LocalAgentStore {
       if (this.images.get(id)?.signal?.aborted) { requestCancellation(task); return false; }
       task.state = 'running'; task.updatedAt = Date.now(); return true;
     });
+  }
+  markNativeEntry(owner: string, id: string): Promise<void> {
+    return this.access(true, state => { ownedTask(state, owner, id).runtimeEntered = true; });
   }
   update(owner: string, id: string, change: Partial<Pick<AgentTask, 'state' | 'progress' | 'text' | 'usageTokens' | 'error'>>): Promise<void> {
     return this.access(true, (state) => {
@@ -297,6 +325,21 @@ export class LocalAgentStore {
       const task = ownedTask(state, owner, id);
       requestCancellation(task);
       return task.state;
+    });
+  }
+  /** Execution lost its controller. Pre-entry work stops locally; dispatched work retains its evidence. */
+  abandon(owner: string, id: string, runtimeEntered = false, uncertain = false): Promise<AgentTask> {
+    return this.access(true, state => {
+      const task = ownedTask(state, owner, id);
+      if (runtimeEntered) task.runtimeEntered = true;
+      // This controller failure, unlike explicit cancellation, must survive a faster runtime stop.
+      if (uncertain && (task.runtimeEntered || task.commandEmitted)) {
+        task.state = 'failed'; task.error = 'LOCAL_DISPATCH_UNCERTAIN'; task.updatedAt = Date.now();
+      } else if (active(task)) {
+        if (runtimeEntered || task.runtimeEntered || task.commandEmitted) requestCancellation(task);
+        else { task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED'; task.updatedAt = Date.now(); }
+      }
+      return task;
     });
   }
 
@@ -382,6 +425,38 @@ export class LocalAgentStore {
 
   async poll(token: string, request: CompanionPoll): Promise<CompanionPollResult> {
     const pendingImages = new Map<string, { owner: string; signal?: AbortSignal }>();
+    const result = await this.pollState(token, request);
+    let commandBytes = 0;
+    const candidates = await this.access(false, state => {
+      const tokenHash = hash(token), device = state.devices.find(item => item.tokenHash === tokenHash);
+      if (!device) return fail('LOCAL_COMPANION_UNAUTHORIZED');
+      return Object.values(state.tasks).filter(task => task.deviceId === device.id && task.owner === device.owner && task.state === 'queued');
+    });
+    for (const task of candidates) {
+      let emittedHere = false;
+      try {
+        await this.handoff(task.owner, task.id, async isCurrent => {
+          const emitted = await this.pollState(token, { agents: request.agents, updates: [] }, task.id, isCurrent,
+            12 * 1024 * 1024 - 128_000 - commandBytes);
+          for (const command of emitted.commands) {
+            commandBytes += Buffer.byteLength(JSON.stringify(command));
+            if (command.hasImage) pendingImages.set(command.id, { owner: task.owner, signal: this.images.get(command.id)?.signal });
+          }
+          emittedHere = emitted.commands.length > 0;
+          result.commands.push(...emitted.commands);
+        });
+      } catch (error) {
+        // A command already emitted remains an observable receipt, even if later bookkeeping fails.
+        if (!(await this.task(task.owner, task.id)).commandEmitted) {
+          await this.update(task.owner, task.id, { state: 'failed', error: nativeFailureCode(error) });
+          result.cancelTaskIds.push(task.id);
+        } else if (emittedHere) await this.update(task.owner, task.id, { state: 'failed', error: 'LOCAL_DISPATCH_UNCERTAIN' });
+      }
+    }
+    return this.discardCancelledImages(result, pendingImages);
+  }
+  private async pollState(token: string, request: CompanionPoll, handoffId?: string, isCurrent?: () => boolean, maxCommandBytes = 12 * 1024 * 1024 - 128_000): Promise<CompanionPollResult> {
+    const pendingImages = new Map<string, { owner: string; signal?: AbortSignal }>();
     const result = await this.access(true, (state) => {
       const tokenHash = hash(token);
       const device = state.devices.find((item) => item.tokenHash.length === tokenHash.length && timingSafeEqual(Buffer.from(item.tokenHash), Buffer.from(tokenHash)));
@@ -422,7 +497,8 @@ export class LocalAgentStore {
         // Helpers terminate disconnected work within 30s and all work within 10 minutes.
         // Old terminal records must not grow heartbeat payloads without bound.
         if (['cancelling', 'cancelled', 'failed'].includes(task.state) && now - task.updatedAt <= 600_000) cancelTaskIds.push(task.id);
-        if (task.state === 'queued') {
+        if (task.state === 'queued' && task.id === handoffId) {
+          if (!isCurrent?.()) fail('LOCAL_CANCELLED');
           if (!device.agents.some((agent) => agent.provider === task.provider)) {
             task.state = 'failed'; task.error = 'LOCAL_VERSION_UNSUPPORTED'; task.updatedAt = now;
             continue;
@@ -446,14 +522,19 @@ export class LocalAgentStore {
             ...(task.researchBundle ? { researchTools: task.researchBundle } : {}),
             ...(task.kind === 'run' ? { prompt: task.prompt, ...(task.agentSettings ? { agentSettings: task.agentSettings } : {}) } : {}) };
           const bytes = Buffer.byteLength(JSON.stringify(command));
-          if (commandBytes + bytes > 12 * 1024 * 1024 - 128_000) continue;
+          if (commandBytes + bytes > maxCommandBytes) continue;
           task.state = 'running'; task.updatedAt = now;
+          task.commandEmitted = true;
           if (image) pendingImages.set(task.id, { owner: image.owner, signal: image.signal });
           commands.push(command); commandBytes += bytes;
         }
       }
       return { commands, cancelTaskIds: cancelTaskIds.slice(-1000) };
     });
+    return this.discardCancelledImages(result, pendingImages);
+  }
+  private async discardCancelledImages(result: CompanionPollResult,
+    pendingImages: Map<string, { owner: string; signal?: AbortSignal }>): Promise<CompanionPollResult> {
     // Persistence yields to cancellation. Recheck before returning any image to the
     // transport, and confirm cancellation while the command is still unsent.
     for (;;) {
@@ -463,8 +544,12 @@ export class LocalAgentStore {
       const ids = new Set(cancelled.map(command => command.id));
       result.commands = result.commands.filter(command => !ids.has(command.id));
       result.cancelTaskIds = [...new Set([...result.cancelTaskIds, ...ids])].slice(-1000);
-      await Promise.all(cancelled.map(command => this.update(pendingImages.get(command.id)!.owner, command.id,
-        { state: 'cancelled', error: 'LOCAL_CANCELLED' })));
+      await Promise.all(cancelled.map(command => this.access(true, state => {
+        const task = ownedTask(state, pendingImages.get(command.id)!.owner, command.id);
+        if (active(task)) { task.state = 'cancelled'; task.error = 'LOCAL_CANCELLED'; task.updatedAt = Date.now(); }
+        // This command never left the poll response, so it cannot claim a delivery receipt.
+        delete task.commandEmitted;
+      })));
     }
   }
 }

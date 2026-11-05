@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { isLocalWorkspaceMode } from '../auth/local-workspace';
 import { nativeImageCapability, validateNativeImage } from '../../local-agents/native-image';
 import type { NativeAgentImage } from '../../../shared/native-image.interface';
+import { researchSnapshotPrompt } from '../../local-agents/tool-config';
 
 interface Runtime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -27,7 +28,7 @@ const wait = (ms: number) => new Promise<void>((resolveWait) => setTimeout(resol
 export class LocalAgentsService implements OnModuleDestroy {
   readonly store: LocalAgentStore;
   private readonly runtime: Runtime;
-  private readonly running = new Map<string, { owner: string; agentId: string; abort: AbortController; done: Promise<void> }>();
+  private readonly running = new Map<string, { owner: string; agentId: string; abort: AbortController; done: Promise<void>; entered?: boolean }>();
   private readonly logins = new Set<LocalAgentProvider>();
   private detection?: { until: number; promise: Promise<NativeAgentStatus[]> };
   private stopping = false;
@@ -122,7 +123,7 @@ export class LocalAgentsService implements OnModuleDestroy {
     return !options.signal?.aborted && await options.shouldContinue() && !options.signal?.aborted;
   }
 
-  private async launch(task: AgentTask, options: LocalAgentExecution): Promise<void> {
+  private async launch(task: AgentTask, options: LocalAgentExecution, onSubmitted?: () => Promise<void>): Promise<void> {
     if (this.stopping || this.running.has(task.id) || !['staged', 'queued'].includes(task.state)) return;
     if (task.hasImage && !await this.imageMayContinue(options)) {
       await this.store.cancel(task.owner, task.id);
@@ -146,13 +147,27 @@ export class LocalAgentsService implements OnModuleDestroy {
     let progressWrites: Promise<void> = Promise.resolve();
     const done = (async () => {
       try {
-        if (signal.aborted) throw new LocalAgentError('LOCAL_CANCELLED');
-        const result = await this.runtime.runNativeAgent(task.provider, task.prompt, { root: join(this.store.root, 'workspaces', task.id), signal,
+        let execution: ReturnType<Runtime['runNativeAgent']> | undefined;
+        let uncertain = false;
+        try { await this.store.handoff(task.owner, task.id, async isCurrent => {
+          if (task.hasImage && !await this.imageMayContinue(options)) throw new LocalAgentError('LOCAL_CANCELLED');
+          if ((await this.store.task(task.owner, task.id)).state !== 'running' || signal.aborted || !isCurrent()) throw new LocalAgentError('LOCAL_CANCELLED');
+          // Runtime entry is synchronous here: no awaited receipt write opens another revocation window.
+          execution = this.runtime.runNativeAgent(task.provider, task.prompt, { root: join(this.store.root, 'workspaces', task.id), signal,
           agentSettings: task.agentSettings, ...(image ? { image } : {}),
           ...(task.researchBundle ? { researchTools: { ...task.researchBundle,
             call: (request: ResearchToolRequest, signal: AbortSignal) => this.callResearchTool(task.owner, task.id, request, signal) } } : {}),
           onEvent: event => { if (!image) progressWrites = progressWrites.then(() => this.store.appendEvents(task.owner, task.id, [event])); },
           onProgress: (text: string) => { if (!image) progressWrites = progressWrites.then(() => this.store.update(task.owner, task.id, { progress: text.slice(0, 500) })); } });
+          const running = this.running.get(task.id); if (running) running.entered = true;
+          // Completion is awaited outside the local handoff/fence, never inside a database transaction.
+          void execution.catch(() => undefined);
+          await this.store.markNativeEntry(task.owner, task.id);
+        }); } catch (error) { if (!execution) throw error; uncertain = true; }
+        try { await onSubmitted?.(); }
+        catch { uncertain = true; }
+        if (uncertain) { abort.abort(); await execution?.catch(() => undefined); throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN'); }
+        const result = await execution!;
         await progressWrites;
         if (signal.aborted) {
           await this.store.update(task.owner, task.id, { state: 'cancelled', error: 'LOCAL_CANCELLED' });
@@ -183,6 +198,20 @@ export class LocalAgentsService implements OnModuleDestroy {
     let task = options.remoteTaskId ? await this.store.task(owner, options.remoteTaskId) : await this.store.findMessage(owner, options.messageId);
     if (task && (task.agentId !== options.agentId || task.messageId !== options.messageId)) throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN');
     if (task && image && !task.hasImage) throw new LocalAgentError('LOCAL_INVALID_INPUT');
+    const refs = (scope?: LocalAgentExecution['researchScope']) => JSON.stringify((scope?.memoryReferences ?? [])
+      .map(ref => `${ref.kind}:${ref.id}:${ref.version}`).sort());
+    if (task && refs(task.researchScope) !== refs(options.researchScope)) {
+      if (task.commandEmitted || task.runtimeEntered) throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
+      await this.store.cancel(owner, task.id);
+      throw new LocalAgentError('MEMORY_CONTEXT_CHANGED', task.id, task.id);
+    }
+    let clearHandoff: (() => void) | undefined;
+    const register = (id: string) => {
+      clearHandoff = this.store.registerHandoff(owner, id, async handoff => {
+        await options.onDispatch?.();
+        if (options.withHandoff) await options.withHandoff(handoff); else await handoff();
+      });
+    };
     if (!task) {
       // Cancellation changes the durable state before the OS has finished killing
       // the process tree. Its execution slot remains reserved until done settles.
@@ -192,28 +221,40 @@ export class LocalAgentsService implements OnModuleDestroy {
       if (!options.prompt.trim() || Buffer.byteLength(options.prompt) > 256_000) throw new LocalAgentError('LOCAL_INVALID_INPUT');
       const research = options.researchScope && this.researchTools
         ? { scope: options.researchScope, bundle: await this.researchTools.bundle(owner, options.researchScope) } : undefined;
-      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research, image, options.signal);
+      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research, image, options.signal, true);
       try {
         await options.onTask({ taskId: task.id, contextId: task.id });
-        await options.onDispatch?.();
+        await options.onDispatch?.({ inputBytes: Buffer.byteLength(researchSnapshotPrompt(options.prompt, research?.bundle.snapshot ?? ''), 'utf8') });
         if (task.hasImage && !await this.imageMayContinue(options)) throw new LocalAgentError('LOCAL_CANCELLED', task.id, task.id);
+        register(task.id);
         await this.store.activate(owner, task.id);
-      } catch (error) { await this.store.cancel(owner, task.id); throw error; }
+      } catch (error) { clearHandoff?.(); await this.store.cancel(owner, task.id); throw error; }
     }
+    let submission: Promise<void> | undefined;
+    const recordSubmission = async (delivery: 'runtime' | 'companion-command') => {
+      submission ??= Promise.resolve().then(() => options.onSubmitted?.(delivery))
+        .catch(() => { throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task!.id, task!.id); });
+      await submission;
+    };
+    try {
+    if (!clearHandoff) { register(task.id); await this.store.requireHandoff(owner, task.id); }
     if (task.hasImage && ['staged', 'queued', 'running', 'cancelling'].includes(task.state) && !await this.imageMayContinue(options)) {
       const cancellation = await this.store.cancel(owner, task.id);
       this.running.get(task.id)?.abort.abort();
       throw new LocalAgentError(cancellation === 'cancelled' || cancellation === 'completed' ? 'LOCAL_CANCELLED' : 'LOCAL_PAUSED', task.id, task.id);
     }
-    if (!task.deviceId) await this.launch(task, options);
+    if (!task.deviceId) await this.launch(task, options, () => recordSubmission('runtime'));
     let progress = '';
     for (;;) {
       task = await this.store.task(owner, task.id);
+      if (task.commandEmitted) await recordSubmission('companion-command');
+      if (task.runtimeEntered) await recordSubmission('runtime');
       if (task.state === 'completed') return { taskId: task.id, contextId: task.id, text: task.text || '', usageTokens: task.usageTokens ?? null };
       if (task.state === 'failed' || task.state === 'cancelled') throw new LocalAgentError(task.error || 'LOCAL_TASK_FAILED', task.id, task.id);
       if (task.state === 'staged') throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
       if (!await options.shouldContinue()) {
         const cancellation = await this.store.cancel(owner, task.id);
+        if ((await this.store.task(owner, task.id)).commandEmitted) await recordSubmission('companion-command');
         this.running.get(task.id)?.abort.abort();
         // A running upstream task must acknowledge its stop before the council
         // clears this task reference and permits a new assignment.
@@ -231,6 +272,22 @@ export class LocalAgentsService implements OnModuleDestroy {
       if (task.progress && task.progress !== progress) { progress = task.progress; await options.onProgress(progress); }
       await wait(300);
     }
+    } catch (error) {
+      // Revoke captured callbacks synchronously before any awaited journal cleanup.
+      clearHandoff?.();
+      const running = this.running.get(task.id);
+      const uncertain = !(error instanceof LocalAgentError) || error.code === 'LOCAL_DISPATCH_UNCERTAIN';
+      let abandoned: AgentTask;
+      try { abandoned = await this.store.abandon(owner, task.id, running?.entered, uncertain); }
+      catch { throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id); }
+      finally { running?.abort.abort(); }
+      if (abandoned.commandEmitted) await recordSubmission('companion-command');
+      if (abandoned.runtimeEntered || running?.entered) await recordSubmission('runtime');
+      if (uncertain && (abandoned.commandEmitted || abandoned.runtimeEntered || running?.entered)) {
+        throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
+      }
+      throw error;
+    } finally { clearHandoff?.(); }
   }
 
   /** The CLI only gets a task-specific local bridge; device/account credentials stay here. */

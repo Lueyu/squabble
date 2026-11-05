@@ -1,6 +1,7 @@
 import type { NativeAgentConfiguration } from './local-agents.interface';
 import type { ResearchEvent } from './research-events.interface';
 import type { ResearchCoverage, ResearchGoal, ResearchWorkflowView } from './research-workflow.interface';
+import type { MemoryContextInventory, ThesisCandidateInput } from './research-memory.interface';
 /** Public contracts for bounded, user-owned investment research. */
 export interface LlmBudgetSettings {
   enabled: boolean;
@@ -93,6 +94,7 @@ export interface CouncilResponse {
   details?: string;
 }
 export interface CouncilMessage {
+  memory?: MemoryContextInventory;
   taskId?: string;
   cycleId?: string;
   /** Zero-based turn within a discussion cycle. Older messages may omit it. */
@@ -119,6 +121,9 @@ export interface CouncilMessage {
   researchEventId?: string;
 }
 export interface CouncilReport {
+  /** Null/absent means the historical publication outcome was not recorded. */
+  publicationOutcome?: 'succeeded' | 'failed' | null;
+  thesisCandidates?: ThesisCandidateInput[] | null;
   coverage?: ResearchCoverage | null;
   id: string;
   version: number;
@@ -127,7 +132,8 @@ export interface CouncilReport {
   summary: string;
   dissent: string[];
   nextReviewCondition: string;
-  evidence: Array<{ id: string; title: string; content: string; sourceUrl: string | null; fetchedAt: string }>;
+  evidence: Array<{ id: string; title: string; content: string; sourceUrl: string | null; fetchedAt: string;
+    metadata?: import('./research-evidence.interface').EvidenceMetadata }>;
   sourceRunId: string | null;
   candidate: CouncilCandidate | null;
   paperOrderId: string | null;

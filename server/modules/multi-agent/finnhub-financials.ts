@@ -1,4 +1,5 @@
 import type { EvidenceInput } from './evidence.service';
+import { financialMetadata } from './financial-evidence-metadata';
 
 export interface FinnhubFinancialsResult {
   items: EvidenceInput[];
@@ -112,6 +113,7 @@ export function parseFinnhubFinancials(
   const report: Record<string, unknown> | undefined = record(filing.report);
   const values: string[] = [];
   const concepts: string[] = [];
+  const typed: Array<StatementValue & { start: string | null }> = [];
   const missingFields: string[] = [];
   const currencies: Set<string> = new Set();
   let missingUnits: boolean = false;
@@ -126,6 +128,7 @@ export function parseFinnhubFinancials(
     const periodNote: string = field.section === 'cf' ? ' (may be YTD)' : '';
     values.push(`${field.label}: ${entry.unit ?? 'reported units (currency not supplied)'} ${entry.value}${periodNote}`);
     concepts.push(`${field.label}: ${entry.concept}`);
+    typed.push({ ...entry, start: field.section === 'bs' ? '' : field.section === 'cf' ? null : reportDate(filing.startDate)! });
   }
   if (missingUnits) missingFields.push('reported currency units');
   if (currencies.size > 1) missingFields.push('consistent reported currency units');
@@ -152,6 +155,8 @@ export function parseFinnhubFinancials(
         `Source concepts: ${concepts.join('; ')}.`,
       ].join(' '),
       sourceName: 'Finnhub API', sourceUrl, relevanceScore: 0.9,
+      metadata: financialMetadata({ ticker, provider: 'Finnhub API', sourceUrl, accession,
+        filed: reportDate(filing.filedDate)!, end, amended: form.endsWith('/A'), facts: typed }),
     }],
   };
 }

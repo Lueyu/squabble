@@ -37,3 +37,5 @@ CREATE TABLE IF NOT EXISTS strategy_protections (
  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  CONSTRAINT strategy_protection_unique UNIQUE(owner,account_id,ticker)
 );
+
+ALTER TABLE strategy_plans ADD COLUMN IF NOT EXISTS memory_inventory jsonb;

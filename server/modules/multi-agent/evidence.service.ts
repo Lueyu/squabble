@@ -31,6 +31,7 @@ export type EvidenceRole = 'fundamental' | 'news' | 'technical';
 
 /** A single evidence item ready to be fed into an LLM prompt or persisted. */
 export interface EvidenceInput {
+  metadata?: import('@shared/research-evidence.interface').EvidenceMetadata;
   role: EvidenceRole;
   evidenceType: EvidenceType;
   title: string;
@@ -107,6 +108,9 @@ export class EvidenceService {
   }
 
   private localize(items: EvidenceInput[], language: AnalysisLanguage): EvidenceInput[] {
+    const observedAt = new Date().toISOString();
+    items = items.map(item => item.metadata ? { ...item, metadata: { sources: item.metadata.sources.map(source => ({
+      ...source, observedAt, observationBasis: 'server' as const })) } } : item);
     if (language !== 'en') return items;
     return items.map((item) => ['Finnhub API', 'SEC EDGAR'].includes(item.sourceName ?? '') ? item : {
       ...item, title: englishEvidenceText(item.title), content: englishEvidenceText(item.content),

@@ -1,3 +1,4 @@
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
@@ -7,6 +8,7 @@ import type { CouncilMember } from '../../../shared/council.interface';
 import type { ResearchDelivery, ResearchSkillPin, ResearchTask, ResearchTaskAttempt, ResearchTaskKind, ResearchTaskState } from '../../../shared/research-workflow.interface';
 import type { TaskPlan } from './council.tasks';
 import type { CouncilEvidence } from './council.rules';
+import { packMemoryContext } from '../research-memory/research-memory.context';
 
 type Session = typeof councilSessions.$inferSelect;
 type TaskRow = typeof councilResearchTasks.$inferSelect;
@@ -20,6 +22,7 @@ export class CouncilWorkflowStore {
   }
   async initialize(row: Session, plans: TaskPlan[], skills: (key: ResearchTaskKind) => ResearchSkillPin[]): Promise<void> {
     await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, row.owner);
       const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       if (current?.revision !== row.revision || current.status !== 'running' || current.checkpoint?.cycleId !== row.checkpoint?.cycleId) return;
       await tx.insert(councilResearchTasks).values(plans.map(plan => ({ ...plan, owner: row.owner, sessionId: row.id,
@@ -34,6 +37,7 @@ export class CouncilWorkflowStore {
   }
   async rebase(owner: string, row: Session, selected?: ResearchTaskKind[]): Promise<void> {
     await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, row.owner);
       const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, row.id))).for('update');
       if (session?.revision !== row.revision || session.status !== 'running') return;
       const tasks = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner),
@@ -50,6 +54,7 @@ export class CouncilWorkflowStore {
   }
   async claim(row: Session, task: ResearchTask, kind: 'work' | 'review'): Promise<ResearchTaskAttempt | null> {
     return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, row.owner);
       const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       if (session?.status !== 'running' || session.revision !== row.revision || session.checkpoint?.cycleId !== task.cycleId) return null;
       const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.id, task.id))).for('update');
@@ -58,13 +63,15 @@ export class CouncilWorkflowStore {
       if (current.attempts.length >= 12) {
         await tx.update(councilResearchTasks).set({ state: 'failed', reason: 'ATTEMPT_LIMIT' }).where(eq(councilResearchTasks.id, task.id)); return null;
       }
-      const attempt: ResearchTaskAttempt = { id: randomUUID(), messageId: randomUUID(), kind, revision: row.revision, startedAt: new Date().toISOString(), state: 'running' };
+      const attempt: ResearchTaskAttempt = { id: randomUUID(), messageId: randomUUID(), kind, revision: row.revision, startedAt: new Date().toISOString(), state: 'running',
+        memory: packMemoryContext([], 0, undefined, { requested: kind === 'review' ? [] : row.checkpoint?.workflow?.memory?.items }).inventory };
       await tx.update(councilResearchTasks).set({ state: 'running', attempts: [...current.attempts, attempt], updatedAt: new Date() }).where(eq(councilResearchTasks.id, task.id));
       return attempt;
     });
   }
   async markRemote(row: Session, task: ResearchTask, attemptId: string, patch: Partial<ResearchTaskAttempt>, dispatch = false): Promise<void> {
     await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, row.owner);
       const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.id, task.id))).for('update');
       if (!current || !current.attempts.some(a => a.id === attemptId)) throw new Error('LOCAL_PAUSED');
@@ -79,6 +86,7 @@ export class CouncilWorkflowStore {
     tokens?: number; taskId?: string; externalUsageUnknown?: boolean; sources?: CouncilEvidence[];
   }): Promise<boolean> {
     return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, row.owner);
       const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.id, task.id))).for('update');
       if (!current) return false;
@@ -95,6 +103,7 @@ export class CouncilWorkflowStore {
       const state: ResearchTaskState = result.error ? 'failed' : accepted ? 'accepted' : result.review
         ? needsRevision ? 'needs_revision' : 'failed' : 'submitted';
       const delivery = result.delivery ?? current.delivery;
+      const memory = attempts.find(item => item.id === attempt.id)?.memory;
       await tx.update(councilResearchTasks).set({ attempts, state, delivery, reason: result.error ?? result.review?.feedback ?? null,
         reworks: current.reworks + (needsRevision ? 1 : 0), acceptedAttemptId: accepted ? (result.delivery ? attempt.id
           : [...current.attempts].reverse().find(a => a.kind === 'work' && a.state === 'succeeded')?.id ?? null) : null,
@@ -103,13 +112,13 @@ export class CouncilWorkflowStore {
         const response = result.delivery.response;
         await tx.insert(councilMessages).values({ owner: row.owner, sessionId: row.id, role: member.role, memberName: member.name,
           content: result.delivery.conclusion, revision: row.revision, tokensUsed: result.tokens ?? 0,
-          metadata: { cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id,
+          metadata: { memory, cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id,
             phase: task.key === 'summary' ? 'summary' : task.key === 'challenge' ? 'challenge' : 'opening', response,
             evidenceIds: result.delivery.evidenceIds, externalAgent: member.executionMode === 'local', externalUsageUnknown: result.externalUsageUnknown } });
       }
       if (result.review) await tx.insert(councilMessages).values({ owner: row.owner, sessionId: row.id, role: member.role,
         memberName: member.name, content: result.review.feedback, revision: row.revision, tokensUsed: result.tokens ?? 0,
-        metadata: { cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id, phase: 'response',
+        metadata: { memory, cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id, phase: 'response',
           response: { thesis: `${row.language === 'en' ? result.review.accepted ? 'Accepted. ' : 'Revision required. '
             : result.review.accepted ? '验收通过。' : '需要修订。'}${result.review.feedback}`, evidencePoints: [], risks: [], nextChecks: [] },
           evidenceIds: current.delivery?.evidenceIds ?? [], externalAgent: member.executionMode === 'local', externalUsageUnknown: result.externalUsageUnknown } });

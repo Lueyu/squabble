@@ -315,6 +315,7 @@ export const bullBearArguments = pgTable("bull_bear_arguments", {
 ]);
 
 export const agentEvidence = pgTable("agent_evidence", {
+  metadata: jsonb("metadata").$type<import('@shared/research-evidence.interface').EvidenceMetadata>(),
   id: uuid("id").primaryKey().defaultRandom(),
   runId: uuid("run_id").notNull(),
   role: varchar("role", { length: 30 }).notNull(),

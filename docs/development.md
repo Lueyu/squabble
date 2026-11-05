@@ -66,7 +66,7 @@ Logs are under `logs/`; inspect them if startup fails. The individual
 `dev:server` and `dev:client` commands do not use that supervisor; provide the
 required environment variables in their shell when running them separately.
 
-The app applies additive migrations `03` through `20` on startup. They do not
+The app applies additive migrations `03` through `25` on startup. They do not
 create the base schema. Neither Docker configuration publishes PostgreSQL on
 the host, so a source development server cannot reach it at `localhost:5432`
 without an explicit local port mapping.
@@ -102,10 +102,24 @@ npm run test:server   # Nest service/rule tests; database suites need the variab
 npm run test:client   # client state and component behavior
 npm run test:desktop  # bundled database, lifecycle and loopback security checks
 npm run test:local-agents # native CLI fixtures and companion ownership/lease checks
+npm run test:memory-eval  # fixed retrieval corpus plus required operation/request regressions
 npm run type:check    # typecheck only
 ```
 
-Database integration suites use `BUDGET_TEST_DATABASE_URL`, `COUNCIL_TEST_DATABASE_URL`, and `AUTH_TEST_DATABASE_URL`. Set them to a **disposable test database** initialized with `01_schema.sql` and additive migrations `03`–`15`; do not point them at personal or production data. Without these variables, database cases are explicitly skipped. CI provisions PostgreSQL and runs them, including concurrent reservations, user isolation, first-account registration, discussion revisions, and atomic paper execution.
+Database integration suites use `BUDGET_TEST_DATABASE_URL`, `COUNCIL_TEST_DATABASE_URL`, `AUTH_TEST_DATABASE_URL`, `STRATEGY_TEST_DATABASE_URL`, and `MEMORY_TEST_DATABASE_URL`. Set them to a **disposable test database** initialized with `01_schema.sql` and additive migrations `03`–`25`; do not point them at personal or production data. Without these variables, database cases are explicitly skipped. CI provisions PostgreSQL and runs them, including concurrent reservations, user isolation, first-account registration, discussion revisions, memory archival and atomic paper execution. Verify the database/schema and expected tables after initialization; a successful shell exit alone does not establish that migrations ran.
+
+The memory evaluation requires its database prerequisites and fails when required
+integration coverage is unavailable or skipped. It compares a fixed historical
+ranking baseline and task-aware retrieval on the same fictional expected sets,
+then checks publication/recovery, temporal visibility, revocation, request
+inventories and paper execution. Its scores describe those fixtures, not general
+semantic accuracy. Retrieval uses bounded candidate pools and deterministic
+bilingual terms; free paraphrases, negation and cross-company reasoning remain
+limitations to measure before adding a semantic retrieval layer.
+Each new cycle retains up to 100 eligible histories and 500 eligible theses,
+then freezes up to 200 references. Eligibility is checked in batches; many
+ineligible sources can increase total scan time. These retrieval limits do not
+truncate the dossier's thesis list.
 
 Agent service:
 
@@ -131,7 +145,7 @@ with that snapshot. A local Agent receives one task for all holdings; the app
 polls public progress and persists a combined report with per-holding judgments.
 Cancellation and service restart do not replay the model request. The separate
 single-stock run and research discussion room keep their existing flows.
-Migration `20_portfolio_report.sql` adds the report table without rewriting
+Migration `25_portfolio_report.sql` adds the report table without rewriting
 holdings or older analyses.
 
 Use [Settings to connect a supported research agent](local-agents.md). Desktop starts the

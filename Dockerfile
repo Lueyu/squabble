@@ -50,8 +50,13 @@ COPY scripts/db/15_native_agents.sql ./scripts/db/15_native_agents.sql
 COPY scripts/db/16_daily_strategy.sql ./scripts/db/16_daily_strategy.sql
 COPY scripts/db/17_research_memory.sql ./scripts/db/17_research_memory.sql
 COPY scripts/db/18_research_workflow.sql ./scripts/db/18_research_workflow.sql
-COPY scripts/db/19_local_model_route.sql ./scripts/db/19_local_model_route.sql
-COPY scripts/db/20_portfolio_report.sql ./scripts/db/20_portfolio_report.sql
+COPY scripts/db/19_atomic_research_theses.sql ./scripts/db/19_atomic_research_theses.sql
+COPY scripts/db/20_research_memory_temporal.sql ./scripts/db/20_research_memory_temporal.sql
+COPY scripts/db/21_research_archive_jobs.sql ./scripts/db/21_research_archive_jobs.sql
+COPY scripts/db/22_research_monitors.sql ./scripts/db/22_research_monitors.sql
+COPY scripts/db/23_monitor_observation_order.sql ./scripts/db/23_monitor_observation_order.sql
+COPY scripts/db/24_local_model_route.sql ./scripts/db/24_local_model_route.sql
+COPY scripts/db/25_portfolio_report.sql ./scripts/db/25_portfolio_report.sql
 COPY scripts/ensure-settings-key.cjs scripts/ensure-jwt-secret.cjs scripts/start-app.cjs ./scripts/
 
 # Views and static assets are resolved from process.cwd()/dist/client

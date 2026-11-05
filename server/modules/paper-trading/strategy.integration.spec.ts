@@ -1,3 +1,4 @@
+import { councilReports, councilSessions } from '../../database/council.schema';
 import 'reflect-metadata';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +31,7 @@ test('daily discussion publishes validated plan, monitor reviews once, atomic fi
   let initialized = false;
   try {
     await admin`CREATE SCHEMA ${admin(namespace)}`; initialized = true;
-    for (const name of ['01_schema', '03_agent_builder', '08_investment_council', '09_builder_cadence', '12_council_dialogue', '16_daily_strategy']) {
+    for (const name of ['01_schema', '03_agent_builder', '08_investment_council', '09_builder_cadence', '12_council_dialogue', '16_daily_strategy', '17_research_memory', '18_research_workflow', '19_atomic_research_theses', '20_research_memory_temporal', '21_research_archive_jobs', '22_research_monitors']) {
       await client.unsafe(readFileSync(`scripts/db/${name}.sql`, 'utf8'));
     }
     await client`INSERT INTO users(id, username, password_hash) VALUES(${owner}, 'strategy-test', 'test-only')`;
@@ -75,6 +76,9 @@ test('daily discussion publishes validated plan, monitor reviews once, atomic fi
           dissent: [], nextReviewCondition: 'price bounds', evidence: [{ id: 'verified-price', title: 'Market price', content: 'Daily data confirms RSI30', sourceUrl: null,
             fetchedAt: new Date().toISOString() }], sourceRunId: null, candidate: null, paperOrderId: null, tokensUsed: 100, engine: 'llm', createdAt: new Date().toISOString() }],
         error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      await db.insert(councilSessions).values({ id, owner, profileId: row.id, profileVersion: 1, profileSnapshot: config, ticker: 'AAPL', language: 'en', status: 'completed' });
+      const report = session.reports[0];
+      await db.insert(councilReports).values({ ...report, owner, sessionId: id, createdAt: new Date(report.createdAt) });
       sessions.set(id, session); return session;
     }, addMessage: async () => undefined, runSession: async (_owner: string, id: string) => { researchCalls += 1; sessions.get(id)!.status = 'completed'; },
     getSession: async (_owner: string, id: string) => sessions.get(id)!, pauseSession: async () => undefined };

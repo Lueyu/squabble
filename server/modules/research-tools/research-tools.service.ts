@@ -16,14 +16,17 @@ import type { ResearchMemoryRecall } from '@shared/research-memory.interface';
 import { RESEARCH_TOOLS, toolDescriptor, validRequest, type ResearchToolDefinition } from './research-tools.registry';
 import { boundedResult, clipped, isoDate, researchFailure, researchSource } from './research-tools.output';
 import { extractValuationInputs, frozenPeerTickers, valuationScenarios } from './research-valuation';
+import { memoryReference, memoryToolData } from '../research-memory/research-memory.context';
+import { boundedMemoryPins } from '../research-memory/research-memory.ranking';
+import { compactToolEvidence, toolEvidenceMetadata } from './research-tools.evidence';
 
 type SessionRow = typeof councilSessions.$inferSelect;
-interface ScopedSession { session: SessionRow; authority: string }
+interface ScopedSession { session: SessionRow; authority: string; review?: boolean }
 type ScopeDatabase = Pick<PostgresJsDatabase, 'select'>;
 const ARCHIVED_TOOLS = new Set(['get_quotes', 'get_financials', 'get_news', 'get_valuation',
   'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web']);
 interface CallOptions { signal?: AbortSignal; shouldContinue?: () => Promise<boolean> }
-interface HandlerInput extends Partial<ResearchValuationRequest> { limit?: number; query?: string }
+interface HandlerInput extends Partial<ResearchValuationRequest> { limit?: number; query?: string; asOf?: string }
 interface SavedReport {
   savedAt: number; data: Record<string, unknown>; source: ResearchSource; truncated: boolean;
 }
@@ -69,6 +72,7 @@ export class ResearchToolsService {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
     let authority: string | undefined;
+    let review = false;
     const assertActive = (): void => {
       if (!active || options.signal?.aborted || scope.expiresAt <= Date.now()) throw new ScopeEnded();
     };
@@ -79,6 +83,7 @@ export class ResearchToolsService {
       const current = await this.currentSession(owner, scope);
       if (!current || authority && current.authority !== authority) throw new ScopeEnded();
       authority ??= current.authority;
+      review = current.review === true;
       assertActive();
       return current.session;
     };
@@ -87,9 +92,9 @@ export class ResearchToolsService {
         const session: SessionRow = await guard();
         started = true;
         const result: ResearchToolResult = await this.handle(tool, owner, scope, session,
-          parsed.data as HandlerInput, guard);
+          parsed.data as HandlerInput, guard, review);
         await guard();
-        const archived = await this.archiveProviderResult(tool, owner, scope, boundedResult(result), authority!, assertActive);
+        const archived = await this.archiveProviderResult(tool, owner, scope, result, authority!, assertActive);
         await guard();
         return archived;
       } catch (error) {
@@ -143,16 +148,17 @@ export class ResearchToolsService {
     const assigned = attempt.kind === 'review'
       ? row.profileSnapshot.council?.members.find(member => member.role === 'manager')?.id : task.memberId;
     return assigned === scope.memberId && scope.expiresAt > Date.now()
-      ? { session: row, authority: JSON.stringify([row.checkpoint.cycleId, task.id, attempt.id]) } : null;
+      ? { session: row, authority: JSON.stringify([row.checkpoint.cycleId, task.id, attempt.id]), review: attempt.kind === 'review' } : null;
   }
 
   /** Read-only tools may archive their server-produced results, never caller-supplied facts or live memory/report copies. */
   private async archiveProviderResult(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
     result: ResearchToolResult, authority: string, assertActive: () => void): Promise<ResearchToolResult> {
     if (!ARCHIVED_TOOLS.has(tool.name) || !['succeeded', 'partial'].includes(result.status)
-      || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return result;
+      || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return boundedResult(result);
     const id = randomUUID();
-    const bounded = boundedResult({ ...result, data: { evidenceId: id, ...result.data } });
+    const metadata = toolEvidenceMetadata(result.data, tool.name);
+    const bounded = boundedResult({ ...result, data: compactToolEvidence({ evidenceId: id, ...result.data }) });
     if (!bounded.data || typeof bounded.data !== 'object' || !('evidenceId' in bounded.data)
       || bounded.data.evidenceId !== id) return bounded;
     const evidence: CouncilEvidence = { id, role: tool.kind === 'news' || tool.kind === 'web' ? 'sentiment' : 'fundamental',
@@ -160,6 +166,7 @@ export class ResearchToolsService {
       sourceUrl: bounded.sources[0]?.url ?? null,
       sourceName: tool.kind === 'web' ? `${tool.source} (unverified)` : tool.source,
       fetchedAt: bounded.asOf, relevanceScore: tool.kind === 'web' ? 0 : 1,
+      ...(metadata.sources.length ? { metadata } : {}),
       ...(tool.kind ? { researchKind: tool.kind } : {}) };
     await this.db.transaction(async tx => {
       // Match the workflow store's lock order; reload under lock so concurrent
@@ -176,11 +183,11 @@ export class ResearchToolsService {
   }
 
   private async handle(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
-    session: SessionRow, input: HandlerInput, guard: () => Promise<SessionRow>): Promise<ResearchToolResult> {
+    session: SessionRow, input: HandlerInput, guard: () => Promise<SessionRow>, review: boolean): Promise<ResearchToolResult> {
     if (tool.name === 'get_quotes') return this.quote(scope, tool.source);
     if (tool.name === 'get_research_report') return this.reports(owner, scope, input.limit ?? 1);
-    if (tool.name === 'get_discussion_context') return this.context(owner, scope, session, input.limit ?? 8);
-    if (tool.name === 'get_research_memory') return this.researchMemory(owner, scope, session);
+    if (tool.name === 'get_discussion_context') return this.context(owner, scope, session, input.limit ?? 8, review);
+    if (tool.name === 'get_research_memory') return this.researchMemory(owner, scope, session, review, input.asOf);
     if (tool.name === 'get_peer_comparison') return this.peerComparison(owner, scope, session, guard);
     if (tool.name === 'get_valuation_scenarios') {
       if (!input.metric || !input.multiples) return researchFailure('failed', 'RESEARCH_INVALID_ARGUMENTS');
@@ -194,22 +201,31 @@ export class ResearchToolsService {
     return this.evidenceResult(items, scope.ticker, now, input.limit ?? 10);
   }
 
-  private async researchMemory(owner: string, scope: ResearchToolScope, session: SessionRow): Promise<ResearchToolResult> {
+  private async researchMemory(owner: string, scope: ResearchToolScope, session: SessionRow, review = false, asOf?: string): Promise<ResearchToolResult> {
     const workflow = session.checkpoint?.workflow;
     let recall: ResearchMemoryRecall;
-    if (workflow?.recallEnabled === false || workflow && !workflow.memory) {
+    if (review || scope.memoryReferences?.length === 0) {
       recall = { items: [], context: '', preferences: await this.memory.getPreferences(owner) };
-    } else if (workflow?.memory) recall = await this.memory.refreshRecall(owner, workflow.memory);
-    else recall = await this.memory.recall(owner, { ticker: scope.ticker });
+    } else if (workflow?.recallEnabled === false || workflow && !workflow.memory) {
+      const requested = boundedMemoryPins(workflow.memory?.items ?? []).map(memoryReference);
+      recall = { items: [], context: '', preferences: await this.memory.getPreferences(owner), requested,
+        omissions: requested.map(item => ({ ...item, reason: 'disabled' })) };
+    } else if (workflow?.memory) recall = await this.memory.refreshRecall(owner, workflow.memory, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) });
+    else recall = await this.memory.recall(owner, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) });
     const now = new Date().toISOString();
-    const enabled = workflow?.recallEnabled !== false && recall.preferences.recallEnabled;
-    return { status: recall.items.length ? 'succeeded' : 'unavailable', asOf: now, truncated: false,
-      ...(!recall.items.length ? { errorCode: enabled ? 'RESEARCH_NO_DATA' : 'RESEARCH_RECALL_DISABLED' } : {}),
-      sources: recall.items.flatMap(item => item.citations.map(citation =>
-        researchSource(citation.title, citation.sourceUrl, isoDate(citation.fetchedAt) ?? now))).slice(0, 12),
-      data: { ticker: scope.ticker, enabled, preferences: recall.preferences, items: recall.items,
-        limitations: ['Historical memory contains opinion, not verified current financial facts.',
-          'Pinned references are refreshed against live owner-owned sources; disabled, deleted and excluded data is omitted.'] } };
+    if (!review && scope.memoryReferences) {
+      const permitted = (item: { id: string; kind: string; version: number }) => scope.memoryReferences!.some(ref =>
+        ref.id === item.id && ref.kind === item.kind && ref.version === item.version);
+      recall = { ...recall, items: recall.items.filter(permitted), requested: scope.memoryReferences,
+        omissions: recall.omissions?.filter(permitted) };
+    }
+    const enabled = !review && workflow?.recallEnabled !== false && recall.preferences.recallEnabled;
+    const data = { ...memoryToolData(recall), enabled };
+    return { status: data.items.length ? 'succeeded' : 'unavailable', asOf: recall.asOf ?? asOf ?? now,
+      truncated: data.inventory.omissions.length > 0,
+      ...(!data.items.length ? { errorCode: enabled ? 'RESEARCH_NO_DATA' : 'RESEARCH_RECALL_DISABLED' } : {}),
+      // Full citations are protected inside each unit; the display envelope need not duplicate them.
+      sources: [], data };
   }
 
   private async financialEvidence(owner: string, scope: ResearchToolScope, session: SessionRow,
@@ -299,11 +315,12 @@ export class ResearchToolsService {
       truncated: facts.length > selected.length || gaps.length > 10,
       ...(!facts.length ? { errorCode: 'RESEARCH_NO_DATA' } : {}),
       data: { ticker, evidence: selected.map((item: EvidenceInput) => ({ title: clipped(item.title, 200),
-        content: item.content, evidenceType: item.evidenceType, source: researchSource(item.sourceName, item.sourceUrl, asOf) })),
+        content: item.content, evidenceType: item.evidenceType, source: researchSource(item.sourceName, item.sourceUrl, asOf),
+        ...(item.metadata ? { metadata: { sources: item.metadata.sources.map(source => ({ ...source,
+          observedAt: source.observedAt ?? asOf, observationBasis: 'server' as const })) } } : {}) })),
       gaps: gaps.slice(0, 10).map((item: EvidenceInput) => ({ title: clipped(item.title, 200), content: item.content })),
       ...(!items.length ? { availability: 'No verified data was returned.' } : {}),
-      currencyAndUnits: 'Only currencies, units and reporting periods explicitly stated in each source are known.',
-      timing: 'asOf is acquisition time; financial reporting periods and publication dates remain in source excerpts.' } };
+      timing: 'asOf is acquisition; unstated dates and units are unknown.' } };
   }
 
   private async reports(owner: string, scope: ResearchToolScope, limit: number): Promise<ResearchToolResult> {
@@ -350,7 +367,7 @@ export class ResearchToolsService {
         'Report currency and units are known only where explicitly recorded in its text.'] } };
   }
 
-  private async context(owner: string, scope: ResearchToolScope, session: SessionRow, limit: number): Promise<ResearchToolResult> {
+  private async context(owner: string, scope: ResearchToolScope, session: SessionRow, limit: number, review = false): Promise<ResearchToolResult> {
     const rows = await this.db.select({ id: councilMessages.id, role: councilMessages.role,
       memberName: councilMessages.memberName, content: councilMessages.content, revision: councilMessages.revision,
       createdAt: councilMessages.createdAt }).from(councilMessages)
@@ -361,13 +378,14 @@ export class ResearchToolsService {
     const facts = session.evidenceSnapshot.filter((item) => !gaps.includes(item));
     const evidence = [...gaps.slice(0, 6), ...facts].slice(0, 12);
     const workflow = session.checkpoint?.workflow;
-    const memory = workflow ? await this.researchMemory(owner, scope, session) : null;
+    const memory = workflow && !scope.memoryReferences ? await this.researchMemory(owner, scope, session, review) : null;
     return { status: 'succeeded', asOf: now, truncated: rows.length > limit || session.evidenceSnapshot.length > evidence.length,
       sources: [researchSource('Assigned discussion session', undefined, now)],
       data: { ticker: scope.ticker, sessionId: scope.sessionId, revision: scope.revision, memberId: scope.memberId,
         turn: scope.turn, capturedAt: now,
         ...(workflow ? { workflow: { goal: workflow.goal,
-          frozenPeers: frozenPeerTickers(scope.ticker, workflow.peers).slice(1), memory: memory?.data,
+          frozenPeers: frozenPeerTickers(scope.ticker, workflow.peers).slice(1),
+          ...(scope.memoryReferences ? { memoryInPrompt: true } : { memory: memory?.data }),
           valuationInputs: extractValuationInputs(facts, now),
           valuationAssumptions: 'No scenario multiples have been supplied in this snapshot; live calculation requires explicit assumptions.' } } : {}),
         omittedEvidenceCount: session.evidenceSnapshot.length - evidence.length,

@@ -35,7 +35,7 @@ test('a full Builder scan uses four budgeted council calls, fills once, and reus
     await admin`CREATE SCHEMA ${admin(namespace)}`;
     createdSchema = true;
     for (const file of ['01_schema.sql', '03_agent_builder.sql', '07_llm_budget.sql',
-      '08_investment_council.sql', '09_builder_cadence.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '18_research_workflow.sql']) {
+      '08_investment_council.sql', '09_builder_cadence.sql', '12_council_dialogue.sql', '13_budget_toggle.sql', '14_a2a_agents.sql', '18_research_workflow.sql', '19_atomic_research_theses.sql', '21_research_archive_jobs.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     // JS time fixes the US market-open window. Align report freshness in this

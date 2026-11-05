@@ -1,3 +1,4 @@
+import type { MemoryReference } from './research-memory.interface';
 /** Task-bound read-only tools; never carry account credentials across this boundary. */
 export interface ResearchSource { title: string; url?: string; fetchedAt: string }
 export interface ResearchToolDescriptor {
@@ -11,6 +12,8 @@ export interface ResearchToolResult {
   data: unknown; sources: ResearchSource[]; asOf: string; truncated: boolean; errorCode?: string;
 }
 export interface ResearchToolScope {
+  /** Server-owned allowlist for workflow prompt memory. Explicit [] forbids further memory; snapshots never duplicate it. */
+  memoryReferences?: MemoryReference[];
   sessionId: string; revision: number; memberId: string; memberName: string; turn: number;
   ticker: string; language: 'en' | 'zh-CN'; webResearch: boolean; expiresAt: number;
 }

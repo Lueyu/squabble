@@ -80,7 +80,7 @@ export class LlmBudgetService {
     return row;
   }
 
-  async reserve(userId: string, input: ReserveBudgetRequest): Promise<BudgetReservation> {
+  async reserve(userId: string, input: ReserveBudgetRequest, beforeDispatch?: () => Promise<void>): Promise<BudgetReservation> {
     const text = (value: unknown, fallback: string, maximum: number): string => {
       if (value === undefined) return fallback;
       if (typeof value !== 'string' || !value.trim() || value.length > maximum || /[\u0000-\u001f]/u.test(value)) {
@@ -95,7 +95,7 @@ export class LlmBudgetService {
     if (input.maxOutputTokens !== undefined && (!Number.isSafeInteger(input.maxOutputTokens) || input.maxOutputTokens < 1)) {
       throw new BadRequestException('maxOutputTokens must be a positive integer');
     }
-    return this.db.transaction(async (tx) => {
+    const reservation = await this.db.transaction(async (tx) => {
       await this.ownerLock(tx, userId);
       const [row] = await tx.select().from(llmBudgetSettings).where(eq(llmBudgetSettings.owner, userId));
       const settings = this.settingsFromRow(row);
@@ -123,6 +123,18 @@ export class LlmBudgetService {
       return { id, taskId, inputTokens, maxOutputTokens, reservedTokens,
         omitOutputLimit: !settings.enabled && input.maxOutputTokens === undefined };
     });
+    // This callback has no transport capability. Rollback is confined to its failure,
+    // before the reservation is returned to the caller that can start a network call.
+    try { await beforeDispatch?.(); }
+    catch (error) {
+      await this.db.transaction(async tx => {
+        await this.ownerLock(tx, userId);
+        await tx.delete(llmBudgetUsage).where(and(eq(llmBudgetUsage.owner, userId),
+          eq(llmBudgetUsage.id, reservation.id), eq(llmBudgetUsage.status, 'reserved')));
+      });
+      throw error;
+    }
+    return reservation;
   }
 
   async settle(userId: string, id: string, usage?: unknown, failed = false): Promise<SettledTokenUsage> {

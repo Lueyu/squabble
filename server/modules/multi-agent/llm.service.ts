@@ -42,6 +42,8 @@ export interface LlmCallOptions {
   shouldContinue?: () => Promise<boolean>;
   /** Public task progress only; never raw private reasoning. */
   onProgress?: (message: string) => Promise<void>;
+  /** Runs after a committed reservation, immediately before transport. Failure prevents transport and releases that reservation. */
+  onDispatch?: () => Promise<void>;
 }
 
 class ProviderHttpError extends Error {
@@ -71,9 +73,16 @@ function boundedDeepSeekMode(baseUrl: string, model: string) {
 }
 
 /** A single chat-completion message in OpenAI-compatible format. */
-interface ChatMessage {
+export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+}
+
+/** Shared with request packing so the injected instruction is included in the same budget estimate. */
+export function jsonChatMessages(messages: readonly ChatMessage[]): ChatMessage[] {
+  return [...messages.filter(message => message.role === 'system'), {
+    role: 'system', content: '你必须严格按照用户要求的 JSON 格式输出，不要添加任何解释、说明或 markdown 格式。只输出合法的 JSON 字符串。',
+  }, ...messages.filter(message => message.role !== 'system')];
 }
 
 /** The raw content + token usage returned by a chat call. */
@@ -153,6 +162,12 @@ export class LlmService {
     for (const id of new Set(ids)) await this.settings.getLlmConfig(userId, id);
   }
 
+  /** Respect explicit higher limits without changing saved settings. Unlimited billing still uses a finite context envelope. */
+  async getInputLimit(userId: string): Promise<number> {
+    const settings = await this.budgets.getSettings(userId);
+    return settings.enabled ? settings.maxInputTokens : 6000;
+  }
+
   /** Public execution metadata only; credentials never enter reports. */
   async getExecutionInfo(userId: string, route?: ModelRoute): Promise<{
     provider: string;
@@ -222,7 +237,7 @@ export class LlmService {
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       if (options.shouldContinue && !(await options.shouldContinue())) throw new Error('LLM request cancelled');
       // Deliberately outside the network catch: budget/DB failures must never retry or bypass accounting.
-      const reservation = await this.budgets.reserve(userId, { ...options, taskId, model, messages });
+      const reservation = await this.budgets.reserve(userId, { ...options, taskId, model, messages }, options.onDispatch);
       const outputLimit = reservation.omitOutputLimit ? {} : /^(?:o[1-9](?:-|$)|gpt-5(?:[.-]|$))/u.test(model)
         ? { max_completion_tokens: reservation.maxOutputTokens }
         : { max_tokens: reservation.maxOutputTokens };
@@ -308,6 +323,7 @@ export class LlmService {
       try { result = await agents.execute(userId, {
         agentId: route.agentId, agentSettings: route.agentSettings, messageId,
         prompt: messages.map(message => `${message.role.toUpperCase()}:\n${message.content}`).join('\n\n'),
+        onDispatch: options.onDispatch,
         onTask: async () => undefined, onProgress: options.onProgress ?? (async () => undefined),
         shouldContinue: options.shouldContinue ?? (async () => true),
       }); } catch (error) {
@@ -344,19 +360,7 @@ export class LlmService {
     userId: string,
     options?: LlmCallOptions,
   ): Promise<{ data: unknown; tokens: number; tokensKnown?: boolean }> {
-    const systemMsg: ChatMessage = {
-      role: 'system',
-      content: '你必须严格按照用户要求的 JSON 格式输出，不要添加任何解释、说明或 markdown 格式。只输出合法的 JSON 字符串。',
-    };
-
-    // Preserve any caller-supplied system messages, then append our strict-JSON
-    // instruction, then user/assistant messages.
-    const userMsgs = messages.filter((m) => m.role !== 'system');
-    const systemMsgs = messages.filter((m) => m.role === 'system');
-
-    const allMessages: ChatMessage[] = [...systemMsgs, systemMsg, ...userMsgs];
-
-    const result = await this.chat(allMessages, tier, userId, options);
+    const result = await this.chat(jsonChatMessages(messages), tier, userId, options);
 
     let cleaned = result.content.trim();
     // Strip markdown code fences (```json … ```) if the LLM wrapped the output.

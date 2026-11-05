@@ -24,6 +24,7 @@ const portfolio = { totalValue: 1000, totalMv: 0, cash: 1000, cashRatio: 100, ho
 before(async () => {
   if (!client) return;
   await client.unsafe(readFileSync('scripts/db/08_investment_council.sql', 'utf8'));
+  await client.unsafe(readFileSync('scripts/db/21_research_archive_jobs.sql', 'utf8'));
   await client.unsafe(readFileSync('scripts/db/12_council_dialogue.sql', 'utf8'));
   const [row] = await db.insert(builderProfiles).values({ owner, config }).returning();
   profileId = row.id;
