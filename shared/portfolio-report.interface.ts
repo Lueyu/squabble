@@ -1,4 +1,21 @@
 import type { ModelRoute } from './model-route.interface';
+import type { TradingMarketSchedule } from './trading-market.interface';
+
+/** Immutable server ledger facts. Transaction dates are user-recorded dates, not execution timestamps. */
+export interface PortfolioDailyFacts {
+  businessDate: string; timezone: 'Asia/Shanghai'; capturedAt: string;
+  transactions: Array<{ id: string; date: string; ticker: string; type: string; currency: string;
+    shares: number | null; price: number | null; notional: number | null; fees: number | null; updatedAt: string; assumedFunding: boolean }>;
+  byCurrency: Array<{ currency: string; buys: number; sells: number; deposits: number; withdrawals: number; fees: number }>;
+  positionChanges: Array<{ ticker: string; boughtShares: number; soldShares: number; netShares: number }>;
+  marketSessions: Array<TradingMarketSchedule & { lastCompletedTradingDate: string | null }>;
+  returnBasis: { method: 'equity_change_minus_external_flows'; currency: 'USD';
+    startSnapshot: { id: string; date: string; accountValue: number | null; updatedAt: string } | null;
+    endSnapshot: { id: string; date: string; accountValue: number | null; updatedAt: string } | null;
+    fx: Array<{ base: string; quote: string; rate: number; date: string }>;
+    netExternalFlowUsd: number | null; pnlUsd: number | null; returnPct: number | null };
+  gaps: string[];
+}
 
 export interface PortfolioReportHoldingSnapshot {
   ticker: string;
@@ -18,6 +35,7 @@ export interface PortfolioReportSnapshot {
   cashUsd: number | null;
   totalValueUsd: number | null;
   gaps: string[];
+  dailyFacts?: PortfolioDailyFacts;
 }
 
 export type PortfolioHoldingStance = 'add' | 'hold' | 'reduce' | 'exit' | 'watch';

@@ -62,6 +62,7 @@ import { formatDate, formatDateTime, cn } from '@/utils/format';
 import { displayCompanyName } from '@/utils/company-name';
 import AnalysisCard from './AnalysisCard';
 import AnalysisRunner from './AnalysisRunner';
+import ResearchDocumentLibrary from './ResearchDocumentLibrary';
 
 /** Ticker sentinel for the portfolio-level analysis card. */
 const PORTFOLIO_TICKER = 'PORTFOLIO';
@@ -227,19 +228,6 @@ function AnalysisPage() {
     }
   };
 
-  // ticker -> deep report runId map for traditional view badges.
-  // Suffixes like .HK / .US are stripped so display tickers match.
-  const deepReportByTicker = useMemo(() => {
-    const map = new Map<string, string>();
-    const normalizeTicker = (t: string): string => t.replace(/\.(HK|US)$/i, '');
-    for (const r of deepReports) {
-      if (r.ticker && r.id && !map.has(normalizeTicker(r.ticker))) {
-        map.set(normalizeTicker(r.ticker), r.id);
-      }
-    }
-    return map;
-  }, [deepReports]);
-
   /** Split analyses into stock-level cards and the special portfolio card. */
   const { stockAnalyses, portfolioAnalysis } = useMemo(() => {
     const stocks = analyses.filter(
@@ -323,6 +311,7 @@ function AnalysisPage() {
 
       {/* Main content */}
       <div className="min-w-0 flex-1 space-y-4 md:space-y-6">
+        <ResearchDocumentLibrary />
         {/* Date navigator */}
         <Card>
           <CardContent className="flex items-center justify-between p-4">
@@ -459,7 +448,6 @@ function AnalysisPage() {
             {!loading && portfolioAnalysis && (
               <AnalysisCard
                 analysis={portfolioAnalysis}
-                deepReportRunId={deepReportByTicker.get(PORTFOLIO_TICKER)}
               />
             )}
 
@@ -532,7 +520,6 @@ function AnalysisPage() {
                       <AnalysisCard
                         key={a.id}
                         analysis={a}
-                        deepReportRunId={deepReportByTicker.get(a.ticker)}
                       />
                     ))}
                   </div>

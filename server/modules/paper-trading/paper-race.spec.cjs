@@ -10,15 +10,26 @@ const PaperTradingService = loadService('server/modules/paper-trading/paper-trad
   '../../database/council.schema': {},
   '../../database/strategy.schema': {},
   '../notifications/notification.service': { NotificationService: class {} },
-  '../../common/market-clock': {},
+  '../../common/market-clock': { isMarketOpen: () => true },
   './agent-builder.service': { AgentBuilderService: class {} },
   './agent-builder.rules': {},
   './builder-cadence.service': { BuilderCadenceService: class {} },
-  './trading-cadence': {},
+  './trading-cadence': { normalizeCadence: () => ({}), cadenceRejection: () => null },
   '../council/council.service': { CouncilService: class {} },
   './trading-market.service': { TradingMarketService: class {} },
   './strategy.rules': {},
-  '../research-memory/research-memory.fence': { lockMemoryOwner: unexpectedStrategyMemory },
+  './simulation-account': { requireActivePaperAccount: async (db, owner) => db.data.paperAccounts.find(account => account.owner === owner && account.isActive) },
+  '../../database/simulation-experiments.schema': {},
+  './simulation-ledger': { recordSimulationCashFill: unexpectedStrategyMemory, settleSimulationCash: unexpectedStrategyMemory },
+  './simulation-experiments.rules': { executionEconomics: (price, quantity) => ({ price, gross: price * quantity, fee: 0, cashAmount: price * quantity }) },
+  './simulation-order.rules': { simulationLotRejection: () => null },
+  './paper-risk-day': { paperRiskDay: date => date.toISOString().slice(0, 10), paperRiskTimezone: async () => 'UTC' },
+  './strategy-mandate.fence': { assertMandateExecution: unexpectedStrategyMemory },
+  './strategy-reservation': { settleStrategyReservation: unexpectedStrategyMemory },
+  './strategy-portfolio-risk': { preparePortfolioRiskInputs: unexpectedStrategyMemory, readPortfolioRiskSnapshot: unexpectedStrategyMemory, evaluatePortfolioRisk: unexpectedStrategyMemory },
+  './simulation-corporate-actions': { readCorporateActionGaps: async () => [], persistCorporateActionGaps: unexpectedStrategyMemory },
+  '../../database/strategy-mandates.schema': { strategyReservations: tables.strategyReservations },
+  '../research-memory/research-memory.fence': { lockMemoryOwner: async () => undefined },
   '../research-memory/research-memory.dependencies': { strategyMemoryBlock: unexpectedStrategyMemory },
   '../research-memory/research-memory.monitor.service': { observeThesisMonitors: unexpectedStrategyMemory },
 });
@@ -31,7 +42,7 @@ async function main() {
   const db = new MemoryDb();
   const userId = 'audit-user-memory-only';
   const orderId = 'audit-pending-order';
-  db.data.paperAccounts.push({ id: 'paper-account', owner: userId, cashBalance: '1000' });
+  db.data.paperAccounts.push({ id: 'paper-account', owner: userId, cashBalance: '1000', initialCash: '1000', isActive: true, botEnabled: true, ledgerMode: 'legacy_usd', guardrails: { maxOrderPct: 100, maxOrdersPerDay: 10, dailyLossLimitPct: 10 } });
   db.data.paperOrders.push({
     id: orderId, owner: userId, accountId: 'paper-account', ticker: 'AAPL',
     market: 'US', currency: 'USD', side: 'buy', orderType: 'market',
@@ -48,8 +59,12 @@ async function main() {
   };
   const notifications = [];
   const service = new PaperTradingService(db,
-    { getQuote: async () => ({ price: '10', market: 'US', currency: 'USD', companyName: 'Apple' }) },
-    {}, { notifyUser: async (user, payload) => { notifications.push(payload.event); } }, {}, {}, {});
+    { getQuote: async () => ({ price: '10', market: 'US', currency: 'USD', companyName: 'Apple', timestamp: Date.now() }) },
+    { convert: async amount => amount }, { notifyUser: async (user, payload) => { notifications.push(payload.event); } }, {}, {}, {},
+    { getSnapshot: async () => ({ quoteUsable: true, price: 10, market: 'US', currency: 'USD', quoteTimestamp: new Date().toISOString(), maxQuoteAgeSeconds: 300,
+      schedule: { isOpen: true, calendarVerified: true, sessions: [{ opensAt: new Date(Date.now() - 60000).toISOString(), closesAt: new Date(Date.now() + 60000).toISOString() }] } }) });
+  service.equityOf = async () => 1000;
+  service.dayStartEquity = async () => 1000;
   // B reads pending, pauses immediately before its cancellation UPDATE.
   const rejection = service.rejectOrder(userId, orderId);
   await rejectReachedWrite.promise;
@@ -69,7 +84,7 @@ async function main() {
     recordedTrades: db.data.paperTrades.length,
     eventTypes: db.data.paperEvents.map(event => event.eventType),
     notifications,
-    note: 'Real approveOrder(), executeFill(), rejectOrder() and recordEvent(); in-memory DB. .for(update) is a no-op because cancellation is deliberately released only after the approval transaction completes, a schedule compatible with real row locks.',
+    note: 'Real approveOrder(), placeOrder(), rejectOrder() and recordEvent(); in-memory DB. .for(update) is a no-op because cancellation is deliberately released only after the approval transaction completes, a schedule compatible with real row locks.',
   };
   assert.equal(result.finalOrderStatus, 'filled');
   assert.equal(result.finalCash, '900.00');

@@ -12,6 +12,7 @@ export class StrategyScheduler implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(StrategyScheduler.name);
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private readonly jobs = new Set<Promise<void>>();
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly strategy: StrategyService, private readonly notifications: StrategyNotificationsService) {}
   onModuleInit(): void {
@@ -26,10 +27,12 @@ export class StrategyScheduler implements OnModuleInit, OnModuleDestroy {
     try {
       const rows = await this.db.select({ owner: builderProfiles.owner, config: builderProfiles.config }).from(builderProfiles)
         .innerJoin(paperAccounts, eq(builderProfiles.owner, paperAccounts.owner))
-        .where(and(eq(builderProfiles.status, 'active'), eq(paperAccounts.botEnabled, true)));
+        .where(and(eq(builderProfiles.status, 'active'), eq(paperAccounts.botEnabled, true), eq(paperAccounts.isActive, true)));
       for (const row of rows) if ((row.config as BuilderConfig).automation?.enabled) {
-        try { await this.strategy.tick(row.owner); }
-        catch { this.logger.warn('Automatic strategy waiting after failed check'); }
+        const job = this.strategy.tick(row.owner).then(() => undefined)
+          .catch(() => { this.logger.warn('Automatic strategy waiting after failed check'); });
+        this.jobs.add(job);
+        void job.finally(() => this.jobs.delete(job));
       }
       await this.notifications.tick();
     } finally { this.running = false; }

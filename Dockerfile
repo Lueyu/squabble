@@ -57,6 +57,11 @@ COPY scripts/db/22_research_monitors.sql ./scripts/db/22_research_monitors.sql
 COPY scripts/db/23_monitor_observation_order.sql ./scripts/db/23_monitor_observation_order.sql
 COPY scripts/db/24_local_model_route.sql ./scripts/db/24_local_model_route.sql
 COPY scripts/db/25_portfolio_report.sql ./scripts/db/25_portfolio_report.sql
+COPY scripts/db/26_research_documents.sql ./scripts/db/26_research_documents.sql
+COPY scripts/db/27_research_threads.sql ./scripts/db/27_research_threads.sql
+COPY scripts/db/28_simulation_experiments.sql ./scripts/db/28_simulation_experiments.sql
+COPY scripts/db/29_strategy_mandates.sql ./scripts/db/29_strategy_mandates.sql
+COPY scripts/db/30_strategy_daily_adjustments.sql ./scripts/db/30_strategy_daily_adjustments.sql
 COPY scripts/ensure-settings-key.cjs scripts/ensure-jwt-secret.cjs scripts/start-app.cjs ./scripts/
 
 # Views and static assets are resolved from process.cwd()/dist/client

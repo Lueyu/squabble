@@ -210,3 +210,18 @@ test('HK and both CN exchanges enforce their own currency, timezone and mapped p
     assert.equal(result.currency, spec.currency);
   }
 });
+
+test('source captures splits/dividends and blocks explicit trading halts', async () => {
+  const payload = fixture();
+  Object.assign(payload.chart.result[0], { events: { splits: { split: { date: NOW.getTime() / 1000 - 3600, numerator: 2, denominator: 1 } },
+    dividends: { cash: { date: NOW.getTime() / 1000 - 7200, amount: 0.5 } } } });
+  const { service, requests } = createService(payload);
+  const result = await service.getSnapshot('AAPL', NOW);
+  assert.equal(result.corporateActionsChecked, true);
+  assert.deepEqual(result.corporateActions?.map((event) => event.kind).sort(), ['dividend', 'split']);
+  assert.match(requests[0].url ?? '', /events=div%2Csplits/);
+  Object.assign(payload.chart.result[0].meta, { tradingHalted: true });
+  const halted = await service.getSnapshot('AAPL', NOW, true);
+  assert.equal(halted.quoteUsable, false);
+  assert.equal(halted.quoteReason, 'trading_halted');
+});

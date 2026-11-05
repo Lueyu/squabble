@@ -2,6 +2,7 @@ import { pgTable, text, uuid, integer, timestamp, jsonb, uniqueIndex, numeric } 
 import type { StrategyRule, StrategyCandidate, StrategyMarketRuntime } from '../../shared/strategy.interface';
 
 export const strategyTasks = pgTable('strategy_tasks', {
+  scopeKey: text('scope_key').notNull().default('legacy'),
   id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(),
   profileId: uuid('profile_id').notNull(), profileVersion: integer('profile_version').notNull(),
   market: text('market').notNull(), marketDate: text('market_date').notNull(),
@@ -9,8 +10,9 @@ export const strategyTasks = pgTable('strategy_tasks', {
   sessionIds: jsonb('session_ids').$type<string[]>().notNull().default([]), reason: text('reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [uniqueIndex('strategy_task_unique').on(table.owner, table.profileId, table.profileVersion, table.market, table.marketDate, table.attempt)]);
+}, (table) => [uniqueIndex('strategy_task_unique').on(table.owner, table.profileId, table.profileVersion, table.market, table.marketDate, table.attempt, table.scopeKey)]);
 export const strategyPlans = pgTable('strategy_plans', {
+  accountId: uuid('account_id'), mandateId: uuid('mandate_id'), mandateVersion: integer('mandate_version'),
   memoryInventory: jsonb('memory_inventory').$type<import('@shared/research-monitor.interface').StrategyMemoryInventory>(),
   id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(),
   profileId: uuid('profile_id').notNull(), profileVersion: integer('profile_version').notNull(),

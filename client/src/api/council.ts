@@ -1,8 +1,9 @@
 import http from './http';
-import type { CouncilSession, CreateCouncilSession, LlmBudgetSettings, LlmBudgetUsage } from '@shared/council.interface';
+import type { CouncilSession, CouncilScene, CreateCouncilSession, CouncilMessageInput, ForkCouncilSession, CouncilRevisionRequest, LlmBudgetSettings, LlmBudgetUsage } from '@shared/council.interface';
+import type { ResearchDocumentVersion, ResearchRevisionDraft } from '@shared/research-document.interface';
 
-export async function fetchCouncilSessions(): Promise<CouncilSession[]> {
-  const response = await http.get<{ items: CouncilSession[] }>('/api/council/sessions');
+export async function fetchCouncilSessions(filters: { scene?: CouncilScene; topic?: string } = {}): Promise<CouncilSession[]> {
+  const response = await http.get<{ items: CouncilSession[] }>('/api/council/sessions', { params: filters });
   return response.data.items;
 }
 
@@ -16,11 +17,21 @@ export async function createCouncilSession(request: CreateCouncilSession): Promi
   return response.data;
 }
 
-export async function postCouncilMessage(id: string, content: string): Promise<CouncilSession> {
+export async function postCouncilMessage(id: string, content: string, details: Omit<CouncilMessageInput, 'content'> = {}): Promise<CouncilSession> {
   const response = await http.post<CouncilSession>(
-    `/api/council/sessions/${encodeURIComponent(id)}/messages`, { content },
+    `/api/council/sessions/${encodeURIComponent(id)}/messages`, { content, ...details },
   );
   return response.data;
+}
+
+export async function forkCouncilSession(id: string, input: ForkCouncilSession): Promise<CouncilSession> {
+  return (await http.post<CouncilSession>(`/api/council/sessions/${encodeURIComponent(id)}/fork`, input)).data;
+}
+export async function archiveCouncilReport(id: string, reportId: string): Promise<ResearchDocumentVersion> {
+  return (await http.post<ResearchDocumentVersion>(`/api/council/sessions/${encodeURIComponent(id)}/reports/${encodeURIComponent(reportId)}/archive`)).data;
+}
+export async function reviseCouncilReport(id: string, reportId: string, parentVersionId: string, options: Omit<CouncilRevisionRequest, 'parentVersionId'> = {}): Promise<ResearchRevisionDraft> {
+  return (await http.post<ResearchRevisionDraft>(`/api/council/sessions/${encodeURIComponent(id)}/reports/${encodeURIComponent(reportId)}/revision`, { parentVersionId, ...options })).data;
 }
 
 export async function runCouncilSession(id: string): Promise<CouncilSession> {

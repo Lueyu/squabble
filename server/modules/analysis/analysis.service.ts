@@ -10,6 +10,8 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 import { eq, and, desc, asc, notIlike } from 'drizzle-orm';
 import { analysis } from '@server/database/schema';
 import type { Analysis, CreateAnalysisDto, ListResponse } from '@shared/api.interface';
+import { ResearchDocumentsService } from '../research-documents/research-documents.service';
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 
 /**
  * Provides analysis-note read/upsert/delete. Depends on the Drizzle database.
@@ -36,27 +38,46 @@ export class AnalysisService {
     // Exclude internal test/deep-run rows from the public listing.
     const allConditions = [...conditions, notIlike(analysis.ticker, '%testdeep%')];
 
-    const rows = await this.db
-      .select()
-      .from(analysis)
-      .where(and(...allConditions))
-      .orderBy(desc(analysis.analysisDate), asc(analysis.ticker))
-      .limit(50);
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      const rows = await tx
+        .select()
+        .from(analysis)
+        .where(and(...allConditions))
+        .orderBy(desc(analysis.analysisDate), asc(analysis.ticker))
+        .limit(50);
 
-    return {
-      items: rows.map((row) => ({
-        id: row.id,
-        analysisDate: row.analysisDate,
-        ticker: row.ticker,
-        rating: row.rating,
-        action: row.action,
-        analysis: row.analysis,
-        targetPrice: row.targetPrice,
-        catalysts: row.catalysts,
-        risks: row.risks,
-        createdAt: row.createdAt.toISOString(),
-      })),
-    };
+      const versionIds = new Map<string, string>();
+      const deepVersionIds = new Map<string, string>();
+      const documents = new ResearchDocumentsService(this.db);
+      for (const row of rows) {
+        const version = await documents.importSourceInTransaction(tx, userId, { type: 'daily', id: row.id });
+        versionIds.set(row.id, version.id);
+        const sourceId = version.snapshot?.sourceReportVersionId;
+        if (typeof sourceId === 'string') {
+          try {
+            const deep = await documents.getVersionInTransaction(tx, userId, sourceId);
+            if (deep.kind === 'deep' && deep.ticker === row.ticker) deepVersionIds.set(row.id, deep.id);
+          } catch { /* Unknown or inaccessible legacy associations stay unknown. */ }
+        }
+      }
+      return {
+        items: rows.map((row) => ({
+          id: row.id,
+          researchVersionId: versionIds.get(row.id),
+          deepReportVersionId: deepVersionIds.get(row.id) ?? null,
+          analysisDate: row.analysisDate,
+          ticker: row.ticker,
+          rating: row.rating,
+          action: row.action,
+          analysis: row.analysis,
+          targetPrice: row.targetPrice,
+          catalysts: row.catalysts,
+          risks: row.risks,
+          createdAt: row.createdAt.toISOString(),
+        })),
+      };
+    });
   }
 
   /**
@@ -83,56 +104,9 @@ export class AnalysisService {
    * @param dto    Analysis payload keyed by `analysisDate` and `ticker`.
    */
   async upsert(userId: string, dto: CreateAnalysisDto): Promise<Analysis> {
-    const result = await this.db.transaction(async (tx) => {
-      const existing = await tx
-        .select()
-        .from(analysis)
-        .where(
-          and(
-            eq(analysis.owner, userId),
-            eq(analysis.analysisDate, dto.analysisDate),
-            eq(analysis.ticker, dto.ticker),
-          ),
-        )
-        .limit(1);
-
-      if (existing.length > 0) {
-        // Update only the fields supplied in the DTO.
-        const patch: Record<string, unknown> = {};
-        if (dto.rating !== undefined) patch.rating = dto.rating;
-        if (dto.action !== undefined) patch.action = dto.action;
-        if (dto.analysis !== undefined) patch.analysis = dto.analysis;
-        if (dto.targetPrice !== undefined) patch.targetPrice = String(dto.targetPrice);
-        if (dto.catalysts !== undefined) patch.catalysts = dto.catalysts;
-        if (dto.risks !== undefined) patch.risks = dto.risks;
-        patch.updatedAt = new Date();
-        patch.updatedBy = userId;
-
-        const [updated] = await tx
-          .update(analysis)
-          .set(patch)
-          .where(eq(analysis.id, existing[0].id))
-          .returning();
-        return updated;
-      }
-
-      const [inserted] = await tx
-        .insert(analysis)
-        .values({
-          analysisDate: dto.analysisDate,
-          ticker: dto.ticker,
-          rating: dto.rating ?? null,
-          action: dto.action ?? null,
-          analysis: dto.analysis ?? null,
-          targetPrice: dto.targetPrice !== undefined ? String(dto.targetPrice) : null,
-          catalysts: dto.catalysts ?? null,
-          risks: dto.risks ?? null,
-          owner: userId,
-          createdBy: userId,
-          updatedBy: userId,
-        })
-        .returning();
-      return inserted;
+    const result = await new ResearchDocumentsService(this.db).writeDaily(userId, {
+      analysisDate: dto.analysisDate, ticker: dto.ticker, rating: dto.rating, action: dto.action, analysis: dto.analysis,
+      targetPrice: dto.targetPrice !== undefined ? String(dto.targetPrice) : undefined, catalysts: dto.catalysts, risks: dto.risks,
     });
 
     return {
@@ -150,15 +124,25 @@ export class AnalysisService {
   }
 
   /**
-   * Upserts multiple analysis notes concurrently within a transaction.
+   * Upserts the whole batch and its immutable versions in one transaction.
    *
    * @param userId Owner id.
    * @param items  Analysis payloads.
    */
   async batchUpsert(userId: string, items: CreateAnalysisDto[]): Promise<ListResponse<Analysis>> {
-    const results: Analysis[] = await this.db.transaction(async () => {
-      const promises = items.map((item: CreateAnalysisDto) => this.upsert(userId, item));
-      return Promise.all(promises);
+    const documents = new ResearchDocumentsService(this.db);
+    const results: Analysis[] = await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      const results: Analysis[] = [];
+      for (const dto of items) {
+        const row = await documents.writeDailyInTransaction(tx, userId, { analysisDate: dto.analysisDate, ticker: dto.ticker,
+          rating: dto.rating, action: dto.action, analysis: dto.analysis, targetPrice: dto.targetPrice !== undefined ? String(dto.targetPrice) : undefined,
+          catalysts: dto.catalysts, risks: dto.risks });
+        results.push({ id: row.id, analysisDate: row.analysisDate, ticker: row.ticker, rating: row.rating,
+          action: row.action, analysis: row.analysis, targetPrice: row.targetPrice, catalysts: row.catalysts,
+          risks: row.risks, createdAt: row.createdAt.toISOString() });
+      }
+      return results;
     });
     return { items: results };
   }
@@ -171,10 +155,15 @@ export class AnalysisService {
    * @throws NotFoundException if the note does not belong to the user.
    */
   async remove(userId: string, id: string): Promise<{ success: boolean }> {
-    const deleted = await this.db
-      .delete(analysis)
-      .where(and(eq(analysis.id, id), eq(analysis.owner, userId)))
-      .returning({ id: analysis.id });
+    const deleted = await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      const documents = new ResearchDocumentsService(this.db);
+      await documents.importSourceInTransaction(tx, userId, { type: 'daily', id });
+      return tx
+        .delete(analysis)
+        .where(and(eq(analysis.id, id), eq(analysis.owner, userId)))
+        .returning({ id: analysis.id });
+    });
 
     if (deleted.length === 0)
       // NOTE: Chinese user-facing message (existing behavior; not mojibake).

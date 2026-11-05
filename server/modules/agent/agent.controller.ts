@@ -24,6 +24,9 @@ import type {
 
 /** Payload for saving a day's worth of analysis notes. */
 interface DailyAnalysisDto {
+  submissionId?: string;
+  dataAsOf?: string;
+  snapshot?: import('../../../shared/research-document.interface').ResearchInputSnapshot;
   date: string;
   items: Array<{
     ticker: string;

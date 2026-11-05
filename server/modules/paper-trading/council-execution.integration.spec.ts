@@ -10,18 +10,22 @@ import { builderProfiles, paperAccounts, paperOrders, paperPositions } from '../
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { BuilderCadenceService } from './builder-cadence.service';
 import { PaperTradingService } from './paper-trading.service';
+import { simulationMarketFixture } from './simulation-market.fixture';
 import { normalizeBuilderConfig } from './agent-builder.rules';
 import type { BuilderProfile } from '../../../shared/api.interface';
 
 test('persisted scans and final execution enforce cadence and consume only current council approvals', {
   skip: !process.env.COUNCIL_TEST_DATABASE_URL,
 }, async (t) => {
-  const client = postgres(process.env.COUNCIL_TEST_DATABASE_URL!, { max: 8, onnotice: () => {} });
+  const namespace = 'council_execution_' + randomUUID().replaceAll('-', '');
+  const admin = postgres(process.env.COUNCIL_TEST_DATABASE_URL!, { max: 1, onnotice: () => {} });
+  const client = postgres(process.env.COUNCIL_TEST_DATABASE_URL!, { max: 8, onnotice: () => {}, connection: { search_path: namespace } });
   const db = drizzle(client);
   const owner = randomUUID();
-  const owners = [owner];
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-30T14:00:00Z') });
   try {
+    await admin.unsafe('CREATE SCHEMA ' + namespace);
+    await client.unsafe(readFileSync('scripts/db/01_schema.sql', 'utf8'));
     for (const file of ['03_agent_builder.sql', '08_investment_council.sql', '09_builder_cadence.sql', '12_council_dialogue.sql', '21_research_archive_jobs.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
@@ -45,7 +49,7 @@ test('persisted scans and final execution enforce cadence and consume only curre
     assert.equal(await replica.claimReview(owner, profile, 'AAPL', 'US', 'new-data'), false);
 
     const service = new PaperTradingService(db, { getQuote: async () => ({ price: '10', market: 'US', currency: 'USD', timestamp: Date.now() }) } as never,
-      { convert: async () => 1 } as never, { notifyUser: async () => {} } as never, {} as never, cadence, {} as never);
+      { convert: async () => 1 } as never, { notifyUser: async () => {} } as never, {} as never, cadence, {} as never, { getSnapshot: async () => simulationMarketFixture({ price: '10', market: 'US', currency: 'USD', timestamp: Date.now() }) } as never);
     Reflect.set(service, 'equityOf', async () => 10000);
     Reflect.set(service, 'dayStartEquity', async () => 10000);
     await assert.rejects(service.placeOrder(owner, { ticker: 'AAPL', side: 'buy', quantity: 1 },
@@ -59,7 +63,7 @@ test('persisted scans and final execution enforce cadence and consume only curre
     assert.equal((await db.select().from(paperPositions).where(eq(paperPositions.owner, owner))).length, 2);
 
     // A separate investor's fresh council account isolates approval behavior from weekly limits.
-    const councilOwner = randomUUID(); owners.push(councilOwner);
+    const councilOwner = randomUUID();
     const councilConfig = { ...config, council: { ...config.council!, enabled: true } };
     const [row] = await db.insert(builderProfiles).values({ owner: councilOwner, config: councilConfig, status: 'active' }).returning();
     const team: BuilderProfile = { ...profile, ...row, config: councilConfig, status: 'active',
@@ -84,7 +88,7 @@ test('persisted scans and final execution enforce cadence and consume only curre
     assert.equal((await db.select().from(councilReports).where(eq(councilReports.id, report.id)))[0].paperOrderId, filled.id);
     await assert.rejects(service.placeOrder(councilOwner, candidate, 'agent', undefined, true, true, team, authorization), /already used/);
     assert.equal((await db.select().from(paperOrders).where(eq(paperOrders.owner, councilOwner))).length, 1);
-    const pendingOwner = randomUUID(); owners.push(pendingOwner);
+    const pendingOwner = randomUUID();
     const [pendingAccount] = await db.insert(paperAccounts).values({ owner: pendingOwner, initialCash: '10000', cashBalance: '10000',
       botEnabled: true, guardrails: config }).returning();
     await db.insert(paperOrders).values(['MSFT', 'NVDA'].map((ticker) => ({ owner: pendingOwner, accountId: pendingAccount.id,
@@ -94,13 +98,9 @@ test('persisted scans and final execution enforce cadence and consume only curre
     assert.equal(blocked.status, 'rejected_risk', 'old pending orders still reserve automatic capacity');
     assert.match(blocked.reason ?? '', /weekly_order_cap/);
   } finally {
-    for (const id of owners) {
-      for (const table of ['council_reports', 'council_messages', 'council_sessions', 'builder_review_checks', 'builder_scan_leases',
-        'builder_proposals', 'paper_trades', 'paper_orders', 'paper_positions', 'paper_events', 'paper_snapshots', 'paper_accounts', 'builder_profiles']) {
-        await client.unsafe(`DELETE FROM ${table} WHERE owner = $1`, [id]);
-      }
-    }
     t.mock.timers.reset();
     await client.end();
+    await admin.unsafe('DROP SCHEMA IF EXISTS ' + namespace + ' CASCADE');
+    await admin.end();
   }
 });

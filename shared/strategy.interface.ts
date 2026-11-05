@@ -19,6 +19,8 @@ export const STRATEGY_TRIGGER_KINDS = ['price_above', 'price_below', 'sma20_abov
   'rsi14_above', 'rsi14_below', 'volume_ratio_above'] as const;
 export type StrategyTriggerKind = typeof STRATEGY_TRIGGER_KINDS[number];
 export interface StrategyRule {
+  /** A bounded daily review may suspend an entry without discarding its protective stop. */
+  dailySuspended?: boolean;
   id: string;
   ticker: string;
   side: PaperSide;
@@ -33,6 +35,9 @@ export interface StrategyRule {
   rationale: string;
 }
 export interface DailyStrategyPlan {
+  accountId?: string | null;
+  mandateId?: string | null;
+  mandateVersion?: number | null;
   memoryInventory?: import('./research-monitor.interface').StrategyMemoryInventory | null;
   id: string; profileId: string; profileVersion: number; version: number;
   market: Market; marketDate: string; status: 'active' | 'superseded' | 'expired';
@@ -51,6 +56,10 @@ export interface StrategyRuntime {
   notification: { pending: number; failed: number; lastDeliveredAt: string | null };
 }
 export interface StrategyCandidate {
+  accountId?: string;
+  mandateId?: string;
+  mandateVersion?: number;
+  notionalUsd?: number;
   signalId: string; planId: string; planVersion: number; ruleId: string;
   ticker: string; market: Market; side: PaperSide; quantity: number;
   price: number; quoteAt: string; protectiveStop: boolean; reason: string;

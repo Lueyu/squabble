@@ -56,6 +56,11 @@ export interface TradingMarketSchedule {
 }
 
 export interface TradingMarketSnapshot {
+  /** Verified provider board-lot metadata, never inferred for HK equities. */
+  lotSize?: number | null;
+  halted?: boolean;
+  corporateActionsChecked?: boolean;
+  corporateActions?: Array<{ kind: 'dividend' | 'split'; occurredAt: string }>;
   ticker: string;
   providerSymbol: string | null;
   market: TradingMarket | null;

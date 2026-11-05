@@ -1,7 +1,8 @@
 import { sql } from 'drizzle-orm';
 import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
 import type { BuilderConfig } from '@shared/api.interface';
-import type { CouncilCandidate, CouncilReport } from '@shared/council.interface';
+import type { CouncilCandidate, CouncilReport, CouncilScene, CouncilPeriod, CouncilThreadMessage, CouncilContinuationSummary } from '@shared/council.interface';
+import type { ReportReference, ResolvedReportReference } from '@shared/research-document.interface';
 import type { CouncilEvidence } from '../modules/council/council.rules';
 import type { CouncilCheckpoint, CouncilMessageMetadata } from '../modules/council/council.types';
 
@@ -12,6 +13,17 @@ export const councilSessions = pgTable('council_sessions', {
   profileVersion: integer('profile_version').notNull(),
   profileSnapshot: jsonb('profile_snapshot').$type<BuilderConfig>().notNull(),
   ticker: varchar('ticker', { length: 20 }).notNull(),
+  scene: varchar('scene', { length: 24 }).$type<CouncilScene>().notNull().default('stock'),
+  title: text('title').notNull().default(''),
+  subject: text('subject').notNull().default(''),
+  period: jsonb('period').$type<CouncilPeriod | null>(),
+  parentSessionId: uuid('parent_session_id'),
+  parentMessageId: uuid('parent_message_id'),
+  parentReportId: uuid('parent_report_id'),
+  references: jsonb('report_references').$type<ReportReference[]>().notNull().default(sql`'[]'::jsonb`),
+  resolvedReferences: jsonb('resolved_references').$type<ResolvedReportReference[]>().notNull().default(sql`'[]'::jsonb`),
+  inheritedContext: jsonb('inherited_context').$type<CouncilThreadMessage[]>().notNull().default(sql`'[]'::jsonb`),
+  continuationSummary: jsonb('continuation_summary').$type<CouncilContinuationSummary | null>(),
   language: varchar('language', { length: 5 }).$type<'zh-CN' | 'en'>().notNull().default('zh-CN'),
   status: varchar('status', { length: 16 }).$type<'idle' | 'running' | 'completed' | 'paused' | 'failed'>().notNull().default('idle'),
   revision: integer('revision').notNull().default(1),
@@ -41,6 +53,7 @@ export const councilMessages = pgTable('council_messages', {
 }, (table) => [index('council_messages_session_idx').on(table.owner, table.sessionId, table.createdAt)]);
 
 export const councilReports = pgTable('council_reports', {
+  researchVersionId: uuid('research_version_id'),
   publicationOutcome: varchar('publication_outcome', { length: 10 }).$type<'succeeded' | 'failed'>(),
   thesisCandidates: jsonb('thesis_candidates').$type<CouncilReport['thesisCandidates']>(),
   coverage: jsonb('coverage').$type<CouncilReport['coverage']>(),
@@ -63,3 +76,13 @@ export const councilReports = pgTable('council_reports', {
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (table) => [uniqueIndex('council_reports_version_idx').on(table.sessionId, table.version),
   index('council_reports_owner_idx').on(table.owner, table.sessionId, table.createdAt)]);
+
+/** A committed claim is never replayed after an ambiguous paid model response. */
+export const councilRevisionRequests = pgTable('council_revision_requests', {
+  id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(),
+  sessionId: uuid('session_id').notNull().references(() => councilSessions.id, { onDelete: 'cascade' }),
+  requestKey: uuid('request_key').notNull(), inputHash: varchar('input_hash', { length: 64 }).notNull(),
+  status: varchar('status', { length: 16 }).$type<'pending' | 'succeeded' | 'failed'>().notNull().default('pending'),
+  result: jsonb('result').$type<import('@shared/research-document.interface').ResearchRevisionDraft | null>(), error: text('error'),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, table => [uniqueIndex('council_revision_requests_owner_key_idx').on(table.owner, table.requestKey)]);

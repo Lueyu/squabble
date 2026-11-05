@@ -20,6 +20,7 @@ import { workflowReviewPrompt } from './council.workflow-review';
 import { packMemoryContext } from '../research-memory/research-memory.context';
 import { taskMemoryQuery } from '../research-memory/research-memory.ranking';
 import type { MemoryContextInventory } from '../../../shared/research-memory.interface';
+import { threadPromptContext, isPortfolioThread, hasThreadContext } from './council.thread';
 
 type Session = typeof councilSessions.$inferSelect;
 export interface WorkflowOutput { delivery?: ResearchDelivery; review?: { accepted: boolean; feedback: string };
@@ -29,6 +30,7 @@ export interface WorkflowExecutorDependencies {
   db: PostgresJsDatabase; llm: LlmService; localAgents?: LocalAgentsService; memory?: ResearchMemoryService;
   store: CouncilWorkflowStore;
   tools?: ResearchToolsService;
+  validateReferences?(row: Session): Promise<void>;
   activity(row: Session, event: ResearchEvent, acquisition?: ResearchAcquisition): Promise<void>;
 }
 
@@ -82,6 +84,7 @@ export class CouncilWorkflowExecutor {
   async execute(row: Session, task: ResearchTask, attempt: ResearchTaskAttempt, member: CouncilMember, tasks: ResearchTask[],
     batch: ResearchTask[] = []): Promise<WorkflowOutput> {
     const { db, memory } = this.deps;
+    await this.deps.validateReferences?.(row);
     const scope = { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
       turn: task.position, ticker: row.ticker, language: row.language, webResearch: row.profileSnapshot.council?.webResearch === true,
       expiresAt: Date.now() + 600_000 };
@@ -96,7 +99,7 @@ export class CouncilWorkflowExecutor {
       return result;
     };
     const toolResults: Array<{ name: string; result: ResearchToolResult }> = [];
-    if (attempt.kind === 'work' && this.deps.tools) {
+    if (attempt.kind === 'work' && this.deps.tools && !isPortfolioThread(row)) {
       const names = task.key === 'financials' ? ['get_financials'] : task.key === 'business'
         ? [row.checkpoint!.workflow!.peers.length ? 'get_peer_comparison' : 'get_news']
         : task.key === 'valuation' ? ['get_financials', 'get_valuation'] : [];
@@ -194,6 +197,7 @@ export class CouncilWorkflowExecutor {
     }
     const promptContext = review ? workflowReviewPrompt(task, attempt, batch, instructions, row.ticker, row.language,
       messages.slice(-1).map(message => message.content), row.evidenceSnapshot, member.instructions, packingTarget) : { system, input };
+    if (hasThreadContext(row)) Object.assign(promptContext.input, { thread: threadPromptContext(row) });
     const prompt = [{ role: 'system' as const, content: promptContext.system },
       { role: 'user' as const, content: JSON.stringify(promptContext.input) }];
     const inventory: MemoryContextInventory = { ...packed.inventory, requestTokens: requestSize(promptContext.system, promptContext.input),
@@ -206,6 +210,7 @@ export class CouncilWorkflowExecutor {
         submission: member.executionMode === 'local' ? 'agent' : 'api', ...(nativeDelivery ? { nativeDelivery } : {}) } },
       nativeDelivery !== 'companion-command');
     const onDispatch = async (submission?: { inputBytes: number }) => {
+      await this.deps.validateReferences?.(row);
       if (member.executionMode === 'local' && submission) {
         inventory.requestTokens = submission.inputBytes;
         inventory.requestBudgetTokens = 32_000;
@@ -240,7 +245,7 @@ export class CouncilWorkflowExecutor {
       const result = await this.deps.localAgents.execute(row.owner, {
         agentId: member.agentId, agentSettings: member.agentSettings, messageId: attempt.messageId,
         prompt: `${promptContext.system}\n${JSON.stringify(promptContext.input)}`,
-        researchScope: { ...scope, memoryReferences: inventory.prepared },
+        researchScope: isPortfolioThread(row) ? undefined : { ...scope, memoryReferences: inventory.prepared },
         onDispatch,
         withHandoff: async handoff => {
           const activeHandoff = async (tx: MemoryDatabase) => {

@@ -45,8 +45,9 @@ export class PaperTradingController {
   /** Place a manual order (market orders only in V1). */
   @NeedLogin()
   @Post('orders')
-  async placeOrder(@Req() req: Request, @Body() dto: CreatePaperOrderDto) {
-    return this.paper.placeOrder(req.userContext.userId, dto, 'manual');
+  async placeOrder(@Req() req: Request, @Body() dto: CreatePaperOrderDto & { accountId?: string }) {
+    return this.paper.placeOrder(req.userContext.userId, dto, 'manual', undefined, false, true,
+      undefined, undefined, undefined, dto.accountId);
   }
 
   /** Approve a pending agent order. */

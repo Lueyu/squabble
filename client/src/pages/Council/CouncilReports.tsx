@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { isCurrentCouncilReport } from '@/utils/council-state';
 import CouncilReportCard from './CouncilReportCard';
+import { threadCopy } from './thread-copy';
 
 interface CouncilReportsProps {
   session: CouncilSession;
@@ -25,7 +26,7 @@ export default function CouncilReports({ session, profileVersion }: CouncilRepor
     <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-4 pr-12 xl:pr-4">
       <h2 className="flex items-center gap-2 text-sm font-semibold">
         <FileText className="size-4 text-primary" aria-hidden="true" />
-        {t('council.report.history')}
+        {threadCopy(i18n.language).summary}
       </h2>
       <span className="rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
         {reports.length}
@@ -73,7 +74,7 @@ export default function CouncilReports({ session, profileVersion }: CouncilRepor
             <DialogContent showCloseButton={false} className="flex max-h-[88dvh] max-w-3xl flex-col gap-0 overflow-hidden p-0">
               <DialogHeader className="shrink-0 border-b border-border p-4 text-left">
                 <div className="flex items-center justify-between gap-3">
-                  <DialogTitle className="text-base">{session.ticker} · {t('council.report.title', { version: report.version })}</DialogTitle>
+                  <DialogTitle className="text-base">{session.title || session.ticker} · {t('council.report.title', { version: report.version })}</DialogTitle>
                   <DialogClose asChild>
                     <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label={t('council.close')}>
                       <X className="size-4" aria-hidden="true" />

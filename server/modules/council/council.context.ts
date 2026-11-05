@@ -4,12 +4,14 @@ import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
 import { byteExcerpt, criticalEvidenceGaps, evidenceExcerpts, isRuleCandidate, type CouncilEvidence } from './council.rules';
 import { conversationExcerpt } from './council.dialogue';
 import type { DialogueTurn } from './council.types';
+import type { threadPromptContext } from './council.thread';
 
 interface ContextMessage {
   id: string; memberName: string; role: string; content: string;
   metadata?: Pick<CouncilMessage, 'questions' | 'reasoningSummary'> | null;
 }
 interface ContextInput {
+  thread?: ReturnType<typeof threadPromptContext>;
   ticker: string; candidate: CouncilCandidate | null; config: BuilderConfig; member: CouncilMember;
   turn: DialogueTurn; evidence: CouncilEvidence[]; userMessages: string[];
   currentDiscussion: ContextMessage[]; previousDiscussion: ContextMessage[]; systemPrompt: string;
@@ -30,6 +32,7 @@ export function packDiscussionContext(input: ContextInput) {
       content: limits.evidenceText && item.metadata ? byteExcerpt(item.content, limits.evidenceText) : item.content }));
     const included = new Set(evidence.map(item => item.id));
     return {
+    ...(input.thread ? { thread: input.thread } : {}),
     ticker: input.ticker, candidate: input.candidate, phase: input.turn.phase,
     ruleOnly: isRuleCandidate(input.config, input.candidate),
     criticalEvidenceMissing: criticalEvidenceGaps(input.evidence.filter(item => included.has(item.id) || item.sourceName === 'Data Unavailable')),

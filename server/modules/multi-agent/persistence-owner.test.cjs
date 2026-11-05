@@ -22,6 +22,8 @@ function load(name) {
     '@server/database/schema': tables,
     '../settings/settings.service': { SettingsService: class {} },
     '../settings/model-route.rules': { parseModelRoute: value => value },
+    '../research-memory/research-memory.fence': { lockMemoryOwner: async () => undefined },
+    '../research-documents/research-documents.service': { ResearchDocumentsService: class { async importSourceInTransaction() {} } },
   };
   new Function('require', 'module', 'exports', compiled)(id => {
     if (id === './analysis-report') return load('analysis-report.ts');
@@ -34,6 +36,7 @@ function load(name) {
 test('every pipeline insertion explicitly stamps owner and creator without platform database context', async () => {
   const writes = [];
   const db = {
+    transaction: callback => callback(db),
     select: () => ({ from: table => ({ where: async () => table === tables.agentEvidence
       ? [{ id: 'fact', sourceName: 'Market Quote Provider', relevanceScore: '0.9' }] : [] }) }),
     insert: table => ({ values: data => {
@@ -44,7 +47,7 @@ test('every pipeline insertion explicitly stamps owner and creator without platf
         assert.notEqual(row.currentValue, 'null', 'numeric NULL must not become the string null');
       }
       writes.push({ table: table.name, rows });
-      return { returning: async () => rows, onConflictDoUpdate: async () => undefined };
+      return { returning: async () => rows, onConflictDoUpdate: () => ({ returning: async () => rows }) };
     } }),
   };
   const { MultiAgentService } = load('multi-agent.service.ts');

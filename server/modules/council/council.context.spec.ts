@@ -120,6 +120,30 @@ test('populated discussion preserves real SEC facts before optional prose or rea
 });
 
 const statement = 'Period: 2026-01-01 to 2026-09-30. Revenue: USD 314389000000; Net income: USD 85204000000; Operating cash flow: USD 81389000000 (period total); Liabilities: USD 290437000000. Liabilities are a balance as of 2026-09-30; income and cash flow cover the stated period (may be YTD), not annualized. Form: 10-Q. Filed: 2026-10-29.';
+
+test('workflow work and review transport include fixed reports and frozen parent text without portfolio ticker tools', async () => {
+  for (const kind of ['work', 'review']) {
+    const row = { id: 'session', owner: 'owner', revision: 1, ticker: 'PORTFOLIO', scene: 'portfolio_daily', language: 'en', status: 'running',
+      references: [{ versionId: 'fixed-v1' }], resolvedReferences: [{ versionId: 'fixed-v1', content: 'Exact immutable report content' }],
+      inheritedContext: [{ id: 'parent-message', role: 'user', memberName: 'You', content: 'Frozen original parent question' }],
+      profileSnapshot: {}, checkpoint: { workflow: { peers: [], recallEnabled: false } }, evidenceSnapshot: [] };
+    const builder = { from: () => builder, where: () => builder,
+      then: (resolve: (value: unknown) => unknown) => Promise.resolve([row]).then(resolve), orderBy: async () => [] };
+    let captured = '', validations = 0;
+    const executor = new CouncilWorkflowExecutor({ db: { select: () => builder },
+      llm: { getInputLimit: async () => 12000, chatFastJSON: async (messages: unknown) => { captured = JSON.stringify(messages); throw new Error('CAPTURED'); } },
+      tools: { call: async () => { throw new Error('Portfolio must not call ticker tools'); } },
+      validateReferences: async () => { validations++; }, store: { markRemote: async () => undefined }, activity: async () => {} } as never);
+    const task = { id: 'task', key: 'financials', position: 0, dependencies: [], skills: [], reason: null,
+      delivery: { conclusion: 'Check concentration', evidenceIds: [], asOf: '2026-11-05', assumptions: [], gaps: [],
+        response: { thesis: 'Check concentration', evidencePoints: [], risks: [], nextChecks: [] } } };
+    await assert.rejects(executor.execute(row as never, task as never, { id: 'attempt', revision: 1, kind } as never,
+      { id: 'manager', name: 'Fixture', model: 'fast', instructions: '' } as never, []), /CAPTURED/u);
+    assert.equal(validations, 1);
+    assert.ok(captured.includes('Exact immutable report content'));
+    assert.ok(captured.includes('Frozen original parent question'));
+  }
+});
 const fact = (id: string, evidenceType: string, title: string, content: string): CouncilEvidence => ({ id, evidenceType,
   title, content, role: 'fundamental', sourceUrl: 'https://www.sec.gov/Archives/filing', sourceName: 'SEC EDGAR',
   fetchedAt: '2026-10-30T10:00:00Z', relevanceScore: 1 });

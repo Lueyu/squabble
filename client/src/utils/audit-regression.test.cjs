@@ -34,7 +34,7 @@ function harness(file, options = {}) {
   const imports = {
     react,
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-    'react-i18next': { useTranslation: () => ({ t: (key) => key }) },
+    'react-i18next': { useTranslation: () => ({ t: (key) => key, i18n: { language: 'en' } }) },
     'react-router-dom': { useNavigate: () => () => {}, Link: 'Link' },
     sonner: { toast: { success() {}, error() {}, info() {} } },
     '@/utils/format': {

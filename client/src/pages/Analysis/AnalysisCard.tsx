@@ -38,6 +38,7 @@ import {
 } from '@/utils/format';
 import { inferMarket } from '@/hooks/use-market-quotes';
 import { useTranslation } from 'react-i18next';
+import ResearchSourceActions from './ResearchSourceActions';
 
 /**
  * Split a semicolon/newline-delimited string into a clean list, stripping
@@ -134,22 +135,21 @@ function localizedRating(value: string | null, t: (key: string) => string): stri
 interface AnalysisCardProps {
   analysis: AnalysisType;
   companyName?: string | null;
-  /** Run id of a related deep report; when present, a "view deep report" link is shown. */
-  deepReportRunId?: string | null;
 }
 
 /**
  * Render an analysis card. Stock cards are collapsed by default; the
  * portfolio card is always expanded.
  */
-function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardProps) {
+function AnalysisCard({ analysis, companyName }: AnalysisCardProps) {
+  const deepReportVersionId = analysis.deepReportVersionId;
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const catalysts = parseNumberedList(analysis.catalysts);
   const risks = parseNumberedList(analysis.risks);
   const isPortfolio = analysis.ticker === PORTFOLIO_TICKER;
-  const hasDeepReport = Boolean(deepReportRunId);
+  const hasDeepReport = Boolean(deepReportVersionId);
   const market = isPortfolio ? 'US' : inferMarket(analysis.ticker);
   const targetCurrency = market === 'HK' ? 'HKD' : market === 'CN' ? 'CNY' : 'USD';
 
@@ -164,8 +164,8 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
 
   /** Navigate to the deep-report detail page. */
   const handleDeepReportClick = () => {
-    if (deepReportRunId) {
-      navigate(`/analysis/deep-report/${deepReportRunId}`);
+    if (deepReportVersionId) {
+      navigate(`/analysis/reports/${deepReportVersionId}`);
     }
   };
 
@@ -174,7 +174,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
       className={cn(
         'flex flex-col relative overflow-hidden',
         isPortfolio && 'border-primary/40 bg-gradient-to-br from-primary/5 via-card to-card',
-        deepReportRunId && 'border-amber-500/40',
+        deepReportVersionId && 'border-amber-500/40',
       )}
     >
       <CardHeader className="pb-3">
@@ -220,7 +220,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
                   {localizedRating(analysis.rating, t)}
                 </Badge>
               )}
-              {deepReportRunId && (
+              {deepReportVersionId && (
                 <button
                   onClick={handleDeepReportClick}
                   className="inline-flex"
@@ -238,6 +238,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
             </div>
           </div>
         )}
+        <ResearchSourceActions source={{ type: 'daily', id: analysis.id }} versionId={analysis.researchVersionId} />
       </CardHeader>
 
       <Separator />
@@ -419,7 +420,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
       )}
 
       {/* Deep report footer link */}
-      {deepReportRunId && (
+      {deepReportVersionId && (
         <>
           <Separator />
           <div className="px-5 py-3">

@@ -34,6 +34,7 @@ import {
   paperOrders,
 } from '../../database/schema';
 import { PaperTradingService } from '../paper-trading/paper-trading.service';
+import { requireActivePaperAccount } from '../paper-trading/simulation-account';
 import { QuoteService } from '../quote/quote.service';
 import { ImportService } from '../import/import.service';
 import type {
@@ -212,12 +213,13 @@ export class McpService {
         inputSchema: {
           type: 'object',
           properties: {
+            accountId: { type: 'string', description: '当前 get_portfolio 返回的 accountId；切换实验后需重新读取。Use the accountId from the latest get_portfolio; refresh after switching experiments.' },
             ticker: { type: 'string', description: '股票代码，如 "NVDA" 或 "0700"' },
             side: { type: 'string', enum: ['buy', 'sell'], description: '方向' },
             quantity: { type: 'number', description: '股数（正整数）' },
             reason: { type: 'string', description: '下单理由（会展示给用户）' },
           },
-          required: ['ticker', 'side', 'quantity'],
+          required: ['accountId', 'ticker', 'side', 'quantity'],
         },
       },
       {
@@ -286,6 +288,7 @@ export class McpService {
   private async toolGetPortfolio(ctx: McpSessionContext) {
     const overview = await this.paperTrading.getOverview(ctx.userId);
     return {
+      accountId: overview.account.id,
       cash: overview.account.cashBalance,
       equity: overview.equity,
       positionsValue: overview.positionsValue,
@@ -357,22 +360,16 @@ export class McpService {
     }
     const ticker = String(args.ticker ?? '').trim();
     const side = String(args.side ?? '').trim();
-    const quantity = Math.floor(Number(args.quantity));
+    const quantity = Number(args.quantity);
+    const expectedAccountId = typeof args.accountId === 'string' ? args.accountId : '';
+    if (!expectedAccountId) throw new BadRequestException('accountId is required; call get_portfolio before placing a paper order');
+    const account = await requireActivePaperAccount(this.db, ctx.userId);
+    if (account.id !== expectedAccountId) throw new BadRequestException('Paper account changed; call get_portfolio and reassess the candidate');
     if (!ticker) throw new BadRequestException('ticker cannot be empty');
     if (side !== 'buy' && side !== 'sell') throw new BadRequestException('side must be buy or sell');
-    if (!Number.isFinite(quantity) || quantity <= 0) throw new BadRequestException('quantity must be a positive integer');
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new BadRequestException('quantity must be a positive integer');
 
-    // Check the session's daily spending limit for today.
-    const todaySpend = await this.todaySessionSpend(ctx.sessionId);
-    const notionalEstimate = quantity * 100; // Conservative lower bound; real check in placeOrder.
-    if (side === 'buy' && todaySpend + notionalEstimate > ctx.dailyLimitUsd * 10) {
-      // The real notional check happens after we know the price; here we do
-      // an aggressive early sanity check against 10x the limit.
-      throw new ForbiddenException(
-        `今日该代理已使用的额度加上这笔预估已远超日限额 ${ctx.dailyLimitUsd} USD`,
-      );
-    }
-
+    // The paper transaction enforces current session authorization and its exact USD budget.
     const order = await this.paperTrading.placeOrder(
       ctx.userId,
       {
@@ -384,6 +381,7 @@ export class McpService {
       },
       'agent',
       { sessionId: ctx.sessionId, agentName: ctx.name, approvalMode: ctx.approvalMode },
+      false, true, undefined, undefined, undefined, expectedAccountId,
     );
 
     // The placeOrder method returns the raw DB row; normalize for MCP.
@@ -405,11 +403,12 @@ export class McpService {
   }
 
   private async toolListOrders(ctx: McpSessionContext, args: Record<string, unknown>) {
+    const account = await requireActivePaperAccount(this.db, ctx.userId);
     const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 50);
     const rows = await this.db
       .select()
       .from(paperOrders)
-      .where(eq(paperOrders.owner, ctx.userId))
+      .where(and(eq(paperOrders.owner, ctx.userId), eq(paperOrders.accountId, account.id)))
       .orderBy(desc(paperOrders.createdAt))
       .limit(limit);
     return rows.map((o) => ({
@@ -447,21 +446,6 @@ export class McpService {
   // ------------------------------------------------------------------
 
   /** Sum today's filled buy-order notional for a session (USD). */
-  private async todaySessionSpend(sessionId: string): Promise<number> {
-    const dayStart = new Date();
-    dayStart.setUTCHours(0, 0, 0, 0);
-    const rows = await this.db
-      .select()
-      .from(paperOrders)
-      .where(and(eq(paperOrders.sessionId, sessionId), eq(paperOrders.status, 'filled')));
-    return rows
-      .filter((o) => o.createdAt >= dayStart && o.side === 'buy')
-      .reduce((sum, o) => {
-        const notional = Number(o.quantity) * Number(o.filledPrice ?? 0);
-        return sum + notional;
-      }, 0);
-  }
-
   private mapSession(
     row: typeof agentSessions.$inferSelect,
     token?: string,

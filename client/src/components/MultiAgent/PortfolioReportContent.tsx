@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next';
 import type { PortfolioReport, PortfolioReportSnapshot } from '@shared/portfolio-report.interface';
 import { holdingDataGaps, portfolioEvidenceFact, portfolioReportSections } from '@/utils/portfolio-report';
+import PortfolioDailyFactsPanel from './PortfolioDailyFactsPanel';
 
 interface Props {
   report: PortfolioReport;
@@ -10,6 +11,7 @@ interface Props {
 
 export default function PortfolioReportContent({ report, snapshot, t }: Props) {
   return <div className="space-y-6">
+    <PortfolioDailyFactsPanel facts={snapshot.dailyFacts} />
     <section aria-labelledby="portfolio-summary" className="rounded-xl border border-border bg-card p-5">
       <h2 id="portfolio-summary" className="font-serif text-xl font-semibold">{t('analysisFlow.portfolio.summary')}</h2>
       <p className="mt-3 whitespace-pre-wrap text-sm leading-7">{report.summary}</p>

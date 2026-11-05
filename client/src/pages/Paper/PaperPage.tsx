@@ -39,6 +39,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
+import { SimulationExperimentsPanel } from './SimulationExperimentsPanel';
+import { StrategyWorkbench } from './StrategyWorkbench';
 import { useChartTheme } from '@/hooks/use-chart-theme';
 
 import {
@@ -99,7 +101,7 @@ import {
 const usd = (v: string | null | undefined) =>
   v == null
     ? '—'
-    : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    : !Number.isFinite(Number(v)) ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Signed percent formatter. */
 const pct = (v: string | null | undefined) =>
@@ -133,7 +135,8 @@ const eventLabel: Record<string, string> = {
 };
 
 function PaperPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const en = i18n.language.startsWith('en');
   const [params] = useSearchParams();
   const linkedOrderId = params.get('orderId');
   const scrolledOrderId = useRef<string | null>(null);
@@ -183,7 +186,7 @@ function PaperPage() {
   const resetMutation = useMutation({
     mutationFn: (initialCash?: number) => resetPaperAccount(initialCash),
     onSuccess: () => {
-      toast.success(t('ui.paper.confirmResetTitle'));
+      toast.success(en ? 'New cash experiment created; prior history retained' : '已建立新现金实验，原历史保留');
       setResetOpen(false);
       invalidate();
     },
@@ -202,7 +205,7 @@ function PaperPage() {
             {t('paper.title')}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {t('paper.subtitle')}
+            {en ? 'Monitor and simulate trades under published strategies and risk limits.' : '按已发布策略与风控条件监控和模拟交易。'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -220,6 +223,10 @@ function PaperPage() {
         </div>
       </div>
 
+      <SimulationExperimentsPanel accountId={overview?.account.id} autoPreview={params.get('seedReal') === '1'} />
+      <StrategyWorkbench accountId={overview?.account.id} />
+
+      {overview?.valuationGaps?.length ? <p className="rounded border border-amber-500/40 p-3 text-sm text-amber-700 dark:text-amber-400">{en ? 'Valuation incomplete: unavailable prices or FX. Returns are unknown and risk-increasing orders are blocked.' : '估值不完整：存在缺失行情或汇率。收益显示未知，新增风险订单会被拦截。'} {overview.valuationGaps.join(' · ')}</p> : null}
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Card><CardContent className="min-w-0 p-3 sm:p-4">
@@ -284,7 +291,7 @@ function PaperPage() {
               <Settings2 size={14} className="mr-1" /> {t('paper.riskParams')}
             </Button>
             <Button variant="outline" size="sm" onClick={() => setResetOpen(true)}>
-              <RotateCcw size={14} className="mr-1" /> {t('paper.reset')}
+              <RotateCcw size={14} className="mr-1" /> {en ? 'New cash experiment' : '新建现金实验'}
             </Button>
           </div>
         </CardContent>
@@ -491,20 +498,20 @@ function PaperPage() {
       )}
 
       {/* Dialogs */}
-      <ManualOrderDialog open={orderOpen} onOpenChange={setOrderOpen} onDone={invalidate} />
+      <ManualOrderDialog accountId={overview?.account.id} open={orderOpen} onOpenChange={setOrderOpen} onDone={invalidate} />
       <GuardrailsDialog open={guardrailsOpen} onOpenChange={setGuardrailsOpen} overview={overview} onDone={invalidate} />
       <Dialog open={resetOpen} onOpenChange={setResetOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t('ui.paper.confirmResetTitle')}</DialogTitle>
+            <DialogTitle>{en ? 'Create a new cash experiment' : '创建新的现金实验'}</DialogTitle>
             <DialogDescription>
-              {t('ui.paper.confirmResetDescription')}
+              {en ? 'Creates a separate account with $1,000,000. All prior ledgers and positions remain available in the experiment selector. Automation stops.' : '建立独立的100万美元现金账户。原账本及持仓全部保留，可在实验选择器中重新打开。自动化将停止。'}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setResetOpen(false)}>{t('common.cancel')}</Button>
             <Button variant="destructive" onClick={() => resetMutation.mutate(undefined)} disabled={resetMutation.isPending}>
-              {resetMutation.isPending ? t('ui.paper.resetting') : t('ui.paper.confirmReset')}
+              {resetMutation.isPending ? (en ? 'Creating…' : '创建中…') : (en ? 'Create experiment' : '创建实验')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -600,7 +607,7 @@ function summarizeEvent(type: string, detail: Record<string, unknown> | null, t:
 }
 
 /** Manual market-order dialog. */
-function ManualOrderDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void }) {
+function ManualOrderDialog({ accountId, open, onOpenChange, onDone }: { accountId?: string; open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void }) {
   const { t } = useTranslation();
   const [ticker, setTicker] = useState('');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -608,7 +615,8 @@ function ManualOrderDialog({ open, onOpenChange, onDone }: { open: boolean; onOp
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async () => {
-    const dto: CreatePaperOrderDto = {
+    const dto: CreatePaperOrderDto & { accountId?: string } = {
+      accountId,
       ticker: ticker.trim(),
       side,
       quantity: Number(quantity),

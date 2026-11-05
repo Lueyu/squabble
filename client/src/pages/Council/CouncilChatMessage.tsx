@@ -9,6 +9,9 @@ import CouncilResponseBody from './CouncilResponseBody';
 import CouncilMessageActions from './CouncilMessageActions';
 import { councilPersona } from './council-persona';
 import CouncilMemoryInventory from './CouncilMemoryInventory';
+import { Button } from '@/components/ui/button';
+import { Link } from 'react-router-dom';
+import { threadCopy } from './thread-copy';
 
 function safeSourceUrl(value: string | null): string | null {
   if (!value) return null;
@@ -16,9 +19,10 @@ function safeSourceUrl(value: string | null): string | null {
   catch { return null; }
 }
 
-export default function CouncilChatMessage({ message, task, session, onQuestion, onReply }: {
+export default function CouncilChatMessage({ message, task, session, onQuestion, onReply, onFork }: {
   message?: CouncilMessage; task?: ResearchTaskView; session: CouncilSession; onQuestion: (question: string) => void;
   onReply?: (message: CouncilMessage) => void;
+  onFork?: (message: CouncilMessage) => void;
 }) {
   const { t, i18n } = useTranslation();
   if ((!message && !task) || message?.acquisition || message?.phase === 'progress') return null;
@@ -63,6 +67,9 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
             <span className="mt-1 line-clamp-2 block break-words">{councilMessageDisplayContent(replyTo)}</span></span>
         </button>}
         {message && <CouncilResponseBody message={message} />}
+        {message?.references?.map((ref, index) => <Link key={`${ref.versionId}:${index}`} className="mt-2 block text-xs text-primary underline"
+          to={`/analysis/reports/${encodeURIComponent(ref.versionId)}${ref.sectionId ? `#${encodeURIComponent(ref.sectionId)}` : ''}`}>
+          {session.resolvedReferences?.find(item => item.versionId === ref.versionId)?.title ?? threadCopy(i18n.language).pinned}{ref.sectionId ? ` · ${ref.sectionId}` : ''}</Link>)}
         {!isUser && <CouncilMemoryInventory inventory={inventory} applicable />}
         {!isUser && cited.length > 0 && <details className="mt-3 text-xs">
           <summary className="cursor-pointer text-muted-foreground"><span className="inline-flex items-center gap-1"><FileText className="size-3" />
@@ -80,6 +87,7 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
         </details>}
       </div>
       {message && !isUser && <CouncilMessageActions message={message} onReply={onReply} />}
+      {message && onFork && <Button type="button" variant="ghost" size="sm" onClick={() => onFork(message)}>{threadCopy(i18n.language).fork}</Button>}
       {!isUser && Boolean(message?.questions?.length) && <div className="mt-2 flex max-w-full flex-col gap-1.5">
         {message?.questions?.map((question: string, index: number) => <button type="button" key={index} onClick={() => onQuestion(question)}
           className="council-followup flex items-start gap-1.5 rounded-lg border px-2.5 py-2 text-left text-xs leading-5 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">

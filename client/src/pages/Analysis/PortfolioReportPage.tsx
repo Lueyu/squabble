@@ -6,6 +6,7 @@ import { getPortfolioReportRun } from '@/api/portfolio-report';
 import PortfolioReportContent from '@/components/MultiAgent/PortfolioReportContent';
 import { isPortfolioReportActive } from '@/utils/portfolio-report';
 import { Button } from '@/components/ui/button';
+import ResearchSourceActions from './ResearchSourceActions';
 
 export default function PortfolioReportPage() {
   const { runId = '' } = useParams<{ runId: string }>();
@@ -29,6 +30,7 @@ export default function PortfolioReportPage() {
       {t('analysisFlow.portfolio.loadFailed')} <Button variant="outline" size="sm" onClick={() => void run.refetch()}>{t('common.retry')}</Button>
     </div>}
     {run.data && <>
+      {run.data.status === 'completed' && run.data.report && <ResearchSourceActions source={{ type: 'portfolio', id: run.data.id }} />}
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 p-4 text-sm">
         <strong>{t('analysisFlow.portfolio.status')}:</strong>
         <span>{t(`analysisFlow.portfolio.${run.data.status}`)}</span>

@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from 'react-i18next';
 import DeepReportView from '@/components/MultiAgent/DeepReportView';
+import ResearchSourceActions from './ResearchSourceActions';
 
 /**
  * Deep report reader page.
@@ -128,6 +129,7 @@ function DeepReportPage() {
       {/* Report content */}
       {!loading && !error && report && (
         <div className="px-2 sm:px-4 pb-16">
+          <ResearchSourceActions source={{ type: 'deep', id: report.id }} />
           <DeepReportView
             report={report}
             runId={runId}

@@ -1,3 +1,6 @@
+import { ResearchDocumentsService } from '../research-documents/research-documents.service';
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { capturePortfolioDailyFacts } from '../research-documents/portfolio-daily-facts';
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -189,15 +192,21 @@ export class PortfolioAnalysisService implements OnApplicationBootstrap {
     try { route = parseModelRoute(requestedRoute ?? await this.settings.getDefaultModelRoute(userId)); }
     catch { throw new BadRequestException('Invalid model route'); }
     await this.llm.validateRoute(userId, route);
-    const [holdingRows, cashRows] = await this.db.transaction(async tx => {
+    const capturedAt = new Date();
+    const [holdingRows, cashRows, dailyFacts] = await this.db.transaction(async tx => {
       const ownedHoldings = await tx.select().from(holdings).where(eq(holdings.owner, userId));
       const ownedCash = await tx.select().from(cashAccounts).where(eq(cashAccounts.owner, userId));
-      return [ownedHoldings, ownedCash] as const;
+      const dailyFacts = await capturePortfolioDailyFacts(tx, userId, capturedAt, language);
+      return [ownedHoldings, ownedCash, dailyFacts] as const;
     }, { isolationLevel: 'repeatable read' }) as readonly [
       Array<typeof holdings.$inferSelect>, Array<typeof cashAccounts.$inferSelect>,
+      NonNullable<PortfolioReportSnapshot['dailyFacts']>,
     ];
     const snapshot = await buildPortfolioReportSnapshot(holdingRows, cashRows,
       currency => this.fx.convert(1, currency, 'USD'), language);
+    snapshot.capturedAt = capturedAt.toISOString();
+    snapshot.dailyFacts = dailyFacts;
+    snapshot.gaps = [...new Set([...snapshot.gaps, ...dailyFacts.gaps])];
     let row: typeof portfolioAnalysisRuns.$inferSelect;
     try {
       [row] = await this.db.insert(portfolioAnalysisRuns).values({ owner: userId, status: 'pending', route,
@@ -267,10 +276,15 @@ export class PortfolioAnalysisService implements OnApplicationBootstrap {
         tokensUsed = result.tokensKnown === false ? null : result.tokens;
         usageKnown = result.tokensKnown !== false;
       }
-      const [completed] = await this.db.update(portfolioAnalysisRuns).set({ status: 'completed', report, tokensUsed, usageKnown,
-        progress: progress('completed', language === 'en' ? 'Report ready' : '报告已完成', 100),
-        updatedAt: new Date(), completedAt: new Date() }).where(and(eq(portfolioAnalysisRuns.owner, userId),
-        eq(portfolioAnalysisRuns.id, id), eq(portfolioAnalysisRuns.status, 'running'))).returning();
+      const completed = await this.db.transaction(async tx => {
+        await lockMemoryOwner(tx, userId);
+        const [completed] = await tx.update(portfolioAnalysisRuns).set({ status: 'completed', report, tokensUsed, usageKnown,
+          progress: progress('completed', language === 'en' ? 'Report ready' : '报告已完成', 100),
+          updatedAt: new Date(), completedAt: new Date() }).where(and(eq(portfolioAnalysisRuns.owner, userId),
+          eq(portfolioAnalysisRuns.id, id), eq(portfolioAnalysisRuns.status, 'running'))).returning();
+        if (completed) await new ResearchDocumentsService(this.db).importSourceInTransaction(tx, userId, { type: 'portfolio', id }, { availableAt: completed.completedAt?.toISOString() ?? null });
+        return completed;
+      });
       if (!completed) await this.finishCancellation(userId, id);
     } catch (error) {
       const message = safeAnalysisError(error, language);

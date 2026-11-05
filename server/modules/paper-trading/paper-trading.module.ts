@@ -24,12 +24,20 @@ import { StrategyModelService } from './strategy-model.service';
 import { StrategyService } from './strategy.service';
 import { StrategyNotificationsService } from './strategy-notifications.service';
 import { StrategyScheduler } from './strategy.scheduler';
+import { ResearchDocumentsModule } from '../research-documents/research-documents.module';
+import { StrategyMandateService } from './strategy-mandate.service';
+import { StrategyMandateController } from './strategy-mandate.controller';
+import { SimulationExperimentsService } from './simulation-experiments.service';
+import { SimulationExperimentsController } from './simulation-experiments.controller';
+import { StrategyMonitorService } from './strategy-monitor.service';
+import { StrategyDailyAdjustments } from './strategy-daily-adjustments';
 
 @Module({
-  imports: [HttpModule, QuoteModule, FxModule, NotificationModule, MultiAgentModule, CouncilModule, LocalAgentsModule],
-  controllers: [PaperTradingController, AgentBuilderController],
+  imports: [HttpModule, QuoteModule, FxModule, NotificationModule, MultiAgentModule, CouncilModule, LocalAgentsModule, ResearchDocumentsModule],
+  controllers: [PaperTradingController, AgentBuilderController, StrategyMandateController, SimulationExperimentsController],
   providers: [PaperTradingService, AgentBuilderService, BuilderCadenceService, BotScheduler,
-    TradingMarketService, StrategyStore, StrategyModelService, StrategyService, StrategyNotificationsService, StrategyScheduler],
+    TradingMarketService, StrategyStore, StrategyModelService, StrategyService, StrategyNotificationsService, StrategyScheduler,
+    StrategyMandateService, SimulationExperimentsService, StrategyMonitorService, StrategyDailyAdjustments],
   exports: [PaperTradingService],
 })
 export class PaperTradingModule {}

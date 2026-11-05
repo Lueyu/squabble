@@ -112,13 +112,13 @@ export class CouncilWorkflowStore {
         const response = result.delivery.response;
         await tx.insert(councilMessages).values({ owner: row.owner, sessionId: row.id, role: member.role, memberName: member.name,
           content: result.delivery.conclusion, revision: row.revision, tokensUsed: result.tokens ?? 0,
-          metadata: { memory, cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id,
+          metadata: { memory, referenceSnapshot: row.references, cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id,
             phase: task.key === 'summary' ? 'summary' : task.key === 'challenge' ? 'challenge' : 'opening', response,
             evidenceIds: result.delivery.evidenceIds, externalAgent: member.executionMode === 'local', externalUsageUnknown: result.externalUsageUnknown } });
       }
       if (result.review) await tx.insert(councilMessages).values({ owner: row.owner, sessionId: row.id, role: member.role,
         memberName: member.name, content: result.review.feedback, revision: row.revision, tokensUsed: result.tokens ?? 0,
-        metadata: { memory, cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id, phase: 'response',
+        metadata: { memory, referenceSnapshot: row.references, cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id, phase: 'response',
           response: { thesis: `${row.language === 'en' ? result.review.accepted ? 'Accepted. ' : 'Revision required. '
             : result.review.accepted ? '验收通过。' : '需要修订。'}${result.review.feedback}`, evidencePoints: [], risks: [], nextChecks: [] },
           evidenceIds: current.delivery?.evidenceIds ?? [], externalAgent: member.executionMode === 'local', externalUsageUnknown: result.externalUsageUnknown } });

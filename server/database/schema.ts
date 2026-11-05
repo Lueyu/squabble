@@ -694,6 +694,11 @@ export const watchlistTable = watchlist;
 export const paperAccounts = pgTable("paper_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   owner: userProfile("owner").notNull(),
+  name: text("name").default("Paper account").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  ledgerMode: text("ledger_mode").default("legacy_usd").notNull(),
+  executionModel: jsonb("execution_model").$type<import('../../shared/simulation-experiment.interface').SimulationSeed['model']>()
+    .default(sql`'{"version":"paper-v1","feeBps":0,"slippageBps":0,"corporateActions":"unsupported"}'::jsonb`).notNull(),
   baseCurrency: varchar("base_currency", { length: 10 }).default("USD").notNull(),
   initialCash: numeric("initial_cash").default("1000000").notNull(),
   cashBalance: numeric("cash_balance").default("1000000").notNull(),
@@ -717,6 +722,7 @@ export const paperPositions = pgTable("paper_positions", {
   company: varchar("company", { length: 255 }),
   shares: numeric("shares").default("0").notNull(),
   avgCost: numeric("avg_cost").default("0").notNull(),
+  restrictedShares: numeric("restricted_shares").default("0").notNull(),
   openedAt: customTimestamptz("opened_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: customTimestamptz("updated_at", { precision: 3 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -784,6 +790,9 @@ export const paperSnapshots = pgTable("paper_snapshots", {
   accountId: uuid("account_id").notNull(),
   snapshotDate: date("snapshot_date").notNull(),
   equity: numeric("equity").notNull(),
+  benchmarkEquity: numeric("benchmark_equity"),
+  indexBenchmarkEquity: numeric("index_benchmark_equity"),
+  valuedAt: customTimestamptz("valued_at", { precision: 3 }),
   cash: numeric("cash").notNull(),
   positionsValue: numeric("positions_value").default("0").notNull(),
   dailyPl: numeric("daily_pl").default("0").notNull(),

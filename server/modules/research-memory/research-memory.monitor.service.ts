@@ -32,7 +32,7 @@ export async function createThesisMonitors(tx: MemoryFenceTransaction, owner: st
 export async function observeThesisMonitors(tx: MemoryFenceTransaction, owner: string, inventory: StrategyMemoryInventory,
   snapshot: TradingMarketSnapshot, profileId: string, now = new Date()): Promise<boolean> {
   const [profile] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.id, profileId)));
-  const [account] = await tx.select().from(paperAccounts).where(eq(paperAccounts.owner, owner));
+  const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true)));
   const config = profile?.config as BuilderConfig | undefined;
   if (profile?.status !== 'active' || !config?.automation?.enabled || !account?.botEnabled) return false;
   let breached = false;

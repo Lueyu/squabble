@@ -4,7 +4,7 @@ const path = require('node:path');
 const ts = require('typescript');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../../..');
-const names = ['transactions', 'holdings', 'closed', 'cashAccounts', 'snapshots', 'fxRates', 'paperAccounts', 'paperOrders', 'paperPositions', 'paperTrades', 'paperEvents'];
+const names = ['transactions', 'holdings', 'closed', 'cashAccounts', 'snapshots', 'fxRates', 'paperAccounts', 'paperOrders', 'paperPositions', 'paperTrades', 'paperEvents', 'builderProfiles', 'agentSessions', 'paperSnapshots', 'strategyReservations'];
 const tables = Object.fromEntries(names.map(name => [name, new Proxy({ table: name }, {
   get: (t, key) => key === 'table' ? t.table : { table: t.table, key },
 })]));
@@ -12,10 +12,12 @@ const col = (value, row) => value?.key ? row[value.key] : value;
 const orm = {
   eq: (a, b) => row => col(a, row) === col(b, row),
   and: (...items) => row => items.every(p => p(row)),
+  or: (...items) => row => items.some(p => p(row)),
   inArray: (a, values) => row => values.includes(col(a, row)),
   asc: column => ({ column, dir: 1 }),
   desc: column => ({ column, dir: -1 }),
   gte: (a, b) => row => col(a, row) >= col(b, row),
+  gt: (a, b) => row => col(a, row) > col(b, row),
   sql: (strings, ...values) => {
     const shape = strings.join('?');
     if (shape.includes(' + ')) return row => String(Number(col(values[0], row)) + values[1]);

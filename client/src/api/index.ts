@@ -1023,3 +1023,6 @@ export async function rejectPaperOrder(orderId: string): Promise<PaperOrder> {
   const response = await http({ url: `/api/paper/orders/${orderId}/reject`, method: 'POST' });
   return response.data;
 }
+export * as researchDocuments from './research-documents';
+export * as strategyMandates from './strategy-mandates';
+export * as simulationExperiments from './simulation-experiments';
