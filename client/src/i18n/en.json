@@ -229,7 +229,7 @@
   },
   "import": {
     "screenshotFlow": {
-      "intro": "Select up to five broker holdings screenshots. They are recognized one at a time, then combined for review and one import confirmation.",
+      "intro": "Select up to 20 broker holdings screenshots. They are recognized one at a time, then combined for review and one import confirmation.",
       "executor": "Recognition method",
       "local": "Connected local agent (preferred)",
       "vision": "Vision model API",
@@ -248,8 +248,10 @@
       "localPrivacy": "Extract sends the screenshot to the selected agent, which may send it to its model provider using the signed-in account. Processing may occur off-device and consume account usage. This app handles screenshots temporarily and does not automatically retry extraction.",
       "apiPrivacy": "Extract sends the screenshot through the app backend to the configured vision API and may incur charges. The API key is used only in this page and the request. The app does not persist the screenshot or key, and failures are not retried automatically.",
       "reading": "Reading screenshot",
-      "fileHint": "Select 1–5 PNG, JPEG or WebP screenshots, up to 8 MiB each and 24 MiB total. Each image starts a separate recognition task and may consume provider usage.",
-      "fileStatus": { "queued": "Waiting", "running": "Recognizing", "success": "Recognized", "failed": "Failed", "cancelled": "Cancelled or skipped" },
+      "fileHint": "Select 1–20 PNG, JPEG or WebP screenshots, up to 8 MiB each and 160 MiB total. Each image starts a separate recognition task and may consume provider usage.",
+      "fileStatus": { "queued": "Waiting", "reading": "Reading image", "running": "Recognizing", "success": "Recognized", "failed": "Failed", "cancelled": "Cancelled or skipped" },
+      "removeScreenshot": "Remove screenshot {{name}}",
+      "cancelBeforeRemove": "Cancel the active screenshot before removing it.",
       "batchPaused": "Recognition paused after an error. Successful rows remain below. Check the original task if its status is uncertain, then explicitly resume or skip remaining files.",
       "routeUnavailable": "Recognition paused because the selected agent or API is unavailable. Check the configuration, then explicitly resume or skip remaining files.",
       "resumeRemaining": "Resume remaining screenshots",
@@ -286,8 +288,8 @@
       "invalidRows": "Enter a ticker and positive shares. Cost must be non-negative or blank.",
       "reviewAcknowledgement": "I have reviewed and corrected these holdings and confirm they are ready to import.",
       "errors": {
-        "FILE_COUNT": "Select between 1 and 5 screenshots at once.",
-        "TOTAL_SIZE": "The selected screenshots exceed 24 MiB in total.",
+        "FILE_COUNT": "Select between 1 and 20 screenshots at once. Your previous selection is unchanged.",
+        "TOTAL_SIZE": "The selected screenshots exceed 160 MiB in total. Your previous selection is unchanged.",
         "INVALID_IMAGE": "Choose a valid PNG, JPEG or WebP image larger than zero and no more than 8 MiB.",
         "INVALID_REQUEST": "The request is invalid. Select the screenshot again and check the configuration.",
         "INVALID_API_CONFIGURATION": "The vision API configuration is invalid. Check the endpoint, model and key.",

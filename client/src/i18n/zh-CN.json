@@ -211,7 +211,7 @@
   },
   "import": {
     "screenshotFlow": {
-      "intro": "一次选择最多五张券商持仓截图，系统逐张识别并合并结果，核对后统一确认导入。",
+      "intro": "一次选择最多 20 张券商持仓截图，系统逐张识别并合并结果，核对后统一确认导入。",
       "executor": "识别方式",
       "local": "已连接的本地代理（优先）",
       "vision": "视觉模型 API",
@@ -230,8 +230,10 @@
       "localPrivacy": "点击识别会将截图交给所选代理，并可能通过该代理已登录的服务商账号发送给模型服务商；不代表图片仅在本机处理，可能消耗账号额度。应用仅临时处理截图，不自动重试识别。",
       "apiPrivacy": "点击识别会通过应用后端将截图发送到所填视觉 API，可能产生费用。API Key 仅在当前页面和本次请求中使用，应用不持久化截图或 Key。失败不会自动重试。",
       "reading": "正在读取截图",
-      "fileHint": "一次选择 1–5 张 PNG、JPEG 或 WebP 截图；每张不超过 8 MiB，总计不超过 24 MiB。每张图片都会单独发起识别任务，可能消耗服务商额度。",
-      "fileStatus": { "queued": "等待中", "running": "识别中", "success": "已识别", "failed": "失败", "cancelled": "已取消或跳过" },
+      "fileHint": "一次选择 1–20 张 PNG、JPEG 或 WebP 截图；每张不超过 8 MiB，总计不超过 160 MiB。每张图片都会单独发起识别任务，可能消耗服务商额度。",
+      "fileStatus": { "queued": "等待中", "reading": "读取图片中", "running": "识别中", "success": "已识别", "failed": "失败", "cancelled": "已取消或跳过" },
+      "removeScreenshot": "删除截图 {{name}}",
+      "cancelBeforeRemove": "请先取消当前截图的识别，再删除它。",
       "batchPaused": "出错后已暂停识别，成功的持仓仍保留在下方。如任务状态不确定，请先查询原任务，再明确选择继续或跳过剩余截图。",
       "routeUnavailable": "所选代理或接口暂不可用，已暂停识别。检查配置后，可明确选择继续或跳过剩余截图。",
       "resumeRemaining": "继续识别剩余截图",
@@ -268,8 +270,8 @@
       "invalidRows": "请填写证券代码和大于零的股数；成本须为非负数或留空。",
       "reviewAcknowledgement": "我已逐项核对并修改识别结果，确认将这些持仓导入。",
       "errors": {
-        "FILE_COUNT": "请一次选择 1–5 张截图。",
-        "TOTAL_SIZE": "所选截图总大小超过 24 MiB。",
+        "FILE_COUNT": "请一次选择 1–20 张截图，原有选择未变。",
+        "TOTAL_SIZE": "所选截图总大小超过 160 MiB，原有选择未变。",
         "INVALID_IMAGE": "请选择有效的 PNG、JPEG 或 WebP 图片，文件须大于零且不超过 8 MiB。",
         "INVALID_REQUEST": "请求无效，请重新选择截图并检查配置。",
         "INVALID_API_CONFIGURATION": "视觉 API 配置无效，请检查地址、模型名称和 Key。",

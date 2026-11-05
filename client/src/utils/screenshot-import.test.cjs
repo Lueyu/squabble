@@ -12,7 +12,7 @@ function load(file, imports = {}) {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText;
   const exports = {};
-  vm.runInNewContext(compiled, { exports, require: name => imports[name], Number, Date, Set });
+  vm.runInNewContext(compiled, { exports, require: name => imports[name], Number, Date, Set, AbortController });
   return exports;
 }
 function helpers() {
@@ -148,9 +148,60 @@ test('batch selection enforces count, total size and each image format without p
   const file = (name, size = 10, type = 'image/png') => ({ name, size, type });
   assert.equal(screenshotSelectionError([file('a'), file('b')]), null);
   assert.equal(screenshotSelectionError([]), 'FILE_COUNT');
-  assert.equal(screenshotSelectionError(Array.from({ length: 6 }, (_, i) => file(String(i)))), 'FILE_COUNT');
-  assert.equal(screenshotSelectionError([file('a', 8 * 1024 * 1024), file('b', 8 * 1024 * 1024), file('c', 8 * 1024 * 1024), file('d', 1)]), 'TOTAL_SIZE');
+  assert.equal(screenshotSelectionError(Array.from({ length: 20 }, (_, i) => file(String(i), 8 * 1024 * 1024))), null);
+  assert.equal(screenshotSelectionError(Array.from({ length: 21 }, (_, i) => file(String(i)))), 'FILE_COUNT');
   assert.equal(screenshotSelectionError([file('a', 10, 'image/gif')]), 'INVALID_IMAGE');
+});
+
+test('removing queued and processed screenshots uses stable IDs and removes only their review rows', async () => {
+  const { ScreenshotBatchController } = helpers();
+  const ids = ['first', 'second', 'third'];
+  const batch = new ScreenshotBatchController({ create: async value => job({ id: value.requestId, status: 'completed', result: {
+    rows: [{ ticker: value.requestId, shares: 1 }],
+  } }), get: async () => job(), cancel: async () => job({ status: 'cancelled' }) });
+  batch.attach(() => {});
+  batch.replace(ids.map(id => ({ id, filename: 'same.png', image: request().image })));
+  assert.equal(batch.remove('second'), true);
+  await batch.start((item) => ({ ...request(), requestId: item.id, image: item.image }), () => true);
+  await new Promise(setImmediate);
+  assert.equal(batch.snapshot.rows.length, 2);
+  assert.equal(batch.remove('first'), true);
+  assert.equal(batch.snapshot.rows.length, 1);
+  assert.equal(batch.snapshot.rows[0].sourceId, 'third');
+  assert.equal(batch.snapshot.files.length, 1);
+});
+
+test('cancel during async image reading aborts and never sends a paid POST', async () => {
+  const { ScreenshotBatchController } = helpers();
+  const startedRead = deferred(); const pendingRead = deferred(); let posts = 0; let aborted = false;
+  const batch = new ScreenshotBatchController({ create: async () => { posts++; return job(); },
+    get: async () => job(), cancel: async () => job({ status: 'cancelled' }) });
+  batch.attach(() => {}); batch.replace([{ id: 'one', filename: 'one.png', file: { type: 'image/png', size: 10 } }]);
+  const started = batch.start(async (_item, _index, signal) => { signal.addEventListener('abort', () => { aborted = true; });
+    startedRead.resolve(); return pendingRead.promise; });
+  await startedRead.promise;
+  assert.equal(batch.snapshot.files[0].status, 'reading');
+  assert.equal(batch.remove('one'), false);
+  batch.cancel();
+  pendingRead.resolve(request()); await started;
+  assert.equal(aborted, true);
+  assert.equal(posts, 0);
+});
+
+test('removing a queued screenshot after start skips its job without interrupting the active one', async () => {
+  const { ScreenshotBatchController } = helpers();
+  const first = deferred(); const calls = [];
+  const batch = new ScreenshotBatchController({ create: value => { calls.push(value.requestId); return value.requestId === 'first' ? first.promise
+    : Promise.resolve(job({ id: value.requestId, status: 'completed', result: { rows: [{ ticker: value.requestId, shares: 1 }] } })); },
+  get: async () => job(), cancel: async () => job({ status: 'cancelled' }) });
+  batch.attach(() => {});
+  batch.replace(['first', 'middle', 'last'].map(id => ({ id, filename: `${id}.png`, image: request().image })));
+  const started = batch.start(item => ({ ...request(), requestId: item.id, image: item.image }));
+  await new Promise(setImmediate);
+  assert.equal(batch.remove('middle'), true);
+  first.resolve(job({ id: 'first', status: 'completed', result: { rows: [{ ticker: 'FIRST', shares: 1 }] } }));
+  await started; await new Promise(setImmediate);
+  assert.equal(JSON.stringify(calls), JSON.stringify(['first', 'last']));
 });
 
 test('review rejects normalized duplicate tickers including Hong Kong aliases and more than 200 rows', () => {
@@ -173,6 +224,7 @@ test('batch recognition runs in order, pauses after failure and preserves earlie
   batch.attach(() => {});
   batch.replace(['a.png', 'b.png', 'c.png'].map(filename => ({ filename, image: { mimeType: 'image/png', data: filename } })));
   batch.start((item, index) => ({ ...request(), requestId: `job-${index}`, image: item.image }));
+  await new Promise(setImmediate);
   assert.equal(JSON.stringify(calls), JSON.stringify(['job-0']));
   pending[0].resolve(job({ id: 'job-0', status: 'completed', result: { rows: [{ ticker: 'AAPL', shares: 1 }] } }));
   await pending[0].promise; await new Promise(setImmediate);
@@ -183,6 +235,7 @@ test('batch recognition runs in order, pauses after failure and preserves earlie
   assert.equal(batch.snapshot.rows[0].sourceFile, 'a.png');
   assert.equal(batch.snapshot.files[2].status, 'queued');
   batch.resume();
+  await new Promise(setImmediate);
   assert.equal(JSON.stringify(calls), JSON.stringify(['job-0', 'job-1', 'job-2']));
 });
 
@@ -248,7 +301,7 @@ test('malformed completed result pauses the batch instead of treating it as succ
   assert.equal(calls.length, 1);
 });
 
-function screenshotPage(agents = [agent()], acceptedJob = job(), deferState = false) {
+function screenshotPage(agents = [agent()], acceptedJob = job(), deferState = false, autoRead = true) {
   const file = 'client/src/pages/Import/ScreenshotImport.tsx';
   assert.ok(fs.existsSync(path.join(root, file)), 'Screenshot component exists');
   const states = []; const refs = []; const effects = []; const calls = []; const pendingUpdates = [];
@@ -266,7 +319,7 @@ function screenshotPage(agents = [agent()], acceptedJob = job(), deferState = fa
     'react/jsx-runtime': { jsx, jsxs: jsx },
     'react-i18next': { useTranslation: () => ({ t: key => key }) },
     '@tanstack/react-query': { useQuery: () => ({ data: agents, isPending: false }), useQueryClient: () => ({ invalidateQueries: () => {} }) },
-    '@/api': { createScreenshotJob: async value => { calls.push(['create', value]); return typeof acceptedJob === 'function' ? acceptedJob(value) : acceptedJob; },
+    '@/api': { createScreenshotJob: async value => { calls.push(['create', value]); return typeof acceptedJob === 'function' ? acceptedJob(value, calls.filter(call => call[0] === 'create').length) : acceptedJob; },
       fetchScreenshotJob: async () => job(), cancelScreenshotJob: async () => job({ status: 'cancelled' }),
       commitImport: async value => { calls.push(['commit', value]); return { created: 1, skipped: 0, failed: [] }; } },
     '@/api/local-agents': { fetchLocalAgents: async () => agents },
@@ -279,17 +332,21 @@ function screenshotPage(agents = [agent()], acceptedJob = job(), deferState = fa
   const source = fs.readFileSync(path.join(root, file), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS,
     target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  const exports = {}; const readers = [];
+  const exports = {}; const readers = []; const createdUrls = []; const revokedUrls = [];
   let requestNumber = 0;
   vm.runInNewContext(compiled, { exports, require: name => imports[name], Date,
     crypto: { randomUUID: () => `request-${++requestNumber}` }, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     localStorage: { getItem: () => null, removeItem() {}, setItem() {} },
-    FileReader: class { constructor() { readers.push(this); } readAsDataURL() {} abort() {} },
+    URL: { createObjectURL: () => { const url = `blob:preview-${createdUrls.length + 1}`; createdUrls.push(url); return url; },
+      revokeObjectURL: url => revokedUrls.push(url) },
+    FileReader: class { constructor() { readers.push(this); } readAsDataURL(file) { this.file = file;
+      if (autoRead) queueMicrotask(() => { this.result = `data:${file.type};base64,YWJj`; this.onload?.(); }); } abort() { this.aborted = true; } },
   });
   const render = () => { stateCursor = 0; refCursor = 0; effectCursor = 0; return exports.default(); };
   const flush = () => { for (const effect of effects) if (effect.pending) { effect.pending = false; effect.cleanup?.(); effect.cleanup = effect.fn(); } };
   const flushState = () => { while (pendingUpdates.length) pendingUpdates.shift()(); };
-  return { render, flush, flushState, calls, readers };
+  const unmount = () => { for (const effect of effects) effect.cleanup?.(); };
+  return { render, flush, flushState, unmount, calls, readers, createdUrls, revokedUrls };
 }
 function nodes(tree) { return Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : []; }
 function content(tree) { return Array.isArray(tree) ? tree.map(content).join('') : tree && typeof tree === 'object' ? content(tree.props?.children) : tree == null ? '' : String(tree); }
@@ -301,20 +358,152 @@ test('screenshot UI defaults to local image agent and exposes API fields only af
   assert.ok(nodes(page.render()).some(node => node.props.id === 'screenshot-api-key'));
 });
 
-test('image changes invalidate late FileReader callbacks and never import without explicit confirmation', async () => {
+test('selection uses preview URLs without reading images, replaces URLs, and never imports without confirmation', async () => {
   const page = screenshotPage(); page.render(); page.flush(); let tree = page.render();
   const fileInput = () => nodes(tree).find(node => node.type === 'input' && node.props.type === 'file');
   fileInput().props.onChange({ target: { files: [{ name: 'first.png', type: 'image/png', size: 10 }], value: 'first.png' } });
+  assert.equal(page.readers.length, 0);
   tree = page.render();
   fileInput().props.onChange({ target: { files: [{ name: 'second.webp', type: 'image/webp', size: 10 }], value: 'second.webp' } });
-  page.readers[0].result = 'data:image/png;base64,b2xk'; page.readers[0].onload();
-  assert.equal(nodes(page.render()).filter(node => node.type === 'img').length, 0);
-  page.readers[1].result = 'data:image/webp;base64,bmV3'; page.readers[1].onload(); tree = page.render();
-  assert.equal(nodes(tree).find(node => node.type === 'img').props.src, 'data:image/webp;base64,bmV3');
+  assert.deepEqual(page.revokedUrls, ['blob:preview-1']);
+  assert.equal(page.readers.length, 0);
+  tree = page.render();
+  assert.equal(nodes(tree).find(node => node.type === 'img').props.src, 'blob:preview-2');
   await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
   assert.equal(page.calls.filter(call => call[0] === 'create').length, 1);
   assert.equal(page.calls[0][1].image.mimeType, 'image/webp');
   assert.equal(page.calls.filter(call => call[0] === 'commit').length, 0);
+  page.unmount();
+  assert.deepEqual(page.revokedUrls, ['blob:preview-1', 'blob:preview-2']);
+});
+
+test('invalid 21-file selection keeps the existing screenshots and preview URLs', () => {
+  const page = screenshotPage(); page.render(); page.flush(); let tree = page.render();
+  const input = () => nodes(tree).find(node => node.type === 'input' && node.props.type === 'file');
+  input().props.onChange({ target: { files: [{ name: 'kept.png', type: 'image/png', size: 10 }], value: '' } });
+  tree = page.render();
+  input().props.onChange({ target: { files: Array.from({ length: 21 }, (_, index) => ({ name: `${index}.png`, type: 'image/png', size: 10 })), value: '' } });
+  tree = page.render();
+  assert.equal(page.createdUrls.length, 1);
+  assert.equal(page.revokedUrls.length, 0);
+  assert.ok(content(tree).includes('kept.png'));
+  assert.ok(content(tree).includes('import.screenshotFlow.errors.FILE_COUNT'));
+});
+
+test('FileReader failure pauses the next screenshot without sending a POST', async () => {
+  const page = screenshotPage([agent()], job(), false, false);
+  page.render(); page.flush(); let tree = page.render();
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
+    files: ['bad.png', 'later.png'].map(name => ({ name, type: 'image/png', size: 10 })), value: '',
+  } });
+  tree = page.render();
+  const started = nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  await new Promise(setImmediate);
+  assert.equal(page.readers.length, 1);
+  page.readers[0].onerror(); await started;
+  tree = page.render();
+  assert.equal(page.calls.filter(call => call[0] === 'create').length, 0);
+  assert.ok(content(tree).includes('import.screenshotFlow.fileStatus.failed'));
+  assert.ok(content(tree).includes('import.screenshotFlow.fileStatus.queued'));
+});
+
+test('the file picker blocks replacement during lazy read until the user cancels', async () => {
+  const page = screenshotPage([agent()], job(), false, false);
+  page.render(); page.flush(); let tree = page.render();
+  const input = () => nodes(tree).find(node => node.type === 'input' && node.props.type === 'file');
+  input().props.onChange({ target: { files: [{ name: 'old.png', type: 'image/png', size: 10 }], value: '' } });
+  tree = page.render();
+  const started = nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  await new Promise(setImmediate);
+  assert.equal(page.readers.length, 1);
+  tree = page.render();
+  assert.equal(input().props.disabled, true);
+  input().props.onChange({ target: { files: [{ name: 'new.png', type: 'image/png', size: 10 }], value: '' } });
+  assert.equal(page.readers[0].aborted, undefined);
+  assert.equal(page.createdUrls.length, 1);
+  nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.screenshotFlow.cancel')).props.onClick();
+  assert.equal(page.readers[0].aborted, true);
+  await started;
+  tree = page.render();
+  assert.equal(input().props.disabled, false);
+  input().props.onChange({ target: { files: [{ name: 'new.png', type: 'image/png', size: 10 }], value: '' } });
+  tree = page.render();
+  assert.equal(page.calls.filter(call => call[0] === 'create').length, 0);
+  assert.ok(content(tree).includes('new.png'));
+  assert.ok(!content(tree).includes('old.png'));
+  assert.deepEqual(page.revokedUrls, ['blob:preview-1']);
+});
+
+test('deleting duplicate-named uploads and a recognized screenshot removes only its rows before one commit', async () => {
+  const page = screenshotPage([agent()], (value, count) => job({ id: value.requestId, status: 'completed', result: {
+    rows: [{ ticker: `T${count}`, company: `Original ${count}`, shares: 1 }],
+  } }));
+  page.render(); page.flush(); let tree = page.render();
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
+    files: ['same.png', 'same.png', 'other.png'].map(name => ({ name, type: 'image/png', size: 10 })), value: '',
+  } });
+  tree = page.render();
+  const removeButtons = () => nodes(tree).filter(node => node.type === 'Button' && node.props['aria-label']?.includes('removeScreenshot'));
+  assert.equal(removeButtons().length, 3);
+  removeButtons()[0].props.onClick();
+  tree = page.render();
+  assert.equal(removeButtons().length, 2);
+  assert.deepEqual(page.revokedUrls, ['blob:preview-1']);
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  await new Promise(setImmediate);
+  tree = page.render(); page.flush(); tree = page.render();
+  assert.equal(page.calls.filter(call => call[0] === 'create').length, 2);
+  assert.equal(nodes(tree).filter(node => node.props['aria-label'] === 'import.screenshotFlow.rowTicker').length, 2);
+  nodes(tree).find(node => node.props['aria-label'] === 'import.screenshotFlow.rowCompany').props.onChange({ target: { value: 'Edited' } });
+  tree = page.render();
+  removeButtons()[1].props.onClick();
+  tree = page.render();
+  assert.equal(nodes(tree).filter(node => node.props['aria-label'] === 'import.screenshotFlow.rowTicker').length, 1);
+  assert.equal(nodes(tree).find(node => node.props['aria-label'] === 'import.screenshotFlow.rowCompany').props.value, 'Edited');
+  assert.deepEqual(page.revokedUrls, ['blob:preview-1', 'blob:preview-3']);
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } });
+  tree = page.render();
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.confirmImport')).props.onClick();
+  const commits = page.calls.filter(call => call[0] === 'commit');
+  assert.equal(commits.length, 1);
+  assert.equal(commits[0][1].filename, 'same.png');
+  assert.equal(commits[0][1].rows[0].company, 'Edited');
+  assert.equal(Object.hasOwn(commits[0][1].rows[0], 'sourceId'), false);
+  page.unmount();
+  assert.deepEqual(page.revokedUrls, ['blob:preview-1', 'blob:preview-3', 'blob:preview-2']);
+});
+
+test('a delayed result effect cannot reinsert rows after their screenshot is removed', async () => {
+  const page = screenshotPage([agent()], job({ status: 'completed', result: { rows: [{ ticker: 'TEST', shares: 1 }] } }), true);
+  page.render(); page.flush(); page.flushState(); let tree = page.render();
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
+    files: [{ name: 'remove.png', type: 'image/png', size: 10 }], value: '',
+  } });
+  page.flushState(); tree = page.render();
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  page.flushState(); tree = page.render();
+  nodes(tree).find(node => node.type === 'Button' && node.props['aria-label']?.includes('removeScreenshot')).props.onClick();
+  page.flush(); page.flushState(); tree = page.render(); page.flush(); page.flushState(); tree = page.render();
+  assert.equal(nodes(tree).filter(node => node.props['aria-label'] === 'import.screenshotFlow.rowTicker').length, 0);
+});
+
+test('removing one image before a delayed result effect still retains the other image rows', async () => {
+  const page = screenshotPage([agent()], (value, count) => job({ id: value.requestId, status: 'completed', result: {
+    rows: [{ ticker: `T${count}`, shares: 1 }],
+  } }), true);
+  page.render(); page.flush(); page.flushState(); let tree = page.render();
+  nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
+    files: ['first.png', 'second.png'].map(name => ({ name, type: 'image/png', size: 10 })), value: '',
+  } });
+  page.flushState(); tree = page.render();
+  await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
+  await new Promise(setImmediate);
+  page.flushState(); tree = page.render();
+  nodes(tree).find(node => node.type === 'Button' && node.props['aria-label']?.includes('removeScreenshot')).props.onClick();
+  page.flush(); page.flushState(); tree = page.render(); page.flush(); page.flushState(); tree = page.render();
+  const tickers = nodes(tree).filter(node => node.props['aria-label'] === 'import.screenshotFlow.rowTicker');
+  assert.equal(tickers.length, 1);
+  assert.equal(tickers[0].props.value, 'T2');
 });
 
 test('completed extraction requires review and explicit confirmation; editing clears the review acknowledgement', async () => {
@@ -325,7 +514,7 @@ test('completed extraction requires review and explicit confirmation; editing cl
   nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
     files: [{ name: 'holdings.png', type: 'image/png', size: 10 }], value: '',
   } });
-  page.readers[0].result = 'data:image/png;base64,YWJj'; page.readers[0].onload(); tree = page.render();
+  tree = page.render();
   await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
   page.render(); page.flush(); tree = page.render();
   const confirm = () => nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.confirmImport'));
@@ -349,7 +538,6 @@ test('completed rows survive deferred React state updates after the batch count 
   nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
     files: [{ name: 'holdings.png', type: 'image/png', size: 10 }], value: '',
   } });
-  page.readers[0].result = 'data:image/png;base64,YWJj'; page.readers[0].onload();
   page.flushState(); tree = page.render();
   await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
   page.flushState(); tree = page.render(); page.flush(); page.flushState(); tree = page.render();
@@ -357,14 +545,13 @@ test('completed rows survive deferred React state updates after the batch count 
 });
 
 test('three selected screenshots run sequentially and failed middle file needs explicit skip before partial import', async () => {
-  const page = screenshotPage([agent()], value => value.requestId === 'request-2'
+  const page = screenshotPage([agent()], (value, count) => count === 2
     ? job({ id: value.requestId, status: 'failed', error: { code: 'NO_HOLDINGS' } })
     : job({ id: value.requestId, status: 'completed', result: { rows: [{ ticker: 'AAPL', shares: 2 }] } }));
   page.render(); page.flush(); let tree = page.render();
   const input = nodes(tree).find(node => node.type === 'input' && node.props.type === 'file');
   assert.equal(input.props.multiple, true);
   input.props.onChange({ target: { files: ['a.png', 'b.png', 'c.png'].map(name => ({ name, type: 'image/png', size: 10 })), value: '' } });
-  for (let i = 0; i < 3; i++) { page.readers[i].result = 'data:image/png;base64,YWJj'; page.readers[i].onload(); }
   tree = page.render();
   await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
   await new Promise(setImmediate);
@@ -387,14 +574,13 @@ test('three selected screenshots run sequentially and failed middle file needs e
 });
 
 test('duplicate tickers across completed screenshots block the shared commit', async () => {
-  const page = screenshotPage([agent()], value => job({ id: value.requestId, status: 'completed', result: {
-    rows: [{ ticker: value.requestId === 'request-1' ? '0700' : '700.HK', shares: 1 }],
+  const page = screenshotPage([agent()], (value, count) => job({ id: value.requestId, status: 'completed', result: {
+    rows: [{ ticker: count === 1 ? '0700' : '700.HK', shares: 1 }],
   } }));
   page.render(); page.flush(); let tree = page.render();
   nodes(tree).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: {
     files: ['one.png', 'two.png'].map(name => ({ name, type: 'image/png', size: 10 })), value: '',
   } });
-  for (let i = 0; i < 2; i++) { page.readers[i].result = 'data:image/png;base64,YWJj'; page.readers[i].onload(); }
   tree = page.render();
   await nodes(tree).find(node => node.type === 'Button' && content(node).includes('import.extract')).props.onClick();
   await new Promise(setImmediate);

@@ -30,13 +30,13 @@ export default function ScreenshotImport() {
   const executor = executorChoice ?? (preferredAgent ? 'local' : 'vision');
   const selectedAgent = agentId ? agents.find(agent => agent.id === agentId) : preferredAgent;
   const fileRef = useRef<HTMLInputElement>(null);
-  const readerRef = useRef<FileReader | null>(null);
+  const previewUrls = useRef(new Map<string, string>());
   const fileEpoch = useRef(0);
   const migrated = useRef(false);
   const committed = useRef(false);
-  const seenRowsCount = useRef(0);
+  const seenSourceIds = useRef(new Set<string>());
+  const renderedSourceIds = useRef(new Set<string>());
   const [uploads, setUploads] = useState<ScreenshotBatchItem[]>([]);
-  const [reading, setReading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [provider, setProvider] = useState({ baseUrl: '', model: '', apiKey: '' });
   const [rows, setRows] = useState<ScreenshotBatchRow[]>([]);
@@ -48,16 +48,18 @@ export default function ScreenshotImport() {
   const [batch, setBatch] = useState(controller.snapshot);
   const task = batch.task;
   const active = screenshotJobActive(task.job);
+  const reading = batch.files.some(file => file.status === 'reading');
   const jobCreatedAt = task.job?.createdAt;
   const locked = task.submitting || task.cancelling || task.uncertain || active;
   const queued = batch.files.some(file => file.status === 'queued');
-  const queueFinished = batch.files.length > 0 && !queued && !batch.files.some(file => file.status === 'running') && (batch.stopped || !locked);
+  const queueFinished = batch.files.length > 0 && !queued && !reading && !task.cancelling
+    && !batch.files.some(file => file.status === 'running') && (batch.stopped || !locked);
   const reviewProblem = screenshotReviewProblem(rows);
 
   useEffect(() => {
     controller.attach(setBatch);
     if (!migrated.current) { migrated.current = true; setProvider(loadScreenshotProvider(localStorage)); }
-    return () => { fileEpoch.current++; readerRef.current?.abort(); controller.dispose(); };
+    return () => { fileEpoch.current++; controller.dispose(); previewUrls.current.forEach(url => URL.revokeObjectURL(url)); previewUrls.current.clear(); };
   }, [controller]);
 
   useEffect(() => {
@@ -75,40 +77,75 @@ export default function ScreenshotImport() {
   }, [active, jobCreatedAt]);
 
   useEffect(() => {
-    if (batch.rows.length <= seenRowsCount.current) return;
-    const added = batch.rows.slice(seenRowsCount.current);
-    setRows(current => [...current, ...added]);
-    seenRowsCount.current = batch.rows.length;
+    const resultRows = batch.rows;
+    if (resultRows !== controller.snapshot.rows) return;
+    const added = resultRows.filter(row => !seenSourceIds.current.has(row.sourceId));
+    if (!added.length) return;
+    added.forEach(row => seenSourceIds.current.add(row.sourceId));
+    setRows(current => {
+      if (resultRows !== controller.snapshot.rows) return current;
+      const present = new Set(current.map(row => row.sourceId));
+      const live = new Set(controller.snapshot.files.map(file => file.id));
+      const fresh = added.filter(row => live.has(row.sourceId) && !present.has(row.sourceId));
+      return fresh.length ? [...current, ...fresh] : current;
+    });
     setReviewed(false);
-  }, [batch.rows]);
+  }, [batch.rows, controller]);
 
-  const readFiles = (files: File[]) => {
+  useEffect(() => { rows.forEach(row => renderedSourceIds.current.add(row.sourceId)); }, [rows]);
+
+  const selectFiles = (files: File[]) => {
+    if (locked || reading || committing) return;
     const problem = screenshotSelectionError(files);
     if (problem) { setFileError(problem); return; }
+    const selected: ScreenshotBatchItem[] = [];
+    try {
+      for (const file of files) selected.push({ id: crypto.randomUUID(), filename: file.name, file, previewUrl: URL.createObjectURL(file) });
+    } catch {
+      selected.forEach(item => URL.revokeObjectURL(item.previewUrl));
+      setFileError('INVALID_IMAGE');
+      return;
+    }
     const epoch = fileEpoch.current + 1;
     fileEpoch.current = epoch;
-    readerRef.current?.abort(); controller.replace([]); seenRowsCount.current = 0;
-    setUploads([]); setRows([]); setReviewed(false); setCommitResult(null); setFileError(null); setReading(false);
-    setReading(true);
-    const loaded: ScreenshotBatchItem[] = [];
-    const readNext = (index: number) => {
-      if (fileEpoch.current !== epoch) return;
-      if (index === files.length) { setUploads(loaded); controller.replace(loaded); setReading(false); return; }
-      const file = files[index];
-      const reader = new FileReader(); readerRef.current = reader;
-      reader.onload = () => {
-        if (fileEpoch.current !== epoch) return;
-        try {
-          const dataUrl = String(reader.result ?? '');
-          loaded.push({ image: screenshotImage(file, dataUrl), dataUrl, filename: file.name });
-          readNext(index + 1);
-        } catch { setFileError('INVALID_IMAGE'); setReading(false); }
-      };
-      reader.onerror = () => { if (fileEpoch.current === epoch) { setReading(false); setFileError('INVALID_IMAGE'); } };
-      reader.readAsDataURL(file);
-    };
-    readNext(0);
+    controller.replace(selected);
+    previewUrls.current.forEach(url => URL.revokeObjectURL(url));
+    previewUrls.current.clear();
+    selected.forEach(item => previewUrls.current.set(item.id, item.previewUrl));
+    seenSourceIds.current.clear();
+    renderedSourceIds.current.clear();
+    setUploads(selected); setRows([]); setReviewed(false); setCommitResult(null); setFileError(null);
   };
+
+  const removeUpload = (id: string) => {
+    if (!controller.remove(id)) return;
+    seenSourceIds.current.add(id);
+    for (const row of controller.snapshot.rows) {
+      if (!renderedSourceIds.current.has(row.sourceId)) seenSourceIds.current.delete(row.sourceId);
+    }
+    const url = previewUrls.current.get(id);
+    if (url) URL.revokeObjectURL(url);
+    previewUrls.current.delete(id);
+    setUploads(current => current.filter(item => item.id !== id));
+    setRows(current => current.filter(row => row.sourceId !== id));
+    setReviewed(false);
+    setCommitResult(null);
+  };
+
+  const imageFor = (item: ScreenshotBatchItem, signal: AbortSignal) => new Promise<ReturnType<typeof screenshotImage>>((resolve, reject) => {
+    const reader = new FileReader();
+    const fail = () => { cleanup(); reject(new Error('INVALID_IMAGE')); };
+    const onAbort = () => { reader.abort(); fail(); };
+    const cleanup = () => { signal.removeEventListener('abort', onAbort); reader.onload = null; reader.onerror = null; };
+    if (signal.aborted) { fail(); return; }
+    signal.addEventListener('abort', onAbort, { once: true });
+    reader.onload = () => {
+      try { const image = screenshotImage(item.file, String(reader.result ?? '')); cleanup(); resolve(image); }
+      catch { fail(); }
+    };
+    reader.onerror = fail;
+    reader.readAsDataURL(item.file);
+  });
 
   const settings = cleanAgentSettings({ model: agentModel });
   const modelProblem = executor === 'local' ? agentSettingsProblem(settings, selectedAgent) : null;
@@ -123,15 +160,15 @@ export default function ScreenshotImport() {
 
   const extract = async () => {
     if (!uploads.length || !routeReady || batch.started || locked || committing || agentsQuery.isPending) return;
-    setRows([]); seenRowsCount.current = 0; setReviewed(false); setCommitResult(null);
+    setRows([]); seenSourceIds.current.clear(); renderedSourceIds.current.clear(); setReviewed(false); setCommitResult(null);
     setExecutorChoice(executor);
     if (executor === 'local' && selectedAgent) {
       setAgentId(selectedAgent.id);
-      await controller.start(item => ({ requestId: crypto.randomUUID(), image: item.image, executor: 'local',
+      await controller.start(async (item, _index, signal) => ({ requestId: crypto.randomUUID(), image: await imageFor(item, signal), executor: 'local',
         agentId: selectedAgent.id, agentSettings: settings }), () => routeReadyRef.current);
     } else {
       saveScreenshotProvider(localStorage, provider);
-      await controller.start(item => ({ requestId: crypto.randomUUID(), image: item.image, executor: 'vision',
+      await controller.start(async (item, _index, signal) => ({ requestId: crypto.randomUUID(), image: await imageFor(item, signal), executor: 'vision',
         baseUrl: provider.baseUrl.trim() || undefined, model: provider.model.trim(), apiKey: provider.apiKey.trim() }), () => routeReadyRef.current);
     }
   };
@@ -141,7 +178,7 @@ export default function ScreenshotImport() {
     committed.current = true; setCommitting(true);
     const epoch = fileEpoch.current;
     try {
-      const result = await commitImport({ source: 'ocr', rows: rows.map(({ sourceFile: _sourceFile, ...row }) => ({ ...row,
+      const result = await commitImport({ source: 'ocr', rows: rows.map(({ sourceFile: _sourceFile, sourceId: _sourceId, ...row }) => ({ ...row,
         ticker: row.ticker.trim(), company: row.company?.trim() || null,
         avgCost: row.avgCost === '' ? null : row.avgCost })), filename: uploads.map(item => item.filename).join(', ').slice(0, 255) });
       queryClient.invalidateQueries({ queryKey: ['import'] });
@@ -217,26 +254,34 @@ export default function ScreenshotImport() {
           ? 'import.screenshotFlow.localPrivacy' : 'import.screenshotFlow.apiPrivacy')}</p>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="outline" size="sm" disabled={committing} onClick={() => fileRef.current?.click()}>
+          <Button variant="outline" size="sm" disabled={locked || reading || committing} onClick={() => fileRef.current?.click()}>
             <Camera size={14} className="mr-1" />{t('import.selectScreenshot')}
           </Button>
-          <input ref={fileRef} type="file" multiple accept="image/png,image/jpeg,image/webp" className="hidden" disabled={committing}
-            onChange={event => { if (event.target.files?.length) readFiles(Array.from(event.target.files)); event.target.value = ''; }} />
+          <input ref={fileRef} type="file" multiple accept="image/png,image/jpeg,image/webp" className="hidden" disabled={locked || reading || committing}
+            onChange={event => { if (event.target.files?.length) selectFiles(Array.from(event.target.files)); event.target.value = ''; }} />
           <Button size="sm" onClick={extract} disabled={!uploads.length || reading || batch.started || locked || committing || !routeReady || agentsQuery.isPending}>
             {task.submitting || active ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Wand2 size={14} className="mr-1" />}
             {t('import.extract')}
           </Button>
           {reading && <Loader2 size={16} className="animate-spin" aria-label={t('import.screenshotFlow.reading')} />}
-          {uploads[0]?.dataUrl && <img src={uploads[0].dataUrl} alt={t('ui.import.screenshotPreview')} className="h-20 max-w-48 rounded-md border border-border object-contain" />}
         </div>
         <p className="text-xs text-muted-foreground">{t('import.screenshotFlow.fileHint')}</p>
         {fileError && <p role="alert" className="text-sm text-destructive">{errorText(fileError)}</p>}
 
         {batch.files.length > 0 && <div className="space-y-1 rounded-md border border-border p-3 text-sm" aria-live="polite">
-          {batch.files.map((file, index) => <p key={index}>
-            <span className="font-medium">{file.filename}</span> · {t(`import.screenshotFlow.fileStatus.${file.status}`)}
-            {file.error && <span className="ml-2 text-destructive">{errorText(file.error)}</span>}
-          </p>)}
+          {batch.files.map(file => <div key={file.id} className="flex items-center gap-3 border-b border-border/60 py-2 last:border-b-0">
+            {previewUrls.current.get(file.id) && <img src={previewUrls.current.get(file.id)} alt={t('ui.import.screenshotPreview')}
+              className="h-12 w-12 shrink-0 rounded border border-border object-cover" />}
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium" title={file.filename}>{file.filename}</p>
+              <p className="text-xs text-muted-foreground">{t(`import.screenshotFlow.fileStatus.${file.status}`)}</p>
+              {file.error && <p className="text-xs text-destructive">{errorText(file.error)}</p>}
+            </div>
+            <Button size="sm" variant="ghost" disabled={committing || file.status === 'reading' || file.status === 'running'}
+              aria-label={t('import.screenshotFlow.removeScreenshot', { name: file.filename })}
+              title={file.status === 'reading' || file.status === 'running' ? t('import.screenshotFlow.cancelBeforeRemove') : undefined}
+              onClick={() => removeUpload(file.id)}><Trash2 size={14} /></Button>
+          </div>)}
           {batch.paused && <p role="alert" className="text-destructive">{t(batch.pauseReason === 'ROUTE_UNAVAILABLE'
             ? 'import.screenshotFlow.routeUnavailable' : 'import.screenshotFlow.batchPaused')}</p>}
           {batch.paused && !locked && queued && <div className="flex flex-wrap gap-2">
@@ -245,7 +290,8 @@ export default function ScreenshotImport() {
           </div>}
         </div>}
 
-        {(task.requestId || task.error) && <div className="space-y-2 rounded-md border border-border p-3 text-sm" aria-live="polite">
+        {(task.requestId || task.error || reading) && <div className="space-y-2 rounded-md border border-border p-3 text-sm" aria-live="polite">
+          {reading && <p>{t('import.screenshotFlow.reading')}</p>}
           {task.submitting && <p>{t('import.screenshotFlow.submitting')}</p>}
           {task.job && <p>{t(`import.screenshotFlow.${task.job.status === 'failed' || task.job.status === 'cancelled' ? task.job.status : task.job.phase}`)}
             {active && <span className="ml-2 text-xs text-muted-foreground">{t('import.screenshotFlow.elapsed', { seconds: elapsed })}</span>}</p>}
@@ -254,7 +300,7 @@ export default function ScreenshotImport() {
             {(task.uncertain || task.error === 'POLL_FAILED') && <Button size="sm" variant="outline" onClick={() => controller.recover()} disabled={task.polling || task.cancelling}>
               {t('import.screenshotFlow.recover')}
             </Button>}
-            {(active || task.submitting || task.uncertain || queued) && <Button size="sm" variant="outline" onClick={() => { controller.cancel(); setReviewed(false); }} disabled={task.cancelling}>
+            {(reading || active || task.submitting || task.uncertain || queued) && <Button size="sm" variant="outline" onClick={() => { controller.cancel(); setReviewed(false); }} disabled={task.cancelling}>
               {t(task.cancelling ? 'import.screenshotFlow.cancelling' : 'import.screenshotFlow.cancel')}
             </Button>}
           </div>

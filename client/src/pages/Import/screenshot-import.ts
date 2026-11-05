@@ -21,9 +21,9 @@ export function screenshotFileValid(file: Pick<File, 'type' | 'size'>): boolean 
 }
 
 export function screenshotSelectionError(files: Pick<File, 'type' | 'size'>[]): 'FILE_COUNT' | 'TOTAL_SIZE' | 'INVALID_IMAGE' | null {
-  if (files.length < 1 || files.length > 5) return 'FILE_COUNT';
+  if (files.length < 1 || files.length > 20) return 'FILE_COUNT';
   if (files.some(file => !screenshotFileValid(file))) return 'INVALID_IMAGE';
-  if (files.reduce((size, file) => size + file.size, 0) > 24 * 1024 * 1024) return 'TOTAL_SIZE';
+  if (files.reduce((size, file) => size + file.size, 0) > 160 * 1024 * 1024) return 'TOTAL_SIZE';
   return null;
 }
 
@@ -208,9 +208,9 @@ export class ScreenshotJobController {
   }
 }
 
-export interface ScreenshotBatchItem { filename: string; image: NativeAgentImage; dataUrl?: string }
-export interface ScreenshotBatchFile { filename: string; status: 'queued' | 'running' | 'success' | 'failed' | 'cancelled'; error?: string }
-export type ScreenshotBatchRow = ImportRowCandidate & { sourceFile: string };
+export interface ScreenshotBatchItem { id: string; filename: string; file: File; previewUrl: string }
+export interface ScreenshotBatchFile { id: string; filename: string; status: 'queued' | 'reading' | 'running' | 'success' | 'failed' | 'cancelled'; error?: string }
+export type ScreenshotBatchRow = ImportRowCandidate & { sourceId: string; sourceFile: string };
 export interface ScreenshotBatchState {
   files: ScreenshotBatchFile[];
   rows: ScreenshotBatchRow[];
@@ -226,9 +226,11 @@ export class ScreenshotBatchController {
   readonly job: ScreenshotJobController;
   snapshot: ScreenshotBatchState;
   private items: ScreenshotBatchItem[] = [];
-  private activeIndex: number | null = null;
+  private activeId: string | null = null;
+  private generation = 0;
+  private readingAbort?: AbortController;
   private pauseAfterRecovery = false;
-  private requestFor?: (item: ScreenshotBatchItem, index: number) => ScreenshotExtractRequest;
+  private requestFor?: (item: ScreenshotBatchItem, index: number, signal: AbortSignal) => Promise<ScreenshotExtractRequest> | ScreenshotExtractRequest;
   private canContinue?: () => boolean;
   private listener?: (state: ScreenshotBatchState) => void;
   private disposed = false;
@@ -250,31 +252,33 @@ export class ScreenshotBatchController {
     if (!this.disposed) this.listener?.(this.snapshot);
   }
 
-  private file(index: number, patch: Partial<ScreenshotBatchFile>): void {
-    this.emit({ files: this.snapshot.files.map((file, i) => i === index ? { ...file, ...patch } : file) });
+  private file(id: string, patch: Partial<ScreenshotBatchFile>): void {
+    this.emit({ files: this.snapshot.files.map(file => file.id === id ? { ...file, ...patch } : file) });
   }
 
   private onTask(task: ScreenshotJobState): void {
     this.emit({ task });
-    const index = this.activeIndex;
-    if (index == null || this.disposed || this.snapshot.stopped) return;
+    const id = this.activeId;
+    if (id == null || this.disposed || this.snapshot.stopped) return;
+    const item = this.items.find(item => item.id === id);
+    if (!item) return;
     if (task.job?.status === 'completed') {
-      this.activeIndex = null;
+      this.activeId = null;
       if (this.pauseAfterRecovery) this.emit({ paused: true });
       this.pauseAfterRecovery = false;
       const rows = task.job.result?.rows;
       if (!rows || !validScreenshotRows(rows)) {
-        this.file(index, { status: 'failed', error: 'INVALID_RESULT' });
+        this.file(id, { status: 'failed', error: 'INVALID_RESULT' });
         this.emit({ paused: true });
         return;
       }
-      this.emit({ rows: [...this.snapshot.rows, ...rows.map(row => ({ ...row, avgCost: row.avgCost ?? null, sourceFile: this.items[index].filename }))] });
-      this.file(index, { status: 'success' });
+      this.emit({ rows: [...this.snapshot.rows, ...rows.map(row => ({ ...row, avgCost: row.avgCost ?? null, sourceId: id, sourceFile: item.filename }))] });
+      this.file(id, { status: 'success' });
       if (!this.snapshot.paused) this.advance();
     } else if (task.job?.status === 'failed' || task.job?.status === 'cancelled' || (task.error && !task.uncertain && !screenshotJobActive(task.job))) {
-      this.activeIndex = null;
+      this.activeId = null;
       this.pauseAfterRecovery = false;
-      this.file(index, { status: task.job?.status === 'cancelled' ? 'cancelled' : 'failed', error: task.error ?? undefined });
+      this.file(id, { status: task.job?.status === 'cancelled' ? 'cancelled' : 'failed', error: task.error ?? undefined });
       this.emit({ paused: true });
     } else if (task.uncertain || task.error === 'POLL_FAILED') {
       this.pauseAfterRecovery = true;
@@ -285,17 +289,21 @@ export class ScreenshotBatchController {
   }
 
   replace(items: ScreenshotBatchItem[]): void {
-    this.activeIndex = null;
+    this.generation++;
+    this.readingAbort?.abort();
+    this.readingAbort = undefined;
+    this.activeId = null;
     this.pauseAfterRecovery = false;
     this.job.reset();
-    this.items = items;
+    this.items = items.map((item, index) => ({ ...item, id: item.id ?? `legacy-${this.generation}-${index}` }));
     this.requestFor = undefined;
     this.canContinue = undefined;
-    this.emit({ files: items.map(item => ({ filename: item.filename, status: 'queued' })), rows: [],
+    this.emit({ files: this.items.map(item => ({ id: item.id, filename: item.filename, status: 'queued' })), rows: [],
       task: this.job.snapshot, paused: false, stopped: false, started: false, pauseReason: null });
   }
 
-  start(requestFor: (item: ScreenshotBatchItem, index: number) => ScreenshotExtractRequest, canContinue: () => boolean = () => true): Promise<void> {
+  start(requestFor: (item: ScreenshotBatchItem, index: number, signal: AbortSignal) => Promise<ScreenshotExtractRequest> | ScreenshotExtractRequest,
+    canContinue: () => boolean = () => true): Promise<void> {
     if (this.disposed || this.snapshot.started || !this.items.length) return Promise.resolve();
     this.requestFor = requestFor;
     this.canContinue = canContinue;
@@ -304,43 +312,78 @@ export class ScreenshotBatchController {
   }
 
   private advance(): Promise<void> {
-    if (this.disposed || this.snapshot.paused || this.snapshot.stopped || this.activeIndex != null || !this.requestFor) return Promise.resolve();
+    if (this.disposed || this.snapshot.paused || this.snapshot.stopped || this.activeId != null || !this.requestFor) return Promise.resolve();
     const index = this.snapshot.files.findIndex(file => file.status === 'queued');
     if (index < 0) return Promise.resolve();
     if (!this.canContinue?.()) { this.emit({ paused: true, pauseReason: 'ROUTE_UNAVAILABLE' }); return Promise.resolve(); }
     this.job.reset();
-    this.activeIndex = index;
-    this.file(index, { status: 'running' });
-    return this.job.start(this.requestFor(this.items[index], index));
+    const item = this.items.find(item => item.id === this.snapshot.files[index].id);
+    if (!item) return Promise.resolve();
+    const generation = this.generation;
+    this.activeId = item.id;
+    const abort = new AbortController();
+    this.readingAbort = abort;
+    this.file(item.id, { status: 'reading' });
+    return Promise.resolve().then(() => this.requestFor!(item, index, abort.signal)).then(request => {
+      if (this.disposed || generation !== this.generation || abort.signal.aborted || this.activeId !== item.id || this.snapshot.stopped) return;
+      this.readingAbort = undefined;
+      if (!this.canContinue?.()) {
+        this.activeId = null;
+        this.file(item.id, { status: 'queued' });
+        this.emit({ paused: true, pauseReason: 'ROUTE_UNAVAILABLE' });
+        return;
+      }
+      this.file(item.id, { status: 'running' });
+      return this.job.start(request);
+    }).catch(() => {
+      if (this.disposed || generation !== this.generation || abort.signal.aborted || this.activeId !== item.id) return;
+      this.readingAbort = undefined;
+      this.activeId = null;
+      this.file(item.id, { status: 'failed', error: 'INVALID_IMAGE' });
+      this.emit({ paused: true });
+    });
+  }
+
+  remove(id: string): boolean {
+    if (this.disposed || this.activeId === id) return false;
+    if (!this.items.some(item => item.id === id)) return false;
+    this.items = this.items.filter(item => item.id !== id);
+    this.emit({ files: this.snapshot.files.filter(file => file.id !== id), rows: this.snapshot.rows.filter(row => row.sourceId !== id) });
+    return true;
   }
 
   async recover(): Promise<void> { await this.job.refresh(); }
 
   resume(): void {
-    if (this.disposed || this.snapshot.stopped || !this.snapshot.paused || this.activeIndex != null || this.snapshot.task.uncertain) return;
+    if (this.disposed || this.snapshot.stopped || !this.snapshot.paused || this.activeId != null || this.snapshot.task.uncertain) return;
     this.emit({ paused: false, pauseReason: null });
     void this.advance();
   }
 
   skipRemaining(): void {
-    if (this.activeIndex != null) return;
+    if (this.activeId != null) return;
     this.emit({ files: this.snapshot.files.map(file => file.status === 'queued' ? { ...file, status: 'cancelled' } : file), paused: false, pauseReason: null });
   }
 
   cancel(): void {
     if (this.disposed) return;
-    const hadActive = this.activeIndex != null;
+    const hadActiveJob = this.activeId != null && Boolean(this.job.snapshot.requestId);
+    this.generation++;
+    this.readingAbort?.abort();
+    this.readingAbort = undefined;
     this.emit({ stopped: true, paused: false, pauseReason: null, files: this.snapshot.files.map(file =>
-      file.status === 'queued' || file.status === 'running' ? { ...file, status: 'cancelled' } : file) });
-    this.activeIndex = null;
+      file.status === 'queued' || file.status === 'reading' || file.status === 'running' ? { ...file, status: 'cancelled' } : file) });
+    this.activeId = null;
     this.pauseAfterRecovery = false;
-    if (hadActive) void this.job.cancel();
+    if (hadActiveJob) void this.job.cancel();
   }
 
   dispose(): void {
     this.disposed = true;
+    this.generation++;
+    this.readingAbort?.abort();
     this.listener = undefined;
-    this.activeIndex = null;
+    this.activeId = null;
     this.job.dispose();
   }
 }

@@ -29,10 +29,12 @@ by the import API. Use Generic CSV and map the columns for those exports.
 
 For a broker that cannot export a suitable CSV:
 
-1. Take one to five screenshots of your broker app's holdings pages
+1. Take up to 20 screenshots of your broker app's holdings pages
    (同花顺 / 东方财富 / 雪球 / 富途 / 老虎 / Robinhood …).
 2. Choose **截图识别** and select the screenshots (PNG/JPEG/WebP, at most 8 MiB
-   each and 24 MiB total). A connected image-capable local agent is preferred;
+   each and 160 MiB total). You can remove individual screenshots before or
+   after recognition; removing a recognized image also removes its rows. A
+   connected image-capable local agent is preferred;
    you can instead configure a vision-capable model with a compatible Chat
    Completions endpoint and a model API key. CSV import does not require one.
 3. Hit **开始识别**. Each screenshot starts one task in sequence and may consume
