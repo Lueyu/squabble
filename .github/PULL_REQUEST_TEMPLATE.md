@@ -4,7 +4,7 @@
 
 ## Verification
 
-<!-- List commands run and manual checks. Explain any skipped check. CI runs the six required checks. -->
+<!-- List commands run and manual checks. Explain any skipped check. Web-only phase: Lint & typecheck, Agent tests, Docker image build. Desktop checks are manual-only until resumed. -->
 
 ## Data and release impact
 
