@@ -6,6 +6,7 @@
     "notifications": "Notifications"
   },
   "layout": {
+    "localWorkspace": "Local workspace",
     "appName": "Squabble", "darkMode": "Light Mode", "lightMode": "Dark Mode",
     "logout": "Sign Out", "switchAccount": "Switch Account",
     "trading": "Trading", "closed": "Closed",
@@ -13,6 +14,9 @@
     "refreshQuotes": "Refresh quotes", "unknownUser": "Unknown User", "demoUser": "Demo User"
   },
   "auth": {
+    "modeLoading": "Connecting to your workspace…",
+    "modeFailedTitle": "Unable to open your workspace",
+    "modeFailedDescription": "Could not confirm the workspace mode. Check that Squabble is running and try again.",
     "login": "Sign In", "register": "Create one", "username": "Username",
     "password": "Password", "confirmPassword": "Confirm Password",
     "displayName": "Display Name (optional)", "loginTitle": "Sign In",
@@ -45,6 +49,7 @@
     "generateRecoveryCode": "Generate recovery code", "recoveryGenerateFailed": "Could not generate a code. Check your password."
   },
   "privacy": {
+    "backToWorkspace": "Back to workspace",
     "title": "Data and privacy",
     "intro": "Squabble stores data in this installation. The project does not operate a hosted account service or collect telemetry.",
     "storedTitle": "What stays in your installation",

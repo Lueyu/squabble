@@ -6,9 +6,8 @@
  * Mounted as the layout route in `app.tsx`; every feature page renders inside
  * its `<Outlet/>`. Also owns the market-status indicator shown in the top bar.
  *
- * Auth: the layout requires a stored session (token presence check; actual
- * validity is enforced server-side and by the http 401 interceptor). The
- * user menu reads the profile from GET /api/auth/me.
+ * Auth: account mode requires a stored session; local mode opens the workspace
+ * directly. The account-mode user menu reads GET /api/auth/me.
  */
 import { Outlet, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
@@ -16,6 +15,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { fetchMyProfile } from '@/api';
 import { hasSession, tokenStore } from '@/api/http';
+import { getAuthMode } from '@/api/auth-mode';
 import { setLanguage } from '@/i18n';
 import {
   FlaskConical,
@@ -34,6 +34,7 @@ import {
   Moon,
   RefreshCw,
   Menu,
+  Monitor,
   X,
   Circle,
   LogOut,
@@ -76,6 +77,7 @@ interface SidebarProfile {
  * `<Outlet/>`. Redirects to /login when no session exists.
  */
 function Layout() {
+  const localWorkspace = getAuthMode() === 'local';
   const { theme, toggleTheme } = useTheme();
   const { t, i18n } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -158,7 +160,14 @@ function Layout() {
           </nav>
 
           <div className="app-sidebar-footer border-t border-sidebar-border">
-            <SidebarUserBlock />
+            {localWorkspace ? <div className="app-user-block flex items-center gap-2.5 rounded-md px-2 py-1.5"
+              title={t('layout.localWorkspace')}>
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sidebar-accent text-sidebar-accent-foreground">
+                <Monitor size={18} aria-hidden="true" />
+              </div>
+              <span className="app-user-copy min-w-0 truncate text-sm text-sidebar-foreground/80" aria-hidden="true">{t('layout.localWorkspace')}</span>
+              <span className="sr-only">{t('layout.localWorkspace')}</span>
+            </div> : <SidebarUserBlock />}
             <div className="app-footer-actions">
             <button
               onClick={toggleTheme}
@@ -178,7 +187,7 @@ function Layout() {
               <Languages size={18} />
               <span>{i18n.language === 'zh-CN' ? 'English' : '中文'}</span>
             </button>
-            <LogoutButton />
+            {!localWorkspace && <LogoutButton />}
             </div>
           </div>
         </div>

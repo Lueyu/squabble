@@ -35,7 +35,7 @@ Windows 已验证隔离环境的启动、能力查询和未登录检测，真实
 ## 自动投研工具与聊天进度
 
 连接后无需额外配置。Codex 0.104.0+、Claude Code 2.1.221+ 在通过运行时检查后，
-可在任务中读取行情、财务、估值、新闻、当前账号的历史报告和本讨论上下文。
+可在任务中读取行情、财务、估值、新闻、当前工作区的历史报告和本讨论上下文。
 启用网络研究时，还可使用现有预算约束下的网页检索。工具不会授予交易或持仓写入权限。
 
 其他五种运行时，以及低于上述版本或版本无法识别的 Codex/Claude，使用带时间的只读证据快照。
@@ -56,7 +56,9 @@ Windows 已验证隔离环境的启动、能力查询和未登录检测，真实
 3. 点击 **登录**，在打开的终端里完成服务商登录。回到设置，等待状态更新或点击刷新。
 4. 显示已就绪后点击 **连接**。创建独立研究团队时，即可选择已连接的 Agent。
 
-同一安装的本地研究运行环境只归属于一个吵股账号；其他本地账号不能直接使用它。
+桌面版和源码的 `AUTH_MODE=local` 工作区无需吵股登录，原生 Agent 连接属于这台安装实例，
+不再受旧吵股账号归属限制。服务商 CLI 的登录、凭证和费用保持独立。
+显式使用 `AUTH_MODE=account` 时，仍保留原来的账号隔离和运行环境归属。
 使用期间需要保持桌面应用开启。模型 API 的执行方式仍然可用。
 
 ## Docker 网页版
@@ -101,7 +103,7 @@ Docker 使用同一台电脑上的吵股桌面应用作为助手：
 ## English
 
 Compatible Codex 0.104.0+ and Claude Code 2.1.221+ automatically receive task-scoped,
-read-only tools for quotes, financials, valuation, news, saved account reports and
+read-only tools for quotes, financials, valuation, news, saved workspace reports and
 discussion context. Web research is available only when enabled and retains the
 existing request budgets. No trade or portfolio-write permission is granted.
 Other runtimes, and older or unrecognized Codex/Claude versions, receive a dated
@@ -174,6 +176,9 @@ messages. Older servers can still acknowledge the failed task without losing hea
 
 The desktop stores its pairing privately in its application data directory. Docker
 persists pairing and task state in the `local-agents-data` volume; preserve it during
-updates. A native runtime belongs to one Squabble account on that installation. Older
+updates. In desktop/source `AUTH_MODE=local` workspaces, native connections belong to
+the installation without a Squabble login or legacy account-owner restriction.
+Provider CLI sign-in and billing remain separate. `AUTH_MODE=account` keeps the
+existing account isolation and native runtime ownership. Older
 external agent connections need to be reconnected as supported native agents; historical
 reports remain readable.

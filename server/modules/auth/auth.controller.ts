@@ -18,14 +18,23 @@ import { NeedLogin } from '../../common/platform/need-login.decorator';
 import { AuthService } from './auth.service';
 import { AuthRateLimiter } from './auth-rate-limiter';
 import type { RegistrationStatus } from '@shared/api.interface';
+import { authMode, isLocalWorkspaceMode } from './local-workspace';
 
 @Controller('api/auth')
 export class AuthController {
   constructor(private readonly authService: AuthService, private readonly limiter: AuthRateLimiter) {}
 
+  @Get('mode')
+  mode() { return { mode: authMode() }; }
+
+  private requireAccounts(): void {
+    if (isLocalWorkspaceMode()) throw new ForbiddenException('Account sign-in is disabled in local workspace mode');
+  }
+
   /** Whether this instance currently accepts another account. */
   @Get('registration-status')
   async registrationStatus(): Promise<RegistrationStatus> {
+    if (isLocalWorkspaceMode()) return { registrationOpen: false };
     return this.authService.getRegistrationStatus();
   }
 
@@ -35,6 +44,7 @@ export class AuthController {
     @Req() request: Request,
     @Body() body: { username?: string; password?: string; displayName?: string },
   ) {
+    this.requireAccounts();
     if (process.env.REGISTER_ENABLED === 'first-user' || process.env.SQUABBLE_DESKTOP_ORIGIN) {
       const contentType = request.headers['content-type'];
       if (typeof contentType !== 'string' || !/^application\/json(?:\s*;|$)/iu.test(contentType)) {
@@ -78,6 +88,7 @@ export class AuthController {
   /** Log in with username + password. */
   @Post('login')
   async login(@Req() request: Request, @Body() body: { username?: string; password?: string }) {
+    this.requireAccounts();
     this.limiter.consume(request, 'login');
     return this.authService.login({
       username: body.username ?? '',
@@ -88,6 +99,7 @@ export class AuthController {
   /** Exchange a refresh token for a fresh token pair. */
   @Post('refresh')
   async refresh(@Req() request: Request, @Body() body: { refreshToken?: string }) {
+    this.requireAccounts();
     this.limiter.consume(request, 'refresh');
     return this.authService.refresh(body.refreshToken);
   }
@@ -95,6 +107,7 @@ export class AuthController {
   /** Replace a forgotten password using the offline code issued at registration. */
   @Post('recover')
   async recover(@Req() request: Request, @Body() body: { username?: string; recoveryCode?: string; newPassword?: string }) {
+    this.requireAccounts();
     this.limiter.consume(request, 'recover');
     return this.authService.recoverAccount(body);
   }
@@ -102,6 +115,7 @@ export class AuthController {
   @NeedLogin()
   @Post('recovery-code')
   async recoveryCode(@Req() request: Request, @Body() body: { password?: string }) {
+    this.requireAccounts();
     this.limiter.consume(request, 'recover');
     return this.authService.rotateRecoveryCode(request.userContext.userId, body.password ?? '');
   }

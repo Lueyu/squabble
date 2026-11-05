@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SETTINGS_GROUPS, SETTINGS_SECTIONS, type SettingsSection } from './settings-navigation';
+import { getAuthMode } from '@/api/auth-mode';
 
 const ICONS: Record<SettingsSection, LucideIcon> = {
   models: Sparkles, agents: Bot, data: Database, budget: Coins, rules: SlidersHorizontal,
@@ -15,6 +16,7 @@ const ICONS: Record<SettingsSection, LucideIcon> = {
 export default function SettingsNavigation({ active }: { active: SettingsSection }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const sections = SETTINGS_SECTIONS.filter(section => getAuthMode() !== 'local' || section.id !== 'security');
 
   return <>
     <aside className="settings-sidebar" aria-label={t('settingsNav.navigation')}>
@@ -26,7 +28,7 @@ export default function SettingsNavigation({ active }: { active: SettingsSection
       <nav className="settings-menu" aria-label={t('settingsNav.navigation')}>
         {SETTINGS_GROUPS.map(group => <div className="settings-menu-group" key={group}>
           <p className="settings-group-label">{t(`settingsNav.groups.${group}`)}</p>
-          {SETTINGS_SECTIONS.filter(section => section.group === group).map(section => {
+          {sections.filter(section => section.group === group).map(section => {
             const Icon = ICONS[section.id];
             return <NavLink key={section.id} to={`/settings/${section.id}`} end
               className="settings-menu-link">
@@ -51,7 +53,7 @@ export default function SettingsNavigation({ active }: { active: SettingsSection
         <SelectContent>
           {SETTINGS_GROUPS.map(group => <SelectGroup key={group}>
             <SelectLabel>{t(`settingsNav.groups.${group}`)}</SelectLabel>
-            {SETTINGS_SECTIONS.filter(section => section.group === group).map(section =>
+            {sections.filter(section => section.group === group).map(section =>
               <SelectItem key={section.id} value={section.id}>
                 {t(`settingsNav.sections.${section.id}.title`)}
               </SelectItem>)}

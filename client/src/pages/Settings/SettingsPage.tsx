@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { setLanguage } from '@/i18n';
+import { getAuthMode } from '@/api/auth-mode';
 import NotFound from '@/pages/NotFound/NotFound';
 import StrategyRulesPage from '@/pages/StrategyRules/StrategyRulesPage';
 import BudgetPanel from './BudgetPanel';
@@ -25,7 +26,10 @@ export default function SettingsPage() {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  const active = resolveSettingsSection(location.pathname, location.hash);
+  const localWorkspace = getAuthMode() === 'local';
+  const requestedSection = resolveSettingsSection(location.pathname, location.hash);
+  const active = localWorkspace && requestedSection === 'security' ? 'models' : requestedSection;
+  const sections = SETTINGS_SECTIONS.filter(section => !localWorkspace || section.id !== 'security');
   const [visited, setVisited] = useState<SettingsSection[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -65,7 +69,7 @@ export default function SettingsPage() {
           </Button>}
         </header>
 
-        {SETTINGS_SECTIONS.filter(section => section.id === active || visited.includes(section.id)).map(section =>
+        {sections.filter(section => section.id === active || visited.includes(section.id)).map(section =>
           <div key={section.id} hidden={active !== section.id} className="settings-panel"
             role="region" aria-label={t(`settingsNav.sections.${section.id}.title`)}>
             <SettingsSectionContent section={section.id} active={active === section.id} />

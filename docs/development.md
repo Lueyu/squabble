@@ -24,8 +24,10 @@ For pull requests, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 | Source: backend only | `npm run dev:server` | same | API work |
 | Source: client only | `npm run dev:client` | proxies `/api` to :3000 | UI work |
 
-The app uses its own username/password authentication and JWT sessions.
-GitHub is the source of truth; no Miaoda account is needed to run it.
+Desktop and the source `.env.example` use a local workspace without a Squabble
+login. Docker and backends with no `AUTH_MODE` configured retain username/password
+authentication and JWT sessions. GitHub is the source of truth; no Miaoda account
+is needed to run it.
 
 ## Start from source
 
@@ -34,26 +36,29 @@ GitHub is the source of truth; no Miaoda account is needed to run it.
    schema with `psql -d YOUR_CONNECTION_URL -v ON_ERROR_STOP=1 -f scripts/db/01_schema.sql`.
    Do not run the base schema against an existing populated installation.
    The optional `02_demo_seed.sql` adds fictional demo records; leave it out
-   for an empty account experience.
-3. Create a private `.env` in the repository root. It is ignored by Git:
+   for an empty workspace.
+3. Create a private `.env.local` in the repository root using `.env.example`.
+   It is ignored by Git:
 
    ```dotenv
    DATABASE_URL=postgresql://YOUR_USER:YOUR_PASSWORD@127.0.0.1:5432/portfolio
    JWT_SECRET=YOUR_RANDOM_SECRET_AT_LEAST_32_CHARACTERS
    SETTINGS_ENCRYPTION_KEY=ANOTHER_RANDOM_SECRET_AT_LEAST_32_CHARACTERS
-   REGISTER_ENABLED=true
+   AUTH_MODE=local
    SERVER_HOST=127.0.0.1
    SERVER_PORT=3000
+   TRUST_PROXY=false
+   LOCAL_APP_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
    LOCAL_AGENTS_MODE=native
    ```
 
    Replace every placeholder. To generate each secret independently, run
    `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
    Avoid committing credentials or pasting them into an issue.
-4. Run `npm run dev`. It loads `.env` and starts Nest and Vite. Open
+4. Run `npm run dev`. It loads `.env.local` before `.env` and starts Nest and Vite;
+   existing shell variables take precedence. Open
    **http://localhost:8080** for the frontend; the API is on port **3000**.
-   Vite proxies `/api` to `127.0.0.1:3000`. Register an account and save its
-   recovery code, or use the demo login if you applied the optional seed.
+   Vite proxies `/api` to `127.0.0.1:3000`. Local mode opens the workspace directly.
 
 Use available ports: the development supervisor attempts to stop processes on
 its configured ports. Do not run it over an existing Docker app on port 3000.
@@ -65,6 +70,29 @@ The app applies additive migrations `03` through `15` on startup. They do not
 create the base schema. Neither Docker configuration publishes PostgreSQL on
 the host, so a source development server cannot reach it at `localhost:5432`
 without an explicit local port mapping.
+
+## Local workspace mode
+
+`AUTH_MODE=local` requires a loopback `SERVER_HOST` and `TRUST_PROXY=false`.
+It is for a single trusted local workspace. The frontend reads `/api/auth/mode`
+before opening it; login, logout and account recovery are hidden in this mode.
+For Vite, list the actual frontend origins in `LOCAL_APP_ORIGINS`, separated by
+commas. Update those origins if you change `CLIENT_DEV_PORT`.
+
+An empty database receives an internal `local-workspace` identity. A database
+with one existing user reuses that user's data. If it contains multiple users,
+set `LOCAL_WORKSPACE_USER_ID` to the existing user's ID whose workspace you want
+to open; startup will otherwise stop rather than choose one. This selects data
+without deleting, merging or renaming accounts, holdings or saved credentials.
+Native agent connections are shared by this local installation and no longer
+depend on their legacy Squabble account owner; provider CLI login still applies.
+
+Set `AUTH_MODE=account` to retain username/password login, registration and
+recovery. Omitting `AUTH_MODE` from a directly started backend also preserves
+account mode for existing deployments. Desktop supplies `local` by default but
+honors an inherited `AUTH_MODE=account` and `LOCAL_WORKSPACE_USER_ID`. Docker
+continues to use account mode. Do not expose local mode through a public bind,
+reverse proxy or tunnel.
 
 ## Lint, types, tests
 
@@ -159,8 +187,8 @@ upgrades when changing the schema, preserving existing user data.
 ## Platform migration notes
 
 The webapp was originally developed on the Miaoda (aPaaS) cloud. Runtime
-authentication is now the first-party username/password system in
-`server/modules/auth`, and the database layer is a direct Drizzle connection
+authentication now supports local workspaces and first-party username/password
+sessions in `server/modules/auth`, and the database layer is a direct Drizzle connection
 in `server/common/platform`. The development supervisor still contains the
 optional legacy initialization step noted above. Use the environment values
 shown in this guide for source development; the supported end-user paths are

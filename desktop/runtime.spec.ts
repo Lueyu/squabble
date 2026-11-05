@@ -99,22 +99,37 @@ test('desktop startup errors retain PostgreSQL diagnostics without exposing secr
   for (const secret of Object.values(secrets)) assert.ok(!failure.message.includes(secret));
 });
 
-test('desktop server environment binds both services to loopback and keeps registration open', async () => {
-  const runtime = await runtimePromise;
-  assert.ok(runtime?.nestEnvironment);
-  const paths = runtime.desktopPaths('C:\\Squabble', 'C:\\SquabbleData');
-  const environment = runtime.nestEnvironment(paths, {
-    databasePassword: 'a'.repeat(64), jwtSecret: 'b'.repeat(64), settingsEncryptionKey: 'c'.repeat(64),
-  }, 'postgres://squabble:secret@127.0.0.1:5432/portfolio', 41234);
-  assert.equal(environment.SERVER_HOST, '127.0.0.1');
-  assert.equal(environment.SERVER_PORT, '41234');
-  assert.equal(environment.REGISTER_ENABLED, 'true');
-  assert.equal(environment.SQUABBLE_DESKTOP_ORIGIN, 'http://127.0.0.1:41234');
-  assert.equal(environment.NODE_ENV, 'production');
-  assert.equal(environment.JWT_SECRET, 'b'.repeat(64));
-  assert.equal(environment.LOCAL_AGENTS_MODE, 'native');
-  assert.equal(environment.LOCAL_AGENTS_DATA_DIR, join('C:\\SquabbleData', 'local-agents'));
-});
+for (const authMode of [undefined, '', '  ', 'local', 'account', 'invalid']) {
+  test(`desktop server environment handles ${JSON.stringify(authMode)} auth mode with loopback isolation`, async () => {
+    const runtime = await runtimePromise;
+    assert.ok(runtime?.nestEnvironment);
+    const paths = runtime.desktopPaths('C:\\Squabble', 'C:\\SquabbleData');
+    const inherited = process.env;
+    process.env = { ...inherited, SERVER_HOST: '0.0.0.0', TRUST_PROXY: 'true',
+      LOCAL_WORKSPACE_USER_ID: 'fixture-workspace-owner' };
+    if (authMode === undefined) delete process.env.AUTH_MODE;
+    else process.env.AUTH_MODE = authMode;
+    let environment: NodeJS.ProcessEnv;
+    try {
+      environment = runtime.nestEnvironment(paths, {
+        databasePassword: 'a'.repeat(64), jwtSecret: 'b'.repeat(64), settingsEncryptionKey: 'c'.repeat(64),
+      }, 'postgres://squabble:secret@127.0.0.1:5432/portfolio', 41234);
+    } finally {
+      process.env = inherited;
+    }
+    assert.equal(environment.AUTH_MODE, authMode?.trim() || 'local');
+    assert.equal(environment.LOCAL_WORKSPACE_USER_ID, 'fixture-workspace-owner');
+    assert.equal(environment.SERVER_HOST, '127.0.0.1');
+    assert.equal(environment.TRUST_PROXY, 'false');
+    assert.equal(environment.SERVER_PORT, '41234');
+    assert.equal(environment.REGISTER_ENABLED, 'true');
+    assert.equal(environment.SQUABBLE_DESKTOP_ORIGIN, 'http://127.0.0.1:41234');
+    assert.equal(environment.NODE_ENV, 'production');
+    assert.equal(environment.JWT_SECRET, 'b'.repeat(64));
+    assert.equal(environment.LOCAL_AGENTS_MODE, 'native');
+    assert.equal(environment.LOCAL_AGENTS_DATA_DIR, join('C:\\SquabbleData', 'local-agents'));
+  });
+}
 
 test('embedded PostgreSQL creates a clean portfolio and reuses it after a clean stop', { timeout: 120_000 }, async () => {
   const runtime = await runtimePromise;

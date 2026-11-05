@@ -59,7 +59,10 @@ export class LocalAgentStore {
   private tail: Promise<unknown> = Promise.resolve();
   private loaded = false;
   private readonly pairs = new Map<string, { owner: string; expiresAt: number }>();
-  constructor(readonly root: string) {}
+  readonly sharedNative: boolean;
+  constructor(readonly root: string, options: { sharedNative?: boolean } = {}) {
+    this.sharedNative = options.sharedNative ?? false;
+  }
 
   private async atomic(path: string, value: unknown): Promise<void> {
     const temporary = `${path}.${randomUUID()}.tmp`;
@@ -157,28 +160,32 @@ export class LocalAgentStore {
   revoke(owner: string): Promise<void> { return this.access(true, (state) => this.revokeIn(state, owner)); }
   deviceFor(owner: string): Promise<AgentDevice | undefined> { return this.access(false, (state) => state.devices.find((device) => device.owner === owner)); }
   nativeProviders(owner: string): Promise<LocalAgentProvider[]> {
-    return this.access(false, (state) => state.nativeOwner === owner ? state.nativeProviders : []);
+    return this.access(false, (state) => this.sharedNative || state.nativeOwner === owner ? state.nativeProviders : []);
   }
-  nativeClaimedByOther(owner: string): Promise<boolean> { return this.access(false, (state) => !!state.nativeOwner && state.nativeOwner !== owner); }
+  nativeClaimedByOther(owner: string): Promise<boolean> { return this.access(false, (state) => !this.sharedNative && !!state.nativeOwner && state.nativeOwner !== owner); }
   claimNative(owner: string): Promise<void> {
     return this.access(true, (state) => {
+      // Keep legacy ownership untouched so switching back to account mode is reversible.
+      if (this.sharedNative) return;
       if (state.nativeOwner && state.nativeOwner !== owner) fail('LOCAL_AGENT_OWNED');
       state.nativeOwner = owner;
     });
   }
   connectNative(owner: string, provider: LocalAgentProvider): Promise<void> {
     return this.access(true, (state) => {
-      if (state.nativeOwner && state.nativeOwner !== owner) fail('LOCAL_AGENT_OWNED');
-      state.nativeOwner = owner;
+      if (!this.sharedNative) {
+        if (state.nativeOwner && state.nativeOwner !== owner) fail('LOCAL_AGENT_OWNED');
+        state.nativeOwner = owner;
+      }
       if (!state.nativeProviders.includes(provider)) state.nativeProviders.push(provider);
     });
   }
   disconnectNative(owner: string, provider: LocalAgentProvider): Promise<void> {
     return this.access(true, (state) => {
-      if (state.nativeOwner !== owner) fail('LOCAL_AGENT_OWNED');
+      if (!this.sharedNative && state.nativeOwner !== owner) fail('LOCAL_AGENT_OWNED');
       state.nativeProviders = state.nativeProviders.filter((id) => id !== provider);
       this.cancelProvider(state, owner, `native-${provider}`);
-      if (!state.nativeProviders.length) delete state.nativeOwner;
+      if (!this.sharedNative && !state.nativeProviders.length) delete state.nativeOwner;
     });
   }
   connectCompanion(owner: string, provider: LocalAgentProvider): Promise<void> {
@@ -197,8 +204,11 @@ export class LocalAgentStore {
       this.cancelProvider(state, owner, `companion-${provider}`);
     });
   }
+  private inProviderScope(task: AgentTask, owner: string, agentId: string): boolean {
+    return task.agentId === agentId && (task.owner === owner || this.sharedNative && agentId.startsWith('native-') && !task.deviceId);
+  }
   private cancelProvider(state: State, owner: string, agentId: string): void {
-    for (const task of Object.values(state.tasks)) if (task.owner === owner && task.agentId === agentId && active(task)) {
+    for (const task of Object.values(state.tasks)) if (this.inProviderScope(task, owner, agentId) && active(task)) {
       requestCancellation(task);
     }
   }
@@ -206,7 +216,7 @@ export class LocalAgentStore {
     return this.access(false, (state) => Object.values(state.tasks).find((task) => task.owner === owner && task.messageId === messageId));
   }
   task(owner: string, id: string): Promise<AgentTask> { return this.access(false, (state) => ownedTask(state, owner, id)); }
-  busy(owner: string, agentId: string): Promise<boolean> { return this.access(false, (state) => Object.values(state.tasks).some((task) => task.owner === owner && task.agentId === agentId && active(task))); }
+  busy(owner: string, agentId: string): Promise<boolean> { return this.access(false, (state) => Object.values(state.tasks).some((task) => this.inProviderScope(task, owner, agentId) && active(task))); }
 
   stage(owner: string, agentId: string, provider: LocalAgentProvider, messageId: string, prompt: string,
     kind: 'run' | 'login' = 'run', inputSettings?: NativeAgentConfiguration,
@@ -215,14 +225,14 @@ export class LocalAgentStore {
     return this.access(true, (state) => {
       const existing = Object.values(state.tasks).find((task) => task.owner === owner && task.messageId === messageId);
       if (existing) return existing;
-      if (Object.values(state.tasks).some((task) => task.owner === owner && task.agentId === agentId && active(task))) fail('LOCAL_BUSY');
+      if (Object.values(state.tasks).some((task) => this.inProviderScope(task, owner, agentId) && active(task))) fail('LOCAL_BUSY');
       const device = agentId.startsWith('companion-') ? state.devices.find((item) => item.owner === owner) : undefined;
       if (agentId.startsWith('companion-')) {
         if (!device || Date.now() - device.lastSeen > 15_000) fail('LOCAL_COMPANION_OFFLINE');
         if (!device!.agents.some((agent) => agent.provider === provider)) fail('LOCAL_VERSION_UNSUPPORTED');
         if (kind === 'run' && !device!.providers.includes(provider)) fail('LOCAL_AGENT_NOT_FOUND');
         validateNativeAgentConfiguration(agentSettings, device?.agents.find((agent) => agent.provider === provider));
-      } else if (state.nativeOwner !== owner || (kind === 'run' && !state.nativeProviders.includes(provider))) fail('LOCAL_AGENT_NOT_FOUND');
+      } else if (!this.sharedNative && state.nativeOwner !== owner || (kind === 'run' && !state.nativeProviders.includes(provider))) fail('LOCAL_AGENT_NOT_FOUND');
       const task: AgentTask = { id: randomUUID(), owner, agentId, provider, deviceId: device?.id, kind, messageId, prompt,
         ...(agentSettings ? { agentSettings } : {}),
         ...(research ? { researchScope: research.scope, researchBundle: research.bundle } : {}),

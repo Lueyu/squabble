@@ -21,6 +21,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { Button } from '@/components/ui/button';
 import RoutesComponent from './app.tsx';
+import AuthModeGate from './components/AuthModeGate';
 import './index.css';
 import './i18n'; // i18n must load before any page renders
 import { createPortal } from 'react-dom';
@@ -71,7 +72,7 @@ const MainApp = () => {
     <BrowserRouter basename={CLIENT_BASE_PATH}>
       <ErrorBoundary FallbackComponent={CrashFallback} onReset={() => window.location.reload()}>
         <QueryClientProvider client={queryClient}>
-          <RoutesComponent />
+          <AuthModeGate><RoutesComponent /></AuthModeGate>
           {createPortal(<Toaster />, document.body)}
         </QueryClientProvider>
       </ErrorBoundary>

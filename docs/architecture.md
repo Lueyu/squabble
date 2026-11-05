@@ -55,7 +55,15 @@ sources; running the executable locally does not mean inference stays offline.
 
 ## Accounts, ownership and credentials
 
-First-party accounts use username/password authentication, bcrypt password
+Desktop and the source example use `AUTH_MODE=local`: the backend resolves a
+single local workspace identity, and the client enters directly after reading
+`/api/auth/mode`. An empty database creates an internal identity, one existing
+user is reused, and multiple users require `LOCAL_WORKSPACE_USER_ID`. Existing
+records and credentials remain intact. Local mode requires loopback binding
+without proxy trust; browser access is limited to allowed local origins.
+
+`AUTH_MODE=account` (also the backend default when unset) keeps first-party
+username/password authentication, bcrypt password
 hashes, JWT bearer sessions and offline recovery codes. Protected controllers
 obtain the authenticated user from `req.userContext`; business services scope
 user data by owner. This is application-level ownership filtering, not a claim
@@ -174,9 +182,11 @@ helper stores the credential privately in local application data. Settings
 can revoke the pairing. Keep the helper running while research is active.
 
 `server/modules/local-agents/` owns authenticated connections, ownership,
-pairing and a durable task journal. Owners come from the verified application
-session, and each task is bound to its owner, provider and optional companion
-device. A native installation is claimed by one application account. Task
+pairing and a durable task journal. Owners come from the local workspace identity
+or verified application session, and each task is bound to its owner, provider
+and optional companion device. Local mode shares native connections across the
+installation regardless of legacy account ownership; account mode retains a
+single account's native runtime claim. Task
 identity and prompts are atomically persisted before dispatch; progress and
 results are saved as they arrive in the private local-agent data directory.
 Docker mounts a dedicated named volume. The helper persists processed task

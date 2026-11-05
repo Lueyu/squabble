@@ -10,7 +10,8 @@
  * under `api/`, and shared layout under `components/Layout.tsx`.
  */
 import React, { useEffect } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { getAuthMode } from './api/auth-mode';
 import { initAgentAPI } from './utils/agent-api';
 
 import Layout from './components/Layout';
@@ -42,6 +43,7 @@ import NotFound from './pages/NotFound/NotFound';
  * @returns The React element tree for the whole application.
  */
 const RoutesComponent = () => {
+  const localWorkspace = getAuthMode() === 'local';
   // One-time side effect: expose the in-page agent bridge so the host
   // container can call into this SPA.
   useEffect(() => {
@@ -50,9 +52,9 @@ const RoutesComponent = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/recover" element={<RecoverPage />} />
+      <Route path="/login" element={localWorkspace ? <Navigate to="/" replace /> : <LoginPage />} />
+      <Route path="/register" element={localWorkspace ? <Navigate to="/" replace /> : <RegisterPage />} />
+      <Route path="/recover" element={localWorkspace ? <Navigate to="/" replace /> : <RecoverPage />} />
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route element={<Layout />}>
         <Route index element={<DashboardPage />} />

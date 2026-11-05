@@ -11,12 +11,14 @@ import { AuthGlobalGuard } from '../../common/platform/auth.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AuthRateLimiter } from './auth-rate-limiter';
+import { LocalWorkspaceService } from './local-workspace.service';
 
 @Module({
   controllers: [AuthController],
   providers: [
     AuthService,
     AuthRateLimiter,
+    LocalWorkspaceService,
     {
       provide: APP_GUARD,
       useClass: AuthGlobalGuard,

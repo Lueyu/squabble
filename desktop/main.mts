@@ -257,6 +257,7 @@ async function startDesktop(): Promise<void> {
   const port = await loadOrCreateServerPort(paths.serverPortFile);
   const origin = `http://127.0.0.1:${port}`;
   const environment = nestEnvironment(paths, secrets, database.connectionUrl, port);
+  if (process.env.SQUABBLE_DESKTOP_SMOKE === '1') environment.LOCAL_WORKSPACE_USER_ID = '';
 
   markSmokeStage('before-backend-fork');
   backendLog = createWriteStream(join(paths.logsDir, 'backend.log'), { flags: 'a', mode: 0o600 });
@@ -288,12 +289,28 @@ async function startDesktop(): Promise<void> {
       await import('electron-updater');
       markSmokeStage('updater-loaded');
     }
+    const localMode = environment.AUTH_MODE === 'local';
+    const mode = await fetch(`${origin}/api/auth/mode`);
+    if (!mode.ok || (await mode.json() as { mode?: string }).mode !== environment.AUTH_MODE) {
+      throw new Error('Packaged desktop authentication mode does not match its configuration');
+    }
     const response = await fetch(`${origin}/api/auth/registration-status`);
-    if (!response.ok || (await response.json() as { registrationOpen?: boolean }).registrationOpen !== true) {
-      throw new Error('Packaged desktop first-run registration is unavailable');
+    if (!response.ok || (await response.json() as { registrationOpen?: boolean }).registrationOpen !== !localMode) {
+      throw new Error('Packaged desktop registration does not match its authentication mode');
+    }
+    const profile = await fetch(`${origin}/api/auth/me`);
+    if (profile.status !== (localMode ? 200 : 401)) {
+      throw new Error('Packaged desktop workspace access does not match its authentication mode');
+    }
+    if (localMode) {
+      const registration = await fetch(`${origin}/api/auth/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (registration.status !== 403) throw new Error('Packaged local workspace permits account registration');
     }
     await writeFile(join(dataRoot, 'packaged-smoke.json'), JSON.stringify({
-      healthy: true, registrationOpen: true, defaultDataRoot: app.getPath('userData'),
+      healthy: true, authMode: environment.AUTH_MODE, registrationOpen: !localMode,
+      anonymousAccess: localMode, defaultDataRoot: app.getPath('userData'),
     }));
     markSmokeStage('smoke-marker-written');
     app.quit();

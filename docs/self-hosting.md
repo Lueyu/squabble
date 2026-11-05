@@ -47,14 +47,26 @@ pause. If it remains unchanged for a long time, check whether the installer is
 still writing to disk and retry after closing any running Squabble app.
 Reinstalling does not automatically remove the application data directory.
 
-On first launch, create your account and save the one-time recovery code
-offline. The desktop login page keeps registration available for additional
-local accounts, each with its own sign-in and recovery code. Anyone who can
-open this desktop app on your computer can create an account. The Docker
-installation instead closes public registration after its first account.
-The desktop app starts with no demo account or sample holdings. Add
-holdings manually or [import a CSV](import.md). Account recovery uses the
-saved code; there is no email reset service.
+The desktop app opens a local workspace directly, without Squabble registration
+or login. It starts with no sample holdings. Add holdings manually or
+[import a CSV](import.md). Provider CLI sign-in for native research agents is
+independent of Squabble authentication.
+
+### Local workspace and existing data
+
+Desktop defaults to `AUTH_MODE=local`, listens only on `127.0.0.1`, and disables
+proxy trust. A fresh database gets an internal `local-workspace` identity. If
+there is exactly one existing user, the app opens that user's data. With multiple
+users, set `LOCAL_WORKSPACE_USER_ID` to the chosen existing user's ID in the
+environment used to launch the app. Otherwise startup stops with a configuration
+error. Accounts, holdings, reports, provider credentials and CLI sessions are
+preserved; selecting a workspace does not merge or delete other users' data.
+
+For the previous sign-in experience, launch with `AUTH_MODE=account`. Registration
+and recovery codes remain available in that mode. Docker continues to use account
+mode and closes public registration after its first account. Local mode is for
+this computer only; do not publish it through a proxy or tunnel. Anyone with
+access to this local app can use the selected workspace.
 
 Automatic scans, notifications and local API integrations run only while the
 desktop app is open. Quitting it stops the local backend and database. The

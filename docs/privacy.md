@@ -43,6 +43,11 @@ end-to-end encrypted.
 “Instance database” below means the database in your Docker installation or
 desktop application.
 
+Local workspace mode opens without a Squabble login and uses an internal or
+selected existing user identity to keep data ownership stable. Switching modes
+does not erase existing accounts or credentials. Access to that local app grants
+access to the selected workspace; account mode retains separate sign-in sessions.
+
 | Data | Storage and handling |
 |---|---|
 | Account | Username, display name, bcrypt password hash, SHA-256 recovery-code hash, session version, and timestamps in the instance database. Registration requires no phone number, real name, or verified email. Optional notification recipients may include an email address. |
@@ -102,11 +107,12 @@ asks for re-entry; it does not silently switch to the operator's model.
   Agent Builder or disable its AI review/proposal notifications; revoke agent
   sessions you no longer use.
 - **Council and budget:** pause a discussion, disable the council for a Builder profile, and change per-user model limits. Pausing stops later work; an in-flight provider call may still finish. Full notes and report history are retained, and resuming does not reset the discussion's task allowance.
-- **Account recovery:** save the one-time recovery code offline. Recovery resets
+- **Account recovery (account mode):** save the one-time recovery code offline. Recovery resets
   the password, replaces the code, and revokes earlier account and agent
   sessions. Generating a new code with your password replaces the old code and
   revokes earlier account sessions. There is no email-based recovery flow.
-- **This browser or desktop app:** sign out to clear session tokens. Clear the
+- **This browser or desktop app:** in account mode, sign out to clear session tokens.
+  Local mode has no sign-out action; close the app and control access to the computer. Clear the
   site's browser storage or the desktop app's webview storage to remove locally
   saved recognition credentials and preferences; signing out alone does not
   clear all of them.

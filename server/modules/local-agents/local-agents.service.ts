@@ -12,6 +12,7 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import type { ResearchToolRequest, ResearchToolResult } from '../../../shared/research-tools.interface';
 import { researchFailure } from '../research-tools/research-tools.output';
 import { createHash } from 'node:crypto';
+import { isLocalWorkspaceMode } from '../auth/local-workspace';
 
 interface Runtime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -34,7 +35,8 @@ export class LocalAgentsService implements OnModuleDestroy {
     @Optional() @Inject('LOCAL_AGENT_STORE') store?: LocalAgentStore,
     @Optional() private readonly researchTools?: ResearchToolsService) {
     this.runtime = runtime ?? { detectNativeAgents, openNativeLogin, runNativeAgent };
-    this.store = store ?? new LocalAgentStore(resolve(process.env.LOCAL_AGENTS_DATA_DIR || join(homedir(), '.squabble', 'local-agents')));
+    this.store = store ?? new LocalAgentStore(resolve(process.env.LOCAL_AGENTS_DATA_DIR || join(homedir(), '.squabble', 'local-agents')),
+      { sharedNative: isLocalWorkspaceMode() });
   }
   get mode(): 'native' | 'companion' {
     if (process.env.SQUABBLE_DESKTOP_ORIGIN) return 'native';
@@ -80,8 +82,8 @@ export class LocalAgentsService implements OnModuleDestroy {
     const provider = providerFromId(id, this.mode);
     if (this.mode === 'native') await this.store.disconnectNative(owner, provider);
     else await this.store.disconnectCompanion(owner, provider);
-    for (const [taskId, execution] of this.running) {
-      if (execution.owner === owner && (await this.store.task(owner, taskId)).agentId === id) execution.abort.abort();
+    for (const execution of this.running.values()) {
+      if (execution.agentId === id && (execution.owner === owner || this.store.sharedNative && id.startsWith('native-'))) execution.abort.abort();
     }
   }
   async login(owner: string, id: string): Promise<void> {

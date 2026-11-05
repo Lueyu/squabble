@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalAgentStore } from './local-agents.store';
@@ -37,6 +37,95 @@ test('native connection ownership cannot be claimed or released by another accou
   await assert.rejects(store.disconnectNative('bob', 'codex'), /LOCAL_AGENT_OWNED/);
   assert.deepEqual(await store.nativeProviders('bob'), []);
   assert.deepEqual(await store.nativeProviders('alice'), ['codex']);
+}));
+
+test('shared native reload reuses legacy connections while preserving owner metadata and private tasks', async () => fixture(async (legacy, root) => {
+  await legacy.connectNative('alice', 'codex');
+  await legacy.connectNative('alice', 'opencode');
+  const privateTask = await legacy.stage('alice', 'native-codex', 'codex', 'same-message', 'Private account prompt');
+  await legacy.update('alice', privateTask.id, { state: 'completed', text: 'Private account report' });
+  const shared = new LocalAgentStore(root, { sharedNative: true });
+  assert.deepEqual(await shared.nativeProviders('workspace'), ['codex', 'opencode']);
+  assert.equal(await shared.nativeClaimedByOther('workspace'), false);
+  await shared.claimNative('workspace');
+  await shared.connectNative('workspace', 'gemini');
+  assert.equal(JSON.parse(await readFile(join(root, 'connections.json'), 'utf8')).nativeOwner, 'alice');
+  const login = await shared.stage('workspace', 'native-claude', 'claude', 'login', '', 'login');
+  await shared.cancel('workspace', login.id);
+  const ownTask = await shared.stage('workspace', 'native-codex', 'codex', 'same-message', 'Workspace prompt');
+  assert.notEqual(ownTask.id, privateTask.id);
+  assert.equal(ownTask.prompt, 'Workspace prompt');
+  assert.equal((await shared.findMessage('workspace', 'same-message'))?.id, ownTask.id);
+  await assert.rejects(shared.task('workspace', privateTask.id), /LOCAL_TASK_NOT_FOUND/);
+  await assert.rejects(shared.update('workspace', privateTask.id, { text: 'Replacement' }), /LOCAL_TASK_NOT_FOUND/);
+  await assert.rejects(shared.cancel('workspace', privateTask.id), /LOCAL_TASK_NOT_FOUND/);
+  assert.equal((await shared.task('alice', privateTask.id)).text, 'Private account report');
+  for (const provider of ['codex', 'opencode', 'gemini'] as const) await shared.disconnectNative('workspace', provider);
+  assert.equal(JSON.parse(await readFile(join(root, 'connections.json'), 'utf8')).nativeOwner, 'alice');
+  const account = new LocalAgentStore(root);
+  assert.equal(await account.nativeClaimedByOther('workspace'), true);
+  await assert.rejects(account.connectNative('workspace', 'codex'), /LOCAL_AGENT_OWNED/);
+  await account.connectNative('alice', 'codex');
+  assert.equal((await account.task('alice', privateTask.id)).text, 'Private account report');
+}));
+
+test('a fresh shared native store never binds the device to a workspace owner', async () => fixture(async (_legacy, root) => {
+  const store = new LocalAgentStore(root, { sharedNative: true });
+  await store.claimNative('workspace');
+  await store.connectNative('workspace', 'codex');
+  assert.equal(JSON.parse(await readFile(join(root, 'connections.json'), 'utf8')).nativeOwner, undefined);
+  assert.deepEqual(await store.nativeProviders('another-workspace'), ['codex']);
+}));
+
+for (const phase of ['staged', 'queued', 'running'] as const) {
+  test(`shared native ${phase} work reserves its provider across owners and disconnect cancels it`, async () => fixture(async (legacy, root) => {
+    await legacy.connectNative('alice', 'codex');
+    await legacy.connectNative('alice', 'opencode');
+    const store = new LocalAgentStore(root, { sharedNative: true });
+    const task = await store.stage('alice', 'native-codex', 'codex', 'legacy-active', 'Private account prompt');
+    if (phase !== 'staged') await store.activate('alice', task.id);
+    if (phase === 'running') await store.takeNative('alice', task.id);
+    assert.equal(await store.busy('workspace', 'native-codex'), true);
+    assert.equal(await store.busy('workspace', 'native-opencode'), false);
+    await assert.rejects(store.stage('workspace', 'native-codex', 'codex', 'workspace-active', 'Workspace prompt'), /LOCAL_BUSY/);
+    const other = await store.stage('workspace', 'native-opencode', 'opencode', 'other-provider', 'Other prompt');
+    await store.disconnectNative('workspace', 'codex');
+    assert.equal((await store.task('alice', task.id)).state, phase === 'running' ? 'cancelling' : 'cancelled');
+    assert.equal((await store.task('workspace', other.id)).state, 'staged');
+    assert.equal(await store.takeNative('alice', task.id), false);
+    assert.deepEqual(await store.nativeProviders('alice'), ['opencode']);
+    await store.connectNative('workspace', 'codex');
+    if (phase === 'running') {
+      await assert.rejects(store.stage('workspace', 'native-codex', 'codex', 'still-draining', 'Prompt'), /LOCAL_BUSY/);
+      await store.update('alice', task.id, { state: 'cancelled', error: 'LOCAL_CANCELLED' });
+    }
+    assert.equal(await store.busy('workspace', 'native-codex'), false);
+    assert.equal((await store.stage('workspace', 'native-codex', 'codex', 'next-message', 'Prompt')).owner, 'workspace');
+  }));
+}
+
+test('shared native mode leaves companion connection, task and cancellation ownership isolated', async () => fixture(async (_legacy, root) => {
+  const store = new LocalAgentStore(root, { sharedNative: true });
+  const aliceDevice = await store.pair((await store.createPairing('alice')).code, 'Alice laptop');
+  const bobDevice = await store.pair((await store.createPairing('bob')).code, 'Bob laptop');
+  await store.poll(aliceDevice.token, { agents: ready, updates: [] });
+  await store.poll(bobDevice.token, { agents: ready, updates: [] });
+  await store.connectCompanion('alice', 'codex');
+  const alice = await store.stage('alice', 'companion-codex', 'codex', 'same-message', 'Alice private prompt');
+  assert.equal(await store.busy('bob', 'companion-codex'), false);
+  await assert.rejects(store.stage('bob', 'companion-codex', 'codex', 'same-message', 'Bob prompt'), /LOCAL_AGENT_NOT_FOUND/);
+  await store.connectCompanion('bob', 'codex');
+  const bob = await store.stage('bob', 'companion-codex', 'codex', 'same-message', 'Bob prompt');
+  await store.activate('alice', alice.id);
+  await store.activate('bob', bob.id);
+  await store.disconnectCompanion('bob', 'codex');
+  await store.connectNative('workspace', 'codex');
+  await store.disconnectNative('workspace', 'codex');
+  assert.equal((await store.task('alice', alice.id)).state, 'queued');
+  assert.equal((await store.task('bob', bob.id)).state, 'cancelled');
+  await assert.rejects(store.task('bob', alice.id), /LOCAL_TASK_NOT_FOUND/);
+  assert.deepEqual((await store.poll(bobDevice.token, { agents: ready, updates: [] })).commands, []);
+  assert.equal((await store.poll(aliceDevice.token, { agents: ready, updates: [] })).commands[0].prompt, 'Alice private prompt');
 }));
 
 test('an older companion never receives login commands for providers it cannot recognize', async () => fixture(async (store) => {

@@ -28,7 +28,7 @@ Most portfolio trackers show numbers. Squabble argues about them.
 
 - **AI research reports.** A bull and a bear debate your holdings. A critic removes weak arguments. Your risk rules run as hard gates. The result is a 14-section report with both sides preserved.
 - **AI paper trading.** Opt into daily team research, a dated trading plan, scheduled market checks and a fast model review before automatic simulated fills. Configure push notifications and hard risk limits. Manual and MCP agent orders remain available.
-- **Your data stays yours.** Self-hosted. Zero telemetry. Only a username and password — no phone number, no email verification.
+- **Your data stays yours.** Self-hosted. Zero telemetry. Desktop and source local workspaces open without a Squabble login; account mode remains available.
 
 ## Install
 
@@ -38,7 +38,8 @@ Most portfolio trackers show numbers. Squabble argues about them.
 2. Download the installer for your system (`.exe` for Windows, `.dmg` for macOS).
 3. Run the installer. Everything is bundled — PostgreSQL, the server, and the app.
 
-After install, Squabble opens in its own window. Your data stays on your machine.
+After install, Squabble opens directly into a local workspace in its own window.
+Your data stays on your machine. Existing data is preserved; see the [upgrade and workspace selection notes](docs/self-hosting.md#local-workspace-and-existing-data).
 
 ### Web app (Docker)
 
@@ -66,6 +67,7 @@ npm run dev
 
 Before the first launch, configure PostgreSQL and a private `JWT_SECRET` in `.env.local` using `.env.example`.
 After `Ready:` appears, open **http://127.0.0.1:8080** for the source-backed UI with hot reload.
+The example enables `AUTH_MODE=local`: no Squabble login is needed. Keep `SERVER_HOST=127.0.0.1` and `TRUST_PROXY=false`; use `AUTH_MODE=account` for account-based access. See the [development guide](docs/development.md#local-workspace-mode) for existing data and allowed frontend origins.
 Each `npm run dev` stops the previous development session, reclaims both configured ports and their process trees, rebuilds the server, and refreshes Vite's cache. Ctrl+C stops the current session.
 Override `SERVER_PORT=3000` and `CLIENT_DEV_PORT=8080` in `.env.local` if needed. The frontend never silently switches to another port.
 
@@ -88,6 +90,9 @@ installed on your computer. Sign in through the provider's terminal, then click
 from web Settings; confirm the local address in the desktop dialog. Keep the app
 open while researching. Each member can select a model and the reasoning options
 supported by its agent, or inherit the existing defaults. [Setup and usage details](docs/local-agents.md).
+
+In local workspace mode, native agent connections belong to this installation and
+do not require a Squabble account. Provider CLI sign-in remains separate.
 
 Compatible Codex and Claude Code versions automatically receive task-scoped,
 read-only research tools; other runtimes receive a dated evidence snapshot with

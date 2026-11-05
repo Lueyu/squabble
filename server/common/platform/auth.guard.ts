@@ -12,6 +12,7 @@ import {
   ExecutionContext,
   Inject,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -21,10 +22,13 @@ import { verifyAccessToken } from '../../modules/auth/jwt';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from './database.provider';
 import { users } from '../../database/schema';
 import { eq } from 'drizzle-orm';
+import { isLocalWorkspaceMode } from '../../modules/auth/local-workspace';
+import { LocalWorkspaceService } from '../../modules/auth/local-workspace.service';
 
 @Injectable()
 export class AuthGlobalGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector, @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
+  constructor(private readonly reflector: Reflector, @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    @Optional() private readonly workspace?: LocalWorkspaceService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const needLogin = this.reflector.getAllAndOverride<boolean>(NEED_LOGIN_KEY, [
@@ -33,6 +37,12 @@ export class AuthGlobalGuard implements CanActivate {
     ]);
     const req = context.switchToHttp().getRequest<Request>();
     if (!needLogin) return true;
+
+    if (isLocalWorkspaceMode()) {
+      if (!this.workspace) throw new Error('Local workspace service is unavailable');
+      req.userContext = await this.workspace.identity();
+      return true;
+    }
 
     const header = req.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) {

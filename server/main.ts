@@ -16,6 +16,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { RequestHandler } from 'express';
 import { AppModule } from './app.module';
 import { staticAssets } from './common/platform/static-assets.middleware';
+import { isLocalWorkspaceMode, localWorkspaceRequestGuard, validateLocalWorkspaceConfig } from './modules/auth/local-workspace';
 
 /**
  * Builds and starts the NestJS server.
@@ -27,11 +28,14 @@ import { staticAssets } from './common/platform/static-assets.middleware';
  * defaults.
  */
 async function bootstrap() {
+  validateLocalWorkspaceConfig();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     abortOnError: process.env.NODE_ENV !== 'development',
   });
   app.enableShutdownHooks();
   if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
+
+  if (isLocalWorkspaceMode()) app.use(localWorkspaceRequestGuard());
 
   if (process.env.SQUABBLE_DESKTOP_ORIGIN) {
     // The desktop shell serves the SPA on a private loopback origin. Reject
