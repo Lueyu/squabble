@@ -1,0 +1,162 @@
+import 'reflect-metadata';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
+import test from 'node:test';
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { eq } from 'drizzle-orm';
+import { analysis, transactions, snapshots } from '../../database/schema';
+import { tradingMarketDate } from '../paper-trading/trading-market.calendar';
+import { researchDocumentVersions } from '../../database/research-documents.schema';
+import { ResearchDocumentsService } from './research-documents.service';
+import { AgentService } from '../agent/agent.service';
+import { AnalysisService } from '../analysis/analysis.service';
+
+test('report lifecycle: owned immutable versions, retry conflicts, draft CAS, adoption, branches and exact historical sources', {
+  skip: !process.env.RESEARCH_TEST_DATABASE_URL,
+}, async () => {
+  const url = process.env.RESEARCH_TEST_DATABASE_URL!;
+  const namespace = `reports_test_${randomUUID().replaceAll('-', '')}`;
+  const admin = postgres(url, { max: 1, onnotice: () => {} });
+  const client = postgres(url, { max: 6, onnotice: () => {}, connection: { search_path: namespace } });
+  await admin`CREATE SCHEMA ${admin(namespace)}`;
+  try {
+    for (const file of readdirSync('scripts/db').filter(f => /^\d\d_.*\.sql$/u.test(f) && Number(f.slice(0, 2)) !== 2 && Number(f.slice(0, 2)) <= 26).sort()) {
+      await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
+    }
+    await client.unsafe(readFileSync('scripts/db/26_research_documents.sql', 'utf8'));
+    const db = drizzle(client); const service = new ResearchDocumentsService(db);
+    const owner = randomUUID(); const stranger = randomUUID();
+    const [daily] = await db.insert(analysis).values({ owner, ticker: 'ACME', analysisDate: '2026-11-04', analysis: 'Original thesis', risks: 'Original risk' }).returning();
+    const v1 = await service.importSource(owner, { type: 'daily', id: daily.id });
+    assert.equal(v1.dataAsOf, null); assert.equal(v1.availableAt, null); assert.equal(v1.snapshot, null);
+    const duplicates = await Promise.all([1, 2, 3].map(() => service.importSource(owner, { type: 'daily', id: daily.id })));
+    assert.ok(duplicates.every(v => v.id === v1.id));
+    const sameNamedBranch = await service.fork(owner, v1.id, v1.title);
+    assert.notEqual(sameNamedBranch.reportId, v1.reportId);
+    assert.equal((await service.importSource(owner, { type: 'daily', id: daily.id })).id, v1.id, 'source import must never redirect to an identically named branch');
+    await assert.rejects(service.importSource(stranger, { type: 'daily', id: daily.id }), /REPORT_SOURCE_NOT_FOUND/);
+    await assert.rejects(service.getVersion(stranger, v1.id), /REPORT_NOT_FOUND/);
+    await assert.rejects(service.resolveReferences(stranger, [{ versionId: v1.id }]), /REPORT_NOT_FOUND/);
+    const input = { idempotencyKey: 'task-1', title: 'Task report', kind: 'deep' as const, content: 'Same task', sections: [{ id: 'thesis', title: 'Thesis', content: 'Same task' }] };
+    const submitted = await service.submit(owner, input);
+    assert.equal((await service.submit(owner, input)).id, submitted.id);
+    await assert.rejects(service.submit(owner, { ...input, content: 'Changed task' }), /REPORT_IDEMPOTENCY_CONFLICT/);
+    await assert.rejects(db.update(researchDocumentVersions).set({ content: 'tampered' }).where(eq(researchDocumentVersions.id, v1.id)), /REPORT_VERSION_IMMUTABLE|Failed query/);
+    const draft = await service.createDraft(owner, v1.id, { title: 'Revised', content: 'Revised thesis', changeReason: 'New filing' });
+    const edited = await service.updateDraft(owner, draft.id, { title: 'Revised', content: 'Reviewed thesis', changeReason: 'Correct evidence' }, 1);
+    await assert.rejects(service.updateDraft(owner, draft.id, { title: 'Stale', content: 'Stale text', changeReason: 'Old editor' }, 1), /REPORT_DRAFT_CONFLICT/);
+    await assert.rejects(service.publishDraft(stranger, draft.id, edited.revision), /REPORT_DRAFT_NOT_FOUND/);
+    const v2 = await service.publishDraft(owner, draft.id, edited.revision);
+    assert.equal((await service.publishDraft(owner, draft.id, edited.revision)).id, v2.id);
+    assert.equal(v2.parentVersionId, v1.id); assert.equal(v2.reportId, v1.reportId); assert.equal(v2.version, 2);
+    const before = await service.view(owner, v1.id); assert.equal(before.document.latestVersionId, v2.id); assert.equal(before.document.adoptedVersionId, null);
+    await service.adopt(owner, v1.id, null);
+    await assert.rejects(service.adopt(owner, v2.id, null), /REPORT_ADOPTION_CONFLICT/);
+    await service.adopt(owner, v2.id, v1.id);
+    await service.recordStrategyUse(owner, v1.id, randomUUID());
+    const view = await service.view(owner, v2.id);
+    assert.equal(view.document.adoptedVersionId, v2.id); assert.deepEqual(view.document.strategyVersionIds, [v1.id]); assert.ok(view.diff.length > 0);
+    assert.equal(view.adoptions.length, 2); assert.equal(view.adoptions[0].versionId, v2.id);
+    assert.equal(view.adoptions[0].previousVersionId, v1.id); assert.equal(view.adoptions[0].actorId, owner);
+    const branch = await service.fork(owner, v1.id, 'Independent branch');
+    assert.notEqual(branch.reportId, v1.reportId); assert.equal(branch.parentVersionId, v1.id);
+    await service.adopt(owner, branch.id, null);
+    assert.equal((await service.view(owner, v2.id)).document.adoptedVersionId, v2.id);
+    await db.update(analysis).set({ analysis: 'Later overwritten thesis' }).where(eq(analysis.id, daily.id));
+    const v3 = await service.importSource(owner, { type: 'daily', id: daily.id });
+    assert.notEqual(v3.id, v1.id);
+    assert.match((await service.resolveReferences(owner, [{ versionId: v1.id, sectionId: 'analysis' }]))[0].content, /Original thesis/);
+    await db.delete(analysis).where(eq(analysis.id, daily.id));
+    assert.equal((await service.getVersion(owner, v1.id)).sourceStatus, 'missing');
+    await service.revoke(owner, v2.id, 'Evidence withdrawn');
+    assert.equal((await service.getVersion(owner, v2.id)).status, 'revoked');
+    await assert.rejects(service.adopt(owner, v2.id, v2.id), /REPORT_REVOKED/);
+    assert.equal((await service.getVersion(owner, v1.id)).content, v1.content);
+    let writes = 0;
+    const receipt = await service.withSubmission(owner, 'agent-task-1', { thesis: 'one' }, async () => { writes += 1; return { id: 'first' }; });
+    const retry = await service.withSubmission(owner, 'agent-task-1', { thesis: 'one' }, async () => { writes += 1; return { id: 'second' }; });
+    assert.deepEqual(receipt, retry); assert.equal(writes, 1);
+    await assert.rejects(service.withSubmission(owner, 'agent-task-1', { thesis: 'different' }, async () => ({ id: 'bad' })), /REPORT_IDEMPOTENCY_CONFLICT/);
+    const [overwrite] = await db.insert(analysis).values({ owner, ticker: 'SAVE', analysisDate: '2026-11-05', analysis: 'Pre-versioning record' }).returning();
+    await service.writeDaily(owner, { ticker: 'SAVE', analysisDate: '2026-11-05', analysis: 'New record' });
+    const current = await service.importSource(owner, { type: 'daily', id: overwrite.id });
+    const histories = await service.listVersions(owner, current.reportId);
+    assert.equal(histories.length, 2); assert.ok(histories.some(v => v.content.includes('Pre-versioning record')));
+    const agent = new AgentService(db, undefined as never);
+    const task = { date: '2026-11-05', submissionId: 'daily-retry-1', items: [{ ticker: 'SAVE', analysis: 'Agent updated thesis' }] };
+    await agent.saveDailyAnalysis(owner, task);
+    await agent.saveDailyAnalysis(owner, task);
+    await assert.rejects(agent.saveDailyAnalysis(owner, { ...task, items: [{ ticker: 'SAVE', analysis: 'Changed retry' }] }), /REPORT_IDEMPOTENCY_CONFLICT/);
+    const deepInput = { ticker: 'ACME', coreThesis: 'Agent thesis', submissionId: 'deep-retry-1' };
+    const deepFirst = await agent.saveDeepReport(owner, deepInput as Parameters<typeof agent.saveDeepReport>[1]);
+    const deepRetry = await agent.saveDeepReport(owner, deepInput as Parameters<typeof agent.saveDeepReport>[1]);
+    assert.equal(deepFirst.deepReportId, deepRetry.deepReportId);
+    const linked = await service.importSource(owner, { type: 'deep', id: deepFirst.deepReportId });
+    await service.writeDaily(owner, { ticker: 'ACME', analysisDate: '2026-11-05', analysis: 'Linked original research' }, { snapshot: { sourceReportVersionId: linked.id } });
+    const notes = new AnalysisService(db);
+    assert.equal((await notes.list(owner, '2026-11-05', 'ACME')).items[0].deepReportVersionId, linked.id);
+    const [legacyLink] = await db.insert(analysis).values({ owner, ticker: 'ACME', analysisDate: '2026-11-03', analysis: 'No known report link' }).returning();
+    assert.equal((await notes.list(owner, '2026-11-03', 'ACME')).items.find(item => item.id === legacyLink.id)?.deepReportVersionId, null);
+    const displayed = (await notes.list(owner, '2026-11-05', 'SAVE')).items[0];
+    assert.ok(displayed.researchVersionId);
+    await notes.upsert(owner, { analysisDate: '2026-11-05', ticker: 'SAVE', analysis: 'Changed after rendering' });
+    assert.match((await service.getVersion(owner, displayed.researchVersionId)).content, /Agent updated thesis/);
+    await assert.rejects(notes.batchUpsert(owner, [
+      { analysisDate: '2026-11-05', ticker: 'ATOMIC', analysis: 'Must roll back' },
+      { analysisDate: 'invalid-date', ticker: 'BAD', analysis: 'Invalid' },
+    ]));
+    assert.equal((await notes.list(owner, '2026-11-05', 'ATOMIC')).items.length, 0, 'failed batch must leave no report or legacy write');
+    const latest = await service.importSource(owner, { type: 'daily', id: overwrite.id });
+    const a = await service.createDraft(owner, latest.id, { title: 'Parallel A', content: 'A revision', changeReason: 'A reason' });
+    const b = await service.createDraft(owner, latest.id, { title: 'Parallel B', content: 'B revision', changeReason: 'B reason' });
+    const published = await Promise.allSettled([service.publishDraft(owner, a.id, 1), service.publishDraft(owner, b.id, 1)]);
+    assert.equal(published.filter(r => r.status === 'fulfilled').length, 1);
+    assert.equal(published.filter(r => r.status === 'rejected').length, 1);
+    await assert.rejects(db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: submitted.id }], new Date())), /REPORT_AVAILABILITY_UNKNOWN/);
+    const usable = await service.importSource(owner, { type: 'deep', id: deepFirst.deepReportId });
+    const verified = await db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: usable.id, sectionId: 'coreThesis' }], new Date()));
+    assert.equal(verified[0].content, 'Agent thesis');
+    await assert.rejects(db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: usable.id }], new Date('2000-01-01'))), /REPORT_NOT_YET_AVAILABLE/);
+    await assert.rejects(db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: v1.id }], new Date())), /REPORT_SOURCE_MISSING/);
+    await assert.rejects(db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: v2.id }], new Date())), /REPORT_REVOKED/);
+    const future = await service.submit(owner, { ...input, idempotencyKey: 'future-cutoff', availableAt: '2026-11-05T00:00:00.000Z', dataAsOf: '2099-01-01T00:00:00.000Z' });
+    await assert.rejects(db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: future.id }], new Date())), /REPORT_FUTURE_DATA/);
+    const library = await service.list(owner, { topic: 'ticker:ACME', history: true });
+    assert.ok(library.items.some(item => item.id === linked.id));
+    assert.ok(library.items.every(item => item.topicKey === 'ticker:ACME'));
+    assert.equal((await service.list(stranger, { search: 'Agent thesis' })).total, 0);
+    const applied = await service.list(owner, { state: 'strategy', history: true });
+    assert.ok(applied.items.some(item => item.id === v1.id && item.updatesAvailable));
+    const washed = await service.submit(owner, { ...input, idempotencyKey: 'new-summary-invalid-source', availableAt: '2026-11-05T00:00:00.000Z', snapshot: { resolvedReferences: [{ versionId: v2.id, historicalOnly: true }] } });
+    await assert.rejects(db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: washed.id }], new Date())), /REPORT_TRANSITIVE_SOURCE_INVALID/);
+    const foreign = await service.submit(stranger, { ...input, idempotencyKey: 'foreign-evidence', availableAt: '2026-11-05T00:00:00.000Z' });
+    const crossOwner = await service.submit(owner, { ...input, idempotencyKey: 'new-summary-foreign-source', availableAt: '2026-11-05T00:00:00.000Z', snapshot: { reportReferences: [{ versionId: foreign.id }] } });
+    await assert.rejects(db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: crossOwner.id }], new Date())), /REPORT_TRANSITIVE_SOURCE_INVALID/);
+    await assert.rejects(service.createDraft(owner, usable.id, { title: 'Foreign revision', content: 'Text', changeReason: 'Review', sourceReferences: [{ versionId: foreign.id }] }), /REPORT_NOT_FOUND/);
+    const sourcedDraft = await service.createDraft(owner, usable.id, { title: 'Discussion revision', content: 'Changed after discussion', changeReason: 'Review', sourceReferences: [{ versionId: washed.id }] });
+    const sourcedEdit = await service.updateDraft(owner, sourcedDraft.id, { title: sourcedDraft.title, content: 'Edited text', changeReason: 'Reviewed' }, sourcedDraft.revision);
+    assert.deepEqual(sourcedEdit.sourceReferences, [{ versionId: washed.id }], 'ordinary editor saves must retain discussion provenance');
+    const revised = await service.publishDraft(owner, sourcedEdit.id, sourcedEdit.revision);
+    assert.deepEqual(revised.snapshot?.reportReferences, [{ versionId: usable.id }, { versionId: washed.id }]);
+    await assert.rejects(db.transaction(tx => service.assertExecutionSourcesInTransaction(tx, owner, [{ versionId: revised.id }], new Date())), /REPORT_TRANSITIVE_SOURCE_INVALID/);
+    const day = tradingMarketDate('CN', new Date());
+    const priorDay = new Date(Date.parse(`${day}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const [deposit] = await db.insert(transactions).values([
+      { owner, txDate: day, txType: 'Deposit', ticker: 'CASH', shares: '1', price: '100', currency: 'USD', fees: '0' },
+      { owner, txDate: day, txType: 'Buy', ticker: 'ACME', shares: '2', price: '10', currency: 'USD', fees: '0' },
+      { owner: stranger, txDate: day, txType: 'Deposit', ticker: 'CASH', shares: '1', price: '999999', currency: 'USD', fees: '0' },
+    ]).returning();
+    await db.insert(snapshots).values([{ owner, snapshotDate: priorDay, accountValue: '1000' }, { owner, snapshotDate: day, accountValue: '1120' }]);
+    const dailyPortfolio = await service.writeDaily(owner, { ticker: 'PORTFOLIO', analysisDate: day, analysis: 'Portfolio review' }, { snapshot: { dailyFacts: { transactions: ['invented'], pnlUsd: 9999 } } });
+    const frozen = await service.importSource(owner, { type: 'daily', id: dailyPortfolio.id });
+    const facts = frozen.snapshot?.dailyFacts as { transactions: Array<{ id: string }>; returnBasis: { pnlUsd: number } };
+    assert.equal(facts.transactions.length, 2); assert.equal(facts.returnBasis.pnlUsd, 20);
+    assert.ok(facts.transactions.some(row => row.id === deposit.id));
+    await db.update(transactions).set({ price: '900', updatedAt: new Date() }).where(eq(transactions.id, deposit.id));
+    assert.deepEqual((await service.getVersion(owner, frozen.id)).snapshot?.dailyFacts, facts);
+    const oldPortfolio = await service.writeDaily(owner, { ticker: 'PORTFOLIO', analysisDate: '2000-01-01', analysis: 'Historical portfolio' }, { snapshot: { dailyFacts: { invented: true } } });
+    assert.equal((await service.importSource(owner, { type: 'daily', id: oldPortfolio.id })).snapshot, null);
+  } finally { await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
+});

@@ -11,11 +11,15 @@ import { councilReports, councilSessions } from '../../database/council.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { captureStrategyMemory, carryPlanBreaches, strategyMemoryBlock } from '../research-memory/research-memory.dependencies';
+import { requireActivePaperAccount } from './simulation-account';
+import { reserveStrategyCandidate, settleStrategyReservation } from './strategy-reservation';
+import { strategyMandates } from '../../database/strategy-mandates.schema';
 
 export type StrategyTaskRow = typeof strategyTasks.$inferSelect;
 export type StrategyPlanRow = typeof strategyPlans.$inferSelect;
 export interface StrategyResearchFence { sessionId: string; reportId: string; revision: number; cycleId: string }
 export const mapStrategyPlan = (row: StrategyPlanRow): DailyStrategyPlan => ({
+  accountId: row.accountId, mandateId: row.mandateId, mandateVersion: row.mandateVersion,
   id: row.id, profileId: row.profileId, profileVersion: row.profileVersion, version: row.version,
   market: row.market as Market, marketDate: row.marketDate, status: row.status as DailyStrategyPlan['status'],
   rules: row.rules, sessionIds: row.sessionIds, reportIds: row.reportIds, summary: row.summary, memoryInventory: row.memoryInventory,
@@ -38,6 +42,7 @@ export class StrategyStore {
   async tasks(owner: string, profile: BuilderProfile, market: Market, date: string): Promise<StrategyTaskRow[]> {
     return this.db.select().from(strategyTasks).where(and(eq(strategyTasks.owner, owner),
       eq(strategyTasks.profileId, profile.id), eq(strategyTasks.profileVersion, profile.version),
+      eq(strategyTasks.scopeKey, 'legacy'),
       eq(strategyTasks.market, market), eq(strategyTasks.marketDate, date))).orderBy(desc(strategyTasks.attempt));
   }
   async claimTask(owner: string, profile: BuilderProfile, market: Market, marketDate: string,
@@ -100,7 +105,7 @@ export class StrategyStore {
         profileVersion: task.profileVersion, taskId: task.id, version: task.attempt + 1,
         market: task.market, marketDate: task.marketDate, rules, sessionIds: task.sessionIds,
         reportIds, summary: summary.slice(0, 2000), expiresAt, memoryInventory }).returning();
-      const [account] = await tx.select().from(paperAccounts).where(eq(paperAccounts.owner, task.owner));
+      const account = await requireActivePaperAccount(tx, task.owner);
       if (!account?.botEnabled) throw new Error('Paper account stopped; plan discarded');
       const positions = await tx.select().from(paperPositions).where(eq(paperPositions.accountId, account.id));
       for (const rule of rules) if (positions.some((position) => position.ticker === rule.ticker && Number(position.shares) > 0)) {
@@ -119,13 +124,26 @@ export class StrategyStore {
     });
   }
   async claimSignal(owner: string, profile: BuilderProfile, candidate: StrategyCandidate): Promise<boolean> {
-    const [row] = await this.db.insert(strategySignals).values({ id: candidate.signalId, owner, profileId: profile.id,
+    return this.db.transaction(async tx => {
+    await lockMemoryOwner(tx, owner);
+    const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true))).for('update');
+    if (!account || candidate.accountId && candidate.accountId !== account.id) return false;
+    const [row] = await tx.insert(strategySignals).values({ id: candidate.signalId, owner, profileId: profile.id,
       planId: candidate.planId, ruleId: candidate.ruleId, kind: candidate.protectiveStop
         ? `stop:${candidate.protectionId ?? 'plan'}:${candidate.protectionVersion ?? 1}:${candidate.quoteAt}`
         : `entry:${candidate.reviewAttempt ?? 1}`,
       state: candidate.protectiveStop ? 'approved' : 'reviewing', candidate, reason: candidate.reason })
       .onConflictDoNothing().returning({ id: strategySignals.id });
-    return Boolean(row);
+    if (!row) return false;
+    if (candidate.accountId) {
+      const [mandate] = candidate.mandateId ? await tx.select().from(strategyMandates).where(eq(strategyMandates.id, candidate.mandateId)) : [];
+      if (!await reserveStrategyCandidate(tx, owner, account, candidate, mandate?.config.routePolicy.candidateTtlSeconds)) {
+        await tx.update(strategySignals).set({ state: 'wait', reason: 'Cash or shares reserved by another candidate', updatedAt: new Date() }).where(eq(strategySignals.id, candidate.signalId));
+        return false;
+      }
+    }
+    return true;
+    });
   }
   async nextReviewAttempt(owner: string, planId: string, ruleId: string, quoteAt: string): Promise<number | null> {
     const rows = await this.db.select().from(strategySignals).where(and(eq(strategySignals.owner, owner),
@@ -133,7 +151,7 @@ export class StrategyStore {
       .orderBy(desc(strategySignals.createdAt));
     if (!rows.length) return 1;
     const previous = rows[0];
-    if (previous.state !== 'wait' || rows.length >= 3 || Date.now() - previous.updatedAt.getTime() < 30 * 60000
+    if (!['wait', 'blocked', 'expired'].includes(previous.state) || rows.length >= 3 || Date.now() - previous.updatedAt.getTime() < 30 * 60000
       || Date.parse(quoteAt) <= Date.parse(previous.candidate.quoteAt)) return null;
     return rows.length + 1;
   }
@@ -141,8 +159,16 @@ export class StrategyStore {
     return this.db.select().from(strategyProtections).where(eq(strategyProtections.owner, owner));
   }
   async finishSignal(id: string, state: string, reason: string): Promise<void> {
-    await this.db.update(strategySignals).set({ state, reason: reason.slice(0, 1000), updatedAt: new Date() })
-      .where(and(eq(strategySignals.id, id), ne(strategySignals.state, 'filled')));
+    const [current] = await this.db.select({ owner: strategySignals.owner }).from(strategySignals).where(eq(strategySignals.id, id));
+    if (!current) return;
+    await this.db.transaction(async tx => {
+    await lockMemoryOwner(tx, current.owner);
+    const [updated] = await tx.update(strategySignals).set({ state, reason: reason.slice(0, 1000), updatedAt: new Date() })
+      .where(and(eq(strategySignals.id, id), inArray(strategySignals.state, ['reviewing', 'approved']))).returning();
+    if (updated && ['wait', 'veto', 'blocked', 'cancelled', 'expired'].includes(state)) {
+      await settleStrategyReservation(tx, updated.owner, id, 'released', reason);
+    }
+    });
   }
   async runtime(owner: string, profile: BuilderProfile): Promise<StrategyRuntime> {
     const [rows, messages] = await Promise.all([

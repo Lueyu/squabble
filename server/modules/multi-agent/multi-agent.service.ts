@@ -1,3 +1,5 @@
+import { ResearchDocumentsService } from '../research-documents/research-documents.service';
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 /**
  * MultiAgentService — data-access facade for all multi-agent tables.
  *
@@ -582,8 +584,15 @@ export class MultiAgentService {
   ): Promise<void> {
     const detail = await this.getRun(userId, runId);
     const content = buildPipelineReport(detail, engine, execution);
-    await this.db.insert(deepReport).values({ runId, owner: userId, createdBy: userId, updatedBy: userId, ...content })
-      .onConflictDoUpdate({ target: deepReport.runId, set: { ...content, updatedBy: userId, updatedAt: new Date() } });
+    const documents = new ResearchDocumentsService(this.db);
+    await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      const [previous] = await tx.select().from(deepReport).where(and(eq(deepReport.owner, userId), eq(deepReport.runId, runId)));
+      if (previous) await documents.importSourceInTransaction(tx, userId, { type: 'deep', id: previous.id });
+      const [saved] = await tx.insert(deepReport).values({ runId, owner: userId, createdBy: userId, updatedBy: userId, ...content })
+        .onConflictDoUpdate({ target: deepReport.runId, set: { ...content, updatedBy: userId, updatedAt: new Date() } }).returning();
+      await documents.importSourceInTransaction(tx, userId, { type: 'deep', id: saved.id }, { availableAt: new Date().toISOString() });
+    });
   }
 
   /** Retry only failed, report-less work; published reports and user notes are never removed. */
@@ -1032,45 +1041,17 @@ export class MultiAgentService {
       rating.keyUncertainty ? `${en ? 'Uncertainty: ' : '【不确定性】'}${rating.keyUncertainty}` : '',
     ].filter(Boolean).join('\n\n');
 
-    const existing = await this.db
-      .select({ id: analysis.id })
-      .from(analysis)
-      .where(
-        and(
-          eq(analysis.owner, userId),
-          eq(analysis.analysisDate, today),
-          eq(analysis.ticker, run.ticker),
-        ),
-      );
-
-    if (existing.length > 0) {
-      await this.db
-        .update(analysis)
-        .set({
-          rating: rating.rating,
-          action: rating.action,
-          analysis: analysisText || null,
-          targetPrice: rating.targetPrice,
-          catalysts: rating.catalysts,
-          risks: rating.risks,
-          updatedBy: userId,
-        })
-        .where(eq(analysis.id, existing[0].id));
-    } else {
-      await this.db.insert(analysis).values({
-        analysisDate: today,
-        ticker: run.ticker,
-        rating: rating.rating,
-        action: rating.action,
-        analysis: analysisText || null,
-        targetPrice: rating.targetPrice,
-        catalysts: rating.catalysts,
-        risks: rating.risks,
-        owner: userId,
-        createdBy: userId,
-        updatedBy: userId,
-      });
-    }
+    const documents = new ResearchDocumentsService(this.db);
+    await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      const [source] = await tx.select().from(deepReport).where(and(eq(deepReport.owner, userId), eq(deepReport.runId, runId)));
+      const version = source ? await documents.importSourceInTransaction(tx, userId, { type: 'deep', id: source.id }) : null;
+      await documents.writeDailyInTransaction(tx, userId, { analysisDate: today, ticker: run.ticker,
+        rating: rating.rating, action: rating.action, analysis: analysisText || null, targetPrice: rating.targetPrice,
+        catalysts: rating.catalysts, risks: rating.risks, createdBy: userId, updatedBy: userId },
+      { availableAt: new Date().toISOString(), snapshot: { sourceRunId: runId, sourceReportVersionId: version?.id ?? null,
+        gaps: ['Original portfolio input snapshot was not supplied'] } });
+    });
 
     return true;
   }

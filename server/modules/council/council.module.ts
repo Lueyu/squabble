@@ -5,9 +5,10 @@ import { CouncilService } from './council.service';
 import { ResearchMemoryModule } from '../research-memory/research-memory.module';
 import { ResearchToolsModule } from '../research-tools/research-tools.module';
 import { LocalAgentsModule } from '../local-agents/local-agents.module';
+import { ResearchDocumentsModule } from '../research-documents/research-documents.module';
 
 @Module({
-  imports: [MultiAgentModule, LocalAgentsModule, ResearchMemoryModule, ResearchToolsModule],
+  imports: [MultiAgentModule, LocalAgentsModule, ResearchMemoryModule, ResearchToolsModule, ResearchDocumentsModule],
   controllers: [CouncilController],
   providers: [CouncilService],
   exports: [CouncilService],

@@ -7,9 +7,8 @@
  * broker adapter is paper-only by construction — there is no real-broker
  * implementation to misconfigure.
  *
- * Legacy manual fills use the server-side public quote service, with a
- * fallback to stored portfolio prices. Builder fills require a recently
- * fetched quote and an available FX rate; free quotes may be delayed.
+ * All fills require validated recent source quotes, the trading calendar,
+ * available FX and a solvent currency ledger; free quotes may be delayed.
  * No real-broker order is sent.
  *
  * Guardrails (bot orders only; manual orders still require sufficient
@@ -27,13 +26,14 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, desc, eq, gte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, or, sql } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import {
   holdings,
   agentRatings,
   agentRuns,
+  agentSessions,
   builderProfiles,
   builderProposals,
   paperAccounts,
@@ -44,6 +44,17 @@ import {
   paperTrades,
   watchlist,
 } from '../../database/schema';
+import { paperRiskDay, paperRiskTimezone } from './paper-risk-day';
+import { executionEconomics } from './simulation-experiments.rules';
+import { settleStrategyReservation } from './strategy-reservation';
+import { strategyMandates, strategyReservations } from '../../database/strategy-mandates.schema';
+import { simulationLotRejection } from './simulation-order.rules';
+import { requireActivePaperAccount } from './simulation-account';
+import { assertMandateExecution } from './strategy-mandate.fence';
+import { evaluatePortfolioRisk, preparePortfolioRiskInputs, readPortfolioRiskSnapshot } from './strategy-portfolio-risk';
+import { simulationCash, simulationSeeds } from '../../database/simulation-experiments.schema';
+import { recordSimulationCashFill, settleSimulationCash } from './simulation-ledger';
+import { persistCorporateActionGaps, readCorporateActionGaps } from './simulation-corporate-actions';
 import { FxService } from '../fx/fx.service';
 import { QuoteService } from '../quote/quote.service';
 import { NotificationService, type NotificationPayload } from '../notifications/notification.service';
@@ -58,7 +69,6 @@ import type { CouncilCandidate } from '@shared/council.interface';
 import { strategyOutbox, strategyPlans, strategyProtections, strategySignals } from '../../database/strategy.schema';
 import { TradingMarketService } from './trading-market.service';
 import { strategyTriggerMatches } from './strategy.rules';
-import type { TradingMarketSnapshot } from '../../../shared/trading-market.interface';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { strategyMemoryBlock } from '../research-memory/research-memory.dependencies';
 import { observeThesisMonitors } from '../research-memory/research-memory.monitor.service';
@@ -76,7 +86,6 @@ import type {
 } from '@shared/api.interface';
 
 /** Static FX fallback (units per USD) when the FX service is unavailable. */
-const FX_FALLBACK_PER_USD: Record<string, number> = { USD: 1, HKD: 7.78, CNY: 7.1 };
 
 /** Default guardrails for new accounts. */
 const DEFAULT_GUARDRAILS: PaperGuardrails = {
@@ -105,9 +114,10 @@ interface RiskCheck {
   todayOrderCount: number;
   circuitBreaker: boolean;
   reason?: string;
+  feeUsd?: number;
+  cashAmountUsd?: number;
+  executionModel?: { version: string; feeBps: number; slippageBps: number };
 }
-
-type PaperTransaction = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 
 @Injectable()
 export class PaperTradingService {
@@ -127,81 +137,66 @@ export class PaperTradingService {
 
   /** Get (or lazily create) the caller's paper account. */
   async ensureAccount(userId: string): Promise<PaperAccount> {
-    const rows = await this.db
-      .select()
-      .from(paperAccounts)
-      .where(eq(paperAccounts.owner, userId));
-    if (rows[0]) return this.mapAccount(rows[0]);
-    const [created] = await this.db
-      .insert(paperAccounts)
-      .values({ owner: userId, guardrails: DEFAULT_GUARDRAILS })
-      .returning();
-    return this.mapAccount(created);
+    return this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
+      const [current] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, userId), eq(paperAccounts.isActive, true)));
+      if (current) return this.mapAccount(current);
+      const [created] = await tx.insert(paperAccounts).values({ owner: userId, guardrails: DEFAULT_GUARDRAILS }).returning();
+      return this.mapAccount(created);
+    });
   }
 
-  /** Reset the paper account: drop all paper data, start a fresh ledger. */
+  /** Legacy reset endpoint now creates an independent cash experiment; history is retained. */
   async resetAccount(userId: string, initialCash?: number): Promise<PaperAccount> {
     if (initialCash !== undefined && (!Number.isFinite(initialCash) || initialCash <= 0)) {
-      throw new BadRequestException('初始资金必须为正数');
+      throw new BadRequestException('Initial cash must be positive');
     }
-    const updated = await this.db.transaction(async (tx) => {
-      const [account] = await tx.select().from(paperAccounts)
-        .where(eq(paperAccounts.owner, userId)).for('update');
-      if (!account) throw new NotFoundException('Paper account not found');
-
-      // A reset stops the configured agent and keeps its real-action history.
-      const resetProfiles = await tx.update(builderProfiles)
-        .set({ status: 'paused', version: sql`${builderProfiles.version} + 1`, updatedAt: new Date() })
-        .where(eq(builderProfiles.owner, userId)).returning();
-      if (resetProfiles.some((profile) => (profile.config as { automation?: unknown }).automation)) {
-        await tx.delete(strategyProtections).where(eq(strategyProtections.owner, userId));
-      }
-      // Paper orders are cleared below; proposals retain their reference
-      // price, reason and self-reported execution without a dangling order ID.
-      await tx.update(builderProposals)
-        .set({ paperOrderId: null })
-        .where(eq(builderProposals.owner, userId));
-      await tx.update(councilReports).set({ paperOrderId: null }).where(eq(councilReports.owner, userId));
-      await tx.delete(paperTrades).where(eq(paperTrades.accountId, account.id));
-      await tx.delete(paperOrders).where(eq(paperOrders.accountId, account.id));
-      await tx.delete(paperEvents).where(eq(paperEvents.accountId, account.id));
-      await tx.delete(paperSnapshots).where(eq(paperSnapshots.accountId, account.id));
-      await tx.delete(paperPositions).where(eq(paperPositions.accountId, account.id));
-      const [reset] = await tx.update(paperAccounts)
-        .set({
-          initialCash: String(initialCash ?? 1_000_000),
-          cashBalance: String(initialCash ?? 1_000_000),
-          botEnabled: false,
-          updatedAt: new Date(),
-        })
-        .where(eq(paperAccounts.id, account.id))
-        .returning();
-      await tx.insert(paperEvents).values({
-        owner: userId,
-        accountId: account.id,
-        eventType: 'account_reset',
-        detail: { initialCash: Number(reset.initialCash) },
-      });
-      return reset;
+    const created = await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
+      await tx.update(paperAccounts).set({ isActive: false, botEnabled: false, updatedAt: new Date() }).where(eq(paperAccounts.owner, userId));
+      await tx.update(builderProfiles).set({ status: 'paused', version: sql`${builderProfiles.version} + 1`, updatedAt: new Date() })
+        .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.status, 'active')));
+      await tx.update(strategySignals).set({ state: 'blocked', reason: 'New paper account selected', updatedAt: new Date() })
+        .where(and(eq(strategySignals.owner, userId), sql`${strategySignals.state} IN ('pending', 'reviewing', 'approved', 'claimed')`));
+      await tx.update(strategyReservations).set({ status: 'released', reason: 'New paper account selected', updatedAt: new Date() })
+        .where(and(eq(strategyReservations.owner, userId), eq(strategyReservations.status, 'active')));
+      await tx.update(paperOrders).set({ status: 'cancelled', reason: 'New paper account selected' })
+        .where(and(eq(paperOrders.owner, userId), eq(paperOrders.status, 'pending_approval')));
+      const [account] = await tx.insert(paperAccounts).values({ owner: userId, name: 'Cash experiment', ledgerMode: 'native_currency',
+        initialCash: String(initialCash ?? 1_000_000), cashBalance: String(initialCash ?? 1_000_000), isActive: true }).returning();
+      await tx.insert(simulationCash).values({ owner: userId, accountId: account.id, currency: 'USD',
+        available: account.cashBalance, availabilityKnown: true });
+      await tx.insert(paperEvents).values({ owner: userId, accountId: account.id, eventType: 'opening_balance',
+        detail: { initialCash: account.initialCash, previousHistoryRetained: true, modelVersion: 'paper-v1' } });
+      return account;
     });
-    return this.mapAccount(updated);
+    return this.mapAccount(created);
   }
 
   /** Full overview for the paper page: account, positions, curve, feeds. */
   async getOverview(userId: string): Promise<PaperOverview> {
     const account = await this.requireAccount(userId);
+    if (account.ledgerMode === 'native_currency') await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
+      await tx.select({ id: paperAccounts.id }).from(paperAccounts).where(eq(paperAccounts.id, account.id)).for('update');
+      await settleSimulationCash(tx, account.id);
+    });
+    const valuationGaps: string[] = [];
+    try { await this.ensureDailySnapshot(userId, account.id); }
+    catch (error) { valuationGaps.push(error instanceof Error ? error.message : 'Valuation unavailable'); }
     const positions = await this.db
       .select()
       .from(paperPositions)
       .where(eq(paperPositions.accountId, account.id));
 
-    // Resolve prices (live with fallbacks) and market values in USD.
+    // Missing current quotes or FX remain unknown in the USD valuation.
     const enriched = await Promise.all(
       positions.map(async (p) => {
         const price = await this.resolvePrice(userId, p.ticker);
         const shares = Number(p.shares);
         const avgCost = Number(p.avgCost);
         if (!price) {
+          valuationGaps.push(`QUOTE_OR_FX_UNAVAILABLE:${p.ticker}`);
           return {
             ...this.mapPosition(p),
             lastPrice: null,
@@ -223,9 +218,10 @@ export class PaperTradingService {
       }),
     );
 
-    const positionsValue = enriched.reduce((sum, p) => sum + Number(p.marketValue ?? 0), 0);
-    const cash = Number(account.cashBalance);
-    const equity = cash + positionsValue;
+    const positionsValue = valuationGaps.length || enriched.some((p) => p.marketValue === null) ? null : enriched.reduce((sum, p) => sum + Number(p.marketValue), 0);
+    let cash: number | null = null;
+    try { cash = await this.cashValue(userId, account); } catch { valuationGaps.push('CASH_FX_UNAVAILABLE'); }
+    const equity = positionsValue === null || cash === null ? null : cash + positionsValue;
 
     const todayOrders = await this.todayOrders(userId, account.id);
     const curveRows = await this.db
@@ -258,22 +254,26 @@ export class PaperTradingService {
       .orderBy(desc(paperEvents.createdAt))
       .limit(30);
 
-    const dayStart = await this.dayStartEquity(userId, account.id, account.initialCash);
-    const todayPl = equity - dayStart;
-    const totalPl = equity - Number(account.initialCash);
+    let dayStart: number | null = null;
+    try { dayStart = await this.dayStartEquity(userId, account.id, account.initialCash); } catch { /* Missing valuation is exposed above. */ }
+    const todayPl = equity === null || dayStart === null ? null : equity - dayStart;
+    const totalPl = equity === null ? null : equity - Number(account.initialCash);
 
+    const mappedAccount = this.mapAccount(
+      (await this.db.select().from(paperAccounts).where(eq(paperAccounts.id, account.id)))[0],
+    );
+    mappedAccount.cashBalance = cash === null ? '—' : cash.toFixed(2);
     return {
-      account: this.mapAccount(
-        (await this.db.select().from(paperAccounts).where(eq(paperAccounts.id, account.id)))[0],
-      ),
+      account: mappedAccount,
       positions: enriched,
-      equity: equity.toFixed(2),
-      positionsValue: positionsValue.toFixed(2),
-      todayPl: todayPl.toFixed(2),
-      totalPl: totalPl.toFixed(2),
-      totalPlPct: ((totalPl / Number(account.initialCash)) * 100).toFixed(2),
+      equity: equity?.toFixed(2) ?? null,
+      positionsValue: positionsValue?.toFixed(2) ?? null,
+      todayPl: todayPl?.toFixed(2) ?? null,
+      totalPl: totalPl?.toFixed(2) ?? null,
+      totalPlPct: totalPl === null ? null : ((totalPl / Number(account.initialCash)) * 100).toFixed(2),
+      valuationGaps: [...new Set(valuationGaps)],
       todayOrderCount: todayOrders.length,
-      circuitBreakerActive: this.circuitBreakerHit(dayStart, equity, this.parseGuardrails(account.guardrails)),
+      circuitBreakerActive: equity !== null && dayStart !== null && this.circuitBreakerHit(dayStart, equity, this.parseGuardrails(account.guardrails)),
       curve,
       recentOrders: recentOrders.map((o) => this.mapOrder(o)),
       recentEvents: recentEvents.map((e) => ({
@@ -296,79 +296,72 @@ export class PaperTradingService {
     builderProfile?: BuilderProfile,
     councilApproval?: { sessionId: string; reportId: string; candidate: CouncilCandidate },
     strategySignalId?: string,
+    expectedAccountId?: string,
+    approvedPendingOrderId?: string,
   ): Promise<PaperOrder> {
     const initialAccount = await this.requireAccount(userId);
+    if (expectedAccountId && expectedAccountId !== initialAccount.id) throw new BadRequestException('Paper account changed');
+    if (typeof dto.ticker !== 'string' || !/^[A-Za-z0-9.^-]{1,20}$/.test(dto.ticker.trim())) throw new BadRequestException('Invalid ticker');
+    dto = { ...dto, ticker: dto.ticker.trim() };
+    // Every execution path requires a fresh server quote; AI cannot use a manual fallback.
+    strictQuote = true;
     if (dto.orderType && dto.orderType !== 'market') {
       throw new BadRequestException('V1 only supports market orders');
     }
-    const quantity = Math.floor(Number(dto.quantity));
-    if (!Number.isFinite(quantity) || quantity <= 0) {
+    const quantity = Number(dto.quantity);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
       throw new BadRequestException('Quantity must be a positive integer');
     }
     if (dto.side !== 'buy' && dto.side !== 'sell') {
       throw new BadRequestException('Side must be buy or sell');
     }
 
-    let price: ResolvedPrice | null;
-    let quoteTimestamp: number | null = null;
-    let strategySnapshot: TradingMarketSnapshot | null = null;
+    if (!this.tradingMarket) throw new BadRequestException('Validated market service unavailable / 无法获取近期报价');
+    const strategySnapshot = await this.tradingMarket.getSnapshot(dto.ticker, new Date(), true);
+    let needsIndicators = false;
+    let needsPortfolioRisk = false;
     if (strategySignalId) {
-      if (!this.tradingMarket || source !== 'agent' || !builderProfile?.config.automation?.enabled) {
-        throw new BadRequestException('A current automatic strategy is required');
-      }
+      if (source !== 'agent' || !builderProfile?.config.automation?.enabled) throw new BadRequestException('A current automatic strategy is required');
       const [requestedSignal] = await this.db.select({ candidate: strategySignals.candidate }).from(strategySignals)
         .where(and(eq(strategySignals.id, strategySignalId), eq(strategySignals.owner, userId)));
-      const intendedProtection = requestedSignal?.candidate.protectiveStop === true;
-      strategySnapshot = await this.tradingMarket.getSnapshot(dto.ticker, new Date(), true);
-      if (!(intendedProtection ? strategySnapshot.quoteUsable : strategySnapshot.usable) || !strategySnapshot.price || !strategySnapshot.currency
-        || !strategySnapshot.market || !strategySnapshot.quoteTimestamp || !strategySnapshot.schedule?.isOpen) {
-        throw new BadRequestException('Fresh validated market data is unavailable');
-      }
-      const fxToUsd = await this.fxService.convert(1, strategySnapshot.currency, 'USD');
-      if (!Number.isFinite(fxToUsd) || fxToUsd <= 0) throw new BadRequestException('FX data unavailable');
-      price = { price: strategySnapshot.price, market: strategySnapshot.market,
-        currency: strategySnapshot.currency, company: null, fxToUsd };
-      quoteTimestamp = Date.parse(strategySnapshot.quoteTimestamp);
-    } else if (strictQuote) {
-      const quote = await this.quoteService.getQuote(dto.ticker);
-      const fetchedRecently = quote && Number.isFinite(quote.timestamp)
-        && Math.abs(Date.now() - quote.timestamp) <= 5 * 60 * 1000;
-      if (!fetchedRecently || !quote || Number(quote.price) <= 0) {
-        throw new BadRequestException(`无法获取 ${dto.ticker} 的近期报价，订单未执行`);
-      }
-      let fxToUsd: number;
-      try {
-        fxToUsd = await this.fxService.convert(1, quote.currency, 'USD');
-      } catch {
-        throw new BadRequestException(`无法获取 ${quote.currency} 的汇率，订单未执行`);
-      }
-      price = {
-        price: Number(quote.price),
-        market: quote.market,
-        currency: quote.currency,
-        company: quote.companyName ?? null,
-        fxToUsd,
-      };
-      quoteTimestamp = quote.timestamp;
-    } else {
-      price = await this.resolvePrice(userId, dto.ticker);
+      needsIndicators = requestedSignal?.candidate.protectiveStop !== true;
+      needsPortfolioRisk = Boolean(requestedSignal?.candidate.mandateId && !requestedSignal.candidate.protectiveStop);
     }
-    if (!price) {
-      throw new BadRequestException(`无法获取 ${dto.ticker} 的价格，订单未执行`);
+    const now = Date.now();
+    if (!strategySnapshot.quoteUsable || (needsIndicators && !strategySnapshot.usable) || strategySnapshot.halted
+      || !Number.isFinite(strategySnapshot.price) || !strategySnapshot.price || !strategySnapshot.currency || !strategySnapshot.market
+      || !strategySnapshot.quoteTimestamp || !strategySnapshot.schedule?.calendarVerified || !strategySnapshot.schedule.isOpen
+      || !strategySnapshot.schedule.sessions.some((session) => now >= Date.parse(session.opensAt) && now < Date.parse(session.closesAt))) {
+      throw new BadRequestException(`无法获取 ${dto.ticker} 的近期报价 / Fresh validated market data is unavailable: ${strategySnapshot.quoteReason ?? strategySnapshot.reason ?? 'market_closed'}`);
     }
+    const fxToUsd = await this.fxService.convert(1, strategySnapshot.currency, 'USD');
+    if (!Number.isFinite(fxToUsd) || fxToUsd <= 0) throw new BadRequestException('FX data unavailable / 汇率不可用');
+    const price: ResolvedPrice = { price: strategySnapshot.price, market: strategySnapshot.market,
+      currency: strategySnapshot.currency, company: null, fxToUsd };
+    if (price.market === 'US') dto = { ...dto, ticker: dto.ticker.toUpperCase() };
+    const quoteTimestamp = Date.parse(strategySnapshot.quoteTimestamp);
+    const portfolioInputs = needsPortfolioRisk ? await preparePortfolioRiskInputs(this.db, userId, initialAccount.id,
+      this.tradingMarket, this.fxService, new Date(), [dto.ticker]) : undefined;
     // Fetch expensive portfolio valuations before taking the account row lock.
     // Solvency and order-count checks below use the locked, current ledger.
-    const equityBeforeLock = await this.equityOf(userId, initialAccount);
-    const dayStart = await this.dayStartEquity(
-      userId, initialAccount.id, initialAccount.initialCash,
-    );
+    let equityBeforeLock: number;
+    try { equityBeforeLock = await this.equityOf(userId, initialAccount); }
+    catch (error) { if (dto.side === 'buy') throw error; equityBeforeLock = 0; }
+    let dayStart = 0;
+    try { dayStart = await this.dayStartEquity(userId, initialAccount.id, initialAccount.initialCash); }
+    catch (error) { if (dto.side === 'buy') throw error; }
 
     const committed = await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       const [lockedAccount] = await tx.select().from(paperAccounts)
         .where(and(eq(paperAccounts.id, initialAccount.id), eq(paperAccounts.owner, userId)))
         .for('update');
-      if (!lockedAccount) throw new NotFoundException('Paper account not found');
+      if (!lockedAccount || !lockedAccount.isActive || (expectedAccountId && lockedAccount.id !== expectedAccountId)) throw new BadRequestException('Paper account changed during execution');
+      const execution = executionEconomics(price.price, quantity, dto.side, lockedAccount.executionModel?.feeBps ?? 0, lockedAccount.executionModel?.slippageBps ?? 0);
+      if (approvedPendingOrderId) {
+        const [pending] = await tx.select().from(paperOrders).where(and(eq(paperOrders.id, approvedPendingOrderId), eq(paperOrders.accountId, lockedAccount.id), eq(paperOrders.owner, userId))).for('update');
+        if (!pending || pending.status !== 'pending_approval' || pending.ticker !== dto.ticker || pending.side !== dto.side || Number(pending.quantity) !== quantity) throw new BadRequestException('Order is no longer pending approval');
+      }
       if (source === 'agent' && !lockedAccount.botEnabled) {
         throw new BadRequestException('Bot is not enabled');
       }
@@ -393,6 +386,7 @@ export class PaperTradingService {
         throw new BadRequestException('An immutable approved strategy signal is required');
       }
       let strategyRule: StrategyRule | null = null;
+      let lockedPortfolioEquity: number | null = null;
       let protectiveStrategyStop = false;
       let strategyPlanId: string | null = null;
       if (strategySignalId) {
@@ -405,6 +399,7 @@ export class PaperTradingService {
         const now = Date.now();
         if (!signal || signal.state !== 'approved' || signal.orderId || !candidate || !plan || !strategyRule
           || !builderProfile || signal.profileId !== builderProfile.id
+          || (candidate.accountId && candidate.accountId !== lockedAccount.id)
           || candidate.planVersion !== plan.version || candidate.ticker !== dto.ticker || candidate.side !== dto.side
           || candidate.quantity !== quantity || candidate.signalId !== signal.id
           || candidate.market !== price.market || plan.market !== price.market
@@ -414,6 +409,23 @@ export class PaperTradingService {
           || Math.abs(now - Date.parse(candidate.quoteAt)) > strategySnapshot.maxQuoteAgeSeconds * 1000) {
           throw new BadRequestException('Strategy signal is stale, changed, consumed or no longer triggered');
         }
+        if (!candidate.protectiveStop && (execution.price < strategyRule.minPrice || execution.price > strategyRule.maxPrice)) {
+          throw new BadRequestException('Slippage-adjusted fill price exceeds the authorized strategy band');
+        }
+        let portfolioRisk: ReturnType<typeof evaluatePortfolioRisk> | undefined;
+        if (candidate.mandateId && !candidate.protectiveStop) {
+          if (!portfolioInputs) throw new BadRequestException('Portfolio inputs changed; create a new candidate');
+          const [mandate] = await tx.select().from(strategyMandates).where(and(eq(strategyMandates.id, candidate.mandateId), eq(strategyMandates.owner, userId))).for('share');
+          if (!mandate) throw new BadRequestException('Published strategy unavailable');
+          const portfolio = await readPortfolioRiskSnapshot(tx, userId, lockedAccount.id, this.tradingMarket!, this.fxService,
+            new Date(), portfolioInputs);
+          lockedPortfolioEquity = portfolio.equityUsd;
+          portfolioRisk = evaluatePortfolioRisk(portfolio, mandate.config, candidate, execution.price * price.fxToUsd,
+            execution.fee * price.fxToUsd, new Date());
+        }
+        await assertMandateExecution(tx, userId, lockedAccount.id, candidate, strategyRule,
+          lockedPortfolioEquity ?? Math.min(equityBeforeLock, equityBeforeLock + Number(lockedAccount.cashBalance) - Number(initialAccount.cashBalance)),
+          execution.price * price.fxToUsd, new Date(), strategySnapshot ?? undefined, portfolioRisk);
         strategyPlanId = plan.id;
         if (candidate.protectiveStop) {
           const [protection] = candidate.protectionId ? await tx.select().from(strategyProtections).where(and(
@@ -437,6 +449,7 @@ export class PaperTradingService {
           const memoryBlock = await strategyMemoryBlock(tx, userId, inventory, dto.ticker, new Date(), true);
           if (memoryBlock) {
             await tx.update(strategySignals).set({ state: 'blocked', reason: memoryBlock, updatedAt: new Date() }).where(eq(strategySignals.id, signal.id));
+            await settleStrategyReservation(tx, userId, signal.id, 'released', memoryBlock);
             return { memoryBlock };
           }
           if (builderProfile.config.tickers.length && !builderProfile.config.tickers.includes(dto.ticker)) {
@@ -445,7 +458,7 @@ export class PaperTradingService {
           if (!builderProfile.config.tickers.length) {
             const owned = await tx.select({ id: holdings.id }).from(holdings).where(and(eq(holdings.owner, userId), eq(holdings.ticker, dto.ticker))).limit(1);
             const watched = await tx.select({ id: watchlist.id }).from(watchlist).where(and(eq(watchlist.owner, userId), eq(watchlist.ticker, dto.ticker))).limit(1);
-            const held = await tx.select({ id: paperPositions.id }).from(paperPositions).where(and(eq(paperPositions.owner, userId), eq(paperPositions.ticker, dto.ticker))).limit(1);
+            const held = await tx.select({ id: paperPositions.id }).from(paperPositions).where(and(eq(paperPositions.accountId, lockedAccount.id), eq(paperPositions.ticker, dto.ticker))).limit(1);
             if (!owned.length && !watched.length && !held.length) throw new BadRequestException('Ticker was removed from the investor universe');
           }
         }
@@ -479,13 +492,16 @@ export class PaperTradingService {
       }
       const account = lockedAccount;
 
-      const notionalUsd = quantity * price.price * price.fxToUsd;
-      const equity = equityBeforeLock;
-      const utcDayStart = new Date();
-      utcDayStart.setUTCHours(0, 0, 0, 0);
-      const todayOrders = await tx.select().from(paperOrders)
-        .where(and(eq(paperOrders.accountId, account.id), gte(paperOrders.createdAt, utcDayStart)));
-      const todayBotCount = todayOrders.filter((o) => o.source === 'agent').length;
+      const notionalUsd = quantity * execution.price * price.fxToUsd;
+      const equity = lockedPortfolioEquity ?? Math.min(equityBeforeLock, equityBeforeLock + Number(account.cashBalance) - Number(initialAccount.cashBalance));
+      const riskTimezone = await paperRiskTimezone(tx, userId, account.id);
+      const riskDay = paperRiskDay(new Date(), riskTimezone);
+      const recentStart = new Date(Date.now() - 48 * 3600_000);
+      const recentAccountOrders = await tx.select().from(paperOrders).where(and(eq(paperOrders.accountId, account.id),
+        or(gte(paperOrders.createdAt, recentStart), gte(paperOrders.filledAt, recentStart), eq(paperOrders.status, 'pending_approval'))));
+      const todayOrders = recentAccountOrders.filter((order) => order.status === 'pending_approval'
+        || paperRiskDay(order.filledAt ?? order.createdAt, riskTimezone) === riskDay);
+      const todayBotCount = todayOrders.filter((o) => o.source === 'agent' && o.id !== approvedPendingOrderId).length;
       const accountGuardrails = this.parseGuardrails(account.guardrails);
       const guardrails = builderProfile ? {
         maxOrderPct: Math.min(accountGuardrails.maxOrderPct, builderProfile.config.maxOrderPct),
@@ -495,18 +511,42 @@ export class PaperTradingService {
 
       // ---- Risk gate (bot orders; manual orders skip caps but keep solvency) ----
       let rejection: string | undefined;
+      const knownActionGaps = await readCorporateActionGaps(tx, userId, account.id);
+      const [targetPosition] = await tx.select().from(paperPositions).where(and(eq(paperPositions.accountId, account.id), eq(paperPositions.ticker, dto.ticker)));
+      const newActions = targetPosition ? strategySnapshot.corporateActions?.filter((event) => Date.parse(event.occurredAt) >= targetPosition.openedAt.getTime()
+        && Date.parse(event.occurredAt) <= Date.now()) ?? [] : [];
+      if (newActions.length || knownActionGaps.some(gap => gap.ticker === dto.ticker)) {
+        rejection = 'Corporate action detected since opening; reconcile and create a new seed before further orders';
+        await persistCorporateActionGaps(tx, userId, account.id, dto.ticker, newActions);
+      }
       let circuitBreaker = false;
+      let sessionRequiresApproval = agentInfo?.approvalMode === 'require_approval';
+      if (agentInfo) {
+        const [session] = await tx.select().from(agentSessions).where(and(eq(agentSessions.id, agentInfo.sessionId), eq(agentSessions.owner, userId))).for('update');
+        if (!session || session.status !== 'active' || session.permission !== 'trade') throw new BadRequestException('Agent session is no longer authorized to trade');
+        sessionRequiresApproval = session.approvalMode !== 'auto';
+        const sessionOrders = await tx.select().from(paperOrders).where(and(eq(paperOrders.owner, userId),
+          eq(paperOrders.accountId, account.id), eq(paperOrders.sessionId, session.id), eq(paperOrders.side, 'buy'),
+          or(and(eq(paperOrders.status, 'filled'), gte(paperOrders.filledAt, recentStart)), eq(paperOrders.status, 'pending_approval'))));
+        const committedSpend = sessionOrders.filter((o) => o.id !== approvedPendingOrderId
+          && (o.status === 'pending_approval' || paperRiskDay(o.filledAt ?? o.createdAt, riskTimezone) === riskDay))
+          .reduce((sum, o) => {
+            const risk = o.riskCheck as RiskCheck | null;
+            return sum + Number(risk?.cashAmountUsd ?? (Number(risk?.notionalUsd ?? 0) + Number(risk?.feeUsd ?? 0)));
+          }, 0);
+        if (dto.side === 'buy' && committedSpend + execution.cashAmount * price.fxToUsd > Number(session.dailyLimitUsd)) rejection = 'Agent session daily USD spending limit exceeded';
+      }
       if (source === 'agent') {
         if (!isMarketOpen(price.market)) {
           rejection = `${dto.ticker} 所在市场当前未开盘`;
-        } else if (!protectiveStrategyStop && this.circuitBreakerHit(dayStart, equity, guardrails)) {
+        } else if (dto.side === 'buy' && !protectiveStrategyStop && this.circuitBreakerHit(dayStart, equity, guardrails)) {
           circuitBreaker = true;
           rejection = `日亏损熔断：当日权益回撤已超过 ${guardrails.dailyLossLimitPct}%，今日停止交易`;
         } else if (dto.side === 'buy' && notionalUsd > (equity * guardrails.maxOrderPct) / 100) {
           // The per-order cap constrains exposure on the way in; closing a
           // position must never be blocked by it.
           rejection = `单笔金额 ${(notionalUsd / equity * 100).toFixed(1)}% 超过上限 ${guardrails.maxOrderPct}%`;
-        } else if (!protectiveStrategyStop && todayBotCount >= guardrails.maxOrdersPerDay) {
+        } else if (dto.side === 'buy' && !protectiveStrategyStop && todayBotCount >= guardrails.maxOrdersPerDay) {
           rejection = `今日 bot 订单已达 ${guardrails.maxOrdersPerDay} 笔上限`;
         }
         const recentOrders = await tx.select().from(paperOrders).where(and(
@@ -514,51 +554,74 @@ export class PaperTradingService {
         ));
         const cadenceReason = cadenceRejection(normalizeCadence(builderProfile?.config.cadence), {
           ticker: dto.ticker, market: price.market, notionalUsd, equityUsd: equity,
-          orders: recentOrders.map((order) => ({ ticker: order.ticker, market: order.market as Market,
+          orders: recentOrders.filter((order) => order.id !== approvedPendingOrderId).map((order) => ({ ticker: order.ticker, market: order.market as Market,
             createdAt: order.createdAt, status: order.status,
             notionalUsd: Number((order.riskCheck as RiskCheck | null)?.notionalUsd ?? 0) })),
         });
-        if (!protectiveStrategyStop) rejection ??= cadenceReason ?? undefined;
+        if (dto.side === 'buy' && !protectiveStrategyStop) rejection ??= cadenceReason ?? undefined;
         const rule = builderProfile?.config.priceRules?.find((item) => item.ticker === dto.ticker.toUpperCase());
-        if (!strategySignalId && dto.side === 'buy' && rule?.buyAtOrBelow !== undefined && price.price > rule.buyAtOrBelow) {
+        if (!strategySignalId && dto.side === 'buy' && rule?.buyAtOrBelow !== undefined && execution.price > rule.buyAtOrBelow) {
           rejection ??= 'Price is above the investor buy threshold';
         }
         const originalReason = councilApproval?.candidate.reason ?? dto.reason ?? '';
         if (!strategySignalId && !protectiveStrategyStop && dto.side === 'sell' && rule?.sellAtOrAbove !== undefined
-          && originalReason.includes('Investor price rule:') && price.price < rule.sellAtOrAbove) {
+          && originalReason.includes('Investor price rule:') && execution.price < rule.sellAtOrAbove) {
           rejection ??= 'Price is below the investor sell threshold';
         }
       }
 
       // ---- Solvency checks (both sources) ----
       const cash = Number(account.cashBalance);
+      const reservations = (await tx.select().from(strategyReservations).where(and(eq(strategyReservations.owner, userId),
+        eq(strategyReservations.accountId, account.id), eq(strategyReservations.status, 'active'), gt(strategyReservations.expiresAt, new Date()))))
+        .filter(reservation => reservation.signalId !== strategySignalId);
+      const reservedCash = reservations.filter(reservation => reservation.side === 'buy'
+        && reservation.currency === (account.ledgerMode === 'native_currency' ? price.currency : 'USD'))
+        .reduce((sum, reservation) => sum + Number(reservation.cash), 0);
+      const reservedShares = reservations.filter(reservation => reservation.side === 'sell'
+        && reservation.ticker === (price.market === 'US' ? dto.ticker.toUpperCase() : dto.ticker))
+        .reduce((sum, reservation) => sum + Number(reservation.shares), 0);
       const [existing] = await tx
         .select()
         .from(paperPositions)
         .where(and(eq(paperPositions.accountId, account.id), eq(paperPositions.ticker, price.market === 'US' ? dto.ticker.toUpperCase() : dto.ticker)));
-      if (dto.side === 'buy' && notionalUsd > cash) {
+      if (account.ledgerMode === 'native_currency') {
+        await settleSimulationCash(tx, account.id);
+        const [nativeCash] = await tx.select().from(simulationCash).where(and(eq(simulationCash.accountId, account.id), eq(simulationCash.currency, price.currency)));
+        if (dto.side === 'buy' && execution.cashAmount > Number(nativeCash?.available ?? 0) - reservedCash) rejection ??= `Insufficient unreserved available ${price.currency}; convert cash explicitly`;
+      } else if (price.currency !== 'USD') {
+        rejection ??= 'Create a native-currency experiment and explicitly convert cash before foreign-currency trading';
+      }
+      if (dto.side === 'buy' && account.ledgerMode !== 'native_currency' && execution.cashAmount * price.fxToUsd > cash - reservedCash) {
         rejection = rejection ?? `现金不足：需 ${notionalUsd.toFixed(2)} USD，可用 ${cash.toFixed(2)} USD`;
       }
       if (strategyRule && dto.side === 'buy') {
-        const totalExposure = (quantity + Number(existing?.shares ?? 0)) * price.price * price.fxToUsd;
+        const totalExposure = (quantity + Number(existing?.shares ?? 0)) * execution.price * price.fxToUsd;
         if (builderProfile?.config.template === 'guard' || totalExposure > equity * strategyRule.maxPositionPct / 100) {
           rejection ??= 'Strategy maximum position or template limit exceeded';
         }
       }
+      let sellable = Math.max(0, Number(existing?.shares ?? 0) - Number(existing?.restrictedShares ?? 0));
       if (dto.side === 'sell') {
         const held = existing ? Number(existing.shares) : 0;
         if (quantity > held) {
           rejection = rejection ?? `持仓不足：仅有 ${held} 股，无法卖出 ${quantity} 股`;
         }
-        if (strategySignalId && price.market === 'CN') {
+        if (quantity > Math.max(0, held - Number(existing?.restrictedShares ?? 0))) rejection ??= 'Opening shares have unknown or restricted sellability';
+        if (price.market === 'CN') {
           const buys = await tx.select().from(paperOrders).where(and(eq(paperOrders.accountId, account.id),
             eq(paperOrders.ticker, dto.ticker), eq(paperOrders.side, 'buy'), eq(paperOrders.status, 'filled'),
-            gte(paperOrders.createdAt, new Date(Date.now() - 48 * 3600000))));
-          const boughtToday = buys.filter((order) => marketDate('CN', order.createdAt) === marketDate('CN'))
+            gte(paperOrders.filledAt, new Date(Date.now() - 48 * 3600000))));
+          const boughtToday = buys.filter((order) => order.filledAt && marketDate('CN', order.filledAt) === marketDate('CN'))
             .reduce((sum, order) => sum + Number(order.quantity), 0);
-          if (quantity > Math.max(0, held - boughtToday)) rejection ??= 'CN T+1 shares are not yet sellable';
+          sellable = Math.max(0, held - Number(existing?.restrictedShares ?? 0) - boughtToday);
+          if (quantity > sellable) rejection ??= 'CN T+1 shares are not yet sellable';
         }
+        sellable = Math.max(0, sellable - reservedShares);
+        if (quantity > sellable) rejection ??= 'Shares reserved by another active candidate are unavailable';
       }
+
+      rejection ??= simulationLotRejection(dto.ticker, price.market, dto.side, quantity, sellable, strategySnapshot.lotSize) ?? undefined;
 
       const riskCheck: RiskCheck = {
         passed: !rejection,
@@ -568,19 +631,19 @@ export class PaperTradingService {
         orderPct: equity > 0 ? Number(((notionalUsd / equity) * 100).toFixed(2)) : 0,
         todayOrderCount: todayBotCount,
         circuitBreaker,
-        reason: rejection,
+        reason: rejection, feeUsd: execution.fee * price.fxToUsd,
+        cashAmountUsd: execution.cashAmount * price.fxToUsd,
+        executionModel: { version: 'paper-v1', feeBps: account.executionModel?.feeBps ?? 0, slippageBps: account.executionModel?.slippageBps ?? 0 },
       };
 
       const ticker = price.market === 'US' ? dto.ticker.toUpperCase() : dto.ticker;
       // Determine the final status: agent orders in require_approval mode go
       // to pending_approval instead of filling immediately.
       const needsApproval =
-        source === 'agent' && agentInfo?.approvalMode === 'require_approval';
+        source === 'agent' && sessionRequiresApproval && !approvedPendingOrderId;
       const finalStatus = rejection ? 'rejected_risk' : needsApproval ? 'pending_approval' : 'filled';
 
-      const [order] = await tx
-        .insert(paperOrders)
-        .values({
+      const orderValues = {
           owner: userId,
           accountId: account.id,
           ticker,
@@ -594,23 +657,26 @@ export class PaperTradingService {
           source,
           reason: rejection ?? dto.reason ?? null,
           riskCheck,
-          filledPrice: rejection || needsApproval ? null : String(price.price),
+          filledPrice: rejection || needsApproval ? null : String(execution.price),
           filledAt: rejection || needsApproval ? null : new Date(),
           sessionId: agentInfo?.sessionId ?? null,
           agentName: agentInfo?.agentName ?? null,
-        })
-        .returning();
+      };
+      const [order] = approvedPendingOrderId
+        ? await tx.update(paperOrders).set(orderValues).where(and(eq(paperOrders.id, approvedPendingOrderId), eq(paperOrders.accountId, account.id))).returning()
+        : await tx.insert(paperOrders).values(orderValues).returning();
 
       if (strategySignalId && builderProfile) {
         await tx.update(strategySignals).set({ state: finalStatus === 'filled' ? 'filled' : 'blocked',
           orderId: order.id, reason: rejection ?? dto.reason ?? '', updatedAt: new Date() })
           .where(and(eq(strategySignals.id, strategySignalId), eq(strategySignals.owner, userId)));
+        await settleStrategyReservation(tx, userId, strategySignalId, finalStatus === 'filled' ? 'consumed' : 'released', rejection ?? dto.reason ?? finalStatus);
         if (builderProfile.config.notifyOnProposal) await tx.insert(strategyOutbox).values({ owner: userId, profileId: builderProfile.id,
           eventKey: `strategy-order:${order.id}`, payload: { event: finalStatus === 'filled' ? 'strategy_filled' : 'strategy_blocked',
             title: builderProfile.config.language === 'en'
               ? finalStatus === 'filled' ? 'Automatic PAPER fill' : 'Automatic PAPER risk block'
               : finalStatus === 'filled' ? '自动模拟盘成交' : '自动模拟盘风控拦截',
-            body: `${ticker} ${dto.side} ${quantity} @ ${price.price} ${price.currency}\n${rejection ?? dto.reason ?? ''}` } });
+            body: `${ticker} ${dto.side} ${quantity} @ ${execution.price} ${price.currency}\n${rejection ?? dto.reason ?? ''}` } });
       }
 
       if (rejection) {
@@ -647,12 +713,14 @@ export class PaperTradingService {
       }
 
       // ---- Execute the fill ----
+      if (account.ledgerMode === 'native_currency') await recordSimulationCashFill(tx, userId, account.id,
+        price.currency, price.market, dto.side, execution.cashAmount);
       let cashAfter = cash;
       let realizedPl: number | null = null;
       if (dto.side === 'buy') {
-        cashAfter = cash - notionalUsd;
+        cashAfter = cash - execution.cashAmount * price.fxToUsd;
         const totalShares = (existing ? Number(existing.shares) : 0) + quantity;
-        const totalCost = (existing ? Number(existing.shares) * Number(existing.avgCost) : 0) + quantity * price.price;
+        const totalCost = (existing ? Number(existing.shares) * Number(existing.avgCost) : 0) + execution.gross + execution.fee;
         const avgCost = totalShares > 0 ? totalCost / totalShares : 0;
         if (existing) {
           await tx
@@ -679,8 +747,8 @@ export class PaperTradingService {
             planId: strategyPlanId, ruleId: strategyRule.id, version: sql`${strategyProtections.version} + 1`, updatedAt: new Date() },
         });
       } else {
-        cashAfter = cash + notionalUsd;
-        realizedPl = (price.price - Number(existing.avgCost)) * quantity;
+        cashAfter = cash + execution.cashAmount * price.fxToUsd;
+        realizedPl = ((execution.price - Number(existing.avgCost)) * quantity - execution.fee) * price.fxToUsd;
         const remaining = Number(existing.shares) - quantity;
         if (remaining > 0) {
           await tx
@@ -707,8 +775,8 @@ export class PaperTradingService {
         market: price.market,
         side: dto.side,
         quantity: String(quantity),
-        price: String(price.price),
-        fee: '0',
+        price: String(execution.price),
+        fee: (execution.fee * price.fxToUsd).toFixed(8),
         realizedPl: realizedPl === null ? null : realizedPl.toFixed(2),
         cashAfter: cashAfter.toFixed(2),
       });
@@ -718,7 +786,7 @@ export class PaperTradingService {
         accountId: account.id,
         eventType: 'order_filled',
         detail: {
-          orderId: order.id, ticker, side: dto.side, quantity, price: price.price,
+          orderId: order.id, ticker, side: dto.side, quantity, price: execution.price,
           source, notionalUsd: Number(notionalUsd.toFixed(2)),
           realizedPl: realizedPl === null ? undefined : Number(realizedPl.toFixed(2)),
         },
@@ -739,7 +807,7 @@ export class PaperTradingService {
           currency: price.currency,
           side: dto.side,
           quantity: String(quantity),
-          referencePrice: String(price.price),
+          referencePrice: String(execution.price),
           reason: dto.reason ?? '',
           paperOrderId: order.id,
           expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
@@ -754,7 +822,7 @@ export class PaperTradingService {
       return { order, notification: suppressNotification ? null : {
         event: 'order_filled',
         title: `模拟盘成交：${ticker} ${dto.side === 'buy' ? '买入' : '卖出'} ${quantity} 股`,
-        body: `成交价 ${price.price}（${price.currency}），约 ${notionalUsd.toFixed(2)} USD`
+        body: `成交价 ${execution.price}（${price.currency}），约 ${notionalUsd.toFixed(2)} USD`
           + (realizedPl !== null ? `，已实现盈亏 ${realizedPl >= 0 ? '+' : ''}${realizedPl.toFixed(2)} USD` : '')
           + (source === 'agent' ? '\n来源：AI 盯盘代理' : '\n来源：手动下单'),
       } as NotificationPayload };
@@ -783,85 +851,32 @@ export class PaperTradingService {
       // Establish the first day opening equity before the scheduler can trade.
       await this.ensureDailySnapshot(userId, account.id);
     }
-    const [updated] = await this.db
-      .update(paperAccounts)
-      .set({ botEnabled: enabled, updatedAt: new Date() })
-      .where(eq(paperAccounts.id, account.id))
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
+      const [current] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.id, account.id), eq(paperAccounts.isActive, true))).for('update');
+      if (!current) throw new BadRequestException('Paper account changed');
+      const [row] = await tx.update(paperAccounts).set({ botEnabled: enabled, updatedAt: new Date() })
+        .where(eq(paperAccounts.id, account.id)).returning();
+      return row;
+    });
     await this.recordEvent(userId, account.id, enabled ? 'bot_started' : 'bot_stopped', {});
     return this.mapAccount(updated);
   }
 
   /**
    * Approve a pending agent order: fill it at the current price.
-   * Re-runs the solvency checks but skips the bot guardrails (the human
-   * has already made the decision — that IS the guardrail).
+   * Uses the same fresh-quote, currency, settlement and agent risk gates.
    */
   async approveOrder(userId: string, orderId: string): Promise<PaperOrder> {
-    await this.requireAccount(userId);
-    const [order] = await this.db
-      .select()
-      .from(paperOrders)
-      .where(and(eq(paperOrders.id, orderId), eq(paperOrders.owner, userId)));
-    if (!order) throw new NotFoundException('订单不存在');
-    if (order.status !== 'pending_approval') {
-      throw new BadRequestException('Order is not in pending approval state');
-    }
-
-    const price = await this.resolvePrice(userId, order.ticker);
-    if (!price) throw new BadRequestException(`无法获取 ${order.ticker} 的价格`);
-
-    const quantity = Number(order.quantity);
-    const notionalUsd = quantity * price.price * price.fxToUsd;
-    const updated = await this.db.transaction(async (tx) => {
-      const [account] = await tx.select().from(paperAccounts)
-        .where(eq(paperAccounts.owner, userId)).for('update');
-      if (!account) throw new NotFoundException('Paper account not found');
-      const [pending] = await tx.select().from(paperOrders)
-        .where(and(eq(paperOrders.id, orderId), eq(paperOrders.owner, userId)))
-        .for('update');
-      if (!pending || pending.status !== 'pending_approval') {
-        throw new BadRequestException('Order is no longer pending approval');
-      }
-      // Human approval skips bot percentage caps, but the locked ledger must
-      // still have sufficient cash or shares at the actual fill time.
-      const cash = Number(account.cashBalance);
-      if (pending.side === 'buy' && notionalUsd > cash) {
-        throw new BadRequestException(`现金不足：需 ${notionalUsd.toFixed(2)} USD，可用 ${cash.toFixed(2)} USD`);
-      }
-      if (pending.side === 'sell') {
-        const [position] = await tx.select().from(paperPositions)
-          .where(and(eq(paperPositions.accountId, account.id), eq(paperPositions.ticker, pending.ticker)));
-        if (!position || Number(position.shares) < quantity) {
-          throw new BadRequestException('模拟盘持仓不足，无法审批卖单');
-        }
-      }
-      await this.executeFill(
-        tx, userId, account.id, pending.id, pending.ticker, price,
-        pending.side as 'buy' | 'sell', quantity,
-      );
-      const [filled] = await tx.update(paperOrders)
-        .set({ status: 'filled', filledPrice: String(price.price), filledAt: new Date() })
-        .where(eq(paperOrders.id, orderId))
-        .returning();
-      await tx.insert(paperEvents).values({
-        owner: userId,
-        accountId: account.id,
-        eventType: 'order_filled',
-        detail: {
-          orderId, ticker: pending.ticker, side: pending.side, quantity,
-          price: price.price, approvedBy: 'user', agentName: pending.agentName,
-          notionalUsd: Number(notionalUsd.toFixed(2)),
-        },
-      });
-      return filled;
-    });
-    await this.notifications.notifyUser(userId, {
-      event: 'order_filled',
-      title: `审批通过：${order.ticker} ${order.side === 'buy' ? '买入' : '卖出'} ${quantity} 股`,
-      body: `成交价 ${price.price}（约 ${notionalUsd.toFixed(2)} USD）`,
-    });
-    return this.mapOrder(updated);
+    const account = await this.requireAccount(userId);
+    const [order] = await this.db.select().from(paperOrders).where(and(eq(paperOrders.id, orderId),
+      eq(paperOrders.owner, userId), eq(paperOrders.accountId, account.id)));
+    if (!order) throw new NotFoundException('Order not found in the active paper account');
+    if (order.status !== 'pending_approval') throw new BadRequestException('Order is not in pending approval state');
+    const agentInfo = order.sessionId ? { sessionId: order.sessionId, agentName: order.agentName ?? '', approvalMode: 'auto' as const } : undefined;
+    return this.placeOrder(userId, { ticker: order.ticker, side: order.side as PaperSide, quantity: Number(order.quantity),
+      orderType: 'market', reason: order.reason ?? undefined }, 'agent', agentInfo, false, true,
+      undefined, undefined, undefined, account.id, order.id);
   }
 
   /** Reject a pending agent order. */
@@ -870,7 +885,7 @@ export class PaperTradingService {
     const [order] = await this.db
       .select()
       .from(paperOrders)
-      .where(and(eq(paperOrders.id, orderId), eq(paperOrders.owner, userId)));
+      .where(and(eq(paperOrders.id, orderId), eq(paperOrders.owner, userId), eq(paperOrders.accountId, account.id)));
     if (!order) throw new NotFoundException('订单不存在');
     if (order.status !== 'pending_approval') {
       throw new BadRequestException('Order is not in pending approval state');
@@ -878,7 +893,7 @@ export class PaperTradingService {
     const [updated] = await this.db
       .update(paperOrders)
       .set({ status: 'cancelled', reason: '用户拒绝审批' })
-      .where(and(eq(paperOrders.id, orderId), eq(paperOrders.owner, userId), eq(paperOrders.status, 'pending_approval')))
+      .where(and(eq(paperOrders.id, orderId), eq(paperOrders.owner, userId), eq(paperOrders.accountId, account.id), eq(paperOrders.status, 'pending_approval')))
       .returning();
     if (!updated) throw new BadRequestException('Order is no longer pending approval');
     await this.recordEvent(userId, account.id, 'order_rejected', {
@@ -889,87 +904,6 @@ export class PaperTradingService {
       agentName: order.agentName,
     });
     return this.mapOrder(updated);
-  }
-
-  /** Apply a human-approved paper fill inside the caller's transaction. */
-  private async executeFill(
-    tx: PaperTransaction,
-    userId: string,
-    accountId: string,
-    orderId: string,
-    ticker: string,
-    price: ResolvedPrice,
-    side: 'buy' | 'sell',
-    quantity: number,
-  ): Promise<void> {
-    const [account] = await tx.select().from(paperAccounts).where(eq(paperAccounts.id, accountId));
-    const cash = Number(account.cashBalance);
-    const notionalUsd = quantity * price.price * price.fxToUsd;
-
-    const [existing] = await tx
-      .select()
-      .from(paperPositions)
-      .where(and(eq(paperPositions.accountId, accountId), eq(paperPositions.ticker, ticker)));
-
-    let cashAfter = cash;
-    let realizedPl: number | null = null;
-
-    if (side === 'buy') {
-      cashAfter = cash - notionalUsd;
-      const totalShares = (existing ? Number(existing.shares) : 0) + quantity;
-      const totalCost = (existing ? Number(existing.shares) * Number(existing.avgCost) : 0) + quantity * price.price;
-      const avgCost = totalShares > 0 ? totalCost / totalShares : 0;
-      if (existing) {
-        await tx
-          .update(paperPositions)
-          .set({ shares: String(totalShares), avgCost: String(avgCost), updatedAt: new Date() })
-          .where(eq(paperPositions.id, existing.id));
-      } else {
-        await tx.insert(paperPositions).values({
-          owner: userId,
-          accountId,
-          ticker,
-          market: price.market,
-          currency: price.currency,
-          company: price.company,
-          shares: String(totalShares),
-          avgCost: String(avgCost),
-        });
-      }
-    } else {
-      cashAfter = cash + notionalUsd;
-      realizedPl = (price.price - Number(existing.avgCost)) * quantity;
-      const remaining = Number(existing.shares) - quantity;
-      if (remaining > 0) {
-        await tx
-          .update(paperPositions)
-          .set({ shares: String(remaining), updatedAt: new Date() })
-          .where(eq(paperPositions.id, existing.id));
-      } else {
-        await tx.delete(paperPositions).where(eq(paperPositions.id, existing.id));
-        await tx.delete(strategyProtections).where(and(eq(strategyProtections.owner, userId),
-          eq(strategyProtections.accountId, account.id), eq(strategyProtections.ticker, ticker)));
-      }
-    }
-
-    await tx
-      .update(paperAccounts)
-      .set({ cashBalance: cashAfter.toFixed(2), updatedAt: new Date() })
-      .where(eq(paperAccounts.id, accountId));
-
-    await tx.insert(paperTrades).values({
-      owner: userId,
-      accountId,
-      orderId,
-      ticker,
-      market: price.market,
-      side,
-      quantity: String(quantity),
-      price: String(price.price),
-      fee: '0',
-      realizedPl: realizedPl === null ? null : realizedPl.toFixed(2),
-      cashAfter: cashAfter.toFixed(2),
-    });
   }
 
   /** Update guardrail thresholds. */
@@ -993,13 +927,14 @@ export class PaperTradingService {
    * targets, run them through the risk gate, place orders. Used by the
    * scheduler and by the manual "scan now" button.
    */
-  async runBotScan(userId: string): Promise<{
+  async runBotScan(userId: string, expectedAccountId?: string): Promise<{
     scanned: number;
     signals: Array<{ ticker: string; side: PaperSide; reason: string }>;
     placed: number;
     rejected: number;
   }> {
     const account = await this.requireAccount(userId);
+    if (expectedAccountId && account.id !== expectedAccountId) throw new BadRequestException('Paper account changed');
     if (!account.botEnabled) {
       throw new BadRequestException('Bot is not enabled');
     }
@@ -1126,7 +1061,7 @@ export class PaperTradingService {
         const order = await this.placeOrder(
           userId,
           { ticker: signal.ticker, side: signal.side, quantity: signal.quantity, orderType: 'market', reason: signal.reason },
-          'agent',
+          'agent', undefined, false, true, undefined, undefined, undefined, account.id,
         );
         if (order.status === 'filled') placed += 1;
         else rejected += 1;
@@ -1304,7 +1239,7 @@ export class PaperTradingService {
         result.signals.push({ ticker, side: signal.side, reason });
         const order = await this.placeOrder(userId, {
           ticker, side: signal.side, quantity: signal.quantity, orderType: 'market', reason,
-        }, 'agent', undefined, true, true, profile, approval);
+        }, 'agent', undefined, true, true, profile, approval, undefined, account.id);
         if (order.status !== 'filled') {
           result.rejected += 1;
           continue;
@@ -1331,13 +1266,17 @@ export class PaperTradingService {
 
   /** Upsert today's equity snapshot (idempotent per account+date). */
   async ensureDailySnapshot(userId: string, accountId: string): Promise<void> {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = paperRiskDay(new Date(), await paperRiskTimezone(this.db, userId, accountId));
     const [existing] = await this.db
       .select()
       .from(paperSnapshots)
       .where(and(eq(paperSnapshots.accountId, accountId), eq(paperSnapshots.snapshotDate, today)));
     const equityData = await this.equityOf(userId, { id: accountId } as PaperAccount);
-    const [account] = await this.db.select().from(paperAccounts).where(eq(paperAccounts.id, accountId));
+    const [account] = await this.db.select().from(paperAccounts).where(and(eq(paperAccounts.id, accountId), eq(paperAccounts.owner, userId)));
+    if (!account) throw new NotFoundException('Paper account not found');
+    const cash = await this.cashValue(userId, account);
+    const benchmarkEquity = await this.benchmarkValue(userId, accountId);
+    const indexBenchmarkEquity = await this.indexBenchmarkValue(userId, accountId);
     const dayStart = await this.dayStartEquity(
       userId, accountId, account?.initialCash ?? '1000000',
     );
@@ -1347,8 +1286,9 @@ export class PaperTradingService {
         .update(paperSnapshots)
         .set({
           equity: equityData.toString(),
-          cash: String(Number(account?.cashBalance ?? 0)),
-          positionsValue: (equityData - Number(account?.cashBalance ?? 0)).toFixed(2),
+          valuedAt: new Date(),
+          cash: cash.toFixed(2), benchmarkEquity, indexBenchmarkEquity,
+          positionsValue: (equityData - cash).toFixed(2),
           dailyPl: (equityData - dayStart).toFixed(2),
         })
         .where(eq(paperSnapshots.id, existing.id));
@@ -1358,10 +1298,16 @@ export class PaperTradingService {
         accountId,
         snapshotDate: today,
         equity: equityData.toFixed(2),
-        cash: Number(account?.cashBalance ?? 0).toFixed(2),
-        positionsValue: (equityData - Number(account?.cashBalance ?? 0)).toFixed(2),
+        valuedAt: new Date(),
+        cash: cash.toFixed(2), benchmarkEquity, indexBenchmarkEquity,
+        positionsValue: (equityData - cash).toFixed(2),
         dailyPl: (equityData - dayStart).toFixed(2),
-      });
+      }).onConflictDoUpdate({ target: [paperSnapshots.accountId, paperSnapshots.snapshotDate], set: {
+        valuedAt: new Date(),
+        equity: equityData.toFixed(2), cash: cash.toFixed(2), benchmarkEquity, indexBenchmarkEquity,
+        positionsValue: (equityData - cash).toFixed(2),
+        dailyPl: sql`${equityData.toFixed(2)}::numeric - (${paperSnapshots.equity} - ${paperSnapshots.dailyPl})`,
+      } });
     }
   }
 
@@ -1371,9 +1317,7 @@ export class PaperTradingService {
 
   /** Throw 404 unless the caller has a paper account. */
   private async requireAccount(userId: string) {
-    const rows = await this.db.select().from(paperAccounts).where(eq(paperAccounts.owner, userId));
-    if (!rows[0]) throw new NotFoundException('Paper account not found');
-    return rows[0];
+    return requireActivePaperAccount(this.db, userId);
   }
 
   /**
@@ -1385,7 +1329,8 @@ export class PaperTradingService {
     const ticker = rawTicker.trim();
     try {
       const quote = await this.quoteService.getQuote(ticker);
-      if (quote && Number(quote.price) > 0) {
+      if (quote && Number.isFinite(Number(quote.price)) && Number(quote.price) > 0 && Number.isFinite(quote.timestamp)
+        && Math.abs(Date.now() - quote.timestamp) <= 300_000) {
         return {
           price: Number(quote.price),
           market: quote.market,
@@ -1395,62 +1340,90 @@ export class PaperTradingService {
         };
       }
     } catch {
-      // fall through to stored prices
+      // Leave the valuation unknown; historical costs are not current quotes.
     }
 
-    const [h] = await this.db.select().from(holdings).where(and(eq(holdings.owner, userId), eq(holdings.ticker, ticker)));
-    if (h && h.currentPrice != null && Number(h.currentPrice) > 0) {
-      return {
-        price: Number(h.currentPrice),
-        market: (h.market as 'US' | 'HK' | 'CN') ?? 'US',
-        currency: (h.currency as 'USD' | 'HKD' | 'CNY') ?? 'USD',
-        company: h.company ?? null,
-        fxToUsd: await this.fxToUsd((h.currency as 'USD' | 'HKD' | 'CNY') ?? 'USD'),
-      };
-    }
-    const [w] = await this.db.select().from(watchlist).where(and(eq(watchlist.owner, userId), eq(watchlist.ticker, ticker)));
-    if (w && w.currentPrice != null && Number(w.currentPrice) > 0) {
-      return {
-        price: Number(w.currentPrice),
-        market: (w.market as 'US' | 'HK' | 'CN') ?? 'US',
-        currency: (w.currency as 'USD' | 'HKD' | 'CNY') ?? 'USD',
-        company: w.company ?? null,
-        fxToUsd: await this.fxToUsd((w.currency as 'USD' | 'HKD' | 'CNY') ?? 'USD'),
-      };
-    }
+
     return null;
   }
 
-  /** Convert one unit of `currency` into USD (FX service with static fallback). */
+  /** Convert one unit of currency into USD; unavailable FX fails visibly. */
   private async fxToUsd(currency: 'USD' | 'HKD' | 'CNY'): Promise<number> {
     if (currency === 'USD') return 1;
+    return this.fxService.convert(1, currency, 'USD');
+  }
+
+  private async cashValue(userId: string, account: { id: string; cashBalance?: string; ledgerMode?: string }): Promise<number> {
+    if (account.ledgerMode !== 'native_currency') return Number(account.cashBalance ?? 0);
+    const rows = await this.db.select().from(simulationCash).where(and(eq(simulationCash.accountId, account.id), eq(simulationCash.owner, userId)));
+    let value = 0;
+    for (const cash of rows) value += await this.fxService.convert(Number(cash.available) + Number(cash.frozen) + Number(cash.unsettled), cash.currency, 'USD');
+    return value;
+  }
+
+  private async benchmarkValue(userId: string, accountId: string): Promise<string | null> {
+    const [row] = await this.db.select().from(simulationSeeds).where(and(eq(simulationSeeds.accountId, accountId), eq(simulationSeeds.owner, userId)));
+    if (!row) return null;
+    let value = 0;
     try {
-      return await this.fxService.convert(1, currency, 'USD');
-    } catch {
-      return 1 / (FX_FALLBACK_PER_USD[currency] ?? 1);
-    }
+      for (const p of row.seed.positions) {
+        const quote = await this.quoteService.getQuote(p.ticker);
+        if (!quote || Number(quote.price) <= 0 || Math.abs(Date.now() - quote.timestamp) > 300_000) return null;
+        value += await this.fxService.convert(Number(p.shares) * Number(quote.price), p.currency, 'USD');
+      }
+      for (const cash of row.seed.cash) value += await this.fxService.convert(Number(cash.total), cash.currency, 'USD');
+      return value.toFixed(2);
+    } catch { return null; }
+  }
+
+  private async indexBenchmarkValue(userId: string, accountId: string): Promise<string | null> {
+    const [row] = await this.db.select().from(simulationSeeds).where(and(eq(simulationSeeds.accountId, accountId), eq(simulationSeeds.owner, userId)));
+    const benchmark = row?.seed.benchmark;
+    if (!benchmark?.initialPrice || !row.seed.initialEquityUsd) return null;
+    try {
+      const quote = await this.quoteService.getQuote(benchmark.ticker);
+      if (!quote || quote.currency !== 'USD' || !Number.isFinite(Number(quote.price)) || Number(quote.price) <= 0
+        || Math.abs(Date.now() - quote.timestamp) > 300_000) return null;
+      return (Number(row.seed.initialEquityUsd) * Number(quote.price) / Number(benchmark.initialPrice)).toFixed(2);
+    } catch { return null; }
   }
 
   /** Current equity: cash + market value of paper positions (USD). */
   private async equityOf(userId: string, account: { id: string; cashBalance?: string }): Promise<number> {
+    const unresolved = await readCorporateActionGaps(this.db, userId, account.id);
+    if (unresolved.length) throw new BadRequestException(`CORPORATE_ACTION_RECONCILIATION_REQUIRED:${unresolved.map(gap => gap.ticker).join(',')}`);
     const positions = await this.db
       .select()
       .from(paperPositions)
       .where(eq(paperPositions.accountId, account.id));
-    const [acct] = await this.db.select().from(paperAccounts).where(eq(paperAccounts.id, account.id));
-    const cash = Number(acct?.cashBalance ?? account.cashBalance ?? 0);
+    const [acct] = await this.db.select().from(paperAccounts).where(and(eq(paperAccounts.id, account.id), eq(paperAccounts.owner, userId)));
+    if (!acct) throw new NotFoundException('Paper account not found');
+    const cash = await this.cashValue(userId, acct);
     let value = 0;
     for (const p of positions) {
+      if (this.tradingMarket) {
+        const data = await this.tradingMarket.getSnapshot(p.ticker);
+        const actions = data.corporateActions?.filter((event) => Date.parse(event.occurredAt) >= p.openedAt.getTime()
+          && Date.parse(event.occurredAt) <= Date.now()) ?? [];
+        if (actions.length) {
+          await this.db.transaction(async tx => {
+            await lockMemoryOwner(tx, userId);
+            await tx.select({ id: paperAccounts.id }).from(paperAccounts).where(eq(paperAccounts.id, acct.id)).for('update');
+            await persistCorporateActionGaps(tx, userId, acct.id, p.ticker, actions);
+          });
+          throw new BadRequestException(`CORPORATE_ACTION_RECONCILIATION_REQUIRED:${p.ticker}`);
+        }
+      }
       const price = await this.resolvePrice(userId, p.ticker);
       if (price) value += Number(p.shares) * price.price * price.fxToUsd;
-      else value += Number(p.shares) * Number(p.avgCost) * (await this.fxToUsd(p.currency as 'USD' | 'HKD' | 'CNY'));
+      else throw new BadRequestException(`VALUATION_UNAVAILABLE:${p.ticker}; missing quote or FX, increasing risk is blocked`);
     }
     return cash + value;
   }
 
   /** Day-start equity: prior closing snapshot, today's opening, or current equity. */
   private async dayStartEquity(userId: string, accountId: string, _initialCash: string): Promise<number> {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = paperRiskDay(new Date(), await paperRiskTimezone(this.db, userId, accountId));
     const rows = await this.db
       .select()
       .from(paperSnapshots)
@@ -1466,14 +1439,14 @@ export class PaperTradingService {
     return this.equityOf(userId, { id: accountId });
   }
 
-  /** Today's orders (UTC day) for an account. */
+  /** Orders in the account's business-risk day, plus outstanding approvals. */
   private async todayOrders(userId: string, accountId: string) {
-    const dayStart = new Date();
-    dayStart.setUTCHours(0, 0, 0, 0);
-    return this.db
-      .select()
-      .from(paperOrders)
-      .where(and(eq(paperOrders.accountId, accountId), gte(paperOrders.createdAt, dayStart)));
+    const timezone = await paperRiskTimezone(this.db, userId, accountId);
+    const today = paperRiskDay(new Date(), timezone);
+    const rows = await this.db.select().from(paperOrders).where(and(eq(paperOrders.accountId, accountId),
+      or(gte(paperOrders.createdAt, new Date(Date.now() - 48 * 3600_000)),
+        gte(paperOrders.filledAt, new Date(Date.now() - 48 * 3600_000)), eq(paperOrders.status, 'pending_approval'))));
+    return rows.filter((o) => o.status === 'pending_approval' || paperRiskDay(o.filledAt ?? o.createdAt, timezone) === today);
   }
 
   /** Whether the daily-loss circuit breaker is currently tripped. */

@@ -104,7 +104,7 @@ function computeDerived(h: Holding): DerivedHolding {
  * multi-select, AI ratings map, and the pending-human run count.
  */
 export default function HoldingsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [holdings, setHoldings] = useState<DerivedHolding[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -346,6 +346,7 @@ export default function HoldingsPage() {
             />
             {t('ui.tx.refresh')}
           </Button>
+          <Button variant="outline" size="sm" asChild><Link to="/paper?seedReal=1">{i18n.language.startsWith('en') ? 'Create paper experiment' : '复制为模拟实验'}</Link></Button>
           <Button size="sm" onClick={() => setAddOpen(true)}>
             <Plus className="size-4" />
             {t('holdings.addHolding')}

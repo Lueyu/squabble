@@ -26,6 +26,7 @@ before(async () => {
   await client.unsafe(readFileSync('scripts/db/08_investment_council.sql', 'utf8'));
   await client.unsafe(readFileSync('scripts/db/21_research_archive_jobs.sql', 'utf8'));
   await client.unsafe(readFileSync('scripts/db/12_council_dialogue.sql', 'utf8'));
+  await client.unsafe(readFileSync('scripts/db/27_research_threads.sql', 'utf8'));
   const [row] = await db.insert(builderProfiles).values({ owner, config }).returning();
   profileId = row.id;
 });

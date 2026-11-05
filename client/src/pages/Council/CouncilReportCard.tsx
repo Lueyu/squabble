@@ -1,11 +1,21 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, BookOpen, FileCheck2, FlaskConical } from 'lucide-react';
 import type { CouncilReport, CouncilSession } from '@shared/council.interface';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { isCurrentCouncilReport } from '@/utils/council-state';
 import { workflowCopy } from './workflow-copy';
+import { threadCopy } from './thread-copy';
+import { Button } from '@/components/ui/button';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { archiveCouncilReport, forkCouncilSession } from '@/api/council';
+import { toast } from 'sonner';
+import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
+
+import CouncilRevisionDialog from './CouncilRevisionDialog';
+import CouncilContinuationDialog from './CouncilContinuationDialog';
 
 function safeSourceUrl(value: string | null): string | null {
   if (!value) return null;
@@ -21,6 +31,15 @@ export default function CouncilReportCard({ report, session, profileVersion }: {
   const { t, i18n } = useTranslation();
   const current = isCurrentCouncilReport(report, session, profileVersion);
   const copy = workflowCopy[i18n.language.startsWith('zh') ? 'zh-CN' : 'en'];
+  const thread = threadCopy(i18n.language);
+  const navigate = useNavigate();
+  const queries = useQueryClient();
+  const archive = useMutation({ mutationFn: () => archiveCouncilReport(session.id, report.id), retry: false,
+    onSuccess: version => { void queries.invalidateQueries({ queryKey: ['council'] }); navigate(`/analysis/reports/${encodeURIComponent(version.id)}`); },
+    onError: cause => toast.error(errorMessage(cause, t('council.actionFailed'))) });
+  const [revisionParent, setRevisionParent] = useState<string | null>(null);
+  const [continuing, setContinuing] = useState(false);
+  const branchPoint = session.messages.filter(message => message.role !== 'system' && message.revision <= report.revision).at(-1);
   return <Card id={`report-${report.id}-v${report.version}`} className={`min-w-0 ${current ? 'border-primary/30' : 'border-border'}`}>
     <CardHeader>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -35,6 +54,18 @@ export default function CouncilReportCard({ report, session, profileVersion }: {
       </div>
     </CardHeader>
     <CardContent className="space-y-4">
+      <p className="text-xs text-muted-foreground">{thread.summaryHint}</p>
+      {branchPoint && report.publicationOutcome !== 'failed' && <Button size="sm" variant="outline" onClick={() => setContinuing(true)}>{i18n.language.startsWith('zh') ? '审阅总结并继续分支' : 'Review summary and continue in branch'}</Button>}
+      {report.publicationOutcome !== 'failed' && <div className="flex flex-wrap gap-2">
+        {current && session.resolvedReferences?.filter((ref, index, all) => all.findIndex(item => item.versionId === ref.versionId) === index).map(ref =>
+          <Button key={ref.versionId} variant="outline" size="sm" disabled={session.scene === 'trade_pre_review' && (ref.status !== 'valid' || ref.sourceStatus !== 'available')}
+            onClick={() => setRevisionParent(ref.versionId)}>{i18n.language.startsWith('zh') ? '修订引用报告' : 'Revise source report'} · v{ref.version}</Button>)}
+        {report.researchVersionId ? <>
+          <Button variant="outline" size="sm" asChild><Link to={`/analysis/reports/${encodeURIComponent(report.researchVersionId)}`}>{thread.open}</Link></Button>
+          <Button size="sm" asChild><Link to={`/paper?sourceReportVersionId=${encodeURIComponent(report.researchVersionId)}&sourceSessionId=${encodeURIComponent(session.id)}&draft=1`}>{thread.draft}</Link></Button>
+          <p className="w-full text-xs text-muted-foreground">{thread.generated}</p>
+        </> : <Button size="sm" variant="outline" disabled={archive.isPending} onClick={() => archive.mutate()}>{thread.archive}</Button>}
+      </div>}
       {report.coverage && <p className={`rounded-lg border p-3 text-sm ${report.coverage.complete ? 'border-border' : 'border-destructive/30 text-destructive'}`}>
         {report.coverage.complete ? copy.complete : copy.incomplete}</p>}
       {!current && <p className="rounded-lg bg-muted p-3 text-xs leading-5 text-muted-foreground">{t('council.report.obsoleteHint')}</p>}
@@ -86,6 +117,8 @@ export default function CouncilReportCard({ report, session, profileVersion }: {
         count: report.tokensUsed.toLocaleString(i18n.language),
       })}</p>
       <p className="text-xs leading-5 text-muted-foreground">{t(report.researchStance ? 'council.report.manualHint' : 'council.report.executionHint')}</p>
+      {revisionParent && <CouncilRevisionDialog sessionId={session.id} reportId={report.id} parentVersionId={revisionParent} onClose={() => setRevisionParent(null)} />}
+      {continuing && branchPoint && <CouncilContinuationDialog session={session} reportId={report.id} messageId={branchPoint.id} onClose={() => setContinuing(false)} onFork={input => forkCouncilSession(session.id, input)} />}
     </CardContent>
   </Card>;
 }

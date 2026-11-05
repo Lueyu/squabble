@@ -71,6 +71,10 @@ export interface WatchItem {
 }
 
 export interface Analysis {
+  /** Exact immutable version matching this displayed daily row. */
+  researchVersionId?: string | null;
+  /** Known original deep report; never inferred from the latest ticker report. */
+  deepReportVersionId?: string | null;
   id: string;
   analysisDate: string;
   ticker: string;
@@ -1085,11 +1089,12 @@ export interface PaperSnapshotPoint {
 export interface PaperOverview {
   account: PaperAccount;
   positions: Array<PaperPosition & { lastPrice: string | null; marketValue: string | null; unrealizedPl: string | null; unrealizedPct: string | null }>;
-  equity: string;
-  positionsValue: string;
+  equity: string | null;
+  positionsValue: string | null;
   todayPl: string | null;
-  totalPl: string;
-  totalPlPct: string;
+  totalPl: string | null;
+  totalPlPct: string | null;
+  valuationGaps?: string[];
   todayOrderCount: number;
   circuitBreakerActive: boolean;
   curve: PaperSnapshotPoint[];

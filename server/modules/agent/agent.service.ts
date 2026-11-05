@@ -45,6 +45,9 @@ import type {
   StrategyRule,
 } from '@shared/api.interface';
 import { SnapshotsService } from '../snapshots/snapshots.service';
+import { ResearchDocumentsService } from '../research-documents/research-documents.service';
+import { contentHash } from '../research-documents/research-documents.rules';
+import type { ResearchInputSnapshot } from '../../../shared/research-document.interface';
 
 /** A single analysis item within a daily-analysis payload. */
 interface AnalysisItemDto {
@@ -59,6 +62,9 @@ interface AnalysisItemDto {
 
 /** Payload for saving a day's analysis notes. */
 interface DailyAnalysisDto {
+  submissionId?: string;
+  dataAsOf?: string;
+  snapshot?: ResearchInputSnapshot;
   date: string;
   items: AnalysisItemDto[];
 }
@@ -206,39 +212,21 @@ export class AgentService {
    * @param dto    Day's analysis payload.
    */
   async saveDailyAnalysis(userId: string, dto: DailyAnalysisDto): Promise<{ saved: number }> {
-    let saved = 0;
-
-    for (const item of dto.items) {
-      await this.db
-        .insert(analysis)
-        .values({
-          analysisDate: dto.date,
-          ticker: item.ticker,
-          rating: item.rating,
-          action: item.action,
-          analysis: item.analysis,
-          targetPrice: item.targetPrice !== undefined ? String(item.targetPrice) : undefined,
-          catalysts: item.catalysts,
-          risks: item.risks,
-          owner: userId,
-        })
-        .onConflictDoUpdate({
-          target: [analysis.owner, analysis.analysisDate, analysis.ticker],
-          set: {
-            rating: item.rating,
-            action: item.action,
-            analysis: item.analysis,
-            targetPrice: item.targetPrice !== undefined ? String(item.targetPrice) : undefined,
-            catalysts: item.catalysts,
-            risks: item.risks,
-            updatedAt: new Date(),
-            updatedBy: userId,
-          },
-        });
-      saved += 1;
+    if (!Array.isArray(dto.items) || dto.items.length > 200 || !/^\d{4}-\d{2}-\d{2}$/u.test(dto.date)) {
+      throw new BadRequestException('REPORT_INVALID_SUBMISSION');
     }
-
-    return { saved };
+    const documents = new ResearchDocumentsService(this.db);
+    return documents.withSubmission(userId, `agent-daily:${dto.submissionId ?? contentHash(dto)}`, dto, async tx => {
+      for (const item of dto.items) {
+        if (!/^[A-Z0-9.^/_-]{1,20}$/iu.test(item.ticker)) throw new BadRequestException('REPORT_INVALID_SUBMISSION');
+        await documents.writeDailyInTransaction(tx, userId, { analysisDate: dto.date, ticker: item.ticker,
+          rating: item.rating, action: item.action, analysis: item.analysis,
+          targetPrice: item.targetPrice !== undefined ? String(item.targetPrice) : undefined,
+          catalysts: item.catalysts, risks: item.risks },
+        { dataAsOf: dto.dataAsOf ?? null, availableAt: new Date().toISOString(), snapshot: dto.snapshot ?? null });
+      }
+      return { saved: dto.items.length };
+    });
   }
 
   /**
@@ -438,8 +426,8 @@ export class AgentService {
 
   /**
    * Saves a deep research report. Validates the ticker (rejects malformed or
-   * TESTDEEP tickers), always creates a new `agentRuns` row to preserve historical
-   * versions, then upserts the `deepReport` row keyed by runId.
+   * TESTDEEP tickers). Each distinct submission creates a new `agentRuns` row;
+   * retries return the same saved source and immutable document version.
    *
    * @param userId Owner id.
    * @param input  Deep report fields (without id/runId timestamps).
@@ -447,7 +435,7 @@ export class AgentService {
    */
   async saveDeepReport(
     userId: string,
-    input: Omit<DeepReport, 'id' | 'runId' | 'createdAt' | 'updatedAt'> & { reportDate?: string },
+    input: Omit<DeepReport, 'id' | 'runId' | 'createdAt' | 'updatedAt'> & { reportDate?: string; submissionId?: string; dataAsOf?: string; snapshot?: ResearchInputSnapshot },
   ): Promise<{ ok: boolean; runId: string; deepReportId: string; reportDate: string }> {
     const ticker = input.ticker?.trim().toUpperCase() ?? '';
     const tickerRegex = /^[A-Z0-9.]{1,20}$/;
@@ -462,134 +450,139 @@ export class AgentService {
     const inputExtra = input as unknown as { tickerName?: string; companyName?: string };
     const tickerName = inputExtra.tickerName ?? inputExtra.companyName ?? null;
 
-    // Always create a new agent run to preserve historical versions
-    const [inserted] = await this.db
-      .insert(agentRuns)
-      .values({
+    const documents = new ResearchDocumentsService(this.db);
+    return documents.withSubmission(userId, `agent-deep:${input.submissionId ?? contentHash(input)}`, input, async tx => {
+      // The durable submission receipt prevents retries from creating another run.
+      const [inserted] = await tx
+        .insert(agentRuns)
+        .values({
+          ticker,
+          tickerName,
+          triggerType: 'agent',
+          runMode: 'full',
+          status: 'completed',
+          startedAt: new Date(),
+          completedAt: new Date(),
+          owner: userId,
+        })
+        .returning({ id: agentRuns.id });
+      const runId = inserted.id;
+
+      // Upsert deep report by run_id
+      const deepValues = {
+        runId,
         ticker,
-        tickerName,
-        triggerType: 'agent',
-        runMode: 'full',
-        status: 'completed',
-        startedAt: new Date(),
-        completedAt: new Date(),
+        rating: input.rating ?? null,
+        confidence: input.confidence ?? null,
+        targetBear: input.targetBear ?? null,
+        targetBase: input.targetBase ?? null,
+        targetBull: input.targetBull ?? null,
+        probBear: input.probBear ?? null,
+        probBase: input.probBase ?? null,
+        probBull: input.probBull ?? null,
+        coreThesis: input.coreThesis ?? null,
+        viewChange: input.viewChange ?? null,
+        prevRating: input.prevRating ?? null,
+        companyOverview: input.companyOverview ?? null,
+        businessModel: input.businessModel ?? null,
+        moat: input.moat ?? null,
+        revenueStructure: (input.revenueStructure as unknown as Record<string, unknown> | null) ?? null,
+        financialAnnual: (input.financialAnnual as unknown as Record<string, unknown> | null) ?? null,
+        financialQuarterly: (input.financialQuarterly as unknown as Record<string, unknown> | null) ?? null,
+        profitability: (input.profitability as unknown as Record<string, unknown> | null) ?? null,
+        balanceSheet: (input.balanceSheet as unknown as Record<string, unknown> | null) ?? null,
+        cashFlow: (input.cashFlow as unknown as Record<string, unknown> | null) ?? null,
+        financialQuality: input.financialQuality ?? null,
+        segmentAnalysis: (input.segmentAnalysis as unknown as Record<string, unknown> | null) ?? null,
+        valuationRelative: (input.valuationRelative as unknown as Record<string, unknown> | null) ?? null,
+        valuationSotp: (input.valuationSotp as unknown as Record<string, unknown> | null) ?? null,
+        valuationMethodology: input.valuationMethodology ?? null,
+        industryOverview: input.industryOverview ?? null,
+        marketSize: input.marketSize ?? null,
+        competitivePosition: input.competitivePosition ?? null,
+        industryTrends: input.industryTrends ?? null,
+        bullPoints: (input.bullPoints as unknown as Record<string, unknown> | null) ?? null,
+        bearPoints: (input.bearPoints as unknown as Record<string, unknown> | null) ?? null,
+        criticPoints: (input.criticPoints as unknown as Record<string, unknown> | null) ?? null,
+        revisedAssumptions: input.revisedAssumptions ?? null,
+        catalystsTimeline: (input.catalystsTimeline as unknown as Record<string, unknown> | null) ?? null,
+        riskItems: (input.riskItems as unknown as Record<string, unknown> | null) ?? null,
+        riskGateSnapshot: (input.riskGateSnapshot as unknown as Record<string, unknown> | null) ?? null,
+        pmAction: input.pmAction ?? null,
+        pmPriceRange: input.pmPriceRange ?? null,
+        pmPositionSize: input.pmPositionSize ?? null,
+        pmStopLoss: input.pmStopLoss ?? null,
+        pmExecutionPlan: input.pmExecutionPlan ?? null,
+        trackingMetrics: (input.trackingMetrics as unknown as Record<string, unknown> | null) ?? null,
+        viewChangeTriggers: input.viewChangeTriggers ?? null,
         owner: userId,
-      })
-      .returning({ id: agentRuns.id });
-    const runId = inserted.id;
+      };
 
-    // Upsert deep report by run_id
-    const deepValues = {
-      runId,
-      ticker,
-      rating: input.rating ?? null,
-      confidence: input.confidence ?? null,
-      targetBear: input.targetBear ?? null,
-      targetBase: input.targetBase ?? null,
-      targetBull: input.targetBull ?? null,
-      probBear: input.probBear ?? null,
-      probBase: input.probBase ?? null,
-      probBull: input.probBull ?? null,
-      coreThesis: input.coreThesis ?? null,
-      viewChange: input.viewChange ?? null,
-      prevRating: input.prevRating ?? null,
-      companyOverview: input.companyOverview ?? null,
-      businessModel: input.businessModel ?? null,
-      moat: input.moat ?? null,
-      revenueStructure: (input.revenueStructure as unknown as Record<string, unknown> | null) ?? null,
-      financialAnnual: (input.financialAnnual as unknown as Record<string, unknown> | null) ?? null,
-      financialQuarterly: (input.financialQuarterly as unknown as Record<string, unknown> | null) ?? null,
-      profitability: (input.profitability as unknown as Record<string, unknown> | null) ?? null,
-      balanceSheet: (input.balanceSheet as unknown as Record<string, unknown> | null) ?? null,
-      cashFlow: (input.cashFlow as unknown as Record<string, unknown> | null) ?? null,
-      financialQuality: input.financialQuality ?? null,
-      segmentAnalysis: (input.segmentAnalysis as unknown as Record<string, unknown> | null) ?? null,
-      valuationRelative: (input.valuationRelative as unknown as Record<string, unknown> | null) ?? null,
-      valuationSotp: (input.valuationSotp as unknown as Record<string, unknown> | null) ?? null,
-      valuationMethodology: input.valuationMethodology ?? null,
-      industryOverview: input.industryOverview ?? null,
-      marketSize: input.marketSize ?? null,
-      competitivePosition: input.competitivePosition ?? null,
-      industryTrends: input.industryTrends ?? null,
-      bullPoints: (input.bullPoints as unknown as Record<string, unknown> | null) ?? null,
-      bearPoints: (input.bearPoints as unknown as Record<string, unknown> | null) ?? null,
-      criticPoints: (input.criticPoints as unknown as Record<string, unknown> | null) ?? null,
-      revisedAssumptions: input.revisedAssumptions ?? null,
-      catalystsTimeline: (input.catalystsTimeline as unknown as Record<string, unknown> | null) ?? null,
-      riskItems: (input.riskItems as unknown as Record<string, unknown> | null) ?? null,
-      riskGateSnapshot: (input.riskGateSnapshot as unknown as Record<string, unknown> | null) ?? null,
-      pmAction: input.pmAction ?? null,
-      pmPriceRange: input.pmPriceRange ?? null,
-      pmPositionSize: input.pmPositionSize ?? null,
-      pmStopLoss: input.pmStopLoss ?? null,
-      pmExecutionPlan: input.pmExecutionPlan ?? null,
-      trackingMetrics: (input.trackingMetrics as unknown as Record<string, unknown> | null) ?? null,
-      viewChangeTriggers: input.viewChangeTriggers ?? null,
-      owner: userId,
-    };
+      const [upserted] = await tx
+        .insert(deepReport)
+        .values(deepValues)
+          .onConflictDoUpdate({
+            target: [deepReport.runId],
+            set: {
+              ticker,
+            rating: input.rating ?? null,
+            confidence: input.confidence ?? null,
+            targetBear: input.targetBear ?? null,
+            targetBase: input.targetBase ?? null,
+            targetBull: input.targetBull ?? null,
+            probBear: input.probBear ?? null,
+            probBase: input.probBase ?? null,
+            probBull: input.probBull ?? null,
+            coreThesis: input.coreThesis ?? null,
+            viewChange: input.viewChange ?? null,
+            prevRating: input.prevRating ?? null,
+            companyOverview: input.companyOverview ?? null,
+            businessModel: input.businessModel ?? null,
+            moat: input.moat ?? null,
+            revenueStructure: (input.revenueStructure as unknown as Record<string, unknown> | null) ?? null,
+            financialAnnual: (input.financialAnnual as unknown as Record<string, unknown> | null) ?? null,
+            financialQuarterly: (input.financialQuarterly as unknown as Record<string, unknown> | null) ?? null,
+            profitability: (input.profitability as unknown as Record<string, unknown> | null) ?? null,
+            balanceSheet: (input.balanceSheet as unknown as Record<string, unknown> | null) ?? null,
+            cashFlow: (input.cashFlow as unknown as Record<string, unknown> | null) ?? null,
+            financialQuality: input.financialQuality ?? null,
+            segmentAnalysis: (input.segmentAnalysis as unknown as Record<string, unknown> | null) ?? null,
+            valuationRelative: (input.valuationRelative as unknown as Record<string, unknown> | null) ?? null,
+            valuationSotp: (input.valuationSotp as unknown as Record<string, unknown> | null) ?? null,
+            valuationMethodology: input.valuationMethodology ?? null,
+            industryOverview: input.industryOverview ?? null,
+            marketSize: input.marketSize ?? null,
+            competitivePosition: input.competitivePosition ?? null,
+            industryTrends: input.industryTrends ?? null,
+            bullPoints: (input.bullPoints as unknown as Record<string, unknown> | null) ?? null,
+            bearPoints: (input.bearPoints as unknown as Record<string, unknown> | null) ?? null,
+            criticPoints: (input.criticPoints as unknown as Record<string, unknown> | null) ?? null,
+            revisedAssumptions: input.revisedAssumptions ?? null,
+            catalystsTimeline: (input.catalystsTimeline as unknown as Record<string, unknown> | null) ?? null,
+            riskItems: (input.riskItems as unknown as Record<string, unknown> | null) ?? null,
+            riskGateSnapshot: (input.riskGateSnapshot as unknown as Record<string, unknown> | null) ?? null,
+            pmAction: input.pmAction ?? null,
+            pmPriceRange: input.pmPriceRange ?? null,
+            pmPositionSize: input.pmPositionSize ?? null,
+            pmStopLoss: input.pmStopLoss ?? null,
+            pmExecutionPlan: input.pmExecutionPlan ?? null,
+            trackingMetrics: (input.trackingMetrics as unknown as Record<string, unknown> | null) ?? null,
+            viewChangeTriggers: input.viewChangeTriggers ?? null,
+            updatedAt: new Date(),
+            updatedBy: userId,
+          },
+        })
+        .returning({ id: deepReport.id });
 
-    const [upserted] = await this.db
-      .insert(deepReport)
-      .values(deepValues)
-        .onConflictDoUpdate({
-          target: [deepReport.runId],
-          set: {
-            ticker,
-          rating: input.rating ?? null,
-          confidence: input.confidence ?? null,
-          targetBear: input.targetBear ?? null,
-          targetBase: input.targetBase ?? null,
-          targetBull: input.targetBull ?? null,
-          probBear: input.probBear ?? null,
-          probBase: input.probBase ?? null,
-          probBull: input.probBull ?? null,
-          coreThesis: input.coreThesis ?? null,
-          viewChange: input.viewChange ?? null,
-          prevRating: input.prevRating ?? null,
-          companyOverview: input.companyOverview ?? null,
-          businessModel: input.businessModel ?? null,
-          moat: input.moat ?? null,
-          revenueStructure: (input.revenueStructure as unknown as Record<string, unknown> | null) ?? null,
-          financialAnnual: (input.financialAnnual as unknown as Record<string, unknown> | null) ?? null,
-          financialQuarterly: (input.financialQuarterly as unknown as Record<string, unknown> | null) ?? null,
-          profitability: (input.profitability as unknown as Record<string, unknown> | null) ?? null,
-          balanceSheet: (input.balanceSheet as unknown as Record<string, unknown> | null) ?? null,
-          cashFlow: (input.cashFlow as unknown as Record<string, unknown> | null) ?? null,
-          financialQuality: input.financialQuality ?? null,
-          segmentAnalysis: (input.segmentAnalysis as unknown as Record<string, unknown> | null) ?? null,
-          valuationRelative: (input.valuationRelative as unknown as Record<string, unknown> | null) ?? null,
-          valuationSotp: (input.valuationSotp as unknown as Record<string, unknown> | null) ?? null,
-          valuationMethodology: input.valuationMethodology ?? null,
-          industryOverview: input.industryOverview ?? null,
-          marketSize: input.marketSize ?? null,
-          competitivePosition: input.competitivePosition ?? null,
-          industryTrends: input.industryTrends ?? null,
-          bullPoints: (input.bullPoints as unknown as Record<string, unknown> | null) ?? null,
-          bearPoints: (input.bearPoints as unknown as Record<string, unknown> | null) ?? null,
-          criticPoints: (input.criticPoints as unknown as Record<string, unknown> | null) ?? null,
-          revisedAssumptions: input.revisedAssumptions ?? null,
-          catalystsTimeline: (input.catalystsTimeline as unknown as Record<string, unknown> | null) ?? null,
-          riskItems: (input.riskItems as unknown as Record<string, unknown> | null) ?? null,
-          riskGateSnapshot: (input.riskGateSnapshot as unknown as Record<string, unknown> | null) ?? null,
-          pmAction: input.pmAction ?? null,
-          pmPriceRange: input.pmPriceRange ?? null,
-          pmPositionSize: input.pmPositionSize ?? null,
-          pmStopLoss: input.pmStopLoss ?? null,
-          pmExecutionPlan: input.pmExecutionPlan ?? null,
-          trackingMetrics: (input.trackingMetrics as unknown as Record<string, unknown> | null) ?? null,
-          viewChangeTriggers: input.viewChangeTriggers ?? null,
-          updatedAt: new Date(),
-          updatedBy: userId,
-        },
-      })
-      .returning({ id: deepReport.id });
-
-    return {
-      ok: true,
-      runId,
-      deepReportId: upserted.id,
-      reportDate,
-    };
+      await documents.importSourceInTransaction(tx, userId, { type: 'deep', id: upserted.id },
+        { dataAsOf: input.dataAsOf ?? null, availableAt: new Date().toISOString(), snapshot: input.snapshot ?? null });
+      return {
+        ok: true,
+        runId,
+        deepReportId: upserted.id,
+        reportDate,
+      };
+    });
   }
 
   /**

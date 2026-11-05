@@ -19,6 +19,9 @@ import CouncilMemberAvatar from './CouncilMemberAvatar';
 import { councilPersona } from './council-persona';
 import { councilReplyExcerpt } from '@/utils/council-message-text';
 import { isMemoryContextError, memoryReason } from '@/utils/memory-reason';
+import CouncilContinuationDialog from './CouncilContinuationDialog';
+import CouncilReportPicker from './CouncilReportPicker';
+import { threadCopy } from './thread-copy';
 
 interface CouncilConversationProps {
   session: CouncilSession;
@@ -28,6 +31,9 @@ interface CouncilConversationProps {
 
 export default function CouncilConversation({ session, actions, profileChanged }: CouncilConversationProps) {
   const { t, i18n } = useTranslation();
+  const [forkMessage, setForkMessage] = useState<string | null>(null);
+  const [references, setReferences] = useState<import('@shared/research-document.interface').ReportReference[]>([]);
+  const thread = threadCopy(i18n.language);
   const [draft, setDraft] = useState<{ content: string; reply: CouncilMessage | null }>({ content: '', reply: null });
   const { content, reply } = draft;
   const setContent = (next: SetStateAction<string>) => setDraft(current => ({ ...current,
@@ -83,7 +89,8 @@ export default function CouncilConversation({ session, actions, profileChanged }
     sending.current = true;
     let saved: CouncilSession;
     try {
-      saved = await actions.send.mutateAsync({ id: session.id, content: replyPrefix + submittedDraft.trim() });
+      saved = await actions.send.mutateAsync({ id: session.id, content: replyPrefix + submittedDraft.trim(), replyToMessageId: submittedReply?.id, references });
+      setReferences([]);
       setDraft(current => current.content === submittedDraft && current.reply === submittedReply
         ? { content: '', reply: null } : current);
       jumpToLatest();
@@ -98,6 +105,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
       toast.error(`${t('council.messageSavedRunFailed')} ${errorMessage(cause, t('council.actionFailed'))}`);
     } finally { sending.current = false; }
   };
+
 
   return <>
     {Boolean(session.members?.length) && <div className="council-roster" aria-label={t('council.team.title')}>
@@ -131,7 +139,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
         {conversation.entries.map((entry) => entry.legacyActivity
           ? <CouncilResearchProgress key={entry.key} message={entry.legacyActivity} />
           : <CouncilChatMessage key={entry.key} message={entry.message} task={entry.task} session={session} onQuestion={addQuestion}
-            onReply={message => { setReply(message); inputRef.current?.focus(); }} />)}
+            onReply={message => { setReply(message); inputRef.current?.focus(); }} onFork={message => setForkMessage(message.id)} />)}
         {conversation.truncated && <p className="text-xs leading-5 text-muted-foreground">{t('council.progress.truncated')}</p>}
         {session.status === 'running' && !hasCurrentResearchEvents && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card"><Loader2 className="size-4 animate-spin text-primary" /></span>
@@ -149,6 +157,11 @@ export default function CouncilConversation({ session, actions, profileChanged }
         <ArrowDown className="size-3.5" />{t('council.latestMessages')}</Button>}
     </div>
     <form className="council-composer shrink-0 border-t border-border p-3 sm:px-5 sm:py-4" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      {session.messages.filter(message => message.role === 'user').length >= 25 && <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+        <p>{thread.limit}</p><Button type="button" size="sm" variant="outline" disabled={actions.fork.isPending}
+          onClick={() => { const last = session.messages.filter(message => message.role !== 'system').at(-1); if (last) setForkMessage(last.id); }}>{thread.fork}</Button>
+      </div>}
+      <CouncilReportPicker value={references} onChange={setReferences} historical={session.scene !== 'trade_pre_review'} />
       <div className="council-composer-inner">
       {!content && !reply && !messageLimitReached && <div className="council-quick-prompts" aria-label={t('council.studio.prompts')}>
         {['upside', 'downside', 'evidence'].map(key => <button key={key} type="button" onClick={() => addQuestion(t(`council.studio.promptText.${key}`))}>
@@ -186,5 +199,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
       </div>
       </div>
     </form>
+    {forkMessage && <CouncilContinuationDialog session={session} messageId={forkMessage} onClose={() => setForkMessage(null)}
+      onFork={input => actions.fork.mutateAsync({ id: session.id, ...input })} />}
   </>;
 }

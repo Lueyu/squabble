@@ -40,6 +40,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { HealthModule } from './modules/health/health.module';
 import { LlmBudgetModule } from './modules/llm-budget/llm-budget.module';
 import { SystemUpdateModule } from './modules/system-update/system-update.module';
+import { ResearchDocumentsModule } from './modules/research-documents/research-documents.module';
 
 /**
  * Root Nest module. Aggregates feature modules and installs the global
@@ -54,6 +55,7 @@ import { SystemUpdateModule } from './modules/system-update/system-update.module
     LlmBudgetModule,
     HealthModule,
     SystemUpdateModule,
+    ResearchDocumentsModule,
 
     // ====== @route-section: business-modules START ======
     HoldingsModule,

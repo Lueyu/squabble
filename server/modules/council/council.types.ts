@@ -18,8 +18,9 @@ export interface CouncilCheckpoint {
     turn: number; revision: number; dispatchStarted: boolean; awaitingInput?: boolean; lastUserMessageId?: string };
 }
 export interface CouncilMessageMetadata extends Pick<CouncilMessage,
-  'memory' | 'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown' | 'response'> {
+  'references' | 'memory' | 'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown' | 'response'> {
   cycleId?: string;
   researchEvent?: ResearchEvent;
   turn?: number;
+  referenceSnapshot?: import('../../../shared/research-document.interface').ReportReference[];
 }

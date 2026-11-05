@@ -33,6 +33,7 @@ import RegisterPage from './pages/Auth/RegisterPage';
 import RecoverPage from './pages/Auth/RecoverPage';
 import PrivacyPage from './pages/Privacy/PrivacyPage';
 import NotFound from './pages/NotFound/NotFound';
+import ResearchDocumentPage from './pages/Analysis/ResearchDocumentPage';
 
 /**
  * Root route component.
@@ -63,6 +64,7 @@ const RoutesComponent = () => {
         <Route path="import" element={<ImportPage />} />
         <Route path="watchlist" element={<WatchlistPage />} />
         <Route path="analysis" element={<AnalysisPage />} />
+        <Route path="analysis/reports/:versionId" element={<ResearchDocumentPage />} />
         <Route path="paper" element={<PaperPage />} />
         <Route path="agent-builder" element={<AgentBuilderPage />} />
         <Route path="council" element={<CouncilPage />} />

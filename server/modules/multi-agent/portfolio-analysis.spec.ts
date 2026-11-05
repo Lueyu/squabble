@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { basicPortfolioReport, buildPortfolioReportSnapshot, PortfolioAnalysisService } from './portfolio-analysis.service';
-import { cashAccounts, holdings, portfolioAnalysisRuns } from '@server/database/schema';
+import { cashAccounts, holdings, portfolioAnalysisRuns, transactions, snapshots, fxRates } from '@server/database/schema';
+import { researchMemoryPreferences } from '../../database/research-memory.schema';
+import { researchDocuments, researchDocumentVersions } from '../../database/research-documents.schema';
+import { randomUUID } from 'node:crypto';
+import { SQL } from 'drizzle-orm';
 
 test('one portfolio snapshot retains missing prices and never invents weights', async () => {
   const snapshot = await buildPortfolioReportSnapshot([
@@ -36,23 +40,31 @@ test('Basic report includes every holding without model claims or trades', async
 
 function fakeDatabase() {
   let run: Record<string, unknown> | null = null;
+  const artifacts = new Map<unknown, Record<string, unknown>[]>([[researchMemoryPreferences, []], [researchDocuments, []], [researchDocumentVersions, []]]);
   const holdingRows = [
     { ticker: 'AAPL', company: 'Apple', market: 'US', currency: 'USD', shares: '2', currentPrice: '100', buyPrice: '80' },
     { ticker: 'MSFT', company: 'Microsoft', market: 'US', currency: 'USD', shares: '3', currentPrice: '200', buyPrice: '180' },
   ];
   const query = (rows: () => unknown[]) => ({
-    where() { return this; }, orderBy() { return this; }, limit() { return this; },
+    where() { return this; }, orderBy() { return this; }, limit() { return this; }, for() { return this; },
     then(resolve: (rows: unknown[]) => unknown) { return Promise.resolve(rows()).then(resolve); },
   });
   const db = {
     transaction(callback: (tx: unknown) => Promise<unknown>) { return callback(db); },
     select() { return { from(table: unknown) {
+      if (table instanceof SQL) return query(() => [{ ledger: [], boundaries: [], rates: [] }]);
       if (table === holdings) return query(() => holdingRows);
       if (table === cashAccounts) return query(() => [{ currency: 'USD', balance: '100' }]);
+      if ([transactions, snapshots, fxRates].includes(table as typeof transactions)) return query(() => []);
       if (table === portfolioAnalysisRuns) return query(() => run ? [run] : []);
+      if (artifacts.has(table)) return query(() => artifacts.get(table)!);
       throw new Error('Unexpected table');
     } }; },
     insert(table: unknown) {
+      if (artifacts.has(table)) return { values(values: Record<string, unknown>) {
+        const write = async () => { const row = { id: randomUUID(), createdAt: new Date(), ...values }; artifacts.get(table)!.push(row); return [row]; };
+        return { returning: write, onConflictDoNothing: async () => undefined };
+      } };
       assert.equal(table, portfolioAnalysisRuns);
       return { values(values: Record<string, unknown>) {
         return { async returning() {
@@ -64,6 +76,9 @@ function fakeDatabase() {
       } };
     },
     update(table: unknown) {
+      if (artifacts.has(table)) return { set(patch: Record<string, unknown>) { return { where: async () => {
+        const rows = artifacts.get(table)!; for (const row of rows) Object.assign(row, patch); return rows;
+      } }; } };
       assert.equal(table, portfolioAnalysisRuns);
       return { set(patch: Record<string, unknown>) {
         const apply = () => {

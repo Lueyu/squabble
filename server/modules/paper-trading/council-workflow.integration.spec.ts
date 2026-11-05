@@ -16,6 +16,7 @@ import { CouncilService } from '../council/council.service';
 import { AgentBuilderService } from './agent-builder.service';
 import { BuilderCadenceService } from './builder-cadence.service';
 import { PaperTradingService } from './paper-trading.service';
+import { simulationMarketFixture } from './simulation-market.fixture';
 import { normalizeBuilderConfig, normalizeCouncil } from './agent-builder.rules';
 import type { SettingsService } from '../settings/settings.service';
 
@@ -81,7 +82,7 @@ test('a full Builder scan uses four budgeted council calls, fills once, and reus
       },
     } as never, { convert: async (amount: number) => amount } as never, {
       notifyUser: async () => { throw new Error('This workflow must not send external notifications'); },
-    } as never, builder, cadence, council);
+    } as never, builder, cadence, council, { getSnapshot: async () => simulationMarketFixture({ price: '100', market: 'US', currency: 'USD', timestamp: Date.now() }) } as never);
     const config = normalizeBuilderConfig({ name: 'Workflow investor', language: 'en', template: 'balanced',
       tickers: ['AAPL'], priceRules: [{ ticker: 'AAPL', buyAtOrBelow: 100 }], minimumRating: 'Buy',
       customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 2, notifyOnProposal: false,

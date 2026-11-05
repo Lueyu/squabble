@@ -124,9 +124,14 @@ test('portfolio report content renders every required conclusion and holding det
   const React = require('react');
   const { renderToStaticMarkup } = require('react-dom/server');
   const helper = load('utils/portfolio-report.ts');
+  const dailyFacts = load('components/MultiAgent/PortfolioDailyFactsPanel.tsx', {
+    'react/jsx-runtime': require('react/jsx-runtime'),
+    'react-i18next': { useTranslation: () => ({ i18n: { resolvedLanguage: 'en' } }) },
+  });
   const { default: Content } = load('components/MultiAgent/PortfolioReportContent.tsx', {
     'react/jsx-runtime': require('react/jsx-runtime'),
     '@/utils/portfolio-report': helper,
+    './PortfolioDailyFactsPanel': dailyFacts,
   });
   const report = {
     summary: 'Summary conclusion', allocationRisks: ['Concentration risk'], actions: ['Trim position'],

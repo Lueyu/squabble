@@ -185,6 +185,8 @@ test('daily discussion publishes validated plan, monitor reviews once, atomic fi
     assert.equal(reactivated.version, 2);
     assert.equal((await builder.activateProfile(owner, row.id)).version, 2, 'repeat activation is idempotent');
     // A fresh profile version cannot reuse a still-unfilled old-plan signal.
+    // Keep its quote inside the entry band to isolate the expired-plan/version fence.
+    price = 100; refreshedPrice = 100;
     const oldCandidate = { signalId: randomUUID(), planId: oldPlan.id, planVersion: oldPlan.version, ruleId: rule.id,
       ticker: 'AAPL', market: 'US' as const, side: 'buy' as const, quantity: 1, price, quoteAt: new Date().toISOString(),
       protectiveStop: false, reviewAttempt: 3, reason: 'old work' };

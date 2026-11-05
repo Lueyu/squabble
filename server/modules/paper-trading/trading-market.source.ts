@@ -23,10 +23,11 @@ export function emptyTradingSnapshot(ticker: string, now: Date, info: TradingTic
   return { ticker: info?.ticker ?? ticker, providerSymbol: info?.providerSymbol ?? null,
     market: info?.market ?? null, currency: info?.currency ?? null,
     quoteUsable: false, quoteReason: 'unsupported_ticker', usable: false, reason: 'unsupported_ticker',
-    source: 'yahoo-chart', sourceUrl: info ? `${YAHOO_CHART_BASE}${encodeURIComponent(info.providerSymbol)}?interval=1d&range=6mo` : null,
+    source: 'yahoo-chart', sourceUrl: info ? `${YAHOO_CHART_BASE}${encodeURIComponent(info.providerSymbol)}?interval=1d&range=6mo&events=div%2Csplits` : null,
     fetchedAt: now.toISOString(), quoteTimestamp: null, price: null, delay: 'possibly-delayed',
     maxQuoteAgeSeconds: MAX_QUOTE_AGE_SECONDS, timeframe: '1d', candles: [], indicators: null,
-    schedule: info ? tradingMarketSchedule(info.market, now) : null };
+    schedule: info ? tradingMarketSchedule(info.market, now) : null,
+    lotSize: info?.market === 'US' ? 1 : null, halted: false, corporateActionsChecked: false, corporateActions: [] };
 }
 
 function normalizeCandles(result: Record<string, unknown>, info: TradingTicker, now: Date,
@@ -77,10 +78,23 @@ export function parseTradingSnapshot(payload: unknown, info: TradingTicker,
   }
   snapshot.price = meta.regularMarketPrice;
   snapshot.quoteTimestamp = new Date(timestamp).toISOString();
+  const events = object(result.events);
+  snapshot.corporateActionsChecked = result.events === undefined || events !== null;
+  for (const [key, kind] of [['dividends', 'dividend'], ['splits', 'split']] as const) {
+    const entries = events?.[key];
+    if (entries !== undefined && !object(entries)) { snapshot.corporateActionsChecked = false; continue; }
+    for (const entry of Object.values(object(entries) ?? {})) {
+      const occurredAt = epoch(object(entry)?.date);
+      if (occurredAt === null) snapshot.corporateActionsChecked = false;
+      else snapshot.corporateActions!.push({ kind, occurredAt: new Date(occurredAt).toISOString() });
+    }
+  }
+  snapshot.halted = meta.tradingHalted === true || meta.marketState === 'HALTED';
   if (timestamp > now.getTime() + 60_000) { snapshot.quoteReason = snapshot.reason = 'quote_future'; return snapshot; }
   const active = snapshot.schedule?.sessions.find(session => Date.parse(session.opensAt) <= now.getTime()
     && now.getTime() < Date.parse(session.closesAt));
-  snapshot.quoteReason = !snapshot.schedule?.calendarVerified ? 'calendar_unavailable'
+  snapshot.quoteReason = snapshot.halted ? 'trading_halted' : !snapshot.corporateActionsChecked ? 'corporate_actions_invalid'
+    : !snapshot.schedule?.calendarVerified ? 'calendar_unavailable'
     : !snapshot.schedule.isOpen || !active ? 'market_closed'
       : now.getTime() - timestamp > MAX_QUOTE_AGE_SECONDS * 1000 || timestamp < Date.parse(active.opensAt)
         ? 'quote_stale' : null;

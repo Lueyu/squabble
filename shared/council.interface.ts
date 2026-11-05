@@ -2,6 +2,19 @@ import type { NativeAgentConfiguration } from './local-agents.interface';
 import type { ResearchEvent } from './research-events.interface';
 import type { ResearchCoverage, ResearchGoal, ResearchWorkflowView } from './research-workflow.interface';
 import type { MemoryContextInventory, ThesisCandidateInput } from './research-memory.interface';
+import type { ReportReference, ResolvedReportReference } from './research-document.interface';
+
+export const COUNCIL_SCENES = ['portfolio_daily', 'stock', 'period_strategy', 'trade_pre_review', 'trade_post_review'] as const;
+export type CouncilScene = typeof COUNCIL_SCENES[number];
+export interface CouncilPeriod { start: string; end: string }
+export interface CouncilThreadMessage { id: string; role: string; memberName: string; content: string }
+export interface CouncilMessageInput { content: string; replyToMessageId?: string; references?: ReportReference[] }
+export interface CouncilContinuationSummary {
+  content: string; sourceSessionId: string; sourceMessageIds: string[]; references: ReportReference[]; reportId?: string;
+}
+export interface ForkCouncilSession { messageId: string; title?: string; summary?: string; reportId?: string }
+export interface CouncilRevisionRequest { parentVersionId: string; sectionId?: string; generate?: boolean; requestId?: string }
+export interface CouncilReviewContext { references?: ReportReference[]; subject?: string; requireDeliberation?: boolean }
 /** Public contracts for bounded, user-owned investment research. */
 export interface LlmBudgetSettings {
   enabled: boolean;
@@ -61,12 +74,20 @@ export interface CouncilMember {
 }
 export interface CouncilConfig { enabled: boolean; members: CouncilMember[]; webResearch?: boolean }
 export interface CreateCouncilSession {
+  scene?: CouncilScene;
+  title?: string;
+  subject?: string;
+  period?: CouncilPeriod;
+  references?: ReportReference[];
+  parentSessionId?: string;
+  parentMessageId?: string;
+  parentReportId?: string;
   goal?: ResearchGoal;
   peers?: string[];
   parallelism?: 1 | 2;
   recallEnabled?: boolean;
   profileId?: string;
-  ticker: string;
+  ticker?: string;
   language?: 'zh-CN' | 'en';
   members?: CouncilMember[];
   webResearch?: boolean;
@@ -94,6 +115,7 @@ export interface CouncilResponse {
   details?: string;
 }
 export interface CouncilMessage {
+  references?: ReportReference[];
   memory?: MemoryContextInventory;
   taskId?: string;
   cycleId?: string;
@@ -121,6 +143,7 @@ export interface CouncilMessage {
   researchEventId?: string;
 }
 export interface CouncilReport {
+  researchVersionId?: string | null;
   /** Null/absent means the historical publication outcome was not recorded. */
   publicationOutcome?: 'succeeded' | 'failed' | null;
   thesisCandidates?: ThesisCandidateInput[] | null;
@@ -145,6 +168,17 @@ export interface CouncilReport {
   researchStance?: 'positive' | 'balanced' | 'cautious' | null;
 }
 export interface CouncilSession {
+  scene?: CouncilScene;
+  title?: string;
+  subject?: string;
+  period?: CouncilPeriod | null;
+  parentSessionId?: string | null;
+  parentMessageId?: string | null;
+  parentReportId?: string | null;
+  references?: ReportReference[];
+  resolvedReferences?: ResolvedReportReference[];
+  inheritedContext?: CouncilThreadMessage[];
+  continuationSummary?: CouncilContinuationSummary | null;
   workflow?: ResearchWorkflowView;
   researchEvents?: ResearchEvent[];
   researchEventsTruncated?: boolean;

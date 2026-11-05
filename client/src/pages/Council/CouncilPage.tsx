@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BookOpen, CirclePause, FileText, History, Loader2, MessageCircle, Play, Plus, Users } from 'lucide-react';
 import type { BuilderProfile } from '@shared/api.interface';
-import type { CouncilConfig, CouncilSession, CreateCouncilSession } from '@shared/council.interface';
+import { COUNCIL_SCENES, type CouncilScene, type CouncilConfig, type CouncilSession, type CreateCouncilSession } from '@shared/council.interface';
 import { createCouncilPreset } from '@shared/council-templates';
 import { fetchBuilderProfiles } from '@/api/builder';
 import { fetchIntegrationSettings } from '@/api/settings';
@@ -24,16 +24,25 @@ import { CouncilMemoryPanel } from './CouncilMemoryPanel';
 import CouncilReportCard from './CouncilReportCard';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { workflowCopy } from './workflow-copy';
+import CouncilPinnedReports from './CouncilPinnedReports';
+import { Input } from '@/components/ui/input';
+import { threadCopy } from './thread-copy';
 
 export default function CouncilPage() {
   const { t, i18n } = useTranslation();
   const [params, setParams] = useSearchParams();
-  const [newOpen, setNewOpen] = useState(params.has('profileId') || params.has('ticker'));
+  const [newOpen, setNewOpen] = useState(params.has('profileId') || params.has('ticker') || params.has('referenceVersionId') || params.has('scene'));
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [sceneFilter, setSceneFilter] = useState('all');
+  const [topicFilter, setTopicFilter] = useState('');
   const [reportsOpen, setReportsOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const copy = workflowCopy[i18n.language.startsWith('zh') ? 'zh-CN' : 'en'];
+  const thread = threadCopy(i18n.language);
+  const sceneParam = params.get('scene');
+  const initialScene: CouncilScene = COUNCIL_SCENES.includes(sceneParam as CouncilScene) ? sceneParam as CouncilScene : 'stock';
+  const referenceVersionId = params.get('referenceVersionId');
   const sourceReportId = params.get('reportId');
   useEffect(() => { if (sourceReportId) setMemoryOpen(false); }, [sourceReportId]);
   const [newSeed, setNewSeed] = useState<{ key: number; ticker: string; team?: CouncilConfig }>({ key: 0, ticker: params.get('ticker') ?? '' });
@@ -42,6 +51,7 @@ export default function CouncilPage() {
   const connections = useQuery({ queryKey: ['settings', 'model-connections'], queryFn: fetchModelConnections });
   const localAgents = useQuery({ queryKey: ['settings', 'local-agents'], queryFn: fetchLocalAgents });
   const sessionsQuery = useCouncilSessions();
+  const filteredSessions = useCouncilSessions({ scene: sceneFilter === 'all' ? undefined : sceneFilter as CouncilScene, topic: topicFilter || undefined });
   const selectedId = params.get('sessionId') ?? params.get('session') ?? sessionsQuery.data?.[0]?.id ?? null;
   const sessionQuery = useCouncilSession(selectedId);
   const actions = useCouncilActions();
@@ -70,11 +80,11 @@ export default function CouncilPage() {
           onClick={() => setHistoryOpen(true)}><History className="size-4" /></Button>
       </TooltipTrigger><TooltipContent>{t('council.sessions')}</TooltipContent></Tooltip>
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-base font-semibold">{session?.ticker ?? t('council.title')}</h1>
+        <h1 className="truncate text-base font-semibold">{session?.title || session?.ticker || t('council.title')}</h1>
         <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted-foreground" role="status">
           {session?.status === 'running' ? <Loader2 className="size-3 shrink-0 animate-spin text-primary" />
             : <span className={`size-1.5 shrink-0 rounded-full ${session?.status === 'failed' ? 'bg-destructive' : 'bg-muted-foreground/60'}`} />}
-          <span className="truncate">{session ? t(`council.status.${session.status}`) : t('council.chatWelcome')}
+          <span className="truncate">{session ? `${thread.scenes[session.scene ?? 'stock']} · ${t(`council.status.${session.status}`)}` : t('council.chatWelcome')}
             {selectedProfile && <span className="hidden sm:inline"> · {selectedProfile.config.name}</span>}</span>
         </p>
       </div>
@@ -108,6 +118,7 @@ export default function CouncilPage() {
     </div>}
     <div className="flex min-h-0 flex-1">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t('council.conversation')}>
+        {session && <CouncilPinnedReports session={session} />}
         {sessionQuery.isLoading || sessionsQuery.isLoading ? <div className="m-auto flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />{t('council.loading')}</div>
           : !session && (sessionQuery.isError || sessionsQuery.isError) ? <div role="alert" className="m-auto space-y-3 p-6 text-center">
@@ -127,6 +138,10 @@ export default function CouncilPage() {
         aria-label={t('council.report.history')}><CouncilReports session={session} profileVersion={selectedProfile?.version} /></aside>}
     </div>
 
+    {session && (session.parentSessionId || sessionsQuery.data?.some(item => item.parentSessionId === session.id)) && <nav aria-label={i18n.language.startsWith('zh') ? '讨论分支' : 'Discussion branches'} className="flex shrink-0 flex-wrap gap-3 border-t border-border p-2 text-xs">
+      {session.parentSessionId && <Link className="text-primary underline" to={`/council?session=${encodeURIComponent(session.parentSessionId)}`}>{thread.parent}</Link>}
+      {sessionsQuery.data?.filter(item => item.parentSessionId === session.id).map(child => <Link key={child.id} className="text-primary underline" to={`/council?session=${encodeURIComponent(child.id)}`}>↳ {child.title || child.ticker}</Link>)}
+    </nav>}
     <Sheet open={memoryOpen} onOpenChange={setMemoryOpen}>
       <SheetContent closeLabel={copy.close} className="w-[min(620px,96vw)] overflow-y-auto sm:max-w-[620px]">
         <SheetHeader><SheetTitle>{copy.memoryManage}</SheetTitle><SheetDescription>{copy.preferencesHint}</SheetDescription></SheetHeader>
@@ -148,26 +163,33 @@ export default function CouncilPage() {
         <SheetHeader className="border-b border-border px-5 py-5 pr-12">
           <SheetTitle>{t('council.sessions')}</SheetTitle><SheetDescription>{t('council.historyHint')}</SheetDescription>
         </SheetHeader>
+        <div className="space-y-2 border-b border-border p-3">
+          <select aria-label={thread.scene} value={sceneFilter} onChange={event => setSceneFilter(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+            <option value="all">{i18n.language.startsWith('zh') ? '全部场景' : 'All scenes'}</option>
+            {COUNCIL_SCENES.map(value => <option key={value} value={value}>{thread.scenes[value]}</option>)}
+          </select>
+          <Input aria-label={thread.subject} placeholder={i18n.language.startsWith('zh') ? '按标的、主题或标题筛选' : 'Filter ticker, topic or title'} value={topicFilter} onChange={event => setTopicFilter(event.target.value)} />
+        </div>
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
           {sessionsQuery.isError && <div role="alert" className="space-y-2 p-2 text-sm">
             <p className="text-destructive">{t('council.loadFailed')}</p>
             <Button variant="outline" size="sm" onClick={() => void sessionsQuery.refetch()}>{t('council.retry')}</Button>
           </div>}
-          {(sessionsQuery.data ?? []).map((savedItem: CouncilSession) => {
+          {(filteredSessions.data ?? []).map((savedItem: CouncilSession) => {
             const item = savedItem.id === session?.id ? session : savedItem;
             return <button key={item.id} type="button" aria-pressed={selectedId === item.id}
               onClick={() => { setParams({ session: item.id }); setHistoryOpen(false); }}
               className={`w-full rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selectedId === item.id
                 ? 'border-primary/30 bg-primary/10' : 'border-transparent hover:bg-muted'}`}>
-              <span className="flex items-center justify-between gap-2"><span className="font-mono font-semibold">{item.ticker}</span>
+              <span className="flex items-center justify-between gap-2"><span className="truncate font-semibold">{item.title || item.ticker}</span>
                 <span className="text-[11px] text-muted-foreground">{new Date(item.updatedAt).toLocaleDateString(i18n.language)}</span></span>
               <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                {item.status === 'running' && <Loader2 className="size-3 animate-spin" />}{t(`council.status.${item.status}`)}
+                {item.status === 'running' && <Loader2 className="size-3 animate-spin" />}{thread.scenes[item.scene ?? 'stock']} · {item.subject || item.ticker} · {t(`council.status.${item.status}`)}
                 <span className="truncate">· {profiles.find((profile: BuilderProfile) => profile.id === item.profileId)?.config.name ?? t('council.members.standalone')}</span>
               </span>
             </button>;
           })}
-          {sessionsQuery.isSuccess && sessionsQuery.data.length === 0 && <p className="px-2 py-6 text-sm text-muted-foreground">{t('council.noHistory')}</p>}
+          {filteredSessions.isSuccess && filteredSessions.data.length === 0 && <p className="px-2 py-6 text-sm text-muted-foreground">{t('council.noHistory')}</p>}
         </div>
         <div className="flex shrink-0 items-center justify-between border-t border-border p-4 text-xs">
           <Link to="/agent-builder" className="text-primary hover:underline">{t('council.builder')}</Link>
@@ -191,6 +213,11 @@ export default function CouncilPage() {
     }} />}
     <CouncilNewDialog key={newSeed.key} open={newOpen} onOpenChange={setNewOpen} profiles={profiles}
       loading={profilesQuery.isLoading} error={profilesQuery.error} pending={actions.create.isPending}
-      initialProfileId={params.get('profileId') ?? ''} initialTicker={newSeed.ticker} initialTeam={newSeed.team} onCreate={create} />
+      initialProfileId={params.get('profileId') ?? ''} initialTicker={newSeed.ticker} initialTeam={newSeed.team}
+      existingSessions={sessionsQuery.data} initialPeriod={params.has('periodStart') || params.has('periodEnd')
+        ? { start: params.get('periodStart') ?? '', end: params.get('periodEnd') ?? '' } : undefined}
+      initialScene={initialScene} initialReferences={referenceVersionId ? [{ versionId: referenceVersionId,
+        ...(params.get('sectionId') ? { sectionId: params.get('sectionId')! } : {}),
+        ...(params.get('excerpt') ? { excerpt: params.get('excerpt')! } : {}) }] : []} onCreate={create} />
   </div>;
 }

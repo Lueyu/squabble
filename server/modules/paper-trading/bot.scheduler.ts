@@ -13,7 +13,7 @@
  * account never stops the others (or the timer).
  */
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { paperAccounts, builderProfiles } from '../../database/schema';
 import { anyMarketOpen } from '../../common/market-clock';
@@ -58,13 +58,13 @@ export class BotScheduler implements OnModuleInit, OnModuleDestroy {
     const accounts = await this.db
       .select()
       .from(paperAccounts)
-      .where(eq(paperAccounts.botEnabled, true));
+      .where(and(eq(paperAccounts.botEnabled, true), eq(paperAccounts.isActive, true)));
     for (const account of accounts) {
       try {
         const profiles = await this.db.select().from(builderProfiles).where(eq(builderProfiles.owner, account.owner));
         if (profiles.some((item) => item.status === 'active'
           && (item.config as { automation?: { enabled: boolean } }).automation?.enabled)) continue;
-        await this.paper.runBotScan(account.owner);
+        await this.paper.runBotScan(account.owner, account.id);
       } catch (error) {
         this.logger.warn(`bot scan failed for account ${account.id}: ${String(error)}`);
       }

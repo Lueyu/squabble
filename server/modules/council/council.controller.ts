@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, Query } from '@nestjs/common';
 import type { Request } from 'express';
 import { NeedLogin } from '../../common/platform/need-login.decorator';
 import { CouncilService } from './council.service';
-import type { CreateCouncilSession } from '@shared/council.interface';
+import type { CreateCouncilSession, CouncilMessageInput, ForkCouncilSession, CouncilRevisionRequest } from '@shared/council.interface';
 
 @Controller('api/council/sessions')
 export class CouncilController {
@@ -10,8 +10,8 @@ export class CouncilController {
 
   @NeedLogin()
   @Get()
-  async list(@Req() request: Request) {
-    return { items: await this.council.listSessions(request.userContext.userId) };
+  async list(@Req() request: Request, @Query() filters: { scene?: string; topic?: string }) {
+    return { items: await this.council.listSessions(request.userContext.userId, filters) };
   }
 
   @NeedLogin()
@@ -28,8 +28,26 @@ export class CouncilController {
 
   @NeedLogin()
   @Post(':id/messages')
-  message(@Req() request: Request, @Param('id') id: string, @Body() body: { content: string }) {
-    return this.council.addMessage(request.userContext.userId, id, body?.content);
+  message(@Req() request: Request, @Param('id') id: string, @Body() body: CouncilMessageInput) {
+    return this.council.addMessage(request.userContext.userId, id, body?.content, body);
+  }
+
+  @NeedLogin()
+  @Post(':id/fork')
+  fork(@Req() request: Request, @Param('id') id: string, @Body() body: ForkCouncilSession) {
+    return this.council.forkSession(request.userContext.userId, id, body);
+  }
+
+  @NeedLogin()
+  @Post(':id/reports/:reportId/archive')
+  archive(@Req() request: Request, @Param('id') id: string, @Param('reportId') reportId: string) {
+    return this.council.archiveReport(request.userContext.userId, id, reportId);
+  }
+
+  @NeedLogin()
+  @Post(':id/reports/:reportId/revision')
+  revision(@Req() request: Request, @Param('id') id: string, @Param('reportId') reportId: string, @Body() body: CouncilRevisionRequest) {
+    return this.council.draftReportRevision(request.userContext.userId, id, reportId, body?.parentVersionId, body);
   }
 
   @NeedLogin()
