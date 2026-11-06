@@ -18,6 +18,8 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 
 已知的围栏 JSON、嵌套 `response` 等旧输出会转换为自然语言阅读内容，原始材料保留。无法辨认的输出显示内容整理待核对；本地重整不会重跑付费研究。历史档案与首页选取互相独立，讨论不能覆盖初版档案。
 
+内容待整理时，首页仍提供已保存报告的阅读入口，不再显示“研究尚未完成”。每日团队研究与旧组合分析都可本地重新整理；可识别的旧失败记录会自动恢复。模拟复盘将历史快照中的收益、费用、执行限制和资料缺口显示为正文，缺失数字保持未知；原始快照仍可展开核对。
+
 ## 策略：一份当前总策略，草稿随时改
 
 今日的“投资策略”可直接手写，也可从报告或投研室选择内容加入草稿。按股票填写条目和各自期限，保留对应来源。保存草稿不改变正在运行的策略；查看已确认策略时，先“复制为草稿”再修改。
@@ -48,5 +50,7 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 ## English usage summary
 
 Today combines marked positions and confirmed cash, separating daily investment P&L from external funding. Review imported trades and cash flows before posting; holdings snapshots alone never imply cash movements. Initial analysis, each discussion report and their pinned sources remain readable in history.
+
+Saved reports keep a reading link while formatting is pending. Daily team reports and legacy portfolio analyses can be reformatted locally without another model request; recognizable formatting failures recover automatically. Simulation reviews display archived returns, fees, execution constraints and data gaps as readable text, keeping missing figures unknown and preserving the original snapshot. This reading fix requires no database migration.
 
 Write or import findings into one strategy workspace. Save drafts freely, then review the execution explanation and explicitly apply it to switch simulation authority. A paper account copies real positions and recorded cash once, optionally adding virtual cash. It observes until a trustworthy valuation exists and trades only within the confirmed strategy. Deterministic, AI and council paths share the same final execution guards. Strategy changes invalidate old work; expired entries stop without forcing a sale.

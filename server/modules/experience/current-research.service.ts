@@ -10,7 +10,7 @@ import { researchCurrentViews,experiencePreferences } from '../../database/simpl
 import { researchDocuments, researchDocumentVersions } from '../../database/research-documents.schema';
 import { portfolioAnalysisRuns } from '../../database/schema';
 import { councilReports, councilSessions } from '../../database/council.schema';
-import { ResearchDocumentsService } from '../research-documents/research-documents.service';
+import { ResearchDocumentsService, type ResearchDocumentsTransaction } from '../research-documents/research-documents.service';
 import { PortfolioAnalysisService } from '../multi-agent/portfolio-analysis.service';
 import { SimpleCouncilService } from '../council/simple-council.service';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
@@ -18,6 +18,7 @@ import { businessDate, generationIdentity, parseRefresh } from './simple-experie
 import type { CurrentResearchView, DailyResearchReports } from '../../../shared/simple-experience.interface';
 import { AutomaticResearchBudgetService } from '../paper-trading/automatic-research-budget.service';
 import { DailyChannelResearchService } from './daily-channel-research.service';
+import { automaticResearchTasks } from '../../database/investment-policy.schema';
 
 @Injectable()
 export class CurrentResearchService {
@@ -69,6 +70,11 @@ export class CurrentResearchService {
     const [view]=await this.db.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,topicKey),eq(researchCurrentViews.dateKey,dateKey)));
     let material:typeof researchDocumentVersions.$inferSelect|undefined;
     const available=and(isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date())));
+    const formatting=['formatting_portfolio','formatting_daily_research'].includes(view?.taskKind??'');
+    const returnedSource=formatting&&view?.taskId?await this.completedSource(this.db,owner,view.taskId):null;
+    let returned:typeof researchDocumentVersions.$inferSelect|undefined;
+    if(returnedSource)[returned]=await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,owner),available,
+      sql`${researchDocumentVersions.source}->>'type'=${returnedSource.type} AND ${researchDocumentVersions.source}->>'id'=${returnedSource.id}`)).orderBy(desc(researchDocumentVersions.createdAt)).limit(1);
     if(view?.currentDocumentId) [material]=await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocumentVersions.id,view.currentDocumentId),available));
     if(topicKey==='portfolio'&&material?.source?.type==='council'){
       const [dailySource]=await this.db.select({checkpoint:councilSessions.checkpoint}).from(councilReports).innerJoin(councilSessions,and(eq(councilSessions.owner,owner),eq(councilSessions.id,councilReports.sessionId))).where(and(eq(councilReports.owner,owner),eq(councilReports.id,material.source.id)));
@@ -112,7 +118,7 @@ export class CurrentResearchService {
     return {topicKey,dateKey,documentId:material?.id??null,title:material?.title??'',
       updatedAt:typeof material?.snapshot?.generatedAt==="string"?material.snapshot.generatedAt:material?.createdAt.toISOString()??null,dataAsOf:material?.dataAsOf?.toISOString()??null,
       changeSummary:view?.changeSummary??material?.changeReason??null,state:(view?.state==='generating'&&dailySession?.status==='paused'?'failed':view?.state==='generating'?'generating':view?.state==='failed'?'failed':material&&researchLevel==='ai'?presentation.readingState==='ready'?'ready':'failed':'empty'),taskId:view?.taskId??null,error:view?.error??(dailySession?.status==='paused'?dailySession.error??'研究已暂停，请检查连接后在原研究中继续。 / Research paused; check the connection and resume explicitly.':null)??(material&&presentation.readingState==='pending'?'研究已返回，内容整理待核对。 / Research returned; formatting needs review.':null),source:material?.source??null,
-      researchLevel:material?researchLevel:'facts_only',...presentation,...(view?.taskKind==='formatting_portfolio'?{readingState:'pending' as const}:{}),content,progress:dailyProgress??(run?.progress as CurrentResearchView['progress'])??(view?.state==='generating'?{phase:'queued',message:'正在等待可用的 AI 股友…',percent:0}:null),executorLabel,...(dailySession?{sessionId:dailySession.id}:{}),
+      researchLevel:material?researchLevel:returned?'ai':'facts_only',...presentation,...(formatting?{readingState:'pending' as const}:{}),returnedDocumentId:returned?.id??null,content,progress:dailyProgress??(run?.progress as CurrentResearchView['progress'])??(view?.state==='generating'?{phase:'queued',message:'正在等待可用的 AI 股友…',percent:0}:null),executorLabel,...(dailySession?{sessionId:dailySession.id}:{}),
       startedAt:dailySession?.checkpoint?.simple?.startedAt??dailySession?.createdAt.toISOString()??run?.startedAt?.toISOString()??(view?.state==='generating'?view.updatedAt.toISOString():null),cancelling:view?.taskKind==='cancelling_portfolio',cancelled:view?.taskKind==='cancelled'};
   }
 
@@ -144,14 +150,28 @@ export class CurrentResearchService {
     const value=parseRefresh(input),dateKey=value.topicKey==='portfolio'?(value.date??businessDate(new Date(),timezone)):'current';
     await this.documents.withSubmission(owner,`simple-reformat:${value.requestKey}`,value,async tx=>{
       const [view]=await tx.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey)));
-      if(!view||view.state==='generating'||!view.taskId||!['portfolio','formatting_portfolio'].includes(view.taskKind??''))throw new BadRequestException('NO_COMPLETED_RESULT_TO_REPARSE');
-      const [run]=await tx.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,view.taskId),eq(portfolioAnalysisRuns.status,'completed')));
-      if(!run?.report)throw new BadRequestException('NO_COMPLETED_RESULT_TO_REPARSE');
-      const material=await this.documents.importSourceInTransaction(tx,owner,{type:'portfolio',id:run.id}),presentation=researchPresentation(null,material.sections);
-      await tx.update(researchCurrentViews).set(presentation.readingState==='ready'?{currentDocumentId:material.id,state:'ready',taskKind:'portfolio',error:null,updatedAt:new Date()}:{state:'failed',taskKind:'formatting_portfolio',error:'研究已返回，内容整理待核对。原始材料已保留。 / Research returned; formatting needs review. The original material is preserved.',updatedAt:new Date()}).where(eq(researchCurrentViews.id,view.id));
+      if(!view||view.state==='generating'||!view.taskId||!['portfolio','daily_research','formatting_portfolio','formatting_daily_research'].includes(view.taskKind??''))throw new BadRequestException('NO_COMPLETED_RESULT_TO_REPARSE');
+      const source=await this.completedSource(tx,owner,view.taskId);
+      if(!source)throw new BadRequestException('NO_COMPLETED_RESULT_TO_REPARSE');
+      const kind=source.type==='council'?'daily_research':'portfolio';
+      const material=await this.documents.importSourceInTransaction(tx,owner,source);
+      if(material.status==='revoked')throw new ConflictException('REPORT_REVOKED');
+      const presentation=researchPresentation(null,material.sections);
+      await tx.update(researchCurrentViews).set(presentation.readingState==='ready'?{currentDocumentId:material.id,state:'ready',taskKind:kind,error:null,updatedAt:new Date()}:{state:'failed',taskKind:`formatting_${kind}`,error:'研究已返回，内容整理待核对。原始材料已保留。 / Research returned; formatting needs review. The original material is preserved.',updatedAt:new Date()}).where(eq(researchCurrentViews.id,view.id));
+      if(presentation.readingState==='ready'&&view.automaticTaskId)await tx.update(automaticResearchTasks).set({state:'completed'}).where(and(eq(automaticResearchTasks.owner,owner),eq(automaticResearchTasks.id,view.automaticTaskId)));
       return {documentId:material.id};
     });
     return this.get(owner,value.topicKey,dateKey);
+  }
+
+  /** Old formatting receipts stored a session ID under the portfolio task kind. */
+  private async completedSource(tx:ResearchDocumentsTransaction,owner:string,taskId:string):Promise<{type:'portfolio'|'council';id:string}|null>{
+    const [run]=await tx.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,taskId),eq(portfolioAnalysisRuns.status,'completed')));
+    if(run?.report)return {type:'portfolio',id:run.id};
+    const [daily]=await tx.select({report:councilReports}).from(councilReports).innerJoin(councilSessions,and(eq(councilSessions.id,councilReports.sessionId),eq(councilSessions.owner,owner)))
+      .where(and(eq(councilReports.owner,owner),eq(councilReports.sessionId,taskId),or(isNull(councilReports.publicationOutcome),eq(councilReports.publicationOutcome,'succeeded')),
+        sql`${councilSessions.checkpoint}->'simple'->>'researchOnly'='true'`)).orderBy(desc(councilReports.createdAt)).limit(1);
+    return daily?{type:'council',id:daily.report.id}:null;
   }
 
   async refresh(owner:string,input:unknown,facts:unknown,timezone:string,options?:{automaticTaskId?:string;route?:ModelRoute;connectionId?:string;snapshot?:PortfolioReportSnapshot;expectedGenerationKey?:string}):Promise<CurrentResearchView> {
@@ -199,8 +219,25 @@ export class CurrentResearchService {
   }
 
   async reconcile():Promise<void> {
-    const rows=await this.db.select().from(researchCurrentViews).where(eq(researchCurrentViews.state,'generating')).limit(100);
+    const rows=await this.db.select().from(researchCurrentViews).where(or(eq(researchCurrentViews.state,'generating'),and(eq(researchCurrentViews.state,'failed'),inArray(researchCurrentViews.taskKind,['formatting_portfolio','formatting_daily_research'])))).limit(100);
     for(const row of rows) {
+      if(row.state==='failed'){
+        if(!row.taskId)continue;
+        try{
+          const source=await this.completedSource(this.db,row.owner,row.taskId);if(!source)continue;
+          const material=await this.documents.importSource(row.owner,source);
+          if(material.status==='revoked'||researchPresentation(null,material.sections).readingState!=='ready')continue;
+          await this.db.transaction(async tx=>{
+            await lockMemoryOwner(tx,row.owner);
+            const [visible]=await tx.select({id:researchDocumentVersions.id}).from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,row.owner),eq(researchDocumentVersions.id,material.id),isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date()))));
+            if(!visible)return;
+            const [restored]=await tx.update(researchCurrentViews).set({currentDocumentId:material.id,state:'ready',taskKind:source.type==='council'?'daily_research':'portfolio',error:null,updatedAt:new Date()})
+              .where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.state,'failed'),eq(researchCurrentViews.taskKind,row.taskKind),eq(researchCurrentViews.generationSequence,row.generationSequence))).returning();
+            if(restored?.automaticTaskId)await tx.update(automaticResearchTasks).set({state:'completed'}).where(and(eq(automaticResearchTasks.owner,row.owner),eq(automaticResearchTasks.id,restored.automaticTaskId)));
+          });
+        }catch(error){this.logger.warn(error instanceof Error?error.message:'Saved report recovery failed');}
+        continue;
+      }
       if(row.taskKind==='import_pending')continue;
       if(row.taskKind==='cancelling_portfolio'){
         const [run]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,row.owner),eq(portfolioAnalysisRuns.id,row.taskId!)));
@@ -223,7 +260,7 @@ export class CurrentResearchService {
         if(source) {
           const material=await this.documents.importSource(row.owner,source);
           if(researchPresentation(null,material.sections).readingState==='pending'){
-            await this.db.update(researchCurrentViews).set({state:'failed',taskKind:'formatting_portfolio',error:'研究已返回，内容整理待核对。原始材料已保留。 / Research returned; formatting needs review. The original material is preserved.',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));
+            await this.db.update(researchCurrentViews).set({state:'failed',taskKind:row.taskKind==='daily_research'?'formatting_daily_research':'formatting_portfolio',error:'研究已返回，内容整理待核对。原始材料已保留。 / Research returned; formatting needs review. The original material is preserved.',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));
             continue;
           }
           await this.db.transaction(async tx=>{await lockMemoryOwner(tx,row.owner);await tx.update(researchCurrentViews).set({currentDocumentId:material.id,state:'ready',error:null,changeSummary:row.currentDocumentId?'New complete research is available.':null,updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));});
