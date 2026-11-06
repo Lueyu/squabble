@@ -7,6 +7,7 @@ import { researchDocumentVersions } from '../../database/research-documents.sche
 import { ChannelService } from '../channel/channel.service';
 import { channelHash } from '../channel/channel-hash';
 import { UserInvestmentStrategyService } from '../paper-trading/user-investment-strategy.service';
+import { parseReportExecutionPlan, REPORT_EXECUTION_SECTION_ID } from '../paper-trading/report-execution-plan';
 import type { ChannelEvidenceCard } from '../../../shared/channel.interface';
 import { experiencePreferences } from '../../database/simple-experience.schema';
 import { businessDate } from './simple-experience.rules';
@@ -51,9 +52,17 @@ export class DailyChannelResearchService {
       if(publishedOwners.has(owner)||version.revokedAt||businessDate(report.createdAt,timezone)!==businessDate(new Date(),timezone)
         ||session.checkpoint?.simple?.contextDate&&session.checkpoint.simple.contextDate!==businessDate(new Date(),timezone))continue;
       publishedOwners.add(owner);
-      // Importing the same daily source is idempotent even after the user confirms its draft.
-      const selected=version.sections.find(s=>/策略|strategy/iu.test(s.title))??(report.summary.length>12000?version.sections.find(s=>s.content.length<=12000):undefined);
-      await this.strategies.importSource(owner,{kind:'report',versionId:version.id,...(selected?{sectionId:selected.id}:{})},true);
+      // Exact typed proposals are handed off once; prose-only archives never acquire invented actions.
+      const selected=version.sections.find(s=>s.id===REPORT_EXECUTION_SECTION_ID);
+      let plan;
+      if(selected&&version.snapshot?.executionPlan){
+        const evidence=Array.isArray(version.snapshot.evidence)?version.snapshot.evidence:[];
+        const evidenceIds=new Set<string>(evidence.flatMap(item=>item&&typeof item==='object'&&typeof item.id==='string'?[item.id]:[]));
+        try{plan=parseReportExecutionPlan(version.snapshot.executionPlan,evidenceIds);}catch{/* Invalid archived plans remain readable, without an automatic draft. */}
+      }
+      if(plan&&plan.readiness!=='no_trade'&&Date.parse(plan.strategy.endsAt)>Date.now()
+        &&(!plan.preview.entries.length||plan.preview.entries.some(entry=>entry.state!=='expired')))
+        await this.strategies.importSource(owner,{kind:'report',versionId:version.id,sectionId:REPORT_EXECUTION_SECTION_ID},true);
       const check=report.coverage?.reverseCheck;if(!check||check.outcome==='no_counterevidence_found')continue;
       const missing=check.outcome==='unable_to_verify';
       if(missing&&!check.gaps.length)continue;

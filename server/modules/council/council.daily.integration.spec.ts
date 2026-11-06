@@ -101,7 +101,7 @@ test('daily research executes a sealed independent barrier and mandatory reverse
       assert.equal((await today.getDailyReports(randomUUID(), day)).initial, null);
       await synchronizer.syncPublished(); await synchronizer.syncPublished();
       const [drafts] = await client`SELECT count(*)::int AS count FROM user_investment_strategies WHERE owner=${owner}`;
-      assert.equal(drafts.count, 1, 'repeated synchronization does not duplicate a daily strategy draft');
+      assert.equal(drafts.count, 0, 'legacy report prose without a typed execution plan cannot create an automatic strategy draft');
       const [findings] = await client`SELECT count(*)::int AS count FROM channel_findings WHERE owner=${owner}`;
       assert.equal(findings.count, 0, 'no_counterevidence_found never creates a channel finding');
       const preference='我只看一周内会变化的证据。';

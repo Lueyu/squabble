@@ -60,6 +60,14 @@ export function previewStrategy(content: StrategyDraftInput, sources: StrategySo
     if (Date.parse(endsAt) <= now.getTime()) { result.state = 'expired'; result.explanation = message('Expired: stop creating candidates; no forced sale.', '已到期：停止生成新候选，不会自动清仓。'); continue; }
     if (entry.sourceKeys.some(key => !sources.some(source => source.key === key))) { issue('SOURCE_MISSING', [entry.id], 'A pinned source is missing.', '缺少固定来源。'); continue; }
     const directive = entry.directive;
+    const unreviewedPlan = sources.find(source => entry.sourceKeys.includes(source.key)
+      && source.executionPlan?.readiness === 'needs_info' && source.executionPlan.strategy.entries.some(proposed => proposed.text === entry.text));
+    if (unreviewedPlan) {
+      result.state = 'needs_review';
+      issue('REPORT_PLAN_NEEDS_INFO', [entry.id], 'This report proposal has unresolved gaps. Edit and review the entry before applying.',
+        '此报告提案仍有信息缺口，请编辑并核对条目后再应用。');
+      continue;
+    }
     if (!directive) {
       if (entry.mandateRule) {
         if (entry.mandateReviewedText !== entry.text) {
@@ -118,11 +126,29 @@ export function previewStrategy(content: StrategyDraftInput, sources: StrategySo
   if (content.limits && (content.limits.minCashPct ?? 0) + (content.limits.maxGrossExposurePct ?? 100) > 100) {
     issue('CASH_EXPOSURE_CONFLICT', [], 'Minimum cash and maximum exposure limits conflict.', '最低现金比例与最高总仓位存在冲突。');
   }
+  if (!content.entries.length && sources.some(source => source.executionPlan?.readiness === 'needs_info'
+    && !source.executionPlan.strategy.entries.length && source.executionPlan.strategy.body === content.body)) {
+    issue('REPORT_PLAN_NEEDS_INFO', [], 'This report proposal is incomplete. Edit and review it before applying.',
+      '此报告提案尚不完整，请编辑并核对后再应用。');
+  }
   preview.canConfirm = !preview.issues.some(entry => entry.severity === 'error');
   return preview;
 }
 export function sourceAddition(content: StrategyDraftInput, sources: StrategySourceSnapshot[], source: StrategySourceSnapshot): StrategySourceAddition {
   if (sources.some(existing => existing.key === source.key)) return { source, entries: [], alreadyAdded: true };
+  if (source.kind === 'report' && source.sectionId === 'execution-strategy' && source.executionPlan) {
+    const strategy = source.executionPlan.strategy;
+    const entries: StrategyEntry[] = strategy.entries.length ? strategy.entries
+      : source.executionPlan.readiness === 'no_trade' && source.executionPlan.noTradeReason
+        ? [{ id: 'no_trade', text: `AI 建议 / AI proposal: ${source.executionPlan.noTradeReason}`, sourceKeys: [] }] : [];
+    return { source, alreadyAdded: false, entries: entries.map((entry, index) => ({
+      ...structuredClone(entry), id: `source_${createHash('sha256').update(source.key).digest('hex').slice(0, 20)}_${index}`,
+      sourceKeys: [source.key], startsAt: entry.startsAt ?? strategy.startsAt, endsAt: entry.endsAt ?? strategy.endsAt,
+      timezone: entry.timezone ?? strategy.timezone,
+      directive: source.executionPlan!.readiness === 'ready' && entry.directive ? { ...structuredClone(entry.directive), semanticAuthorized: false } : undefined,
+      mandateRule: source.executionPlan!.readiness === 'ready' ? structuredClone(entry.mandateRule) : undefined,
+    })) };
+  }
   return { source, alreadyAdded: false, entries: [{ id: `source_${createHash('sha256').update(source.key).digest('hex').slice(0, 20)}`,
     text: source.readableContent ?? source.content, ...(source.ticker ? { ticker: source.ticker } : {}), sourceKeys: [source.key] }] };
 }

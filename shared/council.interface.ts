@@ -121,6 +121,8 @@ export interface DailyReverseCheck {
   checked: string[]; findings: string[]; gaps: string[]; affectedPremises: string[]; evidenceIds: string[];
 }
 export interface CouncilMessage {
+  executionPlan?: import('./report-execution-plan.interface').ReportExecutionPlan;
+  executionPlanError?: 'missing' | 'invalid';
   reverseCheck?: DailyReverseCheck;
   actualExecutor?: import('./simple-conversation.interface').ActualExecutor;
   claims?: import('./simple-conversation.interface').PublicClaim[];

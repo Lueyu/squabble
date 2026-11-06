@@ -53,6 +53,7 @@ import type { CouncilMessageInput, CouncilMessage, CouncilReviewContext, ForkCou
 import { normalizeThread, freezeThreadContext, threadPromptContext, isPortfolioThread, hasThreadContext, hasDeliberation } from './council.thread';
 import { readableResearch } from '../../../shared/research-reading';
 import { dailyResearchPrompt, dailyResearchTurns, renderDailyReverseCheck } from './council.daily';
+import { parseReportExecutionPlan } from '../paper-trading/report-execution-plan';
 
 type SessionRow = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 type ReportRow = typeof councilReports.$inferSelect;
@@ -999,7 +1000,7 @@ export class CouncilService implements OnModuleInit {
       const claimIds = new Set(publicClaims.flatMap(item => item.metadata?.claims?.map(claim => claim.id) ?? []));
       if (checkpoint.simple && contribution.respondsToClaims?.some(id => !claimIds.has(id))) throw new Error('A challenge must refer to a published claim');
       if(checkpoint.simple?.researchOnly&&turn.phase==='challenge'&&!contribution.reverseCheck)throw new Error('DAILY_REVERSE_CHECK_REQUIRED');
-      const publicMetadata = checkpoint.simple ? { reverseCheck:contribution.reverseCheck,actualExecutor: output.actualExecutor ?? checkpoint.simple.executors.find(item => item.memberId === output.member.id),
+      const publicMetadata = checkpoint.simple ? { reverseCheck:contribution.reverseCheck,executionPlan:contribution.executionPlan,executionPlanError:contribution.executionPlanError,actualExecutor: output.actualExecutor ?? checkpoint.simple.executors.find(item => item.memberId === output.member.id),
         claims: contribution.claims?.map((claim, index) => ({ ...claim, id: `${checkpoint.cycleId}:${output.member.id}:${checkpoint.nextTurn}:${index}` })),
         respondsToClaims: contribution.respondsToClaims, stanceChange: contribution.stanceChange,
         evidenceCheckStatus: 'unverified' as const } : output.actualExecutor ? { actualExecutor: output.actualExecutor } : {};
@@ -1378,7 +1379,15 @@ export class CouncilService implements OnModuleInit {
         opinion={...opinion,summary:`${opinion.summary}\n\n${renderDailyReverseCheck(check,row.language)}`};
         const independent=await tx.select({memberId:councilIndependentSubmissions.memberId}).from(councilIndependentSubmissions).where(and(eq(councilIndependentSubmissions.owner,userId),eq(councilIndependentSubmissions.sessionId,row.id),eq(councilIndependentSubmissions.cycleId,current.checkpoint.cycleId)));
         const complete=current.checkpoint.simple.unavailable.length===0&&this.members(current.profileSnapshot).every(member=>independent.some(s=>s.memberId===member.id));
-        coverage={goal:'comprehensive',cycleId:current.checkpoint.cycleId,revision:row.revision,complete,tasks:[],reverseCheck:check};
+        let executionPlan=opinion.executionPlan;
+        let executionPlanError=opinion.executionPlanError??(executionPlan?undefined:'missing');
+        if(executionPlan)try{
+          const gateGaps=[...executionPlan.gaps,...(!complete?[row.language==='en'?'Independent research coverage is incomplete.':'独立研究尚未完整交付。']:[]),
+            ...(['unable_to_verify','critical_counterevidence'].includes(check.outcome)?check.gaps:[])];
+          executionPlan=parseReportExecutionPlan({...executionPlan,gaps:[...new Set(gateGaps)].slice(0,40)},new Set(current.evidenceSnapshot.map(e=>e.id)));
+        }catch{executionPlan=undefined;executionPlanError='invalid';}
+        coverage={goal:'comprehensive',cycleId:current.checkpoint.cycleId,revision:row.revision,complete,tasks:[],reverseCheck:check,
+          ...(executionPlan?{executionPlan}:{}),...(executionPlanError?{executionPlanError}:{})};
         if(!complete)opinion={...opinion,summary:(row.language==='en'?'Partial research: some independent deliveries are unavailable.\n\n':'部分研究：有独立交付未完成，不构成完整团队结论。\n\n')+opinion.summary};
       }
       if (!error) {

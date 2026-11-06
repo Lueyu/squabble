@@ -8,6 +8,7 @@ import { councilMessages, councilReports, councilSessions } from '../../database
 import { simpleCouncilRequests, councilIndependentSubmissions, councilMemberAttempts } from '../../database/simple-council.schema';
 import { experiencePreferences, researchCurrentViews } from '../../database/simple-experience.schema';
 import { modelConnections } from '../../database/model-connections.schema';
+import { userInvestmentStrategies, userInvestmentStrategyCurrent } from '../../database/user-investment-strategies.schema';
 import { strategySignals } from '../../database/strategy.schema';
 import { strategyMandates, strategyRouteReviews } from '../../database/strategy-mandates.schema';
 import { CouncilService } from './council.service';
@@ -358,10 +359,15 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       frozen.contextDate=chosen.date??ownerDay(new Date());
       const views = await this.db.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner, owner), eq(researchCurrentViews.topicKey, 'portfolio'), chosen.date ? eq(researchCurrentViews.dateKey, chosen.date) : undefined)).orderBy(desc(researchCurrentViews.dateKey)).limit(1);
       if (views[0]?.currentDocumentId) frozen.references.push({ versionId: views[0].currentDocumentId });
+      const [confirmed]=!chosen.date||chosen.date===ownerDay(new Date())?await this.db.select({content:userInvestmentStrategies.content,confirmedAt:userInvestmentStrategies.confirmedAt}).from(userInvestmentStrategyCurrent)
+        .innerJoin(userInvestmentStrategies,and(eq(userInvestmentStrategies.owner,owner),eq(userInvestmentStrategies.id,userInvestmentStrategyCurrent.strategyId),eq(userInvestmentStrategies.status,'confirmed')))
+        .where(eq(userInvestmentStrategyCurrent.owner,owner)):[];
       if (!chosen.date||chosen.date===ownerDay(new Date())) snapshot(frozen.label, {
         holdings:await this.db.select().from(holdings).where(eq(holdings.owner,owner)),
         cash:await this.db.select().from(cashAccounts).where(eq(cashAccounts.owner,owner)),
-        capturedAt:new Date().toISOString(),valuationGap:'Stored price freshness and missing FX must be verified; missing cash is unknown.'
+        capturedAt:new Date().toISOString(),valuationGap:'Stored price freshness and missing FX must be verified; missing cash is unknown.',
+        confirmedInvestorLimits:confirmed?.content.limits??null,confirmedLimitsAt:confirmed?.confirmedAt?.toISOString()??null,
+        constraintGap:confirmed?.content.limits?null:'No confirmed investor risk limits are available. Any new limits must be labelled proposed and reviewed, never inherited from conversation scaffolding.'
       });
       else if (!frozen.references.length) snapshot(frozen.label, { date: chosen.date, gap: 'Historical portfolio snapshot unavailable. Current holdings are not a substitute.' });
     } else if (chosen?.kind === 'decision') {
