@@ -13,6 +13,7 @@ import { councilReports, councilSessions } from '../../database/council.schema';
 import { channelBriefs, channelBubbles, channelReports, channelTemplateRegistry } from '../../database/channel.schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { holdings } from '../../database/schema';
+import { businessDate } from '../experience/simple-experience.rules';
 
 const url = process.env.CHANNEL_TEST_DATABASE_URL ?? process.env.COUNCIL_TEST_DATABASE_URL;
 test('production Brief compilation persists report contracts and dispatches actual completed research and price conditions', { skip: !url }, async () => {
@@ -32,7 +33,7 @@ test('production Brief compilation persists report contracts and dispatches actu
     const now = new Date(), evidenceId = 'filing-one';
     const [session] = await db.insert(councilSessions).values({ owner, ticker: 'PORTFOLIO', scene: 'portfolio_daily', status: 'completed',
       profileVersion: 1, profileSnapshot: {} as never, createdAt: new Date(now.getTime() - 130000),
-      checkpoint: { simple: { researchOnly: true, contextDate: '2026-11-06' } } as never }).returning();
+      checkpoint: { simple: { researchOnly: true, contextDate: businessDate(now, 'Asia/Shanghai') } } as never }).returning();
     const [report] = await db.insert(councilReports).values({ owner, sessionId: session.id, version: 1, revision: 1,
       decision: 'wait', summary: '# Daily report\n\nACME original filing condition.\n\n## Strategy draft\n\nObserve only.', dissent: [], nextReviewCondition: 'Original price condition',
       engine: 'local', publicationOutcome: 'succeeded', evidence: [{ id: evidenceId, title: 'Fictional filing', content: 'ACME observation condition', sourceUrl: 'https://example.test/filing', fetchedAt: now.toISOString(),

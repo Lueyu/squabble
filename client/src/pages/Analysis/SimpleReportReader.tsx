@@ -10,6 +10,7 @@ import type {StrategySourceInput} from '@shared/user-investment-strategy.interfa
 import InvestmentStrategySourceDialog from '@/pages/Today/InvestmentStrategySourceDialog';
 import {readableResearchSection,researchSectionsRecord,researchReferences} from '@shared/research-reading';
 import ReportExecutionPlan from '@/components/ReportExecutionPlan';
+import { simulationReviewSections } from '@shared/simulation-review-reading';
 
 /** Always reads the requested immutable document. No lookup or redirect to current research. */
 export default function SimpleReportReader({ versionId }: { versionId: string }) {
@@ -21,7 +22,8 @@ export default function SimpleReportReader({ versionId }: { versionId: string })
   const { version } = query.data;
   const archived=researchSectionsRecord(version.sections);
   const references=researchReferences(archived);
-  const sections=version.sections.filter(section=>!(version.snapshot?.executionPlan&&section.id==='execution-strategy')).map(section=>({...section,content:readableResearchSection(section)})).filter(section=>section.content);
+  const simulationSections=simulationReviewSections(version,i18n.language);
+  const sections=simulationSections??version.sections.filter(section=>!(version.snapshot?.executionPlan&&section.id==='execution-strategy')).map(section=>({...section,content:readableResearchSection(section)})).filter(section=>section.content);
   return <article className="mx-auto w-full max-w-4xl space-y-5 p-3 pb-12 sm:p-6"><p className="text-sm text-muted-foreground">{zh ? '当时的研究依据 · 只读' : 'Research at the time · Read only'}</p>
     <h1 className="break-words text-2xl font-semibold">{version.title}</h1><p className="text-sm text-muted-foreground">{new Date(typeof version.snapshot?.generatedAt === "string" ? version.snapshot.generatedAt : version.createdAt).toLocaleString(i18n.language)}{version.dataAsOf && <> · {zh ? '数据截至：' : 'Data as of: '}{version.dataAsOf}</>}</p>
     {(version.status === 'revoked' || version.sourceStatus === 'missing') && <p role="alert" className="rounded-lg border p-3 text-sm">{zh ? '原始材料保留，但部分依据已撤回或不可用。' : 'The original material is preserved; some evidence has been withdrawn or is unavailable.'}</p>}
@@ -29,7 +31,7 @@ export default function SimpleReportReader({ versionId }: { versionId: string })
     {sections.length>0&&version.status!=='revoked'&&<Button variant="outline" onClick={()=>setStrategySource({kind:'report',versionId})}>{zh?'加入投资策略':'Add to investment strategy'}</Button>}
     {sections.length?sections.map(section => <section id={section.id} key={section.id} className="space-y-3 rounded-xl border bg-card p-4 sm:p-6"><h2 className="text-lg font-semibold">{section.title}</h2><ResearchMarkdown>{section.content}</ResearchMarkdown></section>):<p role="status">{zh?'研究已返回，内容整理待核对。原始材料已保留，不会重新调用模型。':'Research returned; formatting needs review. The original material is preserved; no model call is made.'}</p>}
     {references&&<ResearchMarkdown>{references}</ResearchMarkdown>}
-    <ReportExecutionPlan key={versionId} versionId={versionId} onAddToStrategy={setStrategySource}/>
+    {!simulationSections&&<ReportExecutionPlan key={versionId} versionId={versionId} onAddToStrategy={setStrategySource}/>}
     <details className="rounded-xl border p-4"><summary className="cursor-pointer text-sm font-medium">{zh ? '当时的固定资料' : 'Frozen inputs at the time'}</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">{version.snapshot ? JSON.stringify(version.snapshot, null, 2) : (zh ? '历史快照未知' : 'Historical snapshot unknown')}</pre></details>
     {!sections.length&&<div className="space-y-3"><Button variant="outline" onClick={()=>void query.refetch()}>{zh?'重新整理已有结果':'Reformat saved result'}</Button><details className="rounded-xl border p-4"><summary className="cursor-pointer text-sm">{zh?'原始研究文本':'Original research text'}</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">{version.content}</pre></details></div>}
     <InvestmentStrategySourceDialog source={strategySource} onClose={()=>setStrategySource(null)}/>
