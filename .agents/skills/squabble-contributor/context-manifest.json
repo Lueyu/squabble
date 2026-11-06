@@ -55,7 +55,8 @@
       ],
       "diagrams": [
         "asset-ledger"
-      ]
+      ],
+      "verifiedCommit": "b8b9069fdbcb60bb6f5a0d256565813bfda4f131"
     },
     {
       "id": "daily-research",
@@ -85,7 +86,8 @@
       ],
       "diagrams": [
         "research-report"
-      ]
+      ],
+      "verifiedCommit": "b8b9069fdbcb60bb6f5a0d256565813bfda4f131"
     },
     {
       "id": "strategy-simulation",
@@ -142,7 +144,8 @@
       ],
       "diagrams": [
         "channel-publication"
-      ]
+      ],
+      "verifiedCommit": "b8b9069fdbcb60bb6f5a0d256565813bfda4f131"
     },
     {
       "id": "agents-and-evidence",
