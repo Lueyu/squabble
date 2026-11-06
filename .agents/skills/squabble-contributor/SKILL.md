@@ -1,46 +1,37 @@
 ---
 name: squabble-contributor
-description: Use when contributing code or documentation to Lueyu/squabble, preparing a pull request to main, or checking the project's merge requirements.
+description: Use when developing, debugging, testing, documenting, deploying or maintaining Lueyu/squabble, or resuming Squabble work in a new chat.
 ---
 
-# Squabble contributor
+# Squabble 开发与维护
 
-Use this skill for changes to `Lueyu/squabble`. Read the repository's
-`CONTRIBUTING.md` and `docs/development.md` for the current project details.
-The GitHub branch rule and CI are authoritative if a copied skill becomes stale.
+仓库中的 `.agents/skills/squabble-contributor/` 是维护正本；全局安装目录是可发现的副本。目标是从已核对的入口开始工作，按改动增量读取代码。此 skill 不授予合并、部署、付费研究或交易权限；沿用当前会话已有授权。
 
-## Current development phase
+## 新聊天从这里开始
 
-The web-only phase starts from baseline `fe9df6c`. Desktop development, testing
-and packaging are paused until explicitly resumed. Do not require desktop
-tests or installer builds for PRs during this phase. Preserve web, server,
-client, database and local-agent tests. The full Desktop installers workflow
-remains available through manual `workflow_dispatch` for recovery only; it does
-not run automatically on pushes, PRs or version tags.
+1. 使用当前项目目录或用户明确指定的仓库。需要定位项目时，读取私有 `~/.squabble/development-context.json` 中的路径提示；不要遍历整块磁盘或根据旧 PID 操作服务。
+2. 从已安装 skill 或仓库正本运行 `node <skill目录>/scripts/inspect-workspace.cjs --repo <仓库根目录>`。它只读 Git 状态、知识版本、路径和迁移登记；不会安装依赖、迁移数据库或调用 AI。`--config <私有配置文件>` 仅补充位置提示。
+3. 优先读取当前 checkout 的本 skill 和下面与任务有关的参考资料。`context-manifest.json` 记录核对基线、模块入口和相关图。版本差异、缺失基线和脏文件需要定向核对，不代表运行实例损坏。不要把旧文档当作当前代码的证明，也不要重新通读整个仓库。
+4. 明确是当前简化体验还是保留的旧流程，再打开对应入口。当前 `/council` 通过 `SimpleCouncilPage` 进入频道；旧 `CouncilPage` 和 `multi-agent/` 分析仍存在。
 
-## Prepare the change
+所有反引号内的仓库路径都相对于选定仓库；参考文件之间的链接相对于 skill。
 
-1. Start from current `main` on a separate branch. Make one focused change per PR.
-2. Keep local user data and credentials out of commits. Demo data must be fictional.
-3. For behavior changes, update relevant tests and both Chinese and English UI
-   text or docs. For database, Docker or desktop changes, describe how existing
-   installations keep data and how the change was verified.
-4. Run `npm run lint` and relevant tests from `CONTRIBUTING.md`. For `agent/`
-   changes, run `uv run pytest -q` inside `agent/`. Record any test you could
-   not run and why; CI still has to pass.
+| 当前任务 | 按需读取 |
+|---|---|
+| 找页面、API、业务模块、数据归属 | [仓库地图](references/repository-map.md) |
+| 日报、报告历史、策略导入/确认、模拟盘、频道 | [研究与执行契约](references/research-and-execution.md) |
+| 开发启动、隔离测试、CI、UI 验收 | [开发与测试](references/development-and-tests.md) |
+| 更新正在使用的实例、Docker、备份或回退 | [部署与恢复](references/deployment-and-recovery.md) |
+| 排错、文档过期、每次改动的知识维护 | [维护指南](references/maintenance.md) |
 
-## Open and merge the PR
+## 开发与交付约定
 
-- Target `main` through a pull request and fill in the PR template: what and
-  why, verification, and data or release impact. Link an issue when relevant;
-  an issue is not mandatory.
-- Wait for the three required checks: **Lint & typecheck**, **Agent tests**
-  and **Docker image build**.
-  Keep the PR up to date with `main` and resolve review conversations.
-- A green CI run does not grant permission to bypass maintainer feedback.
-  GitHub currently does not require an approving review. As a team convention,
-  let maintainers coordinate merges; collaborators with write access can merge
-  without an approval, so they must follow this convention. Maintainers
-  publish releases.
-- Never push, force push or delete `main`, or weaken a required check to get a
-  PR through. If a check fails, fix the branch and let CI rerun.
+- 在已有隔离工作区或从当前 main 建立的分支工作，保留用户已有改动。当前阶段仅开发 Web；使用 `npm run build:web`。Desktop 保留作手动恢复，不默认要求安装包测试。
+- 先明确用户能观察到的行为和受影响契约，再实现和验证。行为修改同步中英文文案；假数据与临时测试数据库用于验证。缺少数据库前置条件导致的 skip 不算集成测试通过。
+- 当前日报先独立封存判断，再反向核查。报告可读、历史可查；报告策略导入不重复抽取或自动激活。策略确认采用持久化内容的预览哈希，并在最终事务中复核修订和来源。自动交易的对象是模拟盘。
+- 每次改动检查 `docs/architecture.md` 的五张图及 skill 中受影响的介绍、入口、测试和运行手册。结构或数据流变化必须同步修改；结构未变则记录核对结论，不能只改日期掩盖未核对内容。详见维护指南。
+- 运行适合改动的检查及 `npm run test:context`、`npm run check:context`。机械校验检查路径和元数据，不能替代对图和文字的语义核对。
+- 通过 PR 进入 main。必需检查为 **Lint & typecheck**、**Agent tests**、**Docker image build**；处理评审意见，不绕过保护。当前 `CONTRIBUTING.md`、CI 和仓库分支规则是合并要求的依据。
+- 合并后同步全局副本：先运行 `node <skill目录>/scripts/sync-skill.cjs --repo <仓库>` 查看计划，再在已获安装/更新授权的范围内加 `--apply`。保留安装版本信息；不要手动维护第二份知识。
+
+完成交付时说明行为/文档改动、验证结果、架构与知识更新、PR 和安装版本，以及实际剩余限制。只有用户要求部署应用时才走实例切换流程。

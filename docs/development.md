@@ -2,7 +2,10 @@
 
 This guide is for changing Squabble's code. To use the product, start with
 the [desktop app or clean local Docker installation](self-hosting.md).
-For pull requests, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+For pull requests, see [CONTRIBUTING.md](../CONTRIBUTING.md). The
+[architecture map](architecture.md) describes current business flows; the
+[Squabble development skill](../.agents/skills/squabble-contributor/SKILL.md)
+routes coding agents to source entrypoints, focused tests and instance recovery.
 
 ## Current development phase
 
@@ -20,8 +23,10 @@ phase; their code and commands remain available for manual recovery.
 - Python 3.12 + [uv](https://docs.astral.sh/uv/) only if developing the optional
   Python agent; the web application's analysis does not require it
 - The npm scripts use `cross-env` for Windows-compatible environment settings.
-  The development supervisor's port cleanup uses Unix utilities; on Windows,
-  stop any conflicting processes yourself before starting it.
+  The development supervisor supports Windows and POSIX process discovery,
+  ownership checks and process-tree cleanup (`scripts/dev-processes.cjs`).
+  Inspect configured ports before starting: it can stop existing listeners and
+  their supervisors, including a running installation on those ports.
 
 ## Run modes
 
@@ -75,10 +80,27 @@ Logs are under `logs/`; inspect them if startup fails. The individual
 `dev:server` and `dev:client` commands do not use that supervisor; provide the
 required environment variables in their shell when running them separately.
 
-The app applies additive migrations `03` through `25` on startup. They do not
-create the base schema. Neither Docker configuration publishes PostgreSQL on
-the host, so a source development server cannot reach it at `localhost:5432`
-without an explicit local port mapping.
+Startup applies the explicit migration list in
+[`server/common/platform/database.provider.ts`](../server/common/platform/database.provider.ts),
+currently ending with `43_channel_workbench.sql`. Numbering is not contiguous;
+use that registry, not a copied numeric range or every SQL file in the directory.
+`01_schema.sql` is the consolidated schema for an empty database. It is not an
+upgrade script, and startup migrations do not create that base schema. There is
+no migration-version ledger: check actual schema objects and startup results
+rather than inferring a database version from the largest SQL filename.
+Neither Docker configuration publishes PostgreSQL on the host, so a source
+development server cannot reach it at `localhost:5432` without an explicit local
+port mapping.
+
+For a source web release, run `npm run build:web`; `npm run build` also builds
+Electron. Run the built backend from its release root so it finds `scripts/db/`
+and `dist/client/`. `npm start` does not load `.env.local` automatically; provide
+the environment through the verified launcher or Node's explicit `--env-file`
+option. Launching a backend can migrate data and start background jobs. Use the
+[private deployment and recovery runbook](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md)
+to discover an existing instance and preserve its database, matching keys and
+durable agent state before an authorized update. Ignored temporary scripts and
+old process IDs are not reusable deployment instructions.
 
 ## Local workspace mode
 
@@ -118,7 +140,25 @@ For deliberate desktop recovery, `npm run test:desktop` still covers the bundled
 database, lifecycle and loopback security. It is outside the web-only phase's
 required verification until desktop development is explicitly resumed.
 
-Database integration suites use `BUDGET_TEST_DATABASE_URL`, `COUNCIL_TEST_DATABASE_URL`, `AUTH_TEST_DATABASE_URL`, `STRATEGY_TEST_DATABASE_URL`, and `MEMORY_TEST_DATABASE_URL`. Set them to a **disposable test database** initialized with `01_schema.sql` and additive migrations `03`–`25`; do not point them at personal or production data. Without these variables, database cases are explicitly skipped. CI provisions PostgreSQL and runs them, including concurrent reservations, user isolation, first-account registration, discussion revisions, memory archival and atomic paper execution. Verify the database/schema and expected tables after initialization; a successful shell exit alone does not establish that migrations ran.
+CI sets seven database integration variables: `BUDGET_TEST_DATABASE_URL`,
+`COUNCIL_TEST_DATABASE_URL`, `AUTH_TEST_DATABASE_URL`,
+`STRATEGY_TEST_DATABASE_URL`, `MEMORY_TEST_DATABASE_URL`,
+`RESEARCH_TEST_DATABASE_URL` and `EXPERIENCE_TEST_DATABASE_URL`.
+Channel tests optionally accept `CHANNEL_TEST_DATABASE_URL`. Durable-channel tests
+fall back to `STRATEGY_TEST_DATABASE_URL`; Brief integration tests fall back to
+`COUNCIL_TEST_DATABASE_URL`. Set `CHANNEL_TEST_DATABASE_URL` explicitly for focused
+channel runs to cover both. Use an isolated **disposable test database**;
+suites create/drop schemas or mutate rows. Never use personal or production data.
+
+Initialize a new empty database with `01_schema.sql`, then apply the current
+startup registry in its listed order. Some suites create independent fixture
+schemas themselves; CI's explicit bootstrap list is not the upgrade registry.
+See the [test-selection reference](../.agents/skills/squabble-contributor/references/development-and-tests.md)
+for a registry-driven PowerShell setup and focused suite matrix.
+Missing variables explicitly skip database cases; report those skips instead of
+calling an offline pass complete integration coverage. Verify target database
+identity, schema objects and expected tables after initialization; a successful
+shell exit alone does not establish that migrations ran.
 
 The memory evaluation requires its database prerequisites and fails when required
 integration coverage is unavailable or skipped. It compares a fixed historical
@@ -151,6 +191,15 @@ during this phase. Pushes, PRs and version tags do not trigger it. Its Windows
 x64, macOS x64 and macOS arm64 tests, fresh packaged database/API smoke tests,
 installer builds and version-tagged release path are retained for manual recovery.
 These desktop jobs are not required PR checks until desktop development resumes.
+
+For documentation-only edits, check local links, commands against current source,
+Markdown/Mermaid rendering and affected knowledge references. Skill/helper
+changes also run `npm run test:context` and `npm run check:context`. Unrelated
+local application suites are not necessary for prose edits; all three required
+GitHub checks still apply. Each change reviews architecture and skill impact,
+updates affected flows/entrypoints, or records explicit no-impact reasoning.
+The [maintenance reference](../.agents/skills/squabble-contributor/references/maintenance.md)
+covers verification metadata and synchronization of the global skill after merge.
 
 ## Native research agents
 
@@ -227,7 +276,8 @@ upgrades when changing the schema, preserving existing user data.
 The webapp was originally developed on the Miaoda (aPaaS) cloud. Runtime
 authentication now supports local workspaces and first-party username/password
 sessions in `server/modules/auth`, and the database layer is a direct Drizzle connection
-in `server/common/platform`. The development supervisor still contains the
-optional legacy initialization step noted above. Use the environment values
-shown in this guide for source development; the supported end-user paths are
+in `server/common/platform`. The development supervisor loads local environment
+files and starts Nest/Vite; database initialization is the explicit setup step
+above. Use the environment values shown in this guide for source development;
+the supported end-user paths are
 described in [local installation](self-hosting.md).

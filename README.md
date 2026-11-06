@@ -185,6 +185,7 @@ Self-hosted. Zero telemetry. The only outbound requests are the ones you make wi
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Development guide | [docs/development.md](docs/development.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| AI development skill | [Squabble development and maintenance](.agents/skills/squabble-contributor/SKILL.md) |
 
 ---
 

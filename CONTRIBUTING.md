@@ -102,6 +102,26 @@ uv run pytest -q     # offline test suite, no live network access
   fresh installs; note schema changes in your PR description for existing
   deployments).
 
+## Keep project knowledge current
+
+The repository-owned [Squabble development skill](.agents/skills/squabble-contributor/SKILL.md)
+provides a module map, research/execution contracts, testing and deployment runbooks.
+New chats should load the relevant reference and inspect changes since its verified
+baseline before reading affected source files. Use `npm run check:context` for path
+and metadata checks and `npm run test:context` for the helper behavior tests.
+
+Every change includes an architecture and knowledge impact review. Update affected
+flows in `docs/architecture.md` and the skill references in the same PR. If structure
+is unchanged, record why the existing diagrams remain accurate in the PR; do not
+invent diagram changes. Update verification metadata only after reviewing the
+source it describes. The helper cannot prove prose or diagram semantics.
+
+After merging an authorized update, preview installation with
+`node .agents/skills/squabble-contributor/scripts/sync-skill.cjs --repo .`, then add
+`--apply` to synchronize the managed global copy. Keep machine-specific instance
+locations in private `~/.squabble/development-context.json`, never in repository
+instructions. Installation does not authorize deployments or paid research.
+
 ## 🐛 Report a bug
 
 Open an issue with the **Bug report** template. The opt-in Docker demo

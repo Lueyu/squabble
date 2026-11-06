@@ -53,7 +53,9 @@ test('observed equity keeps a first boundary, rejects foreign history and separa
   }finally{await client.end();await admin`DROP SCHEMA ${admin(namespace)} CASCADE`;await admin.end();}
 });
 
-test('position snapshot corrections and opening adjustments are not investment returns',{skip:!url},async()=>{
+test('position snapshot corrections and opening adjustments are not investment returns',{skip:!url},async t=>{
+  // Imported checkpoints and the dated ledger fixture must share the same business day.
+  t.mock.timers.enable({apis:['Date'],now:new Date('2026-11-06T04:00:00Z')});
   const namespace='metrics_positions_'+randomUUID().replaceAll('-',''),admin=postgres(url!,{max:1,onnotice:()=>{}});
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   const client=postgres(url!,{max:4,onnotice:()=>{},connection:{search_path:namespace}});
@@ -78,5 +80,5 @@ test('position snapshot corrections and opening adjustments are not investment r
       assert.equal(later.trend.investmentPnlUsd,adjustment==='same-snapshot'?0:null,'noncash balance corrections cannot manufacture investment profit');
       assert.equal(later.trend.gaps.includes('POSITION_BASELINE_CHANGED'),adjustment!=='same-snapshot');
     }
-  }finally{await client.end();await admin`DROP SCHEMA ${admin(namespace)} CASCADE`;await admin.end();}
+  }finally{t.mock.timers.reset();await client.end();await admin`DROP SCHEMA ${admin(namespace)} CASCADE`;await admin.end();}
 });

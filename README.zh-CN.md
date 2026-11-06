@@ -155,6 +155,7 @@ npm run dev
 | 架构 | [docs/architecture.md](docs/architecture.md) |
 | 开发指南 | [docs/development.md](docs/development.md) |
 | 参与贡献 | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| AI 开发技能 | [Squabble 开发与维护](.agents/skills/squabble-contributor/SKILL.md) |
 
 ---
 
