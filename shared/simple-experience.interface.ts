@@ -13,6 +13,7 @@ export interface CurrentResearchView {
   researchLevel?: 'facts_only' | 'ai';
   readingState?: 'ready' | 'pending';
   sessionId?: string | null;
+  returnedDocumentId?: string | null;
   summary?: string | null; keyPoints?: string[]; risks?: string[]; nextChecks?: string[];
   progress?: {phase:string;message:string;percent:number} | null;
   executorLabel?: string | null;

@@ -1,6 +1,6 @@
 # Research, execution and provenance contracts
 
-Use this reference for current research, report import, strategy state, channel publication and ledger changes. Paths are relative to the selected repository checkout. See [repository-map.md](repository-map.md) for routing and `docs/architecture.md` for the five diagrams. Checked at `7de30fb` on 2026-11-07; inspect affected source after subsequent changes.
+Use this reference for current research, report import, strategy state, channel publication and ledger changes. Paths are relative to the selected repository checkout. See [repository-map.md](repository-map.md) for routing and `docs/architecture.md` for the five diagrams. Checked at `7de30fb` on 2026-11-07, with saved-report recovery and simulation-review reading additionally checked at `f0fb2a0` (PR #80) on the same date; inspect affected source after subsequent changes.
 
 ## Today → sealed research → immutable report
 
@@ -13,7 +13,15 @@ Use this reference for current research, report import, strategy state, channel 
 
 The first completed daily report and latest discussion-derived report are separate projections (`CurrentResearchService.getDailyReports`). A newer discussion must not silently rewrite the initial report. Past dates are read-only for refresh. Automatic research is also gated by preferences, route readiness and `AutomaticResearchBudgetService`; discovering these methods does not authorize running them.
 
-Execution recovery is persistent and explicit: current projections reconcile completed work, native journals retain submission identity, and interrupted native tasks are not replayed automatically. `reformat` only reparses an already retained completed portfolio result. Do not turn read/recovery operations into implicit paid retries.
+Execution recovery is persistent: current projections reconcile retained results, native journals retain submission identity, and interrupted native tasks are not replayed automatically. Do not turn read/recovery operations into implicit paid retries.
+
+Saved-report reading and recovery have separate boundaries:
+
+- `CurrentResearchView.returnedDocumentId` identifies the available, non-revoked archive for a result whose formatting is pending. `CurrentAnalysisPanel` links to that exact version while keeping any earlier complete report visible; it must not describe returned research as research that has not run. A formatting retry error leaves the saved-report link available.
+- `POST /api/research/current/reformat` uses `CurrentResearchService.completedSource` to resolve a retained completed portfolio run or a published daily-team report. It also recognizes old `formatting_portfolio` receipts that actually contain a daily session ID. It imports/reads the saved source under the submission receipt, rejects revoked material and updates the current projection; it does not rerun research or rewrite the immutable report. The task kind becomes `portfolio`/`daily_research` when readable, or `formatting_portfolio`/`formatting_daily_research` while pending.
+- `CurrentResearchService.reconcile` can repair failed formatting receipts automatically when their saved material becomes readable. Recovery rechecks owner, visibility/revocation and the failed receipt's task kind/generation sequence before changing the current pointer, and marks an associated automatic task completed. Reformatting and reconciliation can write projection/receipt state: absence of a model call does not make them read-only smoke tests. This recovery change adds no database migration.
+
+For archived simulation reviews, `SimpleReportReader` uses `shared/simulation-review-reading.ts` only for the known source-less `council` envelope with matching account/period identifiers and a valid saved review. It renders archived performance, fees, attribution, execution constraints and data gaps, keeps missing figures unknown, and retains the original snapshot. It neither unwraps unrelated JSON nor rewrites archived content. These reviews omit the execution-plan widget rather than inviting fresh research to invent a missing plan.
 
 ## Exact source → draft → explicit application
 
@@ -93,6 +101,7 @@ Transaction imports classify broker/source identities and fingerprints, return b
 Use [development-and-tests.md](development-and-tests.md) for commands and disposable database setup. Relevant existing regression families include:
 
 - Research: `server/modules/experience/daily-channel-research.integration.spec.ts`, `research-entry.integration.spec.ts`; `server/modules/council/` independent/daily/publication suites; `server/modules/research-documents/research-documents.integration.spec.ts`.
+- Saved report recovery/reading: `server/modules/experience/report-recovery.integration.spec.ts` (requires `EXPERIENCE_TEST_DATABASE_URL`); `client/src/utils/current-report-recovery.test.cjs`, `simulation-review-reading.test.cjs`. Cover old daily receipts, exact returned-version links, owner/revocation boundaries, unchanged archives, unknown figures and no executor calls.
 - Report/strategy boundary: `server/modules/paper-trading/user-investment-strategy-report.integration.spec.ts`, `user-investment-strategy-preparation.integration.spec.ts`, `user-strategy-order-boundary.integration.spec.ts`, `user-strategy-runtime.integration.spec.ts`.
 - Channel: `server/modules/channel/channel-contract.spec.ts`, `channel-briefs.service.spec.ts`, `channel-durable.integration.spec.ts`; `client/src/utils/channel-workbench.test.cjs`.
 - Real ledger: `server/modules/import/asset-ledger.integration.spec.ts`, `transaction-import.spec.ts`; `server/modules/transactions/asset-ledger.spec.cjs`; `client/src/utils/transaction-import.test.cjs`.

@@ -54,7 +54,10 @@ flowchart TD
     reverse --> summary["Summary, coverage and executionPlan"]
     summary --> validate["Evidence and plan validation"]
     validate --> archive["Immutable report version and sections"]
-    archive --> reading["Initial report and discussion projections"]
+    archive --> reading["Latest readable report and exact-version history"]
+    archive --> saved["Saved report formatting recovery"]
+    saved -->|"Visibility and generation fences; no model rerun"| reading
+    review["Saved simulation review envelope"] --> reviewProjection["Readable historical review projection"]
     archive --> handoff["Exact typed plan draft handoff"]
     archive --> channelSource["Channel report and findings"]
     independent --> interrupted["Interrupted or incomplete state retained"]
@@ -68,6 +71,10 @@ Independent submissions are persisted before subsequent shared inspection. `coun
 `server/modules/paper-trading/report-execution-plan.ts` validates `schemaVersion: 1`, `parameterOrigin: 'ai_proposed'`, evidence IDs, entries, validity and risk limits. It derives `ready`, `needs_info` or `no_trade`, and renders the exact `execution-strategy` section. AI parameter proposals are distinct from market observations and investor authority. Invalid/missing plans remain explicit; prose-only archives do not acquire invented actions.
 
 `server/modules/research-documents/research-documents.service.ts` publishes immutable content/sections/snapshots and maintains mutable document pointers and revocation state separately. `research-documents.rules.ts` hashes recursively canonicalized payloads; exact versions and section references survive later revisions. `CurrentResearchService.getDailyReports` separates the initial daily report from later discussion reports. A newer discussion does not overwrite what the initial report said. Availability time, data-as-of time and provenance are retained.
+
+**Report-reading update checked against `f0fb2a0` (PR #80):** `CurrentResearchService.reformat` and `reconcile` recover saved daily-research and legacy portfolio results, including older formatting receipts that stored a session ID. This reuses saved source material without another model call, and preserves owner, visibility, revocation and generation fences. `returnedDocumentId` exposes the exact returned archive while the last complete current report remains visible. Recovery writes current-view/task receipts; it is not a read-only diagnostic.
+
+`client/src/pages/Analysis/SimpleReportReader.tsx` uses `shared/simulation-review-reading.ts` to project valid saved simulation-review envelopes into readable historical sections. It does not rewrite archived reports, fill unknown values with zero or present a missing execution plan as a review failure. The research/report diagram includes these reading and recovery paths; the other four flows are unchanged by PR #80.
 
 The older `server/modules/multi-agent/pipeline.service.ts` bull/bear/critic/risk pipeline and `portfolio-analysis.service.ts` remain for retained runs, APIs and fallback paths. Their reports stay readable; they are not the current default Today research sequence. Likewise, retained Council discussion and revision workflows coexist with the channel UI. Do not remove legacy readers simply because the current navigation changed.
 

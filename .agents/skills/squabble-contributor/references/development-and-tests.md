@@ -38,7 +38,7 @@ provider sessions, real portfolio writes or live strategy confirmations.
 
 | Area | Focused feedback and relevant suite |
 |---|---|
-| Current analysis/report import | `server/modules/experience/*integration.spec.ts`, `server/modules/research-documents/*.spec.ts`; `npm run test:server`, `npm run test:client` |
+| Current analysis/report import | `server/modules/experience/*integration.spec.ts` (including `report-recovery.integration.spec.ts`), `server/modules/research-documents/*.spec.ts`, `client/src/utils/current-report-recovery.test.cjs` and `simulation-review-reading.test.cjs`; `npm run test:server`, `npm run test:client` |
 | Report-to-strategy confirmation and execution | `report-execution-plan.spec.ts`, `report-execution-runtime.integration.spec.ts`, `user-investment-strategy*.spec.ts`, `user-strategy-*.spec.ts` in `server/modules/paper-trading/`; corresponding `client/src/utils/report-execution-plan.test.cjs` and strategy tests |
 | Channel publication, deduplication and recovery | `server/modules/channel/*.spec.ts`, `server/modules/experience/daily-channel-research.integration.spec.ts`, `client/src/utils/channel-workbench.test.cjs` |
 | Real asset/transaction import | `server/modules/import/asset-ledger.integration.spec.ts`, `import-batches*.spec.ts`, `transaction-import.spec.ts`; `server/modules/transactions/*.spec.cjs`, `client/src/utils/transaction-import.test.cjs` |

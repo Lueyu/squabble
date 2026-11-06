@@ -12,6 +12,7 @@ import { TransactionsService } from '../transactions/transactions.service';
 import { CashAccountsService } from '../cash-accounts/cash-accounts.service';
 import type { QuoteService } from '../quote/quote.service';
 import { TransactionImportsService } from './transaction-imports.service';
+import { businessDate } from '../experience/simple-experience.rules';
 
 test('snapshot baseline, transactions and concurrent cash initialization stay consistent in PostgreSQL', { skip: !process.env.EXPERIENCE_TEST_DATABASE_URL }, async t => {
   // Position and cash checkpoints must use the dated transaction fixture's business day.
@@ -22,13 +23,14 @@ test('snapshot baseline, transactions and concurrent cash initialization stay co
   const client = postgres(process.env.EXPERIENCE_TEST_DATABASE_URL!, { max: 6, onnotice: () => {}, connection: { search_path: namespace } });
   try {
     for (const name of (await readdir('scripts/db')).filter(name => /^\d\d_.*\.sql$/.test(name) && !name.startsWith('02_')).sort()) await client.unsafe(await readFile('scripts/db/' + name, 'utf8'));
+    const day = businessDate(new Date(), 'Asia/Shanghai');
     const db = drizzle(client), owner = randomUUID(), quote = { detectMarket: () => ({ market: 'US', currency: 'USD' }) } as QuoteService;
     const importer = new ImportService(db, quote), service = new TransactionsService(db, quote), cash = new CashAccountsService(db, service);
     await Promise.all(Array.from({ length: 8 }, () => cash.list(owner)));
     assert.equal((await db.select().from(cashAccounts).where(eq(cashAccounts.owner, owner))).length, 3);
     await importer.commit(owner, { source: 'csv', rows: [{ ticker: 'FIXT', shares: 10, avgCost: 8, currency: 'USD' }] });
-    await service.create(owner, { txDate: '2026-11-06', txType: 'Deposit', ticker: '', shares: 100, price: 1, currency: 'USD' });
-    const buy = await service.create(owner, { txDate: '2026-11-06', txType: 'Buy', ticker: 'FIXT', shares: 2, price: 10, currency: 'USD' });
+    await service.create(owner, { txDate: day, txType: 'Deposit', ticker: '', shares: 100, price: 1, currency: 'USD' });
+    const buy = await service.create(owner, { txDate: day, txType: 'Buy', ticker: 'FIXT', shares: 2, price: 10, currency: 'USD' });
     assert.equal(Number((await db.select().from(holdings))[0].shares), 12);
     await importer.commit(owner, { source: 'csv', rows: [{ ticker: 'FIXT', shares: 12, avgCost: 8.333333333333334, currency: 'USD' }] });
     await assert.rejects(importer.commit(owner, { source: 'csv', rows: [{ ticker: 'FIXT', shares: 9, avgCost: 8, currency: 'USD' }] }), /SNAPSHOT_REQUIRES_RECONCILIATION/);
@@ -39,8 +41,8 @@ test('snapshot baseline, transactions and concurrent cash initialization stay co
     assert.equal(Number((await cash.list(owner)).find(row => row.currency === 'USD')!.balance), 100);
     const imports = new TransactionImportsService(db, service);
     const input = { kind: 'trades' as const, source: 'csv' as const, baselineScope: 'after-opening' as const, broker: 'fictional', account: 'account-A', rows: [
-      { txDate: '2026-11-06', txType: 'Buy', ticker: 'FIXT', shares: '2', price: '10', fees: '1', currency: 'USD', brokerId: 'execution-1' },
-      { txDate: '2026-11-06', txType: 'Sell', ticker: 'FIXT', shares: '3', price: '12', fees: '1', currency: 'USD', brokerId: 'execution-2' },
+      { txDate: day, txType: 'Buy', ticker: 'FIXT', shares: '2', price: '10', fees: '1', currency: 'USD', brokerId: 'execution-1' },
+      { txDate: day, txType: 'Sell', ticker: 'FIXT', shares: '3', price: '12', fees: '1', currency: 'USD', brokerId: 'execution-2' },
     ] };
     const batch = await imports.create(owner, input);
     const command = { requestKey: randomUUID(), revision: batch.revision, ledgerRevision: batch.ledgerRevision, rowIds: batch.rows.map(row => row.id) };
@@ -79,15 +81,15 @@ test('snapshot baseline, transactions and concurrent cash initialization stay co
     assert.equal(Number((await db.select().from(holdings))[0].shares), 13);
     assert.equal(Number((await cash.list(owner)).find(row => row.currency === 'USD')!.balance), 73);
     const flows = await imports.create(owner, { kind: 'cash-flows', source: 'excel', broker: 'fictional', account: 'account-A', baselineScope: 'after-opening', rows: [
-      { txDate: '2026-11-06', txType: 'Deposit', shares: 10, fees: 0, currency: 'USD', brokerId: 'flow-1' },
-      { txDate: '2026-11-06', txType: 'Deposit', shares: 83, fees: 0, currency: 'USD', recordKind: 'balance' },
+      { txDate: day, txType: 'Deposit', shares: 10, fees: 0, currency: 'USD', brokerId: 'flow-1' },
+      { txDate: day, txType: 'Deposit', shares: 83, fees: 0, currency: 'USD', recordKind: 'balance' },
     ] });
     assert.deepEqual(flows.rows.map(row => row.status), ['ready', 'reference']);
     assert.deepEqual(flows.rows[1].issues, []);
     await imports.commit(owner, flows.id, { requestKey: randomUUID(), revision: flows.revision, ledgerRevision: flows.ledgerRevision, rowIds: [flows.rows[0].id] });
     assert.equal(Number((await cash.list(owner)).find(row => row.currency === 'USD')!.balance), 83);
     const unidentifiedOwner = randomUUID();
-    await service.create(unidentifiedOwner, { txDate: '2026-11-06', txType: 'Deposit', ticker: '', shares: 100, price: 1, currency: 'USD' });
+    await service.create(unidentifiedOwner, { txDate: day, txType: 'Deposit', ticker: '', shares: 100, price: 1, currency: 'USD' });
     const unidentifiedRow = { ...input.rows[0], brokerId: undefined, txTime: '10:30:00' };
     const unidentified = await imports.create(unidentifiedOwner, { ...input, rows: [unidentifiedRow] });
     await imports.commit(unidentifiedOwner, unidentified.id, { requestKey: randomUUID(), revision: unidentified.revision, ledgerRevision: unidentified.ledgerRevision, rowIds: unidentified.rows.map(row => row.id) });
@@ -154,17 +156,18 @@ test('HK and CN ticker aliases share the imported checkpoint and preserve upgrad
   const client = postgres(process.env.EXPERIENCE_TEST_DATABASE_URL!, { max: 1, onnotice: () => {}, connection: { search_path: namespace } });
   try {
     for (const name of (await readdir('scripts/db')).filter(name => /^\d\d_.*\.sql$/.test(name) && !name.startsWith('02_')).sort()) await client.unsafe(await readFile('scripts/db/' + name, 'utf8'));
+    const day = businessDate(new Date(), 'Asia/Shanghai');
     const db = drizzle(client), quote = { detectMarket: (ticker: string) => ticker.startsWith('6') ? { market: 'CN', currency: 'CNY' } : { market: 'HK', currency: 'HKD' } } as QuoteService;
     const importer = new ImportService(db, quote), service = new TransactionsService(db, quote);
     for (const [alias, alternate, canonical, currency] of [['0700.HK', '00700.HK', '0700', 'HKD'], ['600000.SH', '600000.SS', '600000', 'CNY']]) {
       const owner = randomUUID();
       await importer.commit(owner, { source: 'csv', rows: [{ ticker: alias, shares: 10, avgCost: 8, currency }] });
-      await service.create(owner, { txDate: '2026-11-06', txType: 'Deposit', ticker: '', shares: 1000, price: 1, currency });
-      const buy = await service.create(owner, { txDate: '2026-11-06', txType: 'Buy', ticker: alias, shares: 2, price: 10, fees: 1, currency });
+      await service.create(owner, { txDate: day, txType: 'Deposit', ticker: '', shares: 1000, price: 1, currency });
+      const buy = await service.create(owner, { txDate: day, txType: 'Buy', ticker: alias, shares: 2, price: 10, fees: 1, currency });
       let positions = await db.select().from(holdings).where(eq(holdings.owner, owner));
       assert.equal(positions.length, 1, `${alias} must update the imported security rather than create another holding`);
       assert.equal(Number(positions[0].shares), 12);
-      const sell = await service.create(owner, { txDate: '2026-11-06', txType: 'Sell', ticker: alternate, shares: 3, price: 12, fees: 1, currency });
+      const sell = await service.create(owner, { txDate: day, txType: 'Sell', ticker: alternate, shares: 3, price: 12, fees: 1, currency });
       assert.equal(Number((await db.select().from(holdings).where(eq(holdings.owner, owner)))[0].shares), 9);
       await service.update(owner, buy.id, { ticker: canonical, shares: 1 });
       assert.equal(Number((await db.select().from(holdings).where(eq(holdings.owner, owner)))[0].shares), 8);
@@ -183,8 +186,8 @@ test('HK and CN ticker aliases share the imported checkpoint and preserve upgrad
     await service.reconcileAll(upgradedOwner);
     assert.equal((await db.select().from(holdings).where(eq(holdings.owner, upgradedOwner))).length, 1);
     const wrongCurrencyOwner = randomUUID();
-    await service.create(wrongCurrencyOwner, { txDate: '2026-11-06', txType: 'Deposit', ticker: '', shares: 100, price: 1, currency: 'USD' });
-    await assert.rejects(service.create(wrongCurrencyOwner, { txDate: '2026-11-06', txType: 'Buy', ticker: '0700.HK', shares: 1, price: 10, currency: 'USD' }), /POSITION_CURRENCY_MISMATCH/);
+    await service.create(wrongCurrencyOwner, { txDate: day, txType: 'Deposit', ticker: '', shares: 100, price: 1, currency: 'USD' });
+    await assert.rejects(service.create(wrongCurrencyOwner, { txDate: day, txType: 'Buy', ticker: '0700.HK', shares: 1, price: 10, currency: 'USD' }), /POSITION_CURRENCY_MISMATCH/);
   } finally { t.mock.timers.reset(); await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
 });
 

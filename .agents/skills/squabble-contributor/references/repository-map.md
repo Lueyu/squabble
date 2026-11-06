@@ -2,7 +2,7 @@
 
 Resolve code and document paths against the **selected repository checkout**, not the installed skill directory. Read this map, then only the source and reference for the affected area. Contracts are in [research-and-execution.md](research-and-execution.md); the five maintained diagrams are in `docs/architecture.md`.
 
-Verified against baseline `7de30fb` on **2026-11-07**. This identifies what was checked; compare later changes before relying on it.
+Verified against baseline `7de30fb` on **2026-11-07**. Saved-report recovery and simulation-review reading were additionally checked against `f0fb2a0` (PR #80) on the same date. These identify what was checked; compare later changes before relying on it.
 
 ## Current and retained product entrypoints
 
@@ -12,7 +12,7 @@ Verified against baseline `7de30fb` on **2026-11-07**. This identifies what was 
 |---|---|---|
 | `/` | `client/src/pages/Today/TodayPage.tsx`: assets, daily research and investment strategy | `client/src/pages/Dashboard/DashboardPage.tsx` |
 | `/analysis` | `client/src/pages/Analysis/SimpleAnalysisPage.tsx` | `client/src/pages/Analysis/AnalysisPage.tsx` |
-| `/analysis/reports/:versionId` | `client/src/pages/Analysis/ResearchDocumentPage.tsx`: exact immutable version | Shared; never replace requested ID with the latest report |
+| `/analysis/reports/:versionId` | `client/src/pages/Analysis/ResearchDocumentPage.tsx`, `SimpleReportReader.tsx`: exact immutable version and archived simulation-review reading | Shared; never replace requested ID with the latest report |
 | `/council` | `client/src/pages/Council/SimpleCouncilPage.tsx`, `client/src/pages/Channel/ChannelWorkbench.tsx`: channel projection, fact checks and actions | `client/src/pages/Council/CouncilPage.tsx`: retained research room |
 | `/paper` | `client/src/pages/Paper/AiInvestmentPage.tsx` | `client/src/pages/Paper/PaperPage.tsx` |
 | `/agent-builder` | Redirect to `/settings/agents` | `client/src/pages/AgentBuilder/AgentBuilderPage.tsx` |
@@ -28,9 +28,11 @@ In the table, abbreviated filenames are siblings of the fully qualified director
 | Area | Client/API | Authoritative server and shared contracts |
 |---|---|---|
 | Today and current research | `client/src/pages/Today/CurrentAnalysisPanel.tsx`; `client/src/api/simple-experience.ts` | `server/modules/experience/experience.controller.ts`, `today.service.ts`, `current-research.service.ts`, `experience.scheduler.ts`; `shared/simple-experience.interface.ts` |
+| Saved report reading and formatting recovery | `client/src/pages/Today/CurrentAnalysisPanel.tsx`; `POST /api/research/current/reformat` | `server/modules/experience/current-research.service.ts` (`completedSource`, `reformat`, `reconcile`); `shared/simple-experience.interface.ts` (`returnedDocumentId`); `server/modules/experience/report-recovery.integration.spec.ts` |
 | Daily research/report handoff | `/api/research/current/refresh` | `server/modules/experience/daily-channel-research.service.ts`; `server/modules/council/simple-council.service.ts`, `council.service.ts`, `council.daily.ts`, `council.dialogue.ts`; `shared/council.interface.ts`, `shared/report-execution-plan.interface.ts` |
 | Native dispatch/recovery | `client/src/pages/Settings/LocalAgentsPanel.tsx`; `client/src/api/local-agents.ts` | `server/modules/local-agents/local-agents.service.ts`, `research-journal.ts`; `server/local-agents/native.ts`; `shared/local-agents.interface.ts`, `shared/research-execution.interface.ts` |
 | Report versions, references and revocation | `client/src/api/research-documents.ts` | `server/modules/research-documents/research-documents.controller.ts`, `research-documents.service.ts`, `research-documents.rules.ts`; `shared/research-document.interface.ts`, `shared/research-reading.ts` |
+| Archived simulation-review presentation | `client/src/pages/Analysis/SimpleReportReader.tsx` | `shared/simulation-review-reading.ts`; `client/src/utils/simulation-review-reading.test.cjs`. Projects saved returns, fees, constraints and gaps without rewriting the archive or generating a strategy plan. |
 | Execution-plan display/import | `client/src/components/ReportExecutionPlan.tsx`; `client/src/pages/Today/InvestmentStrategySourceDialog.tsx`; `client/src/api/investment-strategies.ts` | `server/modules/paper-trading/report-execution-plan.ts`, `user-investment-strategy.controller.ts`, `user-investment-strategy.service.ts`, `user-investment-strategy.rules.ts`; `shared/user-investment-strategy.interface.ts` |
 | Strategy editing and explicit application | `client/src/pages/Today/InvestmentStrategySection.tsx`, `InvestmentStrategyEditor.tsx`; `client/src/api/ai-investment.ts` | `server/modules/paper-trading/investment-policy.controller.ts`, `investment-policy.service.ts`, `investment-policy.rules.ts`, `user-strategy-runtime.ts`; `shared/investment-policy.interface.ts` |
 | Simulated triggers/reviews/fills | `/paper`; `client/src/utils/strategy-state.ts` | `server/modules/paper-trading/strategy.service.ts`, `strategy.scheduler.ts`, `strategy-monitor.service.ts`, `paper-trading.service.ts`, `strategy-route.rules.ts`, `strategy-portfolio-risk.ts`; `shared/strategy.interface.ts` |

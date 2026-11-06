@@ -77,7 +77,10 @@
         "server/modules/research-documents/research-documents.service.ts",
         "shared/report-execution-plan.interface.ts",
         "client/src/pages/Today/CurrentAnalysisPanel.tsx",
-        "client/src/components/ReportExecutionPlan.tsx"
+        "client/src/components/ReportExecutionPlan.tsx",
+        "client/src/pages/Analysis/SimpleReportReader.tsx",
+        "shared/simulation-review-reading.ts",
+        "server/modules/experience/report-recovery.integration.spec.ts"
       ],
       "references": [
         "references/repository-map.md",
@@ -228,7 +231,9 @@
         "shared/channel.interface.ts",
         "shared/user-investment-strategy.interface.ts",
         "client/src/api/ai-investment.ts",
-        "client/src/api/investment-strategies.ts"
+        "client/src/api/investment-strategies.ts",
+        "shared/simple-experience.interface.ts",
+        "shared/simulation-review-reading.ts"
       ],
       "references": [
         "references/repository-map.md",
@@ -248,6 +253,7 @@
     "architecture": "All five current flows checked; diagrams updated against the recorded application baseline.",
     "behavior": "This change updates development knowledge and tooling only; running application and ledgers are outside its mutation scope.",
     "tooling": "Helper and CI integration source is verified separately from the unchanged application baseline.",
-    "testFixtures": "CI crossed Shanghai midnight: three integration suites now align scenario clocks and dates; stale-report and ledger guards remain unchanged. These test-only changes do not alter any of the five architecture flows."
+    "testFixtures": "CI crossed Shanghai midnight: three integration suites now align scenario clocks and dates; stale-report and ledger guards remain unchanged. These test-only changes do not alter any of the five architecture flows.",
+    "concurrentMain": "PR #80 (f0fb2a0) inspected during final integration: added saved daily-report recovery, returnedDocumentId and readable simulation review projections. Repository/research references and report diagram updated; other architecture flows unchanged. Date fixture fixes preserve both calendar derivation and deterministic clocks."
   }
 }
