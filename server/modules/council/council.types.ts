@@ -8,6 +8,8 @@ export interface ResearchRequest { kind: CouncilResearchKind; query?: string }
 export interface CouncilCheckpoint {
   automaticTaskId?: string;
   simple?: {
+    /** Hidden daily research: sealed independent work, one reverse-check gate, then report. */
+    researchOnly?: boolean;
     initializing?: boolean;
     stopped?: boolean;
     stage: 'independent' | 'discussion' | 'supplement' | 'completed' | 'waiting';
@@ -39,7 +41,7 @@ export interface CouncilCheckpoint {
     turn: number; revision: number; dispatchStarted: boolean; awaitingInput?: boolean; lastUserMessageId?: string };
 }
 export interface CouncilMessageMetadata extends Pick<CouncilMessage,
-  'actualExecutor' | 'claims' | 'respondsToClaims' | 'stanceChange' | 'evidenceCheckStatus' | 'references' | 'memory' | 'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown' | 'response'> {
+  'reverseCheck' | 'actualExecutor' | 'claims' | 'respondsToClaims' | 'stanceChange' | 'evidenceCheckStatus' | 'references' | 'memory' | 'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown' | 'response'> {
   cycleId?: string;
   researchEvent?: ResearchEvent;
   turn?: number;

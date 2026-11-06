@@ -17,13 +17,15 @@ import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { businessDate, generationIdentity, parseRefresh } from './simple-experience.rules';
 import type { CurrentResearchView, DailyResearchReports } from '../../../shared/simple-experience.interface';
 import { AutomaticResearchBudgetService } from '../paper-trading/automatic-research-budget.service';
+import { DailyChannelResearchService } from './daily-channel-research.service';
 
 @Injectable()
 export class CurrentResearchService {
   private readonly logger=new Logger(CurrentResearchService.name);
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db:PostgresJsDatabase,
     private readonly documents:ResearchDocumentsService,private readonly portfolio:PortfolioAnalysisService,
-    private readonly conversations:SimpleCouncilService,@Optional() private readonly routes?:PortfolioResearchRouteService) {}
+    private readonly conversations:SimpleCouncilService,@Optional() private readonly routes?:PortfolioResearchRouteService,
+    @Optional() private readonly daily?:DailyChannelResearchService) {}
 
   /** Independent reading projections over immutable versions; the current pointer never defines the initial report. */
   async getDailyReports(owner:string,dateKey:string):Promise<DailyResearchReports> {
@@ -40,11 +42,12 @@ export class CurrentResearchService {
       .orderBy(sql`coalesce(${portfolioAnalysisRuns.completedAt},${portfolioAnalysisRuns.createdAt},${councilReports.createdAt},${researchDocumentVersions.createdAt})`,researchDocumentVersions.id);
     const history:CurrentResearchView[]=rows.map(({version,session})=>{
       const presentation=researchPresentation(null,version.sections);
-      return {topicKey:'portfolio',dateKey,documentId:version.id,title:version.title,updatedAt:typeof version.snapshot?.generatedAt==="string"?version.snapshot.generatedAt:version.createdAt.toISOString(),dataAsOf:version.dataAsOf?.toISOString()??null,changeSummary:version.changeReason,state:presentation.readingState==='ready'?'ready':'failed',taskId:null,error:presentation.readingState==='pending'?'研究已返回，内容整理待核对。 / Research returned; formatting needs review.':null,source:version.source,researchLevel:'ai',sessionId:session?.id??null,...presentation};
+      return {reportRole:version.source?.type!=='council'||session?.checkpoint?.simple?.researchOnly?'initial':'discussion',topicKey:'portfolio',dateKey,documentId:version.id,title:version.title,updatedAt:typeof version.snapshot?.generatedAt==="string"?version.snapshot.generatedAt:version.createdAt.toISOString(),dataAsOf:version.dataAsOf?.toISOString()??null,changeSummary:version.changeReason,state:presentation.readingState==='ready'?'ready':'failed',taskId:null,error:presentation.readingState==='pending'?'研究已返回，内容整理待核对。 / Research returned; formatting needs review.':null,source:version.source,researchLevel:'ai',sessionId:session?.id??null,...presentation};
     });
-    const standalone=history.filter(item=>item.source?.type!=='council'&&item.readingState==='ready');
+    const dailyJobs=new Set(rows.filter(({session})=>session?.checkpoint?.simple?.researchOnly).map(({version})=>version.id));
+    const standalone=history.filter(item=>(item.source?.type!=='council'||dailyJobs.has(item.documentId!))&&item.readingState==='ready');
     const completeDiscussions=new Set(rows.filter(({report})=>report&&report.coverage?.complete!==false).map(({version})=>version.id));
-    const discussions=history.filter(item=>item.source?.type==='council'&&item.readingState==='ready'&&item.documentId&&completeDiscussions.has(item.documentId));
+    const discussions=history.filter(item=>item.source?.type==='council'&&!dailyJobs.has(item.documentId!)&&item.readingState==='ready'&&item.documentId&&completeDiscussions.has(item.documentId));
     return {initial:standalone[0]??null,latestDiscussion:discussions.at(-1)??null,history};
   }
 
@@ -67,9 +70,12 @@ export class CurrentResearchService {
     let material:typeof researchDocumentVersions.$inferSelect|undefined;
     const available=and(isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date())));
     if(view?.currentDocumentId) [material]=await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocumentVersions.id,view.currentDocumentId),available));
-    if(topicKey==='portfolio'&&material?.source?.type==='council')material=undefined;
+    if(topicKey==='portfolio'&&material?.source?.type==='council'){
+      const [dailySource]=await this.db.select({checkpoint:councilSessions.checkpoint}).from(councilReports).innerJoin(councilSessions,and(eq(councilSessions.owner,owner),eq(councilSessions.id,councilReports.sessionId))).where(and(eq(councilReports.owner,owner),eq(councilReports.id,material.source.id)));
+      if(!dailySource?.checkpoint?.simple?.researchOnly)material=undefined;
+    }
     if(topicKey==='portfolio'&&!material&&dateKey!=='current'){
-      const daily=await this.getDailyReports(owner,dateKey),latest=daily.history.filter(item=>item.source?.type!=='council'&&item.readingState==='ready').at(-1);
+      const daily=await this.getDailyReports(owner,dateKey),latest=daily.history.filter(item=>item.reportRole==='initial'&&item.readingState==='ready').at(-1);
       if(latest?.documentId)[material]=await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocumentVersions.id,latest.documentId),available));
     }
     if(!material) {
@@ -88,20 +94,36 @@ export class CurrentResearchService {
       researchLevel=(sourceRun?.route as ModelRoute|undefined)?.mode==='basic'?'facts_only':'ai';
     }
     if(['portfolio','cancelling_portfolio'].includes(view?.taskKind??'')&&view?.taskId)[run]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,view.taskId)));
+    let dailySession:typeof councilSessions.$inferSelect|undefined,dailyProgress:CurrentResearchView['progress'];
+    if(view?.taskKind==='daily_research'&&view.taskId){
+      [dailySession]=await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,view.taskId)));
+      if(dailySession){
+        const checkpoint=dailySession.checkpoint,total=(dailySession.profileSnapshot.council?.members.length??0)+2;
+        const [completed]=await this.db.execute<{count:string}>(sql`SELECT count(*)::text AS count FROM council_independent_submissions WHERE owner=${owner} AND session_id=${dailySession.id} AND cycle_id=${checkpoint?.cycleId??''}`);
+        const completedSteps=Number(completed?.count??0)+(checkpoint&&(checkpoint.nextTurn>(dailySession.profileSnapshot.council?.members.length??0))?1:0)+(dailySession.status==='completed'?1:0);
+        const phase=checkpoint?.simple?.stage==='independent'?'analyzing':'validating';
+        dailyProgress={phase:dailySession.status==='paused'?'paused':phase,message:dailySession.status==='paused'?'研究已暂停，已完成交付已保留。 / Research paused; completed work is retained.':phase==='analyzing'?'正在独立核对资料，结论尚未公开。 / Independent source checks are in progress.':'正在核对反证并整理今日报告。 / Checking counterevidence and preparing today’s report.',percent:Math.min(100,Math.round(completedSteps/Math.max(1,total)*100))};
+      }
+    }
     const route=(run?.route??view?.dispatchRoute) as ModelRoute|undefined;
     if(route)executorLabel=route.mode==='local'?route.agentId.replace(/^(native|companion)-/u,''):route.mode==='api'?'AI':null;
     const presentation=researchPresentation(null,material?.sections??[]);
     const content=material?.source?presentation.content:material?.content??'';
     return {topicKey,dateKey,documentId:material?.id??null,title:material?.title??'',
       updatedAt:typeof material?.snapshot?.generatedAt==="string"?material.snapshot.generatedAt:material?.createdAt.toISOString()??null,dataAsOf:material?.dataAsOf?.toISOString()??null,
-      changeSummary:view?.changeSummary??material?.changeReason??null,state:(view?.state==='generating'?'generating':view?.state==='failed'?'failed':material&&researchLevel==='ai'?presentation.readingState==='ready'?'ready':'failed':'empty'),taskId:view?.taskId??null,error:view?.error??(material&&presentation.readingState==='pending'?'研究已返回，内容整理待核对。 / Research returned; formatting needs review.':null),source:material?.source??null,
-      researchLevel:material?researchLevel:'facts_only',...presentation,...(view?.taskKind==='formatting_portfolio'?{readingState:'pending' as const}:{}),content,progress:(run?.progress as CurrentResearchView['progress'])??(view?.state==='generating'?{phase:'queued',message:'正在等待可用的 AI 股友…',percent:0}:null),executorLabel,
-      startedAt:run?.startedAt?.toISOString()??(view?.state==='generating'?view.updatedAt.toISOString():null),cancelling:view?.taskKind==='cancelling_portfolio',cancelled:view?.taskKind==='cancelled'};
+      changeSummary:view?.changeSummary??material?.changeReason??null,state:(view?.state==='generating'&&dailySession?.status==='paused'?'failed':view?.state==='generating'?'generating':view?.state==='failed'?'failed':material&&researchLevel==='ai'?presentation.readingState==='ready'?'ready':'failed':'empty'),taskId:view?.taskId??null,error:view?.error??(dailySession?.status==='paused'?dailySession.error??'研究已暂停，请检查连接后在原研究中继续。 / Research paused; check the connection and resume explicitly.':null)??(material&&presentation.readingState==='pending'?'研究已返回，内容整理待核对。 / Research returned; formatting needs review.':null),source:material?.source??null,
+      researchLevel:material?researchLevel:'facts_only',...presentation,...(view?.taskKind==='formatting_portfolio'?{readingState:'pending' as const}:{}),content,progress:dailyProgress??(run?.progress as CurrentResearchView['progress'])??(view?.state==='generating'?{phase:'queued',message:'正在等待可用的 AI 股友…',percent:0}:null),executorLabel,...(dailySession?{sessionId:dailySession.id}:{}),
+      startedAt:dailySession?.checkpoint?.simple?.startedAt??dailySession?.createdAt.toISOString()??run?.startedAt?.toISOString()??(view?.state==='generating'?view.updatedAt.toISOString():null),cancelling:view?.taskKind==='cancelling_portfolio',cancelled:view?.taskKind==='cancelled'};
   }
 
   async cancel(owner:string,input:unknown,timezone:string):Promise<CurrentResearchView>{
     const value=parseRefresh(input),dateKey=value.topicKey==='portfolio'?(value.date??businessDate(new Date(),timezone)):'current';
     if(value.topicKey!=='portfolio')throw new BadRequestException('PORTFOLIO_TASK_REQUIRED');
+    const stopping=await this.get(owner,value.topicKey,dateKey);
+    if(this.daily&&stopping.taskId&&stopping.state==='generating'){
+      const [view]=await this.db.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey)));
+      if(view?.taskKind==='daily_research')await this.daily.stop(owner,stopping.taskId);
+    }
     await this.documents.withSubmission(owner,`simple-cancel:${value.requestKey}`,value,async tx=>{
       const [view]=await tx.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey)));
       if(!view||view.state!=='generating')return{cancelled:true};
@@ -159,7 +181,9 @@ export class CurrentResearchService {
     if(claimed) {
       try {
         let id:string,kind:string;
-        if(value.topicKey==='portfolio') {
+        if(value.topicKey==='portfolio'&&this.daily){
+          id=await this.daily.create(owner,dateKey,value.requestKey,options?.automaticTaskId);kind='daily_research';
+        } else if(value.topicKey==='portfolio') {
           if(selected?.busy){await this.db.update(researchCurrentViews).set({taskKind:'waiting_executor',updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence))));return this.get(owner,value.topicKey,dateKey);}
           const [active]=await this.db.select({id:portfolioAnalysisRuns.id}).from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),inArray(portfolioAnalysisRuns.status,['pending','running','cancelling']))).limit(1);
           if(active){await this.db.update(researchCurrentViews).set({taskKind:'waiting_portfolio',updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence))));return this.get(owner,value.topicKey,dateKey);}
@@ -193,9 +217,9 @@ export class CurrentResearchService {
       }
       if(!row.taskId) {if(Date.now()-row.updatedAt.getTime()>300_000) await this.db.update(researchCurrentViews).set({state:'failed',error:'Research delivery was interrupted; update again to retry.'}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));continue;}
       try {
-        let status:string|undefined,source:{type:'portfolio'|'council';id:string}|undefined;
+        let status:string|undefined,sessionError:string|null=null,source:{type:'portfolio'|'council';id:string}|undefined;
         if(row.taskKind==='portfolio') {const [run]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,row.owner),eq(portfolioAnalysisRuns.id,row.taskId)));status=run?.status;if(status==='completed') source={type:'portfolio',id:row.taskId};}
-        else {const [session]=await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner,row.owner),eq(councilSessions.id,row.taskId)));status=session?.status;const [report]=await this.db.select().from(councilReports).where(and(eq(councilReports.owner,row.owner),eq(councilReports.sessionId,row.taskId))).orderBy(desc(councilReports.createdAt)).limit(1);if(report&&(!report.publicationOutcome||report.publicationOutcome==='succeeded'))source={type:'council',id:report.id};}
+        else {const [session]=await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner,row.owner),eq(councilSessions.id,row.taskId)));status=session?.status;sessionError=session?.error??null;const [report]=await this.db.select().from(councilReports).where(and(eq(councilReports.owner,row.owner),eq(councilReports.sessionId,row.taskId))).orderBy(desc(councilReports.createdAt)).limit(1);if(report&&(!report.publicationOutcome||report.publicationOutcome==='succeeded'))source={type:'council',id:report.id};}
         if(source) {
           const material=await this.documents.importSource(row.owner,source);
           if(researchPresentation(null,material.sections).readingState==='pending'){
@@ -204,7 +228,7 @@ export class CurrentResearchService {
           }
           await this.db.transaction(async tx=>{await lockMemoryOwner(tx,row.owner);await tx.update(researchCurrentViews).set({currentDocumentId:material.id,state:'ready',error:null,changeSummary:row.currentDocumentId?'New complete research is available.':null,updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));});
           if(row.automaticTaskId)await new AutomaticResearchBudgetService(this.db).finish(row.owner,row.automaticTaskId,'completed');
-        } else if(!status||['failed','cancelled','completed'].includes(status)) await this.db.update(researchCurrentViews).set({state:'failed',error:'Research did not produce a complete result.',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));
+        } else if(!status||['failed','cancelled','completed'].includes(status)||row.taskKind==='daily_research'&&status==='paused') await this.db.update(researchCurrentViews).set({state:'failed',error:sessionError??'Research did not produce a complete result.',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));
       }catch(error){this.logger.warn(error instanceof Error?error.message:'Research reconcile failed');}
     }
     // Only standalone published discussions can update this projection. Refresh dispatch receipts

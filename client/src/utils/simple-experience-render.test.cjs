@@ -55,7 +55,7 @@ test('an empty portfolio leads with import while retaining cash and strategy acc
   state.queries.set('today', { data: { date: '2026-11-06', timezone: 'Asia/Shanghai', asOf:'2026-11-06T04:00:00Z', overview: { holdingCount: 0,totalValueUsd:null,cashUsd:null,dailyPnlUsd:null,returnPct:null }, attention: [], gaps: [], holdings: [], analysis: { state: 'empty' }, aiAvailable: false, marketTimes: [] } });
   const html = render(Page);
   assert.match(html, /href="\/import"[^>]*>Import holdings/);
-  assert.match(html, /Start with a research conversation/);
+  assert.match(html, /Check one fact in the channel/);
   assert.match(html, /Confirm cash/);
   assert.match(html, /Write a strategy/);
   assert.doesNotMatch(html, /Full portfolio analysis/);

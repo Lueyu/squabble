@@ -6,11 +6,11 @@ English | [简体中文](README.zh-CN.md)
 
 # Squabble
 
-**Let your AI argue. You decide.**
+**Research that remembers. Decisions you control.**
 
 An open-source investing workspace.
-A bull, a bear and a critic challenge your ideas.
-Then you make the call.
+Independent research and reverse checks produce a daily report.
+A sourced channel follows meaningful changes and keeps decisions in your hands.
 
 **US · HK · China A-shares** · **English / Chinese** · **Self-hosted** · **Zero telemetry**
 
@@ -24,10 +24,10 @@ Then you make the call.
 
 ## Why Squabble?
 
-Most portfolio trackers show numbers. Squabble argues about them.
+Understand your portfolio, what changed, and what needs your decision.
 
-- **AI research reports.** A bull and a bear debate your holdings. A critic removes weak arguments. Your risk rules run as hard gates. The result is a 14-section report with both sides preserved.
-- **AI paper trading.** Opt into daily team research, a dated trading plan, scheduled market checks and a fast model review before automatic simulated fills. Configure push notifications and hard risk limits. Manual and MCP agent orders remain available.
+- **Daily research and a quiet channel.** Independent investigations and a separate reverse check stay in readable reports. The channel publishes short, sourced updates, expandable evidence and one-fact follow-ups. [Channel guide](docs/channel-workbench.md).
+- **Strategy-driven paper trading.** Copy recorded holdings and cash, review the strategy, then explicitly apply it to the simulation. Current rules, proposed changes and actual fills remain distinct. Existing advanced tools remain available.
 - **Your data stays yours.** Self-hosted. Zero telemetry. Desktop and source local workspaces open without a Squabble login; account mode remains available.
 
 ## Install

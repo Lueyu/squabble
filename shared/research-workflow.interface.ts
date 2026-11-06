@@ -35,6 +35,7 @@ export interface ResearchTask {
   reworks: number; acceptedAttemptId: string | null; updatedAt: string;
 }
 export interface ResearchCoverage {
+  reverseCheck?: import('./council.interface').DailyReverseCheck;
   goal: ResearchGoal; cycleId: string; revision: number; complete: boolean;
   tasks: Array<{ id: string; key: ResearchTaskKind; state: ResearchTaskState; acceptedAttemptId: string | null }>;
 }

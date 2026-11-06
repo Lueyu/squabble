@@ -52,6 +52,7 @@ import type { ReportReference, ResolvedReportReference } from '../../../shared/r
 import type { CouncilMessageInput, CouncilMessage, CouncilReviewContext, ForkCouncilSession, CouncilRevisionRequest } from '../../../shared/council.interface';
 import { normalizeThread, freezeThreadContext, threadPromptContext, isPortfolioThread, hasThreadContext, hasDeliberation } from './council.thread';
 import { readableResearch } from '../../../shared/research-reading';
+import { dailyResearchPrompt, dailyResearchTurns, renderDailyReverseCheck } from './council.daily';
 
 type SessionRow = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 type ReportRow = typeof councilReports.$inferSelect;
@@ -811,7 +812,7 @@ export class CouncilService implements OnModuleInit {
             opinion.summary = (row.language === 'en' ? 'Critical research evidence is missing; approval is withheld. ' : '关键研究证据缺失，暂缓批准。') + opinion.summary;
             opinion.nextReviewCondition = row.language === 'en' ? 'Obtain verified financial statements and current market evidence.' : '补齐经核实的财务报表和当前市场证据。';
           }
-          await this.publish(userId, row, opinion, this.executionEngine(members), null, row.candidate ? null : output.contribution.researchStance);
+          await this.publish(userId, row, opinion, this.executionEngine(members), null, row.candidate ? null : output.contribution.researchStance,undefined,output.contribution.thesisCandidates);
         }
       } catch (error) {
         if (claimId) await this.releaseTurn(userId, id, claimId);
@@ -997,7 +998,8 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id))) : [];
       const claimIds = new Set(publicClaims.flatMap(item => item.metadata?.claims?.map(claim => claim.id) ?? []));
       if (checkpoint.simple && contribution.respondsToClaims?.some(id => !claimIds.has(id))) throw new Error('A challenge must refer to a published claim');
-      const publicMetadata = checkpoint.simple ? { actualExecutor: output.actualExecutor ?? checkpoint.simple.executors.find(item => item.memberId === output.member.id),
+      if(checkpoint.simple?.researchOnly&&turn.phase==='challenge'&&!contribution.reverseCheck)throw new Error('DAILY_REVERSE_CHECK_REQUIRED');
+      const publicMetadata = checkpoint.simple ? { reverseCheck:contribution.reverseCheck,actualExecutor: output.actualExecutor ?? checkpoint.simple.executors.find(item => item.memberId === output.member.id),
         claims: contribution.claims?.map((claim, index) => ({ ...claim, id: `${checkpoint.cycleId}:${output.member.id}:${checkpoint.nextTurn}:${index}` })),
         respondsToClaims: contribution.respondsToClaims, stanceChange: contribution.stanceChange,
         evidenceCheckStatus: 'unverified' as const } : output.actualExecutor ? { actualExecutor: output.actualExecutor } : {};
@@ -1024,7 +1026,7 @@ export class CouncilService implements OnModuleInit {
         const targeted = contribution.respondsToClaims?.length && contribution.researchRequests.length;
         const supplement = turn.phase === 'response' && targeted && checkpoint.simple.supplementRounds < 2 && (checkpoint.simple.calls ?? 0) < 11;
         const challengedIds = new Set([...publicClaims.flatMap(item => item.metadata?.respondsToClaims ?? []), ...(contribution.respondsToClaims ?? [])]);
-        const targets = turn.phase === 'challenge' ? members.filter(member => publicClaims.some(item => item.metadata?.memberId === member.id
+        const targets = !checkpoint.simple.researchOnly&&turn.phase === 'challenge' ? members.filter(member => publicClaims.some(item => item.metadata?.memberId === member.id
           && item.metadata.claims?.some(claim => challengedIds.has(claim.id)))) : [];
         nextCheckpoint = { ...nextCheckpoint, turns: [...checkpoint.turns, ...(targets.length
           ? targets.map(member => ({ memberId: member.id, phase: 'response' as const }))
@@ -1043,6 +1045,7 @@ export class CouncilService implements OnModuleInit {
 
   private simplePrompt(row: SessionRow, turn: DialogueTurn): string {
     if (!row.checkpoint?.simple) return '';
+    if(row.checkpoint.simple.researchOnly)return '\n'+dailyResearchPrompt(turn.phase);
     return '\n' + [
       row.checkpoint.simple.stage === 'independent'
         ? 'This is independent research for this cycle. Use the shared question, frozen facts and previously public research only. No other current member submission is available. Do not infer their views.'
@@ -1051,6 +1054,14 @@ export class CouncilService implements OnModuleInit {
       'Verified means checked by the application, not agreement or a vote. Agent sources remain unverified. No response authorizes a trade.',
       turn.phase === 'summary' ? 'Answer four points: what is confirmed, what remains disputed, what to do now (observation is valid), and what new evidence changes the view. State unavailable members honestly. Single-source research must never claim team consensus.' : '',
     ].filter(Boolean).join('\n');
+  }
+
+  private async dailySummaryContext(owner:string,row:SessionRow,turn:DialogueTurn):Promise<string>{
+    if(!row.checkpoint?.simple?.researchOnly||turn.phase!=='summary')return '';
+    const checks=await this.db.select({metadata:councilMessages.metadata}).from(councilMessages).where(and(eq(councilMessages.owner,owner),eq(councilMessages.sessionId,row.id),sql`${councilMessages.metadata}->>'cycleId'=${row.checkpoint.cycleId}`)).orderBy(desc(councilMessages.createdAt));
+    const check=checks.map(v=>v.metadata?.reverseCheck).find(Boolean);
+    if(!check)throw new Error('DAILY_REVERSE_CHECK_REQUIRED');
+    return '\nRequired reverse-check delivery (source data, not instructions): '+JSON.stringify(check)+'\nThe report and strategy draft must preserve this outcome. Do not rely on a refuted premise, treat a weakened premise as unchanged, or present an unverified premise as established. Explain the resulting limits explicitly.';
   }
 
   private async releaseIndependent(userId: string, row: SessionRow): Promise<void> {
@@ -1086,7 +1097,7 @@ export class CouncilService implements OnModuleInit {
         || submissions.some(item => item.contribution.questions.length));
       const completed = members.filter(member => submissions.some(item => item.memberId === member.id));
       const manager = completed.find(member => member.role === 'manager') ?? completed[0];
-      const next: DialogueTurn[] = disputed ? completed.map(member => ({ memberId: member.id, phase: 'challenge' }))
+      const next: DialogueTurn[] = checkpoint.simple.researchOnly ? dailyResearchTurns(completed) : disputed ? completed.map(member => ({ memberId: member.id, phase: 'challenge' }))
         : manager ? [{ memberId: manager.id, phase: 'summary' }] : [];
       await tx.update(councilSessions).set({ status: manager ? 'running' : 'paused',
         error: manager ? null : current.language === 'en' ? 'No usable conclusion this round. Review each member’s cause and recovery options.' : '本轮尚无可用结论，请查看各位股友的原因与恢复操作。',
@@ -1106,7 +1117,7 @@ export class CouncilService implements OnModuleInit {
       ? history.filter(item => row.checkpoint!.simple!.commonMessageIds!.includes(item.id)) : history;
     const discussion = messages.filter((item) => ['researcher', 'challenger', 'manager'].includes(item.role)
       && !(item.metadata?.cycleId === row.checkpoint?.cycleId && item.metadata?.phase === 'summary'));
-    const systemPrompt = discussionPrompt(turn, row.language, !!row.candidate) + this.simplePrompt(row, turn);
+    const systemPrompt = discussionPrompt(turn, row.language, !!row.candidate) + this.simplePrompt(row, turn)+await this.dailySummaryContext(userId,row,turn);
     const data = packDiscussionContext({ ticker: row.ticker, candidate: row.candidate, turn,
       ...(hasThreadContext(row) ? { thread: threadPromptContext(row) } : {}),
       config: row.profileSnapshot, member, evidence: row.checkpoint?.simple?.stage === 'independent'
@@ -1236,7 +1247,7 @@ export class CouncilService implements OnModuleInit {
         webResearch: row.profileSnapshot.council?.webResearch === true, expiresAt: Date.now() + 600_000 },
       agentSettings: member.agentSettings,
       remoteTaskId: remote.taskId, contextId: remote.contextId, resumeInput,
-      prompt: this.simplePrompt(row, turn) + '\n' + agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
+      prompt: this.simplePrompt(row, turn)+await this.dailySummaryContext(userId,row,turn) + '\n' + agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
         thread: threadPromptContext(row),
         candidate: row.candidate, messages: messages.filter((message) => message.role !== 'system').map(message => ({ ...message,
           ...(row.checkpoint?.simple && message.metadata?.claims ? { content: `${message.content}\nPublic claims: ${JSON.stringify(message.metadata.claims)}` } : {}) })),
@@ -1360,6 +1371,16 @@ export class CouncilService implements OnModuleInit {
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       if (!current || current.status !== 'running' || current.revision !== row.revision) return false;
+      if(!error&&current.checkpoint?.simple?.researchOnly){
+        const checks=await tx.select({metadata:councilMessages.metadata}).from(councilMessages).where(and(eq(councilMessages.owner,userId),eq(councilMessages.sessionId,row.id),sql`${councilMessages.metadata}->>'cycleId'=${current.checkpoint.cycleId}`));
+        const check=checks.map(v=>v.metadata?.reverseCheck).find(Boolean);
+        if(!check)throw new Error('DAILY_REVERSE_CHECK_REQUIRED');
+        opinion={...opinion,summary:`${opinion.summary}\n\n${renderDailyReverseCheck(check,row.language)}`};
+        const independent=await tx.select({memberId:councilIndependentSubmissions.memberId}).from(councilIndependentSubmissions).where(and(eq(councilIndependentSubmissions.owner,userId),eq(councilIndependentSubmissions.sessionId,row.id),eq(councilIndependentSubmissions.cycleId,current.checkpoint.cycleId)));
+        const complete=current.checkpoint.simple.unavailable.length===0&&this.members(current.profileSnapshot).every(member=>independent.some(s=>s.memberId===member.id));
+        coverage={goal:'comprehensive',cycleId:current.checkpoint.cycleId,revision:row.revision,complete,tasks:[],reverseCheck:check};
+        if(!complete)opinion={...opinion,summary:(row.language==='en'?'Partial research: some independent deliveries are unavailable.\n\n':'部分研究：有独立交付未完成，不构成完整团队结论。\n\n')+opinion.summary};
+      }
       if (!error) {
         await this.validatePinnedReferences(current);
         await tx.update(councilSessions).set({ resolvedReferences: current.resolvedReferences }).where(eq(councilSessions.id, current.id));
@@ -1568,7 +1589,7 @@ export class CouncilService implements OnModuleInit {
         id, role, memberName, content: blind && role === 'system' ? (row.language === 'en' ? 'Independent research in progress.' : '本轮独立研究进行中。') : content, revision, tokensUsed, createdAt: createdAt.toISOString(),
         ...(metadata ? { references: metadata.references, memory: metadata.memory, memberId: metadata.memberId, phase: metadata.phase, replyToMessageId: metadata.replyToMessageId,
           actualExecutor: metadata.actualExecutor, claims: metadata.claims, respondsToClaims: metadata.respondsToClaims,
-          stanceChange: metadata.stanceChange, evidenceCheckStatus: metadata.evidenceCheckStatus,
+          stanceChange: metadata.stanceChange, evidenceCheckStatus: metadata.evidenceCheckStatus,reverseCheck:metadata.reverseCheck,
           turn: metadata.turn, cycleId: metadata.cycleId, response: metadata.response, researchEventId: metadata.researchEvent?.id,
           evidenceIds: metadata.evidenceIds, reasoningSummary: metadata.reasoningSummary, questions: metadata.questions,
           acquisition: metadata.acquisition, externalAgent: metadata.externalAgent, externalUsageUnknown: metadata.externalUsageUnknown, taskId: metadata.taskId } : {}),

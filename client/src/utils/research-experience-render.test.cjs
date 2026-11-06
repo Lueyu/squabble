@@ -25,7 +25,7 @@ test('returned research has local recovery without a misleading connection promp
 test('a durable initializing receipt never flashes a connection error', () => {
   const session = { ...base, initializing: true, mode: 'unavailable', stage: 'waiting', status: 'idle', actualExecutors: [], memberStates: [], messages: [] };
   state.queries.set('research-conversation', { data: session });
-  const html = render(load('pages/Council/SimpleCouncilPage.tsx').default);
+  const html = render(load('pages/Council/ArchivedCouncilPage.tsx').default);
   assert.match(html, /Question received\. Arranging your stock friends/);
   assert.doesNotMatch(html, /Connect AI|No AI member is connected|Some research needs attention/);
 });
@@ -42,7 +42,7 @@ test('model repair exposes existing qualified model options and preserves saved 
 
 test('a failed member keeps another member’s accepted answer and one aggregate recovery area', () => {
   state.queries.set('research-conversation', { data: base });
-  const html = render(load('pages/Council/SimpleCouncilPage.tsx').default);
+  const html = render(load('pages/Council/ArchivedCouncilPage.tsx').default);
   assert.match(html, /A preserved finding/);
   assert.equal((html.match(/aria-label="Research recovery"/g) || []).length, 1);
   assert.doesNotMatch(html, /No AI connection is available/);

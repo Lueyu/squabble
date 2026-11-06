@@ -42,6 +42,7 @@ import { LlmBudgetModule } from './modules/llm-budget/llm-budget.module';
 import { SystemUpdateModule } from './modules/system-update/system-update.module';
 import { ResearchDocumentsModule } from './modules/research-documents/research-documents.module';
 import { ExperienceModule } from './modules/experience/experience.module';
+import { ChannelModule } from './modules/channel/channel.module';
 
 /**
  * Root Nest module. Aggregates feature modules and installs the global
@@ -58,6 +59,7 @@ import { ExperienceModule } from './modules/experience/experience.module';
     SystemUpdateModule,
     ResearchDocumentsModule,
     ExperienceModule,
+    ChannelModule,
 
     // ====== @route-section: business-modules START ======
     HoldingsModule,
