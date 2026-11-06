@@ -107,6 +107,7 @@ export interface ResearchConversationEntry {
   task?: ResearchTaskView;
   message?: CouncilMessage;
   legacyActivity?: CouncilMessage;
+  report?: CouncilSession['reports'][number];
 }
 
 /** One persistent card per observed task/turn; completion fills that card instead of adding another one. */
@@ -124,6 +125,8 @@ export function researchConversation(session: CouncilSession): {
       if (!message.researchEventId) entries.push({ key: message.id, at: message.createdAt, legacyActivity: message });
     } else entries.push({ key: message.id, at: message.createdAt, message });
   }
+  for(const report of new Map((session.reports??[]).map(item=>[item.id,item])).values())
+    entries.push({key:`report:${report.id}`,at:report.createdAt,report});
   entries.sort((left, right) => left.at.localeCompare(right.at));
   return { entries, cursor: timeline.cursor, truncated: timeline.truncated };
 }

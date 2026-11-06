@@ -16,8 +16,8 @@ export function normalizeCouncil(input?: CouncilConfig): CouncilConfig {
     { id: 'manager', role: 'manager', name: 'Portfolio manager', instructions: '', model: 'slow' },
   ] };
   if (!input || typeof input.enabled !== 'boolean' || !Array.isArray(input.members)
-    || input.members.length < 2 || input.members.length > 6) {
-    throw new Error('Council needs 2–6 members and an enabled preference');
+    || input.members.length < 1 || input.members.length > 6) {
+    throw new Error('Council needs 1–6 members and an enabled preference');
   }
   if (input.webResearch !== undefined && typeof input.webResearch !== 'boolean') throw new Error('Invalid web research preference');
   const optionalText = (value: unknown, maximum: number): string | undefined => {
@@ -58,6 +58,7 @@ export function normalizeCouncil(input?: CouncilConfig): CouncilConfig {
       ...(member.researchFocus === undefined ? {} : { researchFocus: [...new Set(member.researchFocus)] }),
       ...(member.speakingStyle === undefined ? {} : { speakingStyle: member.speakingStyle }) };
   });
+  if (members.length === 1) members[0] = { ...members[0], role: 'manager' };
   if (members.filter((member) => member.role === 'manager').length !== 1) throw new Error('Council requires exactly one moderator');
   return { enabled: input.enabled, members, webResearch: input.webResearch ?? false };
 }

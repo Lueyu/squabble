@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { CouncilCandidate, CouncilMember, CouncilResearchKind, CouncilReport, CouncilMessage, CouncilResponse } from '@shared/council.interface';
 import { parseResponse } from './council-output';
+import { readableResearch } from '../../../shared/research-reading';
 import { byteExcerpt, type CouncilEvidence, type CouncilOpinion, parseOpinion } from './council.rules';
 import type { CouncilCheckpoint, DialogueTurn, ResearchRequest } from './council.types';
 
@@ -76,7 +77,7 @@ export function parseContribution(value: unknown, validIds: Set<string>, turn: D
   const flatResponse=data.response===undefined&&['thesis','evidencePoints','risks','nextChecks'].every(key=>Object.hasOwn(data,key))
     ? {thesis:data.thesis,evidencePoints:data.evidencePoints,risks:data.risks,nextChecks:data.nextChecks,...(data.details===undefined?{}:{details:data.details})}:undefined;
   const response = parseResponse(data.response===undefined?flatResponse:data.response);
-  const legacyContent = typeof data.content === 'string' ? data.content.trim() : typeof data.summary === 'string' ? data.summary.trim() : '';
+  const legacyContent = typeof data.content === 'string' ? readableResearch(data.content) : typeof data.summary === 'string' ? readableResearch(data.summary) : '';
   const structuredContent = response ? [response.thesis, ...response.evidencePoints,
     ...response.risks, ...response.nextChecks, response.details].filter(Boolean).join('\n\n') : '';
   const content = legacyContent || structuredContent;

@@ -1455,3 +1455,154 @@ CREATE UNIQUE INDEX IF NOT EXISTS research_analysis_request_receipt ON research_
 ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_snapshot jsonb;
 ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_route jsonb;
 ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_connection_id text;
+
+-- Assets reports and strategy migrations
+-- 37_asset_ledger_integrity.sql
+-- Preserve original duplicate evidence before enforcing one current cash row.
+ALTER TABLE cash_accounts ADD COLUMN IF NOT EXISTS reconciliation_status varchar(20) NOT NULL DEFAULT 'unconfirmed';
+ALTER TABLE cash_accounts ADD COLUMN IF NOT EXISTS confirmed_at timestamptz(3);
+CREATE TABLE IF NOT EXISTS cash_account_conflicts (
+  id uuid PRIMARY KEY, owner text NOT NULL, currency varchar(10) NOT NULL,
+  original jsonb NOT NULL, archived_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS cash_balance_confirmations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, request_key text NOT NULL,
+  input_hash text NOT NULL, changes jsonb NOT NULL, created_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_confirmations_owner_request ON cash_balance_confirmations(owner,request_key);
+
+CREATE TABLE IF NOT EXISTS position_baselines (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  ticker varchar(20) NOT NULL, market varchar(10) NOT NULL, currency varchar(10) NOT NULL,
+  shares numeric NOT NULL, avg_cost numeric, company text, source text NOT NULL, source_id text,
+  observed_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  covered_transaction_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  covered_closed_ids jsonb NOT NULL DEFAULT '[]'::jsonb
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_position_baselines_owner_ticker ON position_baselines(owner, ticker);
+CREATE TABLE IF NOT EXISTS asset_ledger_migrations (
+  migration_key text PRIMARY KEY, applied_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+-- Startup replays additive SQL. Only the first upgrade may reinterpret legacy balances/history.
+DO $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended(current_schema() || ':asset-ledger-upgrade', 0));
+  IF NOT EXISTS (SELECT 1 FROM asset_ledger_migrations WHERE migration_key = '37_asset_ledger_integrity') THEN
+    WITH duplicates AS (
+      SELECT owner, currency FROM cash_accounts GROUP BY owner, currency HAVING count(*) > 1
+    )
+    INSERT INTO cash_account_conflicts(id, owner, currency, original)
+    SELECT c.id, c.owner, c.currency, to_jsonb(c) FROM cash_accounts c
+    JOIN duplicates d USING(owner, currency) ON CONFLICT(id) DO NOTHING;
+    WITH groups AS (
+      SELECT owner, currency, (array_agg(id ORDER BY _created_at, id))[1] AS keep_id,
+        count(*) AS n, bool_or(balance <> 0) AS nonzero
+      FROM cash_accounts GROUP BY owner, currency
+    )
+    UPDATE cash_accounts c SET reconciliation_status = CASE
+      WHEN c.reconciliation_status = 'review' THEN 'review'
+      WHEN g.n > 1 AND g.nonzero THEN 'review'
+      WHEN c.balance <> 0 THEN 'confirmed' ELSE c.reconciliation_status END
+    FROM groups g WHERE c.id = g.keep_id;
+    WITH ranked AS (
+      SELECT id, row_number() OVER(PARTITION BY owner, currency ORDER BY _created_at, id) AS n FROM cash_accounts
+    )
+    DELETE FROM cash_accounts c USING ranked r WHERE c.id = r.id AND r.n > 1;
+    UPDATE cash_accounts SET confirmed_at = CURRENT_TIMESTAMP WHERE reconciliation_status = 'confirmed' AND confirmed_at IS NULL;
+    -- Existing positions are checkpoints of known state. Historical trades stay untouched.
+    INSERT INTO position_baselines(owner,ticker,market,currency,shares,avg_cost,company,source,source_id,covered_transaction_ids,covered_closed_ids)
+    SELECT h.owner,h.ticker,coalesce(h.market,'US'),coalesce(h.currency,'USD'),h.shares,h.buy_price,h.company,
+      'upgrade-checkpoint',h.id::text,coalesce((SELECT jsonb_agg(t.id::text) FROM transactions t WHERE t.owner=h.owner AND t.ticker=h.ticker),'[]'::jsonb),
+      coalesce((SELECT jsonb_agg(c.id::text) FROM closed c WHERE c.owner=h.owner AND c.ticker=h.ticker),'[]'::jsonb)
+    FROM holdings h WHERE h.shares > 0 ON CONFLICT(owner,ticker) DO NOTHING;
+    INSERT INTO asset_ledger_migrations(migration_key) VALUES ('37_asset_ledger_integrity');
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_owner_currency ON cash_accounts(owner, currency);
+
+-- 39_user_investment_strategies.sql
+-- Additive strategy authoring workspace. Existing policies, mandates, accounts and orders are preserved.
+CREATE TABLE IF NOT EXISTS user_investment_strategies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, revision integer NOT NULL DEFAULT 1,
+  parent_id uuid, status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','confirmed')), content jsonb NOT NULL,
+  sources jsonb NOT NULL DEFAULT '[]'::jsonb, preview jsonb, confirmed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS user_investment_strategies_owner_updated ON user_investment_strategies(owner,updated_at);
+CREATE TABLE IF NOT EXISTS user_investment_strategy_revisions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  strategy_id uuid NOT NULL REFERENCES user_investment_strategies(id), revision integer NOT NULL, snapshot jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_investment_strategy_revision_unique ON user_investment_strategy_revisions(owner,strategy_id,revision);
+CREATE TABLE IF NOT EXISTS user_investment_strategy_current (
+  owner text PRIMARY KEY, strategy_id uuid NOT NULL REFERENCES user_investment_strategies(id), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS user_investment_strategy_preparations (
+  owner text NOT NULL, request_key text NOT NULL, strategy_id uuid NOT NULL REFERENCES user_investment_strategies(id),
+  input_hash text NOT NULL, status text NOT NULL CHECK (status IN ('pending','succeeded','failed')), result jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_investment_strategy_preparation_key ON user_investment_strategy_preparations(owner,request_key);
+
+-- 40_transaction_imports.sql
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_identity text;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_fingerprint text;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_batch_id uuid;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_data jsonb;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS linked_transaction_id uuid;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS ledger_order bigint GENERATED BY DEFAULT AS IDENTITY;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_owner_source_identity ON transactions(owner,source_identity);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_owner_source_fingerprint ON transactions(owner,source_fingerprint) WHERE source_identity IS NULL;
+CREATE TABLE IF NOT EXISTS transaction_import_batches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  input jsonb NOT NULL, rows jsonb NOT NULL, revision integer NOT NULL DEFAULT 0,
+  receipts jsonb NOT NULL DEFAULT '[]'::jsonb, created_at timestamptz(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_transaction_import_batches_owner ON transaction_import_batches(owner);
+
+-- 41_portfolio_value_points.sql
+CREATE TABLE IF NOT EXISTS portfolio_value_points (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, date_key text NOT NULL, slot text NOT NULL,
+  captured_at timestamptz NOT NULL, total_value_usd numeric, known_value_usd numeric NOT NULL,
+  complete boolean NOT NULL, estimated boolean NOT NULL, external_flows jsonb NOT NULL DEFAULT '[]'::jsonb,
+  cash_checkpoints jsonb NOT NULL DEFAULT '[]'::jsonb, position_checkpoints jsonb NOT NULL DEFAULT '[]'::jsonb
+);
+ALTER TABLE portfolio_value_points ADD COLUMN IF NOT EXISTS cash_checkpoints jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE portfolio_value_points ADD COLUMN IF NOT EXISTS position_checkpoints jsonb NOT NULL DEFAULT '[]'::jsonb;
+CREATE UNIQUE INDEX IF NOT EXISTS portfolio_value_point_slot ON portfolio_value_points(owner,slot);
+
+-- 42_user_strategy_runtime.sql
+-- Managed accounts need explicit investor strategy authority before resuming.
+-- Preserve all ledgers, snapshots, reports and completed trades. Idempotent on upgrade.
+UPDATE investment_policies SET status = 'paused', revision = revision + 1, updated_at = NOW()
+WHERE status = 'running' AND base_config -> 'userStrategy' IS NULL;
+UPDATE paper_accounts a SET bot_enabled = FALSE, updated_at = NOW()
+FROM investment_policies p WHERE p.account_id = a.id AND p.owner = a.owner
+AND p.status = 'paused' AND p.base_config -> 'userStrategy' IS NULL AND a.bot_enabled = TRUE;
+UPDATE investment_cycles c SET state = 'cancelled', updated_at = NOW(), result = jsonb_build_object('reason', 'Confirm an investor strategy before execution')
+FROM investment_policies p WHERE p.id = c.policy_id AND p.owner = c.owner AND p.base_config -> 'userStrategy' IS NULL
+AND c.state IN ('queued', 'researching', 'waiting');
+UPDATE strategy_mandates m SET status = 'paused', updated_at = NOW()
+FROM investment_policies p WHERE p.account_id = m.account_id AND p.owner = m.owner AND p.base_config -> 'userStrategy' IS NULL AND m.status = 'published';
+UPDATE strategy_reservations r SET status = 'released', reason = 'Confirm an investor strategy before execution', updated_at = NOW()
+FROM investment_policies p WHERE p.account_id = r.account_id AND p.owner = r.owner AND p.base_config -> 'userStrategy' IS NULL AND r.status = 'active';
+UPDATE strategy_signals s SET state = 'cancelled', reason = 'Confirm an investor strategy before execution', updated_at = NOW()
+FROM investment_policies p WHERE p.owner = s.owner AND s.candidate ->> 'accountId' = p.account_id::text
+AND p.base_config -> 'userStrategy' IS NULL AND s.state IN ('claimed', 'pending', 'reviewing', 'approved', 'wait');
+CREATE TABLE IF NOT EXISTS simulation_valuation_baselines (
+  account_id UUID PRIMARY KEY,
+  owner TEXT NOT NULL,
+  seed JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE OR REPLACE FUNCTION reject_simulation_valuation_baseline_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'Simulation valuation baseline is immutable'; END;
+$$;
+DROP TRIGGER IF EXISTS simulation_valuation_baseline_immutable ON simulation_valuation_baselines;
+CREATE TRIGGER simulation_valuation_baseline_immutable BEFORE UPDATE OR DELETE ON simulation_valuation_baselines
+FOR EACH ROW EXECUTE FUNCTION reject_simulation_valuation_baseline_mutation();
+
+UPDATE paper_orders o SET status = 'cancelled', reason = 'Confirm an investor strategy before execution'
+FROM investment_policies p WHERE p.account_id = o.account_id AND p.owner = o.owner
+AND p.base_config -> 'userStrategy' IS NULL AND o.status = 'pending_approval';

@@ -2,6 +2,7 @@ import type {
   CouncilConfig, CouncilMessage, CouncilReport, CouncilSession, LlmBudgetSettings, TradingCadence,
 } from '@shared/council.interface';
 import { COUNCIL_AVATARS, COUNCIL_RESEARCH_KINDS, COUNCIL_SPEAKING_STYLES } from '@shared/council-templates';
+import { readableResearch } from '@shared/research-reading';
 
 export const DEFAULT_CADENCE: TradingCadence = {
   reviewEveryTradingDays: 5, maxOrdersPerWeek: 2,
@@ -27,7 +28,7 @@ const INTERNAL_EVIDENCE_LINE = new RegExp(`^\\s*\\[\\s*${EVIDENCE_UUID}(?:\\s*,\
 /** Legacy AI replies included internal IDs; source details remain in the report. */
 export function councilMessageDisplayContent(message: Pick<CouncilMessage, 'role' | 'content'>): string {
   if (message.role === 'user' || message.role === 'system') return message.content;
-  return message.content.split('\n').filter((line: string) => !INTERNAL_EVIDENCE_LINE.test(line)).join('\n');
+  return readableResearch(message.content.split('\n').filter((line: string) => !INTERNAL_EVIDENCE_LINE.test(line)).join('\n'));
 }
 
 export function isCurrentCouncilReport(

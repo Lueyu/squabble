@@ -39,6 +39,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from 'react-i18next';
 import ScreenshotImport from './ScreenshotImport';
+import TransactionImport from './TransactionImport';
 
 /** Field keys the CSV mapper can assign. */
 type MapField = 'ticker' | 'shares' | 'avgCost' | 'company';
@@ -227,6 +228,7 @@ function ImportPage() {
       </div>
 
       {mode === 'csv' ? <CsvImport /> : <ScreenshotImport />}
+      <TransactionImport />
       <ImportHistoryCard />
     </div>
   );

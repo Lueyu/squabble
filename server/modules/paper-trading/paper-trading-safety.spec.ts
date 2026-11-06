@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { PaperTradingService } from './paper-trading.service';
+import { investmentPolicies } from '../../database/investment-policy.schema';
 import { strategyMandates } from '../../database/strategy-mandates.schema';
 import { simulationSeeds } from '../../database/simulation-experiments.schema';
 import { simulationMarketFixture } from './simulation-market.fixture';
@@ -134,7 +135,7 @@ test('first daily-loss baseline uses current equity when an account has no snaps
   const service = new PaperTradingService(
     {
       select: () => ({
-        from: (table: unknown) => table === strategyMandates
+        from: (table: unknown) => table === investmentPolicies ? { where: async () => [] } : table === strategyMandates
           ? { where: () => ({ orderBy: () => ({ limit: async () => [] }) }) }
           : ({ where: () => ({ orderBy: async () => [] }) }),
       }),
@@ -160,7 +161,7 @@ test('updating a daily snapshot keeps its original opening equity', async () => 
   const service = new PaperTradingService(
     {
       select: () => ({
-        from: (table: unknown) => table === strategyMandates
+        from: (table: unknown) => table === investmentPolicies ? { where: async () => [] } : table === strategyMandates
           ? { where: () => ({ orderBy: () => ({ limit: async () => [] }) }) }
           : ({
           where: async () => {

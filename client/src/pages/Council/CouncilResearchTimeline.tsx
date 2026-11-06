@@ -60,6 +60,7 @@ export default function CouncilResearchTimeline({ task }: { task: ResearchTaskVi
   const { t } = useTranslation();
   const [now, setNow] = useState(Date.now);
   const active = researchIsActive(task.status);
+  const [manualOpen,setManualOpen]=useState<boolean|null>(null);
   useEffect(() => {
     if (!active) return;
     setNow(Date.now());
@@ -77,8 +78,8 @@ export default function CouncilResearchTimeline({ task }: { task: ResearchTaskVi
       && activity.toolName === previous[0].toolName && activity.status === previous[0].status) previous.push(activity);
     else groups.push([activity]);
   }
-  return <details className={`min-w-0 text-xs ${needsAttention ? 'text-destructive' : 'text-muted-foreground'}`}>
-    <summary className="cursor-pointer rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+  return <details open={manualOpen??active} className={`min-w-0 text-xs ${needsAttention ? 'text-destructive' : 'text-muted-foreground'}`}>
+    <summary onClick={event=>{event.preventDefault();setManualOpen(!(manualOpen??active));}} className="cursor-pointer rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
       <span className="inline-flex max-w-[calc(100%-1rem)] items-center gap-2 align-middle leading-5">
         <ActivityIcon status={task.status} />
         <span className="min-w-0 truncate font-medium">{t(active ? 'council.progress.researching' : 'council.progress.history')}</span>

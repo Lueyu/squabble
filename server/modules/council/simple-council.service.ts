@@ -186,7 +186,8 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       const convert = row.status !== 'running' && (!row.checkpoint?.simple || row.status === 'completed' || row.checkpoint.simple.stopped
         || !row.profileSnapshot.council?.members.length);
       const checkpoint = convert ? newCheckpoint(actual.members, { independent: true }) : row.checkpoint;
-      if (convert && checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, executors: actual.executors, commonEvidence: row.evidenceSnapshot };
+      if (convert && checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, executors: actual.executors, commonEvidence: row.evidenceSnapshot,
+        contextDate:row.checkpoint?.simple?.contextDate,contextLabel:row.checkpoint?.simple?.contextLabel };
       if (checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, automaticTaskId: options.automaticTaskId,
         steeringRevision: (checkpoint.simple.steeringRevision ?? 0) + 1 };
       await tx.update(councilSessions).set({ revision, updatedAt: new Date(), continuationSummary,
@@ -348,7 +349,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       frozen.references.push({ versionId: version.id }); frozen.ticker = version.ticker ?? 'PORTFOLIO';
       frozen.scene = frozen.ticker === 'PORTFOLIO' ? 'portfolio_daily' : 'stock'; frozen.label = version.title;
       snapshot(frozen.label,{documentId:version.id,dataAsOf:version.dataAsOf,snapshot:version.snapshot});
-      if(frozen.scene==='portfolio_daily')frozen.contextDate=ownerDay(new Date(version.dataAsOf??version.createdAt));
+      if(frozen.scene==='portfolio_daily')frozen.contextDate=typeof version.snapshot?.businessDate==='string'?version.snapshot.businessDate:ownerDay(new Date(version.createdAt));
     } else if (chosen?.kind === 'portfolio') {
       frozen.scene = 'portfolio_daily'; frozen.label = chosen.date ? `持仓 ${chosen.date} / Portfolio ${chosen.date}` : '我的持仓 / My portfolio';
       frozen.contextDate=chosen.date??ownerDay(new Date());

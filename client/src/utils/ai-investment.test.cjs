@@ -47,15 +47,17 @@ test('a paused account explicitly includes protective exits and a missing heartb
   assert.match(render(Status, { status: 'paused', lastHeartbeatAt: null }), /including stop-loss and protective exits/);
   assert.match(render(Status, { status: 'running', lastHeartbeatAt: null }), /heartbeat unknown/);
 });
-test('investment preparation never invents cash and explains inherited concentrated positions', () => {
+test('paper copy is short, permits waiting quotes, and has one optional virtual cash field per currency', () => {
   const { load, render, state } = require('./simple-test-loader.cjs')();
   const Start = load('pages/Paper/StartInvestmentCard.tsx').default;
   state.language = 'en';
   const limits = { maxPositionPct: 10, maxOrderPct: 5, maxDailyIncreasePct: 5, maxDailyTurnoverPct: 20, maxGrossExposurePct: 90, minCashPct: 10, dailyLossLimitPct: 3 };
-  const html = render(Start, { preview: { id: 'preview', previewId: 'preview', seed: { positions: [{ ticker: 'TEST', shares: '20', currency: 'USD', sellableShares: '20' }], cash: [], initialEquityUsd: '1000', gaps: ['CASH_UNKNOWN'], model: { feeBps: 5, slippageBps: 10 } }, needsInput: ['CASH_UNKNOWN'], markets: ['US'], limits, budget: { dailyTasks: 6, maxCallsPerTask: 12 }, inheritedConcentration: ['TEST'], expiresAt: '2030-01-01T00:00:00Z' }, onStarted() {} });
-  assert.match(html, /explicitly assume zero cash/);
-  assert.match(html, /Inherited concentrated positions/);
-  assert.match(html, /not force a sale/);
+  const html = render(Start, { preview: { id: 'preview', previewId: 'preview', seed: { capturedAt: '2026-11-06T00:00:00Z', positions: [{ ticker: 'TEST', shares: '20', currency: 'USD', sellableShares: '20' }], cash: [], initialEquityUsd: '1000', gaps: ['CASH_UNKNOWN'], model: { feeBps: 5, slippageBps: 10 } }, needsInput: ['CASH_UNKNOWN'], markets: ['US'], limits, budget: { dailyTasks: 6, maxCallsPerTask: 12 }, inheritedConcentration: ['TEST'], expiresAt: '2030-01-01T00:00:00Z' }, onStarted() {} });
+  assert.match(html, /Assume zero recorded cash/);
+  assert.match(html, /Copy and observe/);
+  assert.match(html, /starts in observation/);
+  assert.equal((html.match(/type="number"/g) || []).length, 3);
+  assert.doesNotMatch(html, /Sellable shares|Allowed investment markets|may discover/);
   assert.doesNotMatch(html, /value="100000"/);
 });
 test('no-sell restriction confirmation explicitly warns that automatic protection is blocked', () => {

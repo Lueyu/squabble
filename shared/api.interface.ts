@@ -23,7 +23,7 @@ export type Action = '加仓' | '买入' | '持有' | '减仓' | '卖出' | '观
 export type Signal = '强烈买入' | '买入' | '观望' | '回避';
 export type Market = 'US' | 'HK' | 'CN';
 export type Currency = 'USD' | 'HKD' | 'CNY';
-export type TxType = 'Buy' | 'Sell' | 'Deposit' | 'Withdrawal' | 'Opening';
+export type TxType = 'Buy' | 'Sell' | 'Deposit' | 'Withdrawal' | 'Opening' | 'Fee';
 
 export interface Group {
   id: string;
@@ -325,6 +325,7 @@ export interface CashAccount {
   id: string;
   currency: Currency;
   balance: string;
+  reconciliationStatus?: 'confirmed' | 'unconfirmed' | 'review';
   updatedAt: string;
 }
 
@@ -349,6 +350,11 @@ export interface QuoteResponse {
   market: Market;
   timestamp: number;
   delayed?: boolean;
+    previousClose?: string;
+    /** Provider observation time, deliberately separate from timestamp/fetch time. */
+    quoteAt?: string;
+    tradingDate?: string;
+    source?: string;
 }
 
 export interface StockSearchResult {

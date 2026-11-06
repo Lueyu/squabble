@@ -1,4 +1,5 @@
 import type { CouncilResponse } from '../../../shared/council.interface';
+import { readableResearch } from '../../../shared/research-reading';
 export class CouncilOutputError extends Error {
   constructor(readonly fieldPath: string, readonly expectedType: string, readonly actualType: string) {
     super(`Invalid structured response at ${fieldPath}: expected ${expectedType}; received ${actualType}`);
@@ -7,7 +8,9 @@ export class CouncilOutputError extends Error {
 const actualType = (value: unknown) => value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
 function text(value: unknown, max: number, path: string): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new CouncilOutputError(path, `nonempty string (max ${max})`, actualType(value));
-  return value.trim();
+  const normalized=readableResearch(value);
+  if(!normalized)throw new CouncilOutputError(path,'readable research text','unrecognized protocol');
+  return normalized;
 }
 /** One known historical shape, one level only. Preserve every section and insertion order. */
 export function normalizeResponseDetails(value: unknown): string {

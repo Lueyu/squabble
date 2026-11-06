@@ -6,6 +6,7 @@ import { LocalAgentsService } from '../local-agents/local-agents.service';
 import { parseNativeAgentConfiguration } from '../local-agents/local-agents.requests';
 import { OcrService } from './ocr.service';
 import { EXTRACTION_PROMPT, parseScreenshotResult, ScreenshotError } from './screenshot-result';
+import { ledgerScreenshotPrompt, parseLedgerScreenshot } from './transaction-import.rules';
 
 interface JobRecord { owner: string; fingerprint: string; view: ScreenshotJob; abort: AbortController; done?: Promise<void>; active: boolean }
 interface JobOptions { now?: () => number; timeoutMs?: number; ttlMs?: number; maxJobs?: number }
@@ -95,6 +96,10 @@ export class ScreenshotJobsService implements OnModuleDestroy {
       && (input.baseUrl === undefined || typeof input.baseUrl === 'string' && input.baseUrl.length <= 500)) {
       dto = { requestId: input.requestId, image, executor: 'vision', apiKey: input.apiKey.trim(), model: input.model.trim(), baseUrl: input.baseUrl?.trim() };
     } else throw new BadRequestException(input.executor === 'vision' ? 'INVALID_API_CONFIGURATION' : 'INVALID_REQUEST');
+    if (input.purpose !== undefined) {
+      if (!['trades', 'cash-flows'].includes(input.purpose)) throw new BadRequestException('INVALID_REQUEST');
+      dto.purpose = input.purpose;
+    }
     this.prune();
     const fingerprint = createHash('sha256').update(JSON.stringify(dto)).digest('hex');
     const key = this.key(owner, dto.requestId);
@@ -129,16 +134,17 @@ export class ScreenshotJobsService implements OnModuleDestroy {
       let result;
       if (dto.executor === 'local') {
         const response = await this.agents.execute(job.owner, { agentId: dto.agentId, messageId: `screenshot:${job.view.id}`,
-          prompt: EXTRACTION_PROMPT, image: dto.image, agentSettings: dto.agentSettings, signal: job.abort.signal,
+          prompt: dto.purpose ? ledgerScreenshotPrompt(dto.purpose) : EXTRACTION_PROMPT, image: dto.image, agentSettings: dto.agentSettings, signal: job.abort.signal,
           onTask: async () => { if (job.abort.signal.aborted) throw new ScreenshotError('LOCAL_CANCELLED'); },
           onDispatch: async () => { if (job.abort.signal.aborted) throw new ScreenshotError('LOCAL_CANCELLED'); },
           onProgress: async () => undefined, shouldContinue: async () => !job.abort.signal.aborted });
         if (job.abort.signal.aborted) return;
         this.update(job, { phase: 'validating' });
-        result = parseScreenshotResult(response.text);
+        result = dto.purpose ? { rows: [], documentKind: dto.purpose, ledgerRows: parseLedgerScreenshot(response.text, dto.purpose) } : parseScreenshotResult(response.text);
       } else {
-        result = await this.ocr.extract({ apiKey: dto.apiKey, model: dto.model, baseUrl: dto.baseUrl,
-          imageBase64: `data:${dto.image.mimeType};base64,${dto.image.data}` }, job.abort.signal);
+        const imageDto = { apiKey: dto.apiKey, model: dto.model, baseUrl: dto.baseUrl,
+          imageBase64: `data:${dto.image.mimeType};base64,${dto.image.data}` };
+        result = dto.purpose ? { rows: [], documentKind: dto.purpose, ledgerRows: await this.ocr.extractLedger(imageDto, dto.purpose, job.abort.signal) } : await this.ocr.extract(imageDto, job.abort.signal);
       }
       if (!job.abort.signal.aborted) this.update(job, { status: 'completed', phase: 'done', result });
     } catch (error) {

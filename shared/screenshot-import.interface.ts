@@ -4,6 +4,7 @@ import type { NativeAgentImage } from './native-image.interface';
 export type ScreenshotExtractRequest = {
   requestId: string;
   image: NativeAgentImage;
+  purpose?: 'trades' | 'cash-flows';
 } & (
   | {
       executor: 'local';
@@ -40,6 +41,8 @@ export interface ScreenshotProblemRow {
   issues: ScreenshotFieldIssue[];
 }
 export interface ScreenshotResult extends OcrExtractResult {
+  documentKind?: 'trades' | 'cash-flows';
+  ledgerRows?: import('./transaction-import.interface').TransactionImportCandidate[];
   problemRows?: ScreenshotProblemRow[];
 }
 export type ImportExecutor =

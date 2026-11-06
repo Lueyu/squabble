@@ -17,6 +17,21 @@ import { eq, sql } from 'drizzle-orm';
 import { firstValueFrom } from 'rxjs';
 import { holdings, watchlist } from '@server/database/schema';
 import type { QuoteResponse, Market, Currency } from '@shared/api.interface';
+import { tradingMarketDate } from '../paper-trading/trading-market.calendar';
+
+function quoteReading(market: Market, previousClose: number, source: string, observed?: number | string): Partial<QuoteResponse> {
+  let quoteAt: string | undefined;
+  if(typeof observed==='number'&&Number.isFinite(observed)&&observed>0)quoteAt=new Date(observed*1000).toISOString();
+  // Tencent HK/CN timestamps use their exchange wall clock. The US fallback's
+  // undocumented wall-clock field is intentionally not treated as verified.
+  if(typeof observed==='string'&&market!=='US'&&/^\d{14}$/u.test(observed)) {
+    const y=Number(observed.slice(0,4)),m=Number(observed.slice(4,6)),d=Number(observed.slice(6,8));
+    const h=Number(observed.slice(8,10)),minute=Number(observed.slice(10,12)),second=Number(observed.slice(12,14));
+    if(m>=1&&m<=12&&d>=1&&d<=31&&h<24&&minute<60&&second<60)quoteAt=new Date(Date.UTC(y,m-1,d,h-8,minute,second)).toISOString();
+  }
+  return {previousClose:Number.isFinite(previousClose)&&previousClose>0?String(previousClose):undefined,source,quoteAt,
+    tradingDate:quoteAt?tradingMarketDate(market,new Date(quoteAt)):undefined};
+}
 
 /** Derived market/currency/symbol metadata for a ticker. */
 interface MarketInfo {
@@ -236,6 +251,8 @@ export class QuoteService {
    * @param symbol US ticker (uppercase).
    */
   async fetchUsQuote(symbol: string): Promise<QuoteResponse | null> {
+    const observed = await this.fetchUsQuoteYahoo(symbol);
+    if(observed)return observed;
     let primary: QuoteResponse | null = null;
     try {
       const url = `http://qt.gtimg.cn/q=us${symbol.toUpperCase()}`;
@@ -284,6 +301,7 @@ export class QuoteService {
         volume: volumeStr && !isNaN(parseFloat(volumeStr)) ? volumeStr : undefined,
         currency: 'USD',
         market: 'US',
+        ...quoteReading('US',prevClose,'tencent'),
         timestamp: Date.now(),
         delayed: true,
       };
@@ -332,6 +350,7 @@ export class QuoteService {
               regularMarketDayHigh?: number;
               regularMarketDayLow?: number;
               regularMarketVolume?: number;
+              regularMarketTime?: number;
               symbol?: string;
             };
           }>;
@@ -360,6 +379,7 @@ export class QuoteService {
         volume: typeof meta.regularMarketVolume === 'number' ? String(meta.regularMarketVolume) : undefined,
         currency: 'USD',
         market: 'US',
+        ...quoteReading('US',prevClose??NaN,'yahoo',meta.regularMarketTime),
         timestamp: Date.now(),
         delayed: true,
       };
@@ -427,6 +447,7 @@ export class QuoteService {
         volume: volumeStr && !isNaN(parseFloat(volumeStr)) ? volumeStr : undefined,
         currency: 'HKD',
         market: 'HK',
+        ...quoteReading('HK',prevClose,'tencent',fields[30]),
         timestamp: Date.now(),
         delayed: true,
       };
@@ -510,6 +531,7 @@ export class QuoteService {
         low: lowStr && !isNaN(parseFloat(lowStr)) ? parseFloat(lowStr).toFixed(2) : undefined,
         currency: 'HKD',
         market: 'HK',
+        ...quoteReading('HK',prevClose,'sina'),
         timestamp: Date.now(),
         delayed: true,
       };
@@ -544,6 +566,7 @@ export class QuoteService {
         changePercent: changePercent.toFixed(2),
         currency: 'HKD',
         market: 'HK',
+        ...quoteReading('HK',prevClose??NaN,'yahoo',meta.regularMarketTime),
         timestamp: Date.now(),
         delayed: true,
       };
@@ -606,6 +629,7 @@ export class QuoteService {
         volume: volumeStr && !isNaN(parseFloat(volumeStr)) ? volumeStr : undefined,
         currency: 'CNY',
         market: 'CN',
+        ...quoteReading('CN',prevClose,'tencent',fields[30]),
         timestamp: Date.now(),
         delayed: true,
       };

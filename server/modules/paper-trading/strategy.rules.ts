@@ -66,8 +66,14 @@ export function validateStrategyRules(value: unknown, context: PlanValidationCon
 
 /** Missing, stale or non-finite indicators never satisfy a trigger. */
 export function strategyTriggerMatches(rule: StrategyRule, price: number,
-  indicators: Partial<{ sma20: number; rsi14: number; volumeRatio: number }> | null): boolean {
+  indicators: Partial<{ sma20: number; rsi14: number; volumeRatio: number }> | null, now = new Date()): boolean {
   if (!Number.isFinite(price) || price < rule.minPrice || price > rule.maxPrice) return false;
+  if (rule.userDirective) {
+    const d = rule.userDirective;
+    if (now.getTime() < Date.parse(d.startsAt) || now.getTime() >= Date.parse(d.endsAt)) return false;
+    if (d.trigger.kind === 'always' || d.trigger.kind === 'semantic') return true;
+    return d.trigger.kind === 'price_lte' ? price <= Number(d.trigger.price) : price >= Number(d.trigger.price);
+  }
   const value = rule.trigger.value;
   switch (rule.trigger.kind) {
     case 'price_above': return price >= value;

@@ -13,6 +13,7 @@ export interface MandateRule extends StrategyRule {
   reviewMode?: 'deterministic' | 'ai';
 }
 export interface StrategyMandateInput {
+  userStrategyId?: string; userStrategyRevision?: number;
   parentPolicyId?: string; parentPolicyRevision?: number; cycleId?: string;
   title: string; objective: string;
   period: 'day' | 'month' | 'custom'; timezone: string; startsAt: string; endsAt: string;

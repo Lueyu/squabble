@@ -55,7 +55,7 @@ test('candidate boundary rejects malformed tickers and unsafe numbers', () => {
   assert.equal(normalizeCandidate({ ...candidate, ticker: ' aapl ' }).ticker, 'AAPL');
 });
 
-test('research teams accept two to six distinct people with exactly one moderator and preserve customization', () => {
+test('research teams preserve one real source or two to six distinct members with one moderator', () => {
   const member = { id: 'fundamental', role: 'researcher' as const, name: 'Fundamental analyst', instructions: 'Check cash flow', model: 'fast' as const,
     roleTitle: 'Fundamentals', personality: 'Skeptical and patient', researchFocus: ['financials' as const], speakingStyle: 'socratic' as const,
     connectionId: '123e4567-e89b-42d3-a456-426614174000' };
@@ -64,7 +64,10 @@ test('research teams accept two to six distinct people with exactly one moderato
   assert.deepEqual(team.members[0], member);
   assert.equal(team.webResearch, true);
   assert.equal(normalizeCouncil({ enabled: true, members: [member, manager] }).members.length, 2);
-  for (const members of [[member], [member, member, manager], [member, manager, { ...manager, id: 'other-chair' }],
+  const single = normalizeCouncil({ enabled: true, members: [member] });
+  assert.equal(single.members.length, 1);
+  assert.deepEqual(single.members[0], { ...member, role: 'manager' });
+  for (const members of [[], [member, member, manager], [member, manager, { ...manager, id: 'other-chair' }],
     Array.from({ length: 7 }, (_, i) => ({ ...member, id: `m${i}`, role: i === 6 ? 'manager' as const : 'researcher' as const }))]) {
     assert.throws(() => normalizeCouncil({ enabled: true, members }));
   }

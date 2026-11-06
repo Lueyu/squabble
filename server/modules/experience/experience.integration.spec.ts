@@ -83,10 +83,12 @@ test('current analysis preserves good content, deduplicates retries and rejects 
     assert.equal((await research.get(owner,'ticker:RAW','current')).documentId,null,'autonomous raw facts are not promoted as user analysis');
     const portfolioDiscussion=await publishDiscussion('Updated portfolio assessment',undefined,'PORTFOLIO',day);
     await research.reconcile();
-    assert.equal((await research.get(owner,'portfolio',day)).documentId,portfolioDiscussion.id,'completed portfolio discussion updates only its explicit business date');
+    assert.equal((await research.get(owner,'portfolio',day)).documentId,material.id,'discussion never overwrites the independently saved portfolio analysis');
+    assert.equal((await research.getDailyReports(owner,day)).latestDiscussion?.documentId,portfolioDiscussion.id,'discussion is visible beside the original report for its explicit business date');
     const historicalDiscussion=await publishDiscussion('Reassessing an old portfolio',undefined,'PORTFOLIO','2020-01-02');
     await research.reconcile();
-    assert.equal((await research.get(owner,'portfolio','2020-01-02')).documentId,historicalDiscussion.id);
-    assert.equal((await research.get(owner,'portfolio',day)).documentId,portfolioDiscussion.id,'discussion of yesterday never replaces today');
+    assert.equal((await research.get(owner,'portfolio','2020-01-02')).documentId,null,'historical discussion is not silently promoted into a standalone analysis');
+    assert.equal((await research.getDailyReports(owner,'2020-01-02')).latestDiscussion?.documentId,historicalDiscussion.id);
+    assert.equal((await research.getDailyReports(owner,day)).latestDiscussion?.documentId,portfolioDiscussion.id,'discussion of yesterday never replaces today’s discussion');
   } finally {await client.end();await admin`DROP SCHEMA ${admin(namespace)} CASCADE`;await admin.end();}
 });

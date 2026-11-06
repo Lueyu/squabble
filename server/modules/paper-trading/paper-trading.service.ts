@@ -327,7 +327,7 @@ export class PaperTradingService {
       if (source !== 'agent' || !builderProfile?.config.automation?.enabled) throw new BadRequestException('A current automatic strategy is required');
       const [requestedSignal] = await this.db.select({ candidate: strategySignals.candidate }).from(strategySignals)
         .where(and(eq(strategySignals.id, strategySignalId), eq(strategySignals.owner, userId)));
-      needsIndicators = requestedSignal?.candidate.protectiveStop !== true;
+      needsIndicators = requestedSignal?.candidate.protectiveStop !== true && !requestedSignal?.candidate.userStrategyId;
       needsPortfolioRisk = Boolean(requestedSignal?.candidate.mandateId && !requestedSignal.candidate.protectiveStop);
     }
     const now = Date.now();
@@ -360,7 +360,7 @@ export class PaperTradingService {
         .where(and(eq(paperAccounts.id, initialAccount.id), eq(paperAccounts.owner, userId)))
         .for('update');
       if (!lockedAccount || !lockedAccount.isActive || (expectedAccountId && lockedAccount.id !== expectedAccountId)) throw new BadRequestException('Paper account changed during execution');
-      if (source === 'agent' && !strategySignalId) {
+      if (!strategySignalId) {
         const investment = await investmentExecutionFence(tx, userId, lockedAccount.id, { ticker: dto.ticker, side: dto.side, market: price.market }, source);
         if (investment.block) return { memoryBlock: investment.block };
       }
@@ -748,7 +748,7 @@ export class PaperTradingService {
             avgCost: String(avgCost),
           });
         }
-        if (strategyRule && strategyPlanId) await tx.insert(strategyProtections).values({ owner: userId,
+        if (strategyRule && strategyRule.stopLossPrice > 0 && strategyPlanId) await tx.insert(strategyProtections).values({ owner: userId,
           accountId: account.id, ticker, market: price.market, stopLossPrice: String(strategyRule.stopLossPrice),
           planId: strategyPlanId, ruleId: strategyRule.id }).onConflictDoUpdate({
           target: [strategyProtections.owner, strategyProtections.accountId, strategyProtections.ticker],

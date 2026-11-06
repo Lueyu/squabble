@@ -11,7 +11,7 @@ test('one portfolio snapshot retains missing prices and never invents weights', 
   const snapshot = await buildPortfolioReportSnapshot([
     { ticker: 'AAPL', company: 'Apple', market: 'US', currency: 'USD', shares: '2', currentPrice: '100', buyPrice: '80' },
     { ticker: 'MSFT', company: 'Microsoft', market: 'US', currency: 'USD', shares: '3', currentPrice: null, buyPrice: '90' },
-  ], [{ currency: 'USD', balance: '100' }], async () => 1);
+  ], [{ currency: 'USD', balance: '100', reconciliationStatus: 'confirmed' }], async () => 1);
   assert.equal(snapshot.holdings.length, 2);
   assert.equal(snapshot.holdings[0].marketValueUsd, 200);
   assert.equal(snapshot.holdings[1].marketValueUsd, null);
@@ -30,12 +30,27 @@ test('portfolio accepts a slash-class holding symbol already supported by holdin
 test('Basic report includes every holding without model claims or trades', async () => {
   const snapshot = await buildPortfolioReportSnapshot([
     { ticker: 'AAPL', company: 'Apple', market: 'US', currency: 'USD', shares: '2', currentPrice: '100', buyPrice: '80' },
-  ], [{ currency: 'USD', balance: '100' }], async () => 1);
+  ], [{ currency: 'USD', balance: '100', reconciliationStatus: 'confirmed' }], async () => 1);
   const report = basicPortfolioReport(snapshot, 'en');
   assert.equal(report.holdings.length, 1);
   assert.equal(report.holdings[0].ticker, 'AAPL');
   assert.deepEqual(report.holdings[0].evidenceRefs, ['holding:AAPL:shares', 'holding:AAPL:currentPrice', 'holding:AAPL:marketValueUsd', 'holding:AAPL:weightPct']);
   assert.match(report.dataGaps.join(' '), /freshness/);
+});
+
+test('report snapshots require reconciled cash and never sum ambiguous balances into weights', async () => {
+  const positions=[{ticker:'ACME',company:null,market:'US',currency:'USD',shares:2,currentPrice:100,buyPrice:80}];
+  for(const balances of [[],[{currency:'USD',balance:0}],[{currency:'USD',balance:500,reconciliationStatus:'review'}],
+    [{currency:'USD',balance:200,reconciliationStatus:'confirmed'},{currency:'USD',balance:300,reconciliationStatus:'confirmed'}]]){
+    const snapshot=await buildPortfolioReportSnapshot(positions,balances,async()=>1);
+    assert.equal(snapshot.cashUsd,null);
+    assert.equal(snapshot.totalValueUsd,null);
+    assert.equal(snapshot.holdings[0].weightPct,null);
+    assert.ok(snapshot.gaps.some(gap=>/cash/i.test(gap)));
+  }
+  const confirmed=await buildPortfolioReportSnapshot(positions,[{currency:'USD',balance:0,reconciliationStatus:'confirmed'}],async()=>1);
+  assert.equal(confirmed.cashUsd,0);
+  assert.equal(confirmed.holdings[0].weightPct,100);
 });
 
 function fakeDatabase() {
@@ -54,7 +69,7 @@ function fakeDatabase() {
     select() { return { from(table: unknown) {
       if (table instanceof SQL) return query(() => [{ ledger: [], boundaries: [], rates: [] }]);
       if (table === holdings) return query(() => holdingRows);
-      if (table === cashAccounts) return query(() => [{ currency: 'USD', balance: '100' }]);
+      if (table === cashAccounts) return query(() => [{ currency: 'USD', balance: '100', reconciliationStatus: 'confirmed' }]);
       if ([transactions, snapshots, fxRates].includes(table as typeof transactions)) return query(() => []);
       if (table === portfolioAnalysisRuns) return query(() => run ? [run] : []);
       if (artifacts.has(table)) return query(() => artifacts.get(table)!);

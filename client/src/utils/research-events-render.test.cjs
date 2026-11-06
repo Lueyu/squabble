@@ -69,7 +69,8 @@ test('role messages and task attempts show a folded bilingual selected/prepared/
       for (const html of [chat, panel, running]) {
         for (const label of labels) assert.ok(html.includes(label), `${locale}: ${label}`);
         assert.match(html, /thesis-1/); assert.match(html, /v2/);
-        assert.doesNotMatch(html, /<details[^>]*\bopen(?:[= >])/u);
+        const inventoryTag=html.match(/<details([^>]*)><summary[^>]*>(?:Initial prompt memory|初始提示词记忆)/u);
+        assert.ok(inventoryTag);assert.doesNotMatch(inventoryTag[1],/\bopen/u);
         assert.doesNotMatch(html, /model used|模型已使用/iu);
       }
     }
@@ -109,12 +110,12 @@ test('research is collapsed above the answer in one role card and failure stays 
   assert.ok(html.indexOf('Failed') < html.indexOf('</summary>'), 'collapsed state must retain the failure label');
 });
 
-test('active cards display one-line research status and wait for a reply without a second card', () => {
+test('active cards expand the actual research process while waiting for a reply in the same card', () => {
   const html = render({ task });
   assert.equal((html.match(/<article\b/gu) ?? []).length, 1);
   assert.ok(html.includes(translations.progress.taskStates.running));
   assert.match(html, /Researching/);
-  assert.doesNotMatch(html, /<details[^>]*\bopen(?:[= >])/u);
+  assert.match(html, /<details[^>]*\bopen(?:[= >])/u);
 });
 
 test('a successful answer still shows source failures in its collapsed research summary', () => {

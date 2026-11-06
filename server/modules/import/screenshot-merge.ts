@@ -16,7 +16,7 @@ export function securityIdentity(
       ? 'HK'
       : /^\d{6}(?:\.(?:SH|SS|SZ|BJ))?$/.test(raw)
         ? 'CN'
-        : /^[A-Z][A-Z0-9.-]{0,19}$/.test(raw)
+        : /^[A-Z][A-Z0-9./-]{0,19}$/.test(raw)
           ? 'US'
           : null);
   if (!market || !['US', 'HK', 'CN'].includes(market)) return null;
@@ -27,7 +27,7 @@ export function securityIdentity(
         ? raw.replace(/\.(?:SH|SS|SZ|BJ)$/, '')
         : raw;
   if (
-    (market === 'US' && !/^[A-Z][A-Z0-9.-]{0,19}$/.test(code)) ||
+    (market === 'US' && !/^[A-Z][A-Z0-9./-]{0,19}$/.test(code)) ||
     (market === 'HK' && !/^\d{4,5}$/.test(code)) ||
     (market === 'CN' && !/^\d{6}$/.test(code))
   )

@@ -10,6 +10,8 @@ import { ResearchFollowupService } from './research-followup.service';
 import { LocalAgentsModule } from '../local-agents/local-agents.module';
 import { PortfolioResearchRouteService } from './portfolio-research-route.service';
 import { ImportAnalysisHandoffService } from './import-analysis-handoff.service';
+import { PortfolioMetricsService } from './portfolio-metrics.service';
+import { QuoteModule } from '../quote/quote.module';
 
-@Module({imports:[MultiAgentModule,CouncilModule,ResearchDocumentsModule,LocalAgentsModule],controllers:[ExperienceController],providers:[TodayService,CurrentResearchService,ExperienceScheduler,ResearchFollowupService,PortfolioResearchRouteService,ImportAnalysisHandoffService],exports:[TodayService,CurrentResearchService,ImportAnalysisHandoffService]})
+@Module({imports:[MultiAgentModule,CouncilModule,ResearchDocumentsModule,LocalAgentsModule,QuoteModule],controllers:[ExperienceController],providers:[TodayService,CurrentResearchService,ExperienceScheduler,ResearchFollowupService,PortfolioResearchRouteService,ImportAnalysisHandoffService,PortfolioMetricsService],exports:[TodayService,CurrentResearchService,ImportAnalysisHandoffService]})
 export class ExperienceModule {}

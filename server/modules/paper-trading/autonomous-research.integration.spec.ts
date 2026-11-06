@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { investmentFixture } from './investment-test.fixture';
+import { investmentFixture, startPreUserStrategyInvestmentFixture, restorePreUserStrategyRunningPolicyFixture } from './investment-test.fixture';
 import { InvestmentPolicyService } from './investment-policy.service';
 import { SimulationExperimentsService } from './simulation-experiments.service';
 import { AutonomousResearchService } from './autonomous-research.service';
@@ -37,7 +37,7 @@ test('real durable discovery and independent review activate a new-stock composi
     const [legacy] = await db.insert(paperAccounts).values({ owner, initialCash: '10000', cashBalance: '10000', botEnabled: true }).returning();
     await db.insert(paperPositions).values(['HLDA', 'HLDB'].map(ticker => ({ owner, accountId: legacy.id, ticker, market: 'US', currency: 'USD', shares: '1', avgCost: '100' })));
     const preview = await policyService.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'autonomous-preview' });
-    await policyService.start(owner, { previewId: preview.id, requestKey: 'autonomous-start', markets: ['US'], adoptAccountId: legacy.id });
+    await startPreUserStrategyInvestmentFixture(policyService, db, owner, { previewId: preview.id, requestKey: 'autonomous-start', markets: ['US'], adoptAccountId: legacy.id });
     const members = ['one', 'two'].map((id, i) => ({ id, name: id, role: i ? 'manager' : 'researcher', model: i ? 'slow' : 'fast', instructions: '', connectionId: randomUUID() }));
     let connected = false;
     const team = { resolveMembers: async () => ({ members: connected ? members : [], executors: connected ? members.map(m => ({ memberId: m.id, identity: m.id + ':provider:model', identityVerified: true, connection: m.id, provider: 'fixture', model: 'model' })) : [] }) };
@@ -126,7 +126,7 @@ test('concurrent US/HK cycle completion merges both markets and a later market e
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-06T07:00:00Z') });
     const service = new InvestmentPolicyService(db, new SimulationExperimentsService(db, {} as never, {} as never));
     const preview = await service.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'merge-preview-one' });
-    const started = await service.start(owner, { previewId: preview.id, requestKey: 'merge-start-one', markets: ['US', 'HK'] });
+    const started = await startPreUserStrategyInvestmentFixture(service, db, owner, { previewId: preview.id, requestKey: 'merge-start-one', markets: ['US', 'HK'] });
     const members = [{ id: 'one', role: 'researcher', name: 'One', model: 'slow', instructions: '' }, { id: 'two', role: 'manager', name: 'Two', model: 'slow', instructions: '' }];
     const config = normalizeBuilderConfig({ name: 'Fixture', template: 'balanced', tickers: [], minimumRating: 'Buy', customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 20, notifyOnProposal: false, council: { enabled: true, members } });
     const [profile] = await db.insert(builderProfiles).values({ owner, config, status: 'draft' }).returning();
@@ -162,7 +162,7 @@ test('four existing holdings rotate risk reviews and do not consume the new-cand
     const preview = await service.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'rotation-preview' });
     const [legacy] = await db.insert(paperAccounts).values({ owner, initialCash: '10000', cashBalance: '10000', botEnabled: true }).returning();
     await db.insert(paperPositions).values(['HLDA', 'HLDB', 'HLDC', 'HLDD'].map(ticker => ({ owner, accountId: legacy.id, ticker, market: 'US', currency: 'USD', shares: '1', avgCost: '100' })));
-    const start = await service.start(owner, { previewId: preview.id, requestKey: 'rotation-start', adoptAccountId: legacy.id });
+    const start = await startPreUserStrategyInvestmentFixture(service, db, owner, { previewId: preview.id, requestKey: 'rotation-start', adoptAccountId: legacy.id });
     const security = (ticker: string) => ({ ticker, market: 'US', currency: 'USD', assetType: 'stock', sourceUrl: 'https://www.sec.gov/fixture', identitySourceUrl: 'https://www.nasdaq.com/fixture', summary: 'Fictional equity', observedAt: new Date().toISOString(), providerSymbol: ticker, lotSize: 1, leveraged: false, inverse: false });
     let discoveries = 0;
     const discovery = { verify: async ({ ticker }: { ticker: string }) => security(ticker), discoverCandidates: async () => { discoveries++; return { candidates: [security('NEWONE')], reason: null }; } };

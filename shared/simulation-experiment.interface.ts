@@ -8,7 +8,9 @@ export interface SimulationCash {
   availabilityKnown: boolean; sourceUpdatedAt?: string;
 }
 export interface SimulationSeed {
-  sourceRevision: string; capturedAt: string; positions: SimulationSeedPosition[]; cash: SimulationCash[];
+  sourceRevision: string; capturedAt: string; valuationStartedAt?: string; positions: SimulationSeedPosition[]; cash: SimulationCash[];
+  /** Real recorded cash before optional virtual funding, for source-change comparisons. */
+  copiedCash?: Array<{ currency: string; total: string }>;
   fx: Array<{ currency: string; rate: string; at: string }>;
   initialEquityUsd: string | null; gaps: string[];
   model: { version: 'paper-v1'; feeBps: number; slippageBps: number; corporateActions: 'unsupported' };

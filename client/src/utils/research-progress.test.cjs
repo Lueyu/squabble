@@ -65,12 +65,12 @@ const progress = () => {
     .map(task => view.render({ task })) };
 };
 
-test('structured turn research is collapsed and retains public tools and waiting state', () => {
+test('active structured research is open and retains public tools and waiting state', () => {
   const tree = progress().render({ session: session([event(1, { kind: 'task', status: 'queued' }), event(2, { kind: 'capability', status: 'succeeded', summary: 'Snapshot mode' })]) });
   assert.ok(!text(tree).includes('Legacy acquisition'));
   assert.ok(text(tree).includes('council.progress.taskStates.queued'));
   assert.ok(text(tree).includes('Snapshot mode'));
-  assert.ok(nodes(tree).some(node => node.type === 'details' && !node.props.open));
+  assert.ok(nodes(tree).some(node => node.type === 'details' && node.props.open));
   assert.ok(nodes(tree).some(node => node.type === 'summary' && text(node).includes('council.progress.taskStates.queued')));
 });
 

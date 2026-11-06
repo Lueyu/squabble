@@ -11,7 +11,7 @@ export const reportIndexSchema = z.object({ category: z.enum(['all', 'daily', 's
   topic: z.string().max(100).optional(), state: z.enum(['all', 'adopted', 'draft', 'strategy']).default('all'), search: z.string().max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50), offset: z.coerce.number().int().min(0).max(100_000).default(0),
   history: z.union([z.boolean(), z.enum(['true', 'false']).transform(value => value === 'true')]).default(false),
-  from: z.iso.date().optional(), to: z.iso.date().optional() }).strict();
+  from: z.iso.date().optional(), to: z.iso.date().optional(),date:z.iso.date().optional(),source:reportSourceSchema.shape.type.optional() }).strict();
 export const revisionSchema = z.object({ title: z.string().trim().min(1).max(300), content: z.string().trim().min(1).max(300_000),
   changeReason: z.string().trim().min(1).max(3000), sections: z.array(sectionSchema).max(200).optional(), sourceReferences: reportReferencesSchema.optional() }).strict();
 export const submitSchema = z.object({ idempotencyKey: z.string().min(1).max(300), title: z.string().trim().min(1).max(300), kind: reportSourceSchema.shape.type,

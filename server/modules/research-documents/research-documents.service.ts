@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { and, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lt, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, exists, gte, ilike, inArray, isNotNull, isNull, lt, notExists, or, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { analysis, deepReport, portfolioAnalysisRuns } from '../../database/schema';
@@ -7,6 +7,8 @@ import { councilReports, councilSessions } from '../../database/council.schema';
 import { researchDocuments, researchDocumentVersions, researchRevisionDrafts, researchDocumentStrategyUses, researchDocumentSubmissions, researchDocumentAdoptions } from '../../database/research-documents.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { capturePortfolioDailyFacts } from './portfolio-daily-facts';
+import { businessDate } from '../experience/simple-experience.rules';
+import { experiencePreferences } from '../../database/simple-experience.schema';
 import type { ReportSource, ReportReference, ResolvedReportReference, ResearchDocumentVersion, ResearchDocumentView,
   ResearchInputSnapshot, ResearchRevisionDraft, ResearchRevisionInput, SubmitResearchDocument, ResearchDocumentIndex, ResearchDocumentIndexQuery } from '../../../shared/research-document.interface';
 import { assertAdoption, assertIdempotency, contentHash, diffSections, parseReportRequest, reportIdSchema, reportReferencesSchema,
@@ -33,6 +35,11 @@ export class ResearchDocumentsService {
     const conditions = [eq(researchDocuments.owner, owner), eq(researchDocumentVersions.owner, owner)];
     if (!query.history) conditions.push(eq(researchDocumentVersions.id, query.state === 'adopted' ? researchDocuments.adoptedVersionId : researchDocuments.latestVersionId));
     if (query.topic) conditions.push(eq(researchDocuments.topicKey, query.topic));
+    if(query.source)conditions.push(sql`${researchDocumentVersions.source}->>'type'=${query.source}`);
+    if(query.date){
+      const [preferences]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
+      conditions.push(sql`coalesce(${researchDocumentVersions.snapshot}->>'businessDate',to_char(${researchDocumentVersions.createdAt} AT TIME ZONE ${preferences?.timezone??'Asia/Shanghai'},'YYYY-MM-DD'))=${query.date}`);
+    }
     if (query.category !== 'all') conditions.push(sql`${category} = ${query.category}`);
     if (query.search?.trim()) conditions.push(ilike(researchDocumentVersions.title, `%${query.search.trim()}%`));
     if (query.state === 'adopted') conditions.push(eq(researchDocumentVersions.id, researchDocuments.adoptedVersionId));
@@ -50,7 +57,7 @@ export class ResearchDocumentsService {
     return { total: totals[0]?.total ?? 0, moreLegacySources, topics: topics.map(topic => ({ ...topic, label: topic.key.startsWith('ticker:') ? topic.key.slice(7) : 'Portfolio' })),
       items: await Promise.all(rows.map(async row => ({ id: row.version.id, reportId: row.version.reportId, version: row.version.version,
         title: row.version.title, kind: row.version.kind, ticker: row.version.ticker, topicKey: row.document.topicKey, category: reportCategory(row.version),
-        dataAsOf: row.version.dataAsOf?.toISOString() ?? null, availableAt: row.version.availableAt?.toISOString() ?? null, createdAt: row.version.createdAt.toISOString(),
+        dataAsOf: row.version.dataAsOf?.toISOString() ?? null, availableAt: row.version.availableAt?.toISOString() ?? null, createdAt: row.version.createdAt.toISOString(),generatedAt:typeof row.version.snapshot?.generatedAt==='string'?row.version.snapshot.generatedAt:null,
         status: row.version.revokedAt ? 'revoked' as const : 'valid' as const, sourceStatus: await this.sourceStatus(this.db, owner, row.version.source),
         source: row.version.source, adoptedVersionId: row.document.adoptedVersionId, latestVersionId: row.document.latestVersionId,
         draftCount: Number(row.draftCount), strategyUseCount: Number(row.strategyUseCount), updatesAvailable: row.updatesAvailable }))) };
@@ -71,7 +78,30 @@ export class ResearchDocumentsService {
       try { await this.importSource(owner, { type: types[index], id: row.id }); }
       catch (error) { if (!(error instanceof NotFoundException)) throw error; }
     }
-    return batches.some(batch => batch.length === 20);
+    // Earlier installs may already have an immutable archive without the round-card link.
+    // Resolve by exact source identity, never by the session's latest document or current title.
+    const unlinked = await this.db.select({ reportId: councilReports.id, versionId: researchDocumentVersions.id }).from(councilReports)
+      .innerJoin(councilSessions, and(eq(councilSessions.owner, owner), eq(councilSessions.id, councilReports.sessionId)))
+      .innerJoin(researchDocumentVersions, and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.kind, 'council'),
+        isNull(researchDocumentVersions.changeReason), isNull(researchDocumentVersions.revokedAt),
+        sql`${researchDocumentVersions.source}->>'type'='council' AND ${researchDocumentVersions.source}->>'id'=${councilReports.id}::text`))
+      .innerJoin(researchDocuments, and(eq(researchDocuments.owner, owner), eq(researchDocuments.id, researchDocumentVersions.reportId)))
+      .where(and(eq(councilReports.owner, owner), isNull(councilReports.researchVersionId),
+        or(isNull(councilReports.publicationOutcome), eq(councilReports.publicationOutcome, 'succeeded'))))
+      .orderBy(desc(councilReports.createdAt), asc(researchDocumentVersions.version), asc(researchDocumentVersions.id)).limit(20);
+    if (unlinked.length) await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      for (const row of unlinked) await this.linkCouncilArchive(tx, owner, row.reportId, row.versionId);
+    });
+    return batches.some(batch => batch.length === 20) || unlinked.length === 20;
+  }
+  private async linkCouncilArchive(tx: ResearchDocumentsTransaction, owner: string, reportId: string, versionId: string): Promise<void> {
+    await tx.update(councilReports).set({ researchVersionId: versionId }).where(and(eq(councilReports.owner, owner), eq(councilReports.id, reportId),
+      isNull(councilReports.researchVersionId), or(isNull(councilReports.publicationOutcome), eq(councilReports.publicationOutcome, 'succeeded')),
+      exists(tx.select({ id: researchDocumentVersions.id }).from(researchDocumentVersions)
+        .innerJoin(researchDocuments, and(eq(researchDocuments.owner, owner), eq(researchDocuments.id, researchDocumentVersions.reportId)))
+        .where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, versionId), eq(researchDocumentVersions.kind, 'council'),
+          isNull(researchDocumentVersions.revokedAt), sql`${researchDocumentVersions.source}->>'type'='council' AND ${researchDocumentVersions.source}->>'id'=${reportId}`)))));
   }
   async sourceUpdates(owner: string, references: ReportReference[]): Promise<Array<{ versionId: string; latestVersionId: string; title: string }>> {
     this.owner(owner); const checked = parseReportRequest(reportReferencesSchema, references);
@@ -247,16 +277,22 @@ export class ResearchDocumentsService {
     const previous = await tx.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner),
       inArray(researchDocumentVersions.reportId, tx.select({ id: researchDocuments.id }).from(researchDocuments).where(and(eq(researchDocuments.owner, owner), eq(researchDocuments.sourceKey, loaded.sourceKey)))),
       isNull(researchDocumentVersions.changeReason), sql`${researchDocumentVersions.source}->>'type' = ${source.type}`, sql`${researchDocumentVersions.source}->>'id' = ${source.id}`)).orderBy(desc(researchDocumentVersions.version));
-    const match = previous.find(row => row.content === loaded.input.content && row.title === loaded.input.title && contentHash(row.sections) === contentHash(loaded.input.sections)
+    // A discussion may be renamed later; the report's archived title and text remain fixed.
+    const match = previous.find(row => row.content === loaded.input.content && (source.type === 'council' || row.title === loaded.input.title) && contentHash(row.sections) === contentHash(loaded.input.sections)
       && (metadata.snapshot === undefined || contentHash(row.snapshot) === contentHash(metadata.snapshot)));
-    if (match && !metadata.idempotencyKey) return this.version(match);
+    if (match && !metadata.idempotencyKey) {
+      if (source.type === 'council') await this.linkCouncilArchive(tx, owner, source.id, match.id);
+      return this.version(match);
+    }
     if (previous.length && !match && source.type !== 'daily') throw new ConflictException('REPORT_IDEMPOTENCY_CONFLICT');
     const retry = metadata.idempotencyKey ? previous.find(row => row.idempotencyKey === metadata.idempotencyKey) : undefined;
     const input = { ...loaded.input, source, dataAsOf: metadata.dataAsOf ?? null, availableAt: metadata.availableAt ?? null,
       snapshot: metadata.snapshot === undefined ? loaded.snapshot : metadata.snapshot };
     if (retry && metadata.availableAt === undefined) input.availableAt = retry.availableAt?.toISOString() ?? null;
     const sourceRevision = source.type === 'daily' ? `:${contentHash(input)}` : '';
-    return this.submitInTransaction(tx, owner, { ...input, idempotencyKey: metadata.idempotencyKey ?? `source:${source.type}:${source.id}${sourceRevision}` }, loaded.sourceKey);
+    const version = await this.submitInTransaction(tx, owner, { ...input, idempotencyKey: metadata.idempotencyKey ?? `source:${source.type}:${source.id}${sourceRevision}` }, loaded.sourceKey);
+    if (source.type === 'council') await this.linkCouncilArchive(tx, owner, source.id, version.id);
+    return version;
   }
   async writeDaily(owner: string, input: Omit<typeof analysis.$inferInsert, 'owner' | 'id'>, metadata: SourceRegistrationMetadata = {}): Promise<typeof analysis.$inferSelect> {
     this.owner(owner);
@@ -284,6 +320,8 @@ export class ResearchDocumentsService {
   }> {
     let fields: Record<string, unknown>; let title: string; let ticker: string | null; let sourceKey = `${source.type}:${source.id}`;
     let snapshot: ResearchInputSnapshot | null = null;
+    const [preferences]=await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
+    const timezone=preferences?.timezone??'Asia/Shanghai';
     if (source.type === 'daily') {
       const query = tx.select().from(analysis).where(and(eq(analysis.owner, owner), eq(analysis.id, source.id)));
       const [row] = lock ? await query.for('share') : await query;
@@ -302,7 +340,7 @@ export class ResearchDocumentsService {
       const [row] = lock ? await query.for('share') : await query;
       if (!row || row.status !== 'completed' || !row.report) throw new NotFoundException('REPORT_SOURCE_NOT_FOUND');
       ticker = null; title = 'Portfolio research'; sourceKey = 'portfolio';
-      fields = row.report as Record<string, unknown>; snapshot = row.snapshot as ResearchInputSnapshot | null;
+      fields = row.report as Record<string, unknown>; snapshot = {...row.snapshot as ResearchInputSnapshot,businessDate:businessDate(row.completedAt??row.createdAt,timezone),generatedAt:(row.completedAt??row.createdAt).toISOString()};
       if (snapshot?.dailyFacts) fields = { dailyLedgerFacts: snapshot.dailyFacts, ...fields };
     } else {
       const query = tx.select({ report: councilReports, session: councilSessions }).from(councilReports)
@@ -314,7 +352,7 @@ export class ResearchDocumentsService {
       title = row.session.title || `${ticker ?? 'Portfolio'} · Research discussion`; sourceKey = `council:${row.session.id}`;
       fields = { summary: row.report.summary, dissent: row.report.dissent, nextReviewCondition: row.report.nextReviewCondition,
         evidence: row.report.evidence, researchStance: row.report.researchStance, thesisCandidates: row.report.thesisCandidates };
-      snapshot = { evidence: row.report.evidence, inputRevision: row.report.revision, sessionId: row.session.id,
+      snapshot = { businessDate:row.session.checkpoint?.simple?.contextDate??businessDate(row.report.createdAt,timezone),generatedAt:row.report.createdAt.toISOString(),evidence: row.report.evidence, inputRevision: row.report.revision, sessionId: row.session.id,
         scene: row.session.scene, subject: row.session.subject, period: row.session.period, references: row.session.references,
         resolvedReferences: row.session.resolvedReferences, parentSessionId: row.session.parentSessionId,
         parentMessageId: row.session.parentMessageId, inheritedContext: row.session.inheritedContext, continuationSummary: row.session.continuationSummary };

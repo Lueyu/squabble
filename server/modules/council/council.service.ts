@@ -51,12 +51,13 @@ import { ResearchDocumentsService } from '../research-documents/research-documen
 import type { ReportReference, ResolvedReportReference } from '../../../shared/research-document.interface';
 import type { CouncilMessageInput, CouncilMessage, CouncilReviewContext, ForkCouncilSession, CouncilRevisionRequest } from '../../../shared/council.interface';
 import { normalizeThread, freezeThreadContext, threadPromptContext, isPortfolioThread, hasThreadContext, hasDeliberation } from './council.thread';
+import { readableResearch } from '../../../shared/research-reading';
 
 type SessionRow = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 type ReportRow = typeof councilReports.$inferSelect;
 interface ResearchSnapshot { evidence: CouncilEvidence[]; sourceRunId: string | null }
 interface MemberOutput { member: CouncilMember; contribution: DiscussionContribution; tokens: number; replyToMessageId: string | null;
-  externalUsageUnknown?: boolean; sources?: CouncilEvidence[]; taskId?: string }
+  actualExecutor?: import('../../../shared/simple-conversation.interface').ActualExecutor; externalUsageUnknown?: boolean; sources?: CouncilEvidence[]; taskId?: string }
 
 @Injectable()
 export class CouncilService implements OnModuleInit {
@@ -254,7 +255,6 @@ export class CouncilService implements OnModuleInit {
     if (!report || report.publicationOutcome === 'failed') throw new BadRequestException('Only a completed owned report can be archived');
     if (!this.documents) throw new BadRequestException('Report documents are unavailable');
     const version = await this.documents.importSource(userId, { type: 'council', id: reportId });
-    await this.db.update(councilReports).set({ researchVersionId: version.id }).where(and(eq(councilReports.owner, userId), eq(councilReports.id, reportId)));
     return version;
   }
 
@@ -663,9 +663,12 @@ export class CouncilService implements OnModuleInit {
     }
     const row = await this.insertSession(userId, profile, candidate.ticker, profile.config.language ?? 'zh-CN', candidate, snapshot, key,
       { scene: 'trade_pre_review', subject: context.subject, references: context.references ?? [], resolvedReferences });
-    if (context.automaticTaskId) await this.db.update(councilSessions).set({ checkpoint: {
-      ...newCheckpoint(this.members(profile.config)), automaticTaskId: context.automaticTaskId,
-    } }).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+    if (context.automaticTaskId || context.requireIndependentReview) {
+      const checkpoint = newCheckpoint(this.members(profile.config), { independent: context.requireIndependentReview });
+      if (context.automaticTaskId) checkpoint.automaticTaskId = context.automaticTaskId;
+      if (checkpoint.simple) checkpoint.simple = { ...checkpoint.simple, commonEvidence: snapshot.evidence, commonMessageIds: [], startedAt: new Date().toISOString(), calls: 0 };
+      await this.db.update(councilSessions).set({ checkpoint }).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+    }
     await this.runSession(userId, row.id);
     await this.jobs.get(`${userId}:${row.id}`);
     const latest = await this.requireSession(userId, row.id);
@@ -941,7 +944,7 @@ export class CouncilService implements OnModuleInit {
       if(!current||!latest||current.status!=='running'||current.revision!==attempt.revision||current.checkpoint?.cycleId!==attempt.cycleId||!['queued','running'].includes(latest.status))return false;
       const [newer]=await tx.select({id:councilMemberAttempts.id}).from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.sessionId,row.id),eq(councilMemberAttempts.cycleId,attempt.cycleId),eq(councilMemberAttempts.memberId,attempt.memberId),sql`${councilMemberAttempts.attempt}>${attempt.attempt}`));
       if(newer)return false;
-      const executor=current.checkpoint.simple!.executors.find(e=>e.memberId===output.member.id)??{memberId:output.member.id,identity:attempt.resourceKey,connection:output.member.agentId??output.member.connectionId??'default',provider:output.member.agentId??'api',model:output.member.agentSettings?.model??'configured-default'};
+      const executor=output.actualExecutor??current.checkpoint.simple!.executors.find(e=>e.memberId===output.member.id)??{memberId:output.member.id,identity:attempt.resourceKey,connection:output.member.agentId??output.member.connectionId??'default',provider:output.member.agentId??'api',model:output.member.agentSettings?.model??'configured-default'};
       await tx.insert(councilIndependentSubmissions).values({owner,sessionId:row.id,cycleId:attempt.cycleId,memberId:output.member.id,attempt:attempt.attempt,
         executorIdentity:executor,contribution:output.contribution,evidence:output.sources??[],tokensUsed:output.tokens,taskId:output.taskId,
         externalUsageUnknown:output.externalUsageUnknown?'true':null}).onConflictDoNothing();
@@ -967,7 +970,7 @@ export class CouncilService implements OnModuleInit {
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       const checkpoint = current?.checkpoint;
-      if (!checkpoint || checkpoint.inflight?.id !== claimId || checkpoint.cycleId !== row.checkpoint?.cycleId) return false;
+      if (!checkpoint || current.status !== 'running' || checkpoint.inflight?.id !== claimId || checkpoint.cycleId !== row.checkpoint?.cycleId) return false;
       if (turn.phase === 'summary' && checkpoint.simple && (checkpoint.simple.steeringRevision ?? 0) !== (row.checkpoint?.simple?.steeringRevision ?? 0)) {
         await tx.update(councilSessions).set({ checkpoint: { ...checkpoint, inflight: undefined, remote: undefined } })
           .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
@@ -980,7 +983,7 @@ export class CouncilService implements OnModuleInit {
       }
       const contribution = output.contribution;
       if (checkpoint.simple?.stage === 'independent' && turn.phase === 'opening') {
-        const executor = checkpoint.simple.executors.find(item => item.memberId === output.member.id)
+        const executor = output.actualExecutor ?? checkpoint.simple.executors.find(item => item.memberId === output.member.id)
           ?? { memberId: output.member.id, identity: `unreported:${output.member.connectionId ?? output.member.agentId ?? 'default'}`,
             connection: output.member.connectionId ?? output.member.agentId ?? 'default', provider: 'unreported', model: output.member.agentSettings?.model ?? 'unreported' };
         await tx.insert(councilIndependentSubmissions).values({ owner: userId, sessionId: row.id, cycleId: checkpoint.cycleId,
@@ -994,10 +997,10 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id))) : [];
       const claimIds = new Set(publicClaims.flatMap(item => item.metadata?.claims?.map(claim => claim.id) ?? []));
       if (checkpoint.simple && contribution.respondsToClaims?.some(id => !claimIds.has(id))) throw new Error('A challenge must refer to a published claim');
-      const publicMetadata = checkpoint.simple ? { actualExecutor: checkpoint.simple.executors.find(item => item.memberId === output.member.id),
+      const publicMetadata = checkpoint.simple ? { actualExecutor: output.actualExecutor ?? checkpoint.simple.executors.find(item => item.memberId === output.member.id),
         claims: contribution.claims?.map((claim, index) => ({ ...claim, id: `${checkpoint.cycleId}:${output.member.id}:${checkpoint.nextTurn}:${index}` })),
         respondsToClaims: contribution.respondsToClaims, stanceChange: contribution.stanceChange,
-        evidenceCheckStatus: 'unverified' as const } : {};
+        evidenceCheckStatus: 'unverified' as const } : output.actualExecutor ? { actualExecutor: output.actualExecutor } : {};
       await tx.insert(councilMessages).values({ owner: userId, sessionId: row.id, role: output.member.role,
         memberName: output.member.name, revision: row.revision, tokensUsed: output.tokens, content: contribution.content,
         metadata: { cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
@@ -1115,7 +1118,8 @@ export class CouncilService implements OnModuleInit {
     if (row.checkpoint?.simple) Object.assign(data, { publicClaims: discussion.flatMap(item => item.metadata?.claims ?? []) });
     const prompt = [{ role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: JSON.stringify(data) }];
-    const options = { taskId: row.taskId, purpose: `council:${turn.phase}:${member.id}`,
+    let actualExecutor: MemberOutput['actualExecutor'];
+    const options = { onExecuted: (execution: { provider: string; model: string; identityVerified: boolean }) => { actualExecutor = { memberId: member.id, connection: member.connectionId ?? 'default', provider: execution.provider, model: execution.model, identity: `${execution.provider}:${execution.model}`, identityVerified: execution.identityVerified, modelVerified: execution.model !== 'unreported' }; }, taskId: row.taskId, purpose: `council:${turn.phase}:${member.id}`,
       maxOutputTokens: turn.phase === 'summary' ? 2400 : 1800,
       retryPolicy: 'none' as const, timeoutMs: 120_000,
       connectionId: member.connectionId, route: { mode: 'api' as const }, shouldContinue: async () => {
@@ -1139,7 +1143,7 @@ export class CouncilService implements OnModuleInit {
       if (row.memberAttempt) await new CouncilMemberAttemptsService(this.db).update(userId,row.memberAttempt.id,{rawText:JSON.stringify(result.data),taskId});
       const contribution = parseContribution(result.data, new Set(data.evidence.map((item) => item.id)), turn, row.candidate);
       await activity('succeeded', row.language === 'en' ? 'Research response received' : '已收到研究回复');
-      return { member, taskId, contribution, tokens: Number.isFinite(result.tokens) ? Math.max(0, Math.trunc(result.tokens)) : 0,
+      return { member, actualExecutor, taskId, contribution, tokens: Number.isFinite(result.tokens) ? Math.max(0, Math.trunc(result.tokens)) : 0,
         replyToMessageId: data.conversation.at(-1)?.id ?? messages.filter((item) => item.role === 'user').at(-1)?.id ?? null };
     } catch (error) {
       await activity('failed', safeAnalysisError(error, row.language));
@@ -1222,6 +1226,8 @@ export class CouncilService implements OnModuleInit {
         revision: row.revision, dispatchStarted: false, lastUserMessageId };
     if (!row.memberAttempt && (!saved || resumeInput)) await this.db.update(councilSessions).set({ checkpoint: { ...current.checkpoint!, remote } })
       .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+    const dispatchStatus = typeof this.localAgents.status === 'function' ? await this.localAgents.status(userId).catch(() => null) : null;
+    const dispatchedAgent = dispatchStatus?.items.find(item => item.id === member.agentId);
     const result = await this.localAgents.execute(userId, { agentId: member.agentId, messageId: remote.messageId,
       activityContext: { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
         turn: row.checkpoint.nextTurn, language: row.language, cycleId: row.checkpoint.cycleId,attempt:row.memberAttempt?.attempt },
@@ -1265,7 +1271,9 @@ export class CouncilService implements OnModuleInit {
       const latest = row.checkpoint.simple?.stage === 'independent' ? await this.requireSession(userId, row.id) : row;
       const privateEvidence = latest.checkpoint?.simple?.privateEvidence?.[member.id] ?? [];
       const parsed = agentContribution(result, [...row.evidenceSnapshot, ...privateEvidence], turn, row.candidate, row.language);
-      return { member, ...parsed, sources: [...privateEvidence, ...parsed.sources],
+      const provider = dispatchedAgent?.provider; const model = member.agentSettings?.model ?? dispatchedAgent?.defaultModel;
+      const actualExecutor: MemberOutput['actualExecutor'] = provider ? { memberId: member.id, connection: member.agentId!, provider, model: model ?? 'configured-default', identity: `${provider}:${model ?? 'configured-default'}`, identityVerified: ['codex', 'claude', 'gemini', 'kimi', 'doubao'].includes(provider), modelVerified: Boolean(model) } : undefined;
+      return { member, actualExecutor, ...parsed, sources: [...privateEvidence, ...parsed.sources],
         taskId: result.taskId,
         tokens: result.usageTokens ?? 0, externalUsageUnknown: result.usageTokens === null,
         replyToMessageId: messages.filter((item) => item.role !== 'system').at(-1)?.id ?? null };
@@ -1388,7 +1396,7 @@ export class CouncilService implements OnModuleInit {
       await tx.update(councilSessions).set({ status: error ? 'failed' : 'completed', error, updatedAt: new Date(),
         ...(error || !current.checkpoint ? {} : { checkpoint: { ...current.checkpoint,
           ...(current.checkpoint.simple ? { simple: { ...current.checkpoint.simple, stage: 'completed' as const,
-            outcome: await this.publicOutcome(tx, userId, current) } } : {}),
+            outcome: await this.publicOutcome(tx, userId, current,report.summary) } } : {}),
           nextTurn: current.checkpoint.turns.length, pendingResearch: [], inflight: undefined } }) })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return true;
@@ -1399,14 +1407,17 @@ export class CouncilService implements OnModuleInit {
     return published;
   }
 
-  private async publicOutcome(tx: MemoryDatabase, owner: string, row: SessionRow): Promise<import('../../../shared/simple-conversation.interface').DebateOutcome> {
+  private async publicOutcome(tx: MemoryDatabase, owner: string, row: SessionRow,summary:string): Promise<import('../../../shared/simple-conversation.interface').DebateOutcome> {
     const messages = await tx.select().from(councilMessages).where(and(eq(councilMessages.owner, owner), eq(councilMessages.sessionId, row.id),
       sql`${councilMessages.metadata}->>'cycleId' = ${row.checkpoint!.cycleId}`));
     const disputed = new Set(messages.flatMap(item => item.metadata?.respondsToClaims ?? []));
     const disagreements = [...disputed].map(claimId => ({ claimId, positions: messages.filter(item => item.metadata?.claims?.some(claim => claim.id === claimId)
       || item.metadata?.respondsToClaims?.includes(claimId)).map(item => ({ memberId: item.metadata!.memberId!, view: item.metadata?.response?.thesis ?? item.content.slice(0, 2000), evidenceIds: item.metadata?.evidenceIds ?? [] })) }));
     const nextEvidence = [...new Set(messages.flatMap(item => [...(item.metadata?.response?.nextChecks ?? []), ...(item.metadata?.questions ?? [])]))].slice(0, 12);
-    return { confirmed: [], disagreements, currentAction: disagreements.length || row.checkpoint?.simple?.unavailable.length || nextEvidence.length ? 'research_more' : 'observe', nextEvidence };
+    const known=new Set(row.evidenceSnapshot.map(item=>item.id));
+    const confirmed=[...new Set(messages.filter(item=>item.metadata?.evidenceCheckStatus==='verified').flatMap(item=>item.metadata?.claims??[])
+      .filter(claim=>!disputed.has(claim.id)&&claim.evidenceIds.length>0&&claim.evidenceIds.every(id=>known.has(id))).map(claim=>readableResearch(claim.statement)).filter(Boolean))].slice(0,12);
+    return { summary:readableResearch(summary),confirmed, disagreements, currentAction: disagreements.length || row.checkpoint?.simple?.unavailable.length || nextEvidence.length ? 'research_more' : 'observe', nextEvidence };
   }
 
   private async collectSnapshot(userId: string, ticker: string, language: 'zh-CN' | 'en',

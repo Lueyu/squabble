@@ -85,12 +85,13 @@ import AddClosedDialog from './AddClosedDialog';
 import TransactionList from './TransactionList';
 
 import { useTranslation } from 'react-i18next';
+import { transactionCashDelta } from '@/utils/transaction-cash';
 
 /**
  * Transactions page component.
  */
 export default function TransactionsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [closed, setClosed] = useState<ClosedPosition[]>([]);
   const [realizedPl, setRealizedPl] = useState<RealizedPlSummary | null>(null);
@@ -196,7 +197,11 @@ export default function TransactionsPage() {
       loadRealizedPl();
       notifyPortfolioUpdate();
     } catch (err) {
-      toast.error(t('tx.deleteFailed'));
+      const message=(err as {response?:{data?:{message?:string;error?:{message?:string}}}})?.response?.data;
+      const code=message?.error?.message??message?.message;
+      toast.error(['CHECKPOINT_HISTORY_REQUIRES_RECONCILIATION','CASH_CHECKPOINT_HISTORY_REQUIRES_RECONCILIATION'].includes(code??'')
+        ? i18n.language.startsWith('zh')?'这笔记录已包含在确认的资产起点中，请先核对持仓或现金起点后再删除。':'This record is included in a confirmed asset starting balance. Reconcile the positions or cash starting balance before deleting it.'
+        : t('tx.deleteFailed'));
     } finally {
       setDeleting(false);
     }
@@ -404,18 +409,9 @@ export default function TransactionsPage() {
                       const isDeposit = tx.txType === 'Deposit';
                       const isWithdrawal = tx.txType === 'Withdrawal';
                       const isOpening = tx.txType === 'Opening';
-                      const amount = isDeposit
-                        ? parseFloat(tx.shares)
-                        : isWithdrawal
-                          ? -parseFloat(tx.shares)
-                          : isOpening
-                            ? 0
-                            : parseFloat(tx.shares) * parseFloat(tx.price) +
-                              (isBuy
-                                ? parseFloat(tx.fees || '0')
-                                : -parseFloat(tx.fees || '0'));
-                      const isOutflow = isBuy || isWithdrawal;
-                      const typeLabel = isBuy ? t('tx.buy') : isSell ? t('tx.sell') : isDeposit ? t('ui.tx.typeDeposit') : isWithdrawal ? t('ui.tx.typeWithdrawal') : t('tx.opening');
+                      const amount = transactionCashDelta(tx);
+                      const isOutflow = amount < 0;
+                      const typeLabel = isBuy ? t('tx.buy') : isSell ? t('tx.sell') : isDeposit ? t('ui.tx.typeDeposit') : isWithdrawal ? t('ui.tx.typeWithdrawal') : isOpening ? t('tx.opening') : i18n.language.startsWith('zh') ? '费用' : 'Fee';
                       const typeClass = isOpening
                         ? 'bg-slate-500/15 text-slate-300 border-slate-500/30'
                         : isBuy
@@ -447,7 +443,7 @@ export default function TransactionsPage() {
                             {formatShares(tx.shares)}
                           </TableCell>
                           <TableCell className="text-right font-mono-nums">
-                            {isDeposit || isWithdrawal || isOpening ? '—' : formatPrice(tx.price)}
+                            {isDeposit || isWithdrawal || isOpening || tx.txType === 'Fee' ? '—' : formatPrice(tx.price)}
                           </TableCell>
                           <TableCell className="text-right font-mono-nums text-muted-foreground">
                             {formatCurrencyWithCurrency(tx.fees || '0', tx.currency || 'USD')}

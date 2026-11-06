@@ -25,12 +25,13 @@ export const investmentConstraintSchema = z.discriminatedUnion('kind', [
 const limits = z.object({ maxPositionPct: percent.optional(), maxOrderPct: percent.optional(),
   maxDailyIncreasePct: percent.optional(), maxDailyTurnoverPct: z.number().min(0).max(200).optional(),
   maxGrossExposurePct: percent.optional(), minCashPct: percent.optional(), dailyLossLimitPct: percent.optional() }).strict();
-const start = z.object({ previewId: z.string().uuid(), requestKey, markets: z.array(market).min(1).max(3).optional(), limits: limits.optional(),
+const start = z.object({ additionalVirtualCash: z.object({ USD: z.number().finite().nonnegative().max(1e12).optional(), HKD: z.number().finite().nonnegative().max(1e12).optional(), CNY: z.number().finite().nonnegative().max(1e12).optional() }).strict().optional(), confirmOpeningCash: z.boolean().optional(), previewId: z.string().uuid(), requestKey, markets: z.array(market).min(1).max(3).optional(), limits: limits.optional(),
   confirmNoCash: z.boolean().optional(), cashAvailable: z.record(z.string(), z.number().finite().nonnegative()).optional(),
   sellableShares: z.record(z.string(), z.number().finite().nonnegative()).optional(), adoptAccountId: z.string().uuid().optional() }).strict();
 export const investmentRequests = {
   preview: z.object({ origin: z.enum(['holdings', 'cash']), cash: z.object({ amount: z.number().finite().positive(), currency: z.enum(['USD', 'HKD', 'CNY']) }).strict().optional(), requestKey }).strict()
     .refine(value => value.origin === 'cash' ? Boolean(value.cash) : !value.cash, 'Cash start requires an explicit amount and currency'),
+  apply: z.object({ strategyId: z.string().uuid(), expectedRevision: z.number().int().positive(), previewHash: z.string().min(1).max(128), expectedCurrentId: z.string().uuid().nullable(), requestKey }).strict(),
   start, restart: start.extend({ expectedAccountId: z.string().uuid() }).strict(),
   pause: z.object({ expectedRevision: z.number().int().positive(), requestKey }).strict(),
   resume: z.object({ expectedRevision: z.number().int().positive(), requestKey }).strict(),

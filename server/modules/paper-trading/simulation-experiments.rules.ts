@@ -4,7 +4,7 @@ import type { SimulationSeed } from '../../../shared/simulation-experiment.inter
 export interface SeedSource {
   holdings: Array<{ id: string; ticker: string; market: string | null; currency: string | null; company: string | null;
     shares: string; buyPrice: string | null; currentPrice: string | null; updatedAt: Date }>;
-  cash: Array<{ currency: string; balance: string; updatedAt: Date }>;
+  cash: Array<{ currency: string; balance: string; updatedAt: Date; reconciliationStatus?: string }>;
 }
 export function seedRevision(source: SeedSource): string {
   return createHash('sha256').update(JSON.stringify({
@@ -22,7 +22,7 @@ export function sourceLedgerRevision(source: SeedSource | SimulationSeed): strin
   };
   const holdings = 'holdings' in source ? source.holdings.map((h) => ({ sourceHoldingId: h.id,
     ticker: h.ticker, market: h.market, currency: h.currency, shares: h.shares, historicalCost: h.buyPrice })) : source.positions;
-  const cash = 'holdings' in source ? source.cash.map((c) => ({ currency: c.currency, total: c.balance })) : source.cash;
+  const cash = 'holdings' in source ? source.cash.map((c) => ({ currency: c.currency, total: c.balance })) : source.copiedCash ?? source.cash;
   if (!Array.isArray(holdings) || !Array.isArray(cash)) return null;
   const positions = holdings.map((p) => ({ id: p.sourceHoldingId, ticker: p.ticker, market: p.market,
     currency: p.currency, shares: decimal(p.shares), cost: p.historicalCost === null ? null : decimal(p.historicalCost),
@@ -54,8 +54,9 @@ export function buildOpeningSeed(source: SeedSource, quotes: Array<{ ticker: str
       sellableShares: null, restriction: 'Unknown restrictions: opening shares cannot be sold until confirmed' };
   });
   const cash = source.cash.map((c) => {
-    gaps.push(`CASH_AVAILABILITY_UNKNOWN:${c.currency}`);
-    return { currency: c.currency, total: c.balance, available: '0', frozen: c.balance, unsettled: '0', availabilityKnown: false, sourceUpdatedAt: c.updatedAt.toISOString() };
+    const known = c.reconciliationStatus === 'confirmed';
+    if (!known) gaps.push(`CASH_AVAILABILITY_UNKNOWN:${c.currency}`);
+    return { currency: c.currency, total: c.balance, available: known ? c.balance : '0', frozen: known ? '0' : c.balance, unsettled: '0', availabilityKnown: known, sourceUpdatedAt: c.updatedAt.toISOString() };
   });
   const currencies = new Set([...positions.map((p) => p.currency), ...cash.map((c) => c.currency)]);
   for (const currency of currencies) if (!fx.some((r) => r.currency === currency && Number(r.rate) > 0)) gaps.push(`FX_MISSING:${currency}`);

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link,useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -15,7 +15,10 @@ import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { isReadingLatest, researchModelLabel } from '@/utils/research-experience';
-import { researchTimeline } from '@/utils/research-events';
+import { researchTimeline, researchConversation } from '@/utils/research-events';
+import CouncilRoundReport from './CouncilRoundReport';
+import InvestmentStrategySourceDialog from '@/pages/Today/InvestmentStrategySourceDialog';
+import type {StrategySourceInput} from '@shared/user-investment-strategy.interface';
 import CouncilChatMessage from './CouncilChatMessage';
 import QuickQuestion from './QuickQuestion';
 import DebateSummary from './DebateSummary';
@@ -42,6 +45,7 @@ export default function SimpleCouncilPage() {
   const [originalQuestion, setOriginalQuestion] = useState('');
   const [rename, setRename] = useState(false); const [title, setTitle] = useState('');
   const [proposal, setProposal] = useState<ConstraintProposal | null>(null);
+  const [strategySource,setStrategySource]=useState<StrategySourceInput|null>(null);
   const auxiliaryIntent = useRef(createRequestIntent(() => crypto.randomUUID())); const auxiliaryLock = useRef(false);
   const intent = useRef(createRequestIntent(() => crypto.randomUUID())); const scroll = useRef<HTMLDivElement>(null);
   const recoveryIntent = useRef(createRequestIntent(() => crypto.randomUUID()));
@@ -55,6 +59,7 @@ export default function SimpleCouncilPage() {
   const configurationId = configurationExecutor?.connectionId ?? configurationExecutor?.connection;
   const configuration = readiness.data?.find(item => item.connectionId === configurationId);
   const timeline = session ? researchTimeline(session) : undefined;
+  const conversation = session ? researchConversation(session) : undefined;
   useEffect(() => { setContext(contextFromSearch(params)); setReply(null); setClarification(null); }, [params]);
   useEffect(() => { followLatest.current = true; setNewMessages(false); setOriginal(null); originalRequest.current++; setRename(false); setProposal(null); setConfigurationMember(null); }, [id]);
   useEffect(() => {
@@ -62,7 +67,7 @@ export default function SimpleCouncilPage() {
     if (!element) return;
     if (followLatest.current) { element.scrollTop = element.scrollHeight; setNewMessages(false); }
     else setNewMessages(true);
-  }, [session?.messages.length, timeline?.cursor]);
+  }, [session?.messages.length, session?.reports.length, timeline?.cursor]);
   const submit = async (message: string, override?: ResearchContext) => {
     if (pending || sendLock.current) return false;
     sendLock.current = true; setPending(true); setReceipt('sending');
@@ -151,19 +156,22 @@ export default function SimpleCouncilPage() {
         <div className="flex flex-wrap justify-center gap-2">{[zh ? '我的持仓里最值得担心的是什么？' : 'What should I worry about most in my portfolio?', zh ? '如何检查一家公司的现金流质量？' : 'How can I assess cash flow quality?'].map((text, index) => <Button key={text} variant="outline" className="h-auto whitespace-normal text-left" disabled={pending} onClick={() => void submit(text, index === 0 ? { kind: 'portfolio' } : undefined)}>{text}</Button>)}</div></div>}
       {id && query.isPending && <p role="status">{zh ? '正在读取讨论…' : 'Loading discussion…'}</p>}
       {id && query.isError && <div role="alert" className="space-y-3"><p>{zh ? '讨论暂时不可用，原始消息未被替代。' : 'The discussion is unavailable. Original messages have not been replaced.'}</p><Button onClick={() => void query.refetch()}>{zh ? '重试' : 'Retry'}</Button></div>}
-      {session?.messages.map(message => <div key={message.id}><CouncilChatMessage message={message} session={session} simple
-        executor={session.actualExecutors?.find(item => item.memberId === message.memberId)} onQuestion={text => void submit(text)} onReply={setReply} />
-        {message.role === 'user' && <div className="mt-1 flex justify-end"><DropdownMenu><DropdownMenuTrigger asChild><Button className="size-7 text-muted-foreground" size="icon" variant="ghost" aria-label={zh ? '这条消息的更多操作' : 'More actions for this message'}><Ellipsis size={16} /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={pending} onSelect={() => void updateAuxiliary('constraint', message.content)}>{zh ? '提议为 AI 账户限制' : 'Propose as an AI account restriction'}</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>}</div>)}
+      {session&&conversation?.entries.map(entry => entry.report ? <CouncilRoundReport key={entry.key} report={entry.report} onAddToStrategy={versionId=>setStrategySource({kind:'report',versionId})}/> : <div key={entry.key}><CouncilChatMessage message={entry.message} task={entry.task} session={session} simple
+        executor={session.actualExecutors?.find(item => item.memberId === (entry.message?.memberId??entry.task?.memberId))} onQuestion={text => void submit(text)} onReply={setReply} />
+        {entry.message&&!['user','system'].includes(entry.message.role)&&(session.stage!=='independent'||entry.message.revision<session.revision)&&<Button size="sm" variant="ghost" className="ml-12 mt-1" onClick={()=>setStrategySource({kind:'message',messageId:entry.message!.id})}>{zh?'加入投资策略':'Add to investment strategy'}</Button>}
+        {entry.message?.role === 'user' && <div className="mt-1 flex justify-end"><DropdownMenu><DropdownMenuTrigger asChild><Button className="size-7 text-muted-foreground" size="icon" variant="ghost" aria-label={zh ? '这条消息的更多操作' : 'More actions for this message'}><Ellipsis size={16} /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={pending} onSelect={() => void updateAuxiliary('constraint', entry.message!.content)}>{zh ? '提议为 AI 账户限制' : 'Propose as an AI account restriction'}</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>}</div>)}
       {proposal && <ConstraintProposalCard proposal={proposal} onClose={() => setProposal(null)} />}
       {session?.stage === 'independent' && session.memberStates?.some(item => item.resultAcceptance === 'accepted') && session.memberStates.some(item => ['queued', 'running', 'unknown'].includes(item.status)) && <p className="rounded-xl bg-primary/5 p-3 text-xs text-muted-foreground">{zh ? '初步观点，其他股友尚未完成；大家仍在独立研究。' : 'Preliminary views: other members have not finished their independent research.'}</p>}
       {session && <CouncilRecoveryCard session={session} onRecover={(memberId, action) => void recover(memberId, action)} onOriginal={memberId => void showOriginal(memberId)} pending={pending} />}
       {session?.memberStates && session.memberStates.filter(item => item.resultAcceptance === 'accepted').length === 1 && session.memberStates.length > 1 && session.memberStates.every(item => !['running', 'queued', 'unknown'].includes(item.status)) && <p className="rounded-xl bg-primary/5 p-3 text-xs text-muted-foreground">{zh ? '仅一位完成，尚未经其他股友交叉检查。' : 'Only one member completed. Other members have not cross-checked this view.'}</p>}
-      {session?.outcome && <DebateSummary outcome={session.outcome} members={session.members || []} mode={session.mode} />}
+      {session?.outcome&&!session.reports.length && <DebateSummary outcome={session.outcome} members={session.members || []} mode={session.mode} />}
       {clarification && <section className="space-y-3 rounded-xl border p-4" role="status"><p>{clarification.needsInput.message}</p><div className="flex flex-wrap gap-2">{clarification.needsInput.options.map(option => <Button key={option.ticker} size="sm" variant="outline" disabled={pending} onClick={() => { setContext({ kind: 'stock', ticker: option.ticker }); void submit(originalQuestion, { kind: 'stock', ticker: option.ticker }); }}>{option.label}</Button>)}</div></section>}
     </div>
     {newMessages && <div className="flex shrink-0 justify-center py-1"><Button size="sm" variant="secondary" onClick={() => { const element = scroll.current; if (element) element.scrollTop = element.scrollHeight; followLatest.current = true; setNewMessages(false); }}>{zh ? '有新消息 · 回到底部' : 'New messages · Jump to latest'}</Button></div>}
     {receipt && <p role="status" className="min-w-0 shrink-0 px-4 py-1 text-xs text-muted-foreground">{receipt === 'sending' ? (zh ? '正在发送问题…' : 'Sending your question…') : session?.status === 'running' ? (zh ? '问题已收到，股友正在研究。' : 'Question received. Your stock friends are researching.') : (zh ? '问题已收到，正在安排股友。' : 'Question received. Arranging your stock friends.')}</p>}
     <QuickQuestion key={id || 'new'} pending={pending} onSubmit={submit} contextLabel={contextLabel} onRemoveContext={!id ? () => setContext(undefined) : undefined}
       replyLabel={reply ? `${reply.memberName}: ${reply.content.slice(0, 140)}` : undefined} onRemoveReply={() => setReply(null)} />
+    <InvestmentStrategySourceDialog source={strategySource} onClose={()=>setStrategySource(null)}/>
+    <Link className="shrink-0 border-t px-4 py-2 text-center text-xs text-primary underline" to="/analysis#report-history">{zh?'查看报告历史':'View report history'}</Link>
   </div>;
 }

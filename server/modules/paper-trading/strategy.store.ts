@@ -109,7 +109,7 @@ export class StrategyStore {
       const account = await requireActivePaperAccount(tx, task.owner);
       if (!account?.botEnabled) throw new Error('Paper account stopped; plan discarded');
       const positions = await tx.select().from(paperPositions).where(eq(paperPositions.accountId, account.id));
-      for (const rule of rules) if (positions.some((position) => position.ticker === rule.ticker && Number(position.shares) > 0)) {
+      for (const rule of rules) if (rule.stopLossPrice > 0 && positions.some((position) => position.ticker === rule.ticker && Number(position.shares) > 0)) {
         await tx.insert(strategyProtections).values({ owner: task.owner, accountId: account.id,
           ticker: rule.ticker, market: task.market, stopLossPrice: String(rule.stopLossPrice), planId: plan.id, ruleId: rule.id })
           .onConflictDoUpdate({ target: [strategyProtections.owner, strategyProtections.accountId, strategyProtections.ticker],
@@ -129,7 +129,7 @@ export class StrategyStore {
     await lockMemoryOwner(tx, owner);
     const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true))).for('update');
     if (!account || candidate.accountId && candidate.accountId !== account.id) return false;
-    const investment = await investmentExecutionFence(tx, owner, account.id, candidate, 'agent', candidate);
+    const investment = await investmentExecutionFence(tx, owner, account.id, candidate, 'agent', candidate, new Date(), false);
     if (investment.block) return false;
     const [row] = await tx.insert(strategySignals).values({ id: candidate.signalId, owner, profileId: profile.id,
       parentPolicyId: candidate.parentPolicyId, parentPolicyRevision: candidate.parentPolicyRevision, cycleId: candidate.cycleId,

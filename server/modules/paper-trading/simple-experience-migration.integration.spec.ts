@@ -106,7 +106,7 @@ async function cashPreview(policies: InvestmentPolicyService, owner: string, req
   return policies.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey });
 }
 
-test('opening the new overview and preview exposes running legacy automation without changing it', async () => {
+test('overview and preview leave legacy automation unchanged; explicit copy creates a separate observing ledger', async () => {
   await investmentFixture(async (db, _client, owner) => {
     const { account } = await legacyAccount(db, owner);
     const old = await legacyAutomation(db, owner, account.id);
@@ -120,12 +120,17 @@ test('opening the new overview and preview exposes running legacy automation wit
     assert.deepEqual(overview.legacyAccounts, [{ id: account.id, name: account.name, active: true, botEnabled: true }]);
     const preview = await cashPreview(policies, owner, 'inert-legacy-preview');
     await policies.overview(owner);
-    await assert.rejects(policies.start(owner, { previewId: preview.id, requestKey: 'unconfirmed-legacy-start' }), /CONFIRM_LEGACY_ADOPTION/);
     assert.deepEqual({ account: (await db.select().from(paperAccounts))[0], ledger: await ledger(db, account.id),
       profile: (await db.select().from(builderProfiles))[0], mandate: (await db.select().from(strategyMandates))[0],
       signals: await db.select().from(strategySignals), reservations: await db.select().from(strategyReservations),
       orders: await db.select().from(paperOrders) }, before);
     assert.deepEqual(await db.select().from(investmentPolicies), []);
+    assert.deepEqual(await db.select().from(investmentCycles), []);
+    const copy = await policies.start(owner, { previewId: preview.id, requestKey: 'explicit-legacy-copy' });
+    assert.notEqual(copy.accountId, account.id);
+    assert.equal(copy.policy.status, 'paused');
+    assert.equal((await db.select().from(paperAccounts).where(eq(paperAccounts.id, account.id)))[0].isActive, false);
+    assert.deepEqual(await ledger(db, account.id), before.ledger, 'copy preserves the historical book rather than reseeding it');
     assert.deepEqual(await db.select().from(investmentCycles), []);
   });
 });
@@ -150,7 +155,7 @@ test('explicit legacy adoption cancels old automation and reservations while ret
     assert.equal((await db.select().from(paperOrders).where(eq(paperOrders.id, old.pending.id)))[0].status, 'cancelled');
     assert.equal((await db.select().from(experiencePreferences))[0].migrationState, 'adopted');
     assert.equal((await db.select().from(investmentPolicies)).length, 1);
-    assert.equal((await db.select().from(investmentCycles)).filter(cycle => cycle.state === 'queued').length, 1);
+    assert.equal((await db.select().from(investmentCycles)).filter(cycle => cycle.state === 'queued').length, 0);
   });
 });
 
@@ -176,7 +181,7 @@ test('adopted accounts reject legacy activation, reset, selection, publication a
     await assert.rejects(paper.toggleBot(owner, true), /INVESTMENT_MANAGED_ACCOUNT/);
     assert.ok(oldSession.token);
     const oldIdentity = await mcp.authenticate(oldSession.token);
-    await assert.rejects(mcp.callTool(oldIdentity, 'place_paper_order', { accountId: account.id, ticker: 'ABC', side: 'buy', quantity: 1 }), /INVESTMENT_AUTHORIZATION_CHANGED/);
+    await assert.rejects(mcp.callTool(oldIdentity, 'place_paper_order', { accountId: account.id, ticker: 'ABC', side: 'buy', quantity: 1 }), /INVESTMENT_PAUSED/);
     assert.deepEqual(await db.select().from(paperAccounts), accounts);
     assert.deepEqual(await ledger(db, account.id), book);
     assert.equal((await db.select().from(builderProfiles))[0].status, 'paused');

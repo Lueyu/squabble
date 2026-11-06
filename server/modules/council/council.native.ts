@@ -6,6 +6,7 @@ import { parseContribution, responseGuidance } from './council.dialogue';
 import type { CouncilEvidence } from './council.rules';
 import type { DialogueTurn } from './council.types';
 import type { threadPromptContext } from './council.thread';
+import { extractResearchObject, unwrapResearchEnvelope } from '../../../shared/research-reading';
 
 export function agentAssignment(input: { ticker: string; language: string; member: CouncilMember; turn: DialogueTurn;
   thread?: ReturnType<typeof threadPromptContext>;
@@ -29,7 +30,11 @@ export function agentAssignment(input: { ticker: string; language: string; membe
 export function agentContribution(result: { data?: unknown; text: string }, evidence: CouncilEvidence[], turn: DialogueTurn,
   candidate: CouncilCandidate | null, language = 'en') {
   let value = result.data;
-  if (!value) try { value = JSON.parse(result.text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')); } catch { /* Plain-text agents can still contribute. */ }
+  if (!value) {
+    const parsed=extractResearchObject(result.text);value=parsed.value;
+    if(parsed.protocol&&!value)throw new Error('Research returned; structured content needs formatting.');
+  }
+  value=unwrapResearchEnvelope(value);
   const data = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { content: result.text };
   const sources: CouncilEvidence[] = [];
   const aliases = new Map<string, string>();

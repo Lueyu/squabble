@@ -15,7 +15,7 @@ import { PortfolioAnalysisService } from '../multi-agent/portfolio-analysis.serv
 import { SimpleCouncilService } from '../council/simple-council.service';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { businessDate, generationIdentity, parseRefresh } from './simple-experience.rules';
-import type { CurrentResearchView } from '../../../shared/simple-experience.interface';
+import type { CurrentResearchView, DailyResearchReports } from '../../../shared/simple-experience.interface';
 import { AutomaticResearchBudgetService } from '../paper-trading/automatic-research-budget.service';
 
 @Injectable()
@@ -24,6 +24,29 @@ export class CurrentResearchService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db:PostgresJsDatabase,
     private readonly documents:ResearchDocumentsService,private readonly portfolio:PortfolioAnalysisService,
     private readonly conversations:SimpleCouncilService,@Optional() private readonly routes?:PortfolioResearchRouteService) {}
+
+  /** Independent reading projections over immutable versions; the current pointer never defines the initial report. */
+  async getDailyReports(owner:string,dateKey:string):Promise<DailyResearchReports> {
+    const [preferences]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
+    const timezone=preferences?.timezone??'Asia/Shanghai';
+    const rows=await this.db.select({version:researchDocumentVersions,run:portfolioAnalysisRuns,report:councilReports,session:councilSessions})
+      .from(researchDocumentVersions).innerJoin(researchDocuments,and(eq(researchDocuments.id,researchDocumentVersions.reportId),eq(researchDocuments.owner,owner)))
+      .leftJoin(portfolioAnalysisRuns,and(eq(portfolioAnalysisRuns.owner,owner),sql`${researchDocumentVersions.source}->>'type'='portfolio' AND ${portfolioAnalysisRuns.id}::text=${researchDocumentVersions.source}->>'id'`))
+      .leftJoin(councilReports,and(eq(councilReports.owner,owner),sql`${researchDocumentVersions.source}->>'type'='council' AND ${councilReports.id}::text=${researchDocumentVersions.source}->>'id'`))
+      .leftJoin(councilSessions,and(eq(councilSessions.owner,owner),eq(councilSessions.id,councilReports.sessionId)))
+      .where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocuments.topicKey,'portfolio'),isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date())),
+        sql`((${portfolioAnalysisRuns.id} IS NOT NULL AND ${portfolioAnalysisRuns.route}->>'mode'<>'basic') OR (${councilReports.id} IS NOT NULL AND (${councilReports.publicationOutcome} IS NULL OR ${councilReports.publicationOutcome}='succeeded') AND ${councilReports.engine}<>'basic' AND ${councilSessions.scene}='portfolio_daily'))`,
+        sql`coalesce(${researchDocumentVersions.snapshot}->>'businessDate', CASE WHEN ${portfolioAnalysisRuns.id} IS NOT NULL THEN to_char(coalesce(${portfolioAnalysisRuns.completedAt},${portfolioAnalysisRuns.createdAt}) AT TIME ZONE ${timezone},'YYYY-MM-DD') ELSE coalesce(${councilSessions.checkpoint}->'simple'->>'contextDate',to_char(${councilReports.createdAt} AT TIME ZONE ${timezone},'YYYY-MM-DD')) END)=${dateKey}`))
+      .orderBy(sql`coalesce(${portfolioAnalysisRuns.completedAt},${portfolioAnalysisRuns.createdAt},${councilReports.createdAt},${researchDocumentVersions.createdAt})`,researchDocumentVersions.id);
+    const history:CurrentResearchView[]=rows.map(({version,session})=>{
+      const presentation=researchPresentation(null,version.sections);
+      return {topicKey:'portfolio',dateKey,documentId:version.id,title:version.title,updatedAt:typeof version.snapshot?.generatedAt==="string"?version.snapshot.generatedAt:version.createdAt.toISOString(),dataAsOf:version.dataAsOf?.toISOString()??null,changeSummary:version.changeReason,state:presentation.readingState==='ready'?'ready':'failed',taskId:null,error:presentation.readingState==='pending'?'研究已返回，内容整理待核对。 / Research returned; formatting needs review.':null,source:version.source,researchLevel:'ai',sessionId:session?.id??null,...presentation};
+    });
+    const standalone=history.filter(item=>item.source?.type!=='council'&&item.readingState==='ready');
+    const completeDiscussions=new Set(rows.filter(({report})=>report&&report.coverage?.complete!==false).map(({version})=>version.id));
+    const discussions=history.filter(item=>item.source?.type==='council'&&item.readingState==='ready'&&item.documentId&&completeDiscussions.has(item.documentId));
+    return {initial:standalone[0]??null,latestDiscussion:discussions.at(-1)??null,history};
+  }
 
   async refreshDaily(owner:string,facts:unknown,timezone:string,accountId:string|null):Promise<CurrentResearchView> {
     const day=businessDate(new Date(),timezone),current=await this.get(owner,'portfolio',day);
@@ -44,31 +67,35 @@ export class CurrentResearchService {
     let material:typeof researchDocumentVersions.$inferSelect|undefined;
     const available=and(isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date())));
     if(view?.currentDocumentId) [material]=await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocumentVersions.id,view.currentDocumentId),available));
+    if(topicKey==='portfolio'&&material?.source?.type==='council')material=undefined;
+    if(topicKey==='portfolio'&&!material&&dateKey!=='current'){
+      const daily=await this.getDailyReports(owner,dateKey),latest=daily.history.filter(item=>item.source?.type!=='council'&&item.readingState==='ready').at(-1);
+      if(latest?.documentId)[material]=await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocumentVersions.id,latest.documentId),available));
+    }
     if(!material) {
       const rows=await this.db.select({version:researchDocumentVersions}).from(researchDocumentVersions).innerJoin(researchDocuments,and(eq(researchDocuments.id,researchDocumentVersions.reportId),eq(researchDocuments.owner,owner)))
         .where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocuments.topicKey,topicKey),available,
           sql`${researchDocumentVersions.source}->>'type' IN ('daily','deep','portfolio','council')`,
           sql`NOT (${researchDocumentVersions.source}->>'type'='council' AND EXISTS(SELECT 1 FROM council_reports r JOIN simple_council_requests q ON q.session_id=r.session_id AND q.owner=r.owner WHERE r.owner=${owner} AND r.id::text=${researchDocumentVersions.source}->>'id' AND q.request_key LIKE 'refresh:%'))`,
-          topicKey==='portfolio'?sql`${researchDocumentVersions.source}->>'type' <> 'council'`:undefined)).orderBy(desc(researchDocumentVersions.createdAt)).limit(100);
+          topicKey==='portfolio'?sql`${researchDocumentVersions.source}->>'type' <> 'council'`:undefined)).orderBy(desc(researchDocumentVersions.createdAt),desc(researchDocumentVersions.id)).limit(100);
       const [preferences]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
-      material=rows.find(r=>dateKey==='current'||businessDate(r.version.dataAsOf??r.version.createdAt,preferences?.timezone??'Asia/Shanghai')===dateKey)?.version;
+      material=rows.find(r=>dateKey==='current'||(r.version.snapshot?.businessDate??businessDate(r.version.createdAt,preferences?.timezone??'Asia/Shanghai'))===dateKey)?.version;
     }
-    let report:unknown, researchLevel:'facts_only'|'ai'='ai',executorLabel:string|null=null;
+    let researchLevel:'facts_only'|'ai'='ai',executorLabel:string|null=null;
     let run:typeof portfolioAnalysisRuns.$inferSelect|undefined;
     if(material?.source?.type==='portfolio'){
       const [sourceRun]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,material.source.id)));
-      report=sourceRun?.report;researchLevel=(sourceRun?.route as ModelRoute|undefined)?.mode==='basic'?'facts_only':'ai';
+      researchLevel=(sourceRun?.route as ModelRoute|undefined)?.mode==='basic'?'facts_only':'ai';
     }
-    if(material?.source?.type==='council'){const [sourceReport]=await this.db.select().from(councilReports).where(and(eq(councilReports.owner,owner),eq(councilReports.id,material.source.id)));report=sourceReport;}
     if(['portfolio','cancelling_portfolio'].includes(view?.taskKind??'')&&view?.taskId)[run]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,view.taskId)));
     const route=(run?.route??view?.dispatchRoute) as ModelRoute|undefined;
     if(route)executorLabel=route.mode==='local'?route.agentId.replace(/^(native|companion)-/u,''):route.mode==='api'?'AI':null;
-    const presentation=researchPresentation(report,material?.sections??[]);
+    const presentation=researchPresentation(null,material?.sections??[]);
     const content=material?.source?presentation.content:material?.content??'';
     return {topicKey,dateKey,documentId:material?.id??null,title:material?.title??'',
-      updatedAt:material?.createdAt.toISOString()??null,dataAsOf:material?.dataAsOf?.toISOString()??null,
-      changeSummary:view?.changeSummary??material?.changeReason??null,state:(view?.state==='generating'?'generating':view?.state==='failed'?'failed':material&&researchLevel==='ai'?'ready':'empty'),taskId:view?.taskId??null,error:view?.error??null,source:material?.source??null,
-      researchLevel:material?researchLevel:'facts_only',...presentation,content,progress:(run?.progress as CurrentResearchView['progress'])??(view?.state==='generating'?{phase:'queued',message:'正在等待可用的 AI 股友…',percent:0}:null),executorLabel,
+      updatedAt:typeof material?.snapshot?.generatedAt==="string"?material.snapshot.generatedAt:material?.createdAt.toISOString()??null,dataAsOf:material?.dataAsOf?.toISOString()??null,
+      changeSummary:view?.changeSummary??material?.changeReason??null,state:(view?.state==='generating'?'generating':view?.state==='failed'?'failed':material&&researchLevel==='ai'?presentation.readingState==='ready'?'ready':'failed':'empty'),taskId:view?.taskId??null,error:view?.error??(material&&presentation.readingState==='pending'?'研究已返回，内容整理待核对。 / Research returned; formatting needs review.':null),source:material?.source??null,
+      researchLevel:material?researchLevel:'facts_only',...presentation,...(view?.taskKind==='formatting_portfolio'?{readingState:'pending' as const}:{}),content,progress:(run?.progress as CurrentResearchView['progress'])??(view?.state==='generating'?{phase:'queued',message:'正在等待可用的 AI 股友…',percent:0}:null),executorLabel,
       startedAt:run?.startedAt?.toISOString()??(view?.state==='generating'?view.updatedAt.toISOString():null),cancelling:view?.taskKind==='cancelling_portfolio',cancelled:view?.taskKind==='cancelled'};
   }
 
@@ -88,6 +115,21 @@ export class CurrentResearchService {
       await tx.update(researchCurrentViews).set({state:draining?'generating':view.currentDocumentId?'ready':'empty',taskKind:draining?'cancelling_portfolio':'cancelled',generationSequence:view.generationSequence+1,generationKey:null,error:null,changeSummary:'本次分析已停止。 / Analysis stopped.',updatedAt:new Date()}).where(eq(researchCurrentViews.id,view.id));
       return{cancelled:true};
     });return this.get(owner,value.topicKey,dateKey);
+  }
+
+  /** Reuse the retained completed result. This path has no executor or provider call. */
+  async reformat(owner:string,input:unknown,timezone:string):Promise<CurrentResearchView>{
+    const value=parseRefresh(input),dateKey=value.topicKey==='portfolio'?(value.date??businessDate(new Date(),timezone)):'current';
+    await this.documents.withSubmission(owner,`simple-reformat:${value.requestKey}`,value,async tx=>{
+      const [view]=await tx.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey)));
+      if(!view||view.state==='generating'||!view.taskId||!['portfolio','formatting_portfolio'].includes(view.taskKind??''))throw new BadRequestException('NO_COMPLETED_RESULT_TO_REPARSE');
+      const [run]=await tx.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,view.taskId),eq(portfolioAnalysisRuns.status,'completed')));
+      if(!run?.report)throw new BadRequestException('NO_COMPLETED_RESULT_TO_REPARSE');
+      const material=await this.documents.importSourceInTransaction(tx,owner,{type:'portfolio',id:run.id}),presentation=researchPresentation(null,material.sections);
+      await tx.update(researchCurrentViews).set(presentation.readingState==='ready'?{currentDocumentId:material.id,state:'ready',taskKind:'portfolio',error:null,updatedAt:new Date()}:{state:'failed',taskKind:'formatting_portfolio',error:'研究已返回，内容整理待核对。原始材料已保留。 / Research returned; formatting needs review. The original material is preserved.',updatedAt:new Date()}).where(eq(researchCurrentViews.id,view.id));
+      return {documentId:material.id};
+    });
+    return this.get(owner,value.topicKey,dateKey);
   }
 
   async refresh(owner:string,input:unknown,facts:unknown,timezone:string,options?:{automaticTaskId?:string;route?:ModelRoute;connectionId?:string;snapshot?:PortfolioReportSnapshot;expectedGenerationKey?:string}):Promise<CurrentResearchView> {
@@ -156,6 +198,10 @@ export class CurrentResearchService {
         else {const [session]=await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner,row.owner),eq(councilSessions.id,row.taskId)));status=session?.status;const [report]=await this.db.select().from(councilReports).where(and(eq(councilReports.owner,row.owner),eq(councilReports.sessionId,row.taskId))).orderBy(desc(councilReports.createdAt)).limit(1);if(report&&(!report.publicationOutcome||report.publicationOutcome==='succeeded'))source={type:'council',id:report.id};}
         if(source) {
           const material=await this.documents.importSource(row.owner,source);
+          if(researchPresentation(null,material.sections).readingState==='pending'){
+            await this.db.update(researchCurrentViews).set({state:'failed',taskKind:'formatting_portfolio',error:'研究已返回，内容整理待核对。原始材料已保留。 / Research returned; formatting needs review. The original material is preserved.',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));
+            continue;
+          }
           await this.db.transaction(async tx=>{await lockMemoryOwner(tx,row.owner);await tx.update(researchCurrentViews).set({currentDocumentId:material.id,state:'ready',error:null,changeSummary:row.currentDocumentId?'New complete research is available.':null,updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));});
           if(row.automaticTaskId)await new AutomaticResearchBudgetService(this.db).finish(row.owner,row.automaticTaskId,'completed');
         } else if(!status||['failed','cancelled','completed'].includes(status)) await this.db.update(researchCurrentViews).set({state:'failed',error:'Research did not produce a complete result.',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));
@@ -169,7 +215,7 @@ export class CurrentResearchService {
       FROM research_documents d JOIN research_document_versions v ON v.id=d.latest_version_id AND v.owner=d.owner
       JOIN council_reports r ON r.research_version_id=v.id AND r.owner=v.owner
       JOIN council_sessions s ON s.id=r.session_id AND s.owner=r.owner AND s.status='completed'
-      WHERE (d.topic_key LIKE 'ticker:%' OR (d.topic_key='portfolio' AND s.checkpoint->'simple'->>'contextDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
+      WHERE d.topic_key LIKE 'ticker:%'
       AND v.revoked_at IS NULL AND v.created_at<=now() AND (v.available_at IS NULL OR v.available_at<=now())
       AND (r.publication_outcome IS NULL OR r.publication_outcome='succeeded')
       AND NOT EXISTS(SELECT 1 FROM simple_council_requests q WHERE q.owner=s.owner AND q.session_id=s.id AND q.request_key LIKE 'refresh:%')

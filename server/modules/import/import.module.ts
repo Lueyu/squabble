@@ -13,11 +13,13 @@ import { LocalAgentsModule } from '../local-agents/local-agents.module';
 import { ExperienceModule } from '../experience/experience.module';
 import { ImportBatchesService } from './import-batches.service';
 import { ImportBatchFiles } from './import-batch-files';
+import { TransactionsModule } from '../transactions/transactions.module';
+import { TransactionImportsService } from './transaction-imports.service';
 
 @Module({
-  imports: [HttpModule, QuoteModule, LocalAgentsModule, ExperienceModule],
+  imports: [HttpModule, QuoteModule, LocalAgentsModule, ExperienceModule, TransactionsModule],
   controllers: [ImportController],
-  providers: [ImportService, OcrService, ScreenshotJobsService, ImportBatchesService, ImportBatchFiles],
+  providers: [ImportService, OcrService, ScreenshotJobsService, ImportBatchesService, ImportBatchFiles, TransactionImportsService],
   exports: [ImportService],
 })
 export class ImportModule {}

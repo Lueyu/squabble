@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { investmentFixture } from './investment-test.fixture';
+import { investmentFixture, startPreUserStrategyInvestmentFixture, restorePreUserStrategyRunningPolicyFixture } from './investment-test.fixture';
 import { InvestmentPolicyService } from './investment-policy.service';
 import { investmentExecutionFence } from './investment-policy.fence';
 import { SimulationExperimentsService } from './simulation-experiments.service';
@@ -23,7 +23,7 @@ test('copied opening security can use one verified source; a novel ticker cannot
     const market = { getSnapshot: async () => simulationMarketFixture({ price: '100', market: 'US', currency: 'USD', timestamp: Date.now() }, true) };
     const policies = new InvestmentPolicyService(db, new SimulationExperimentsService(db, {} as never, {} as never, undefined, market as never));
     const preview = await policies.preview(owner, { origin: 'holdings', requestKey: 'copied-preview' });
-    const start = await policies.start(owner, { previewId: preview.id, requestKey: 'copied-start', cashAvailable: { USD: 10000 }, sellableShares: { ABC: 10 } });
+    const start = await startPreUserStrategyInvestmentFixture(policies, db, owner, { previewId: preview.id, requestKey: 'copied-start', cashAvailable: { USD: 10000 }, sellableShares: { ABC: 10 } });
     const config = normalizeBuilderConfig({ name: 'Fixture single-source research', template: 'balanced', tickers: [], minimumRating: 'Buy', customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 10, notifyOnProposal: false });
     const [profile] = await db.insert(builderProfiles).values({ owner, config }).returning();
     const docs = new ResearchDocumentsService(db);

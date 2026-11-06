@@ -349,7 +349,7 @@ export class StrategyMandateService {
     const positions = await tx.select().from(paperPositions).where(and(eq(paperPositions.owner, owner), eq(paperPositions.accountId, mandate.accountId))).for('share');
     const held = new Set(positions.filter(position => Number(position.shares) > 0).map(position => position.ticker));
     const strongest = new Map<string, MandateRule>();
-    for (const rule of mandate.config.rules) if (held.has(rule.ticker) && Date.parse(rule.expiresAt) > now.getTime()
+    for (const rule of mandate.config.rules) if (rule.stopLossPrice > 0 && held.has(rule.ticker) && Date.parse(rule.expiresAt) > now.getTime()
       && (!strongest.has(rule.ticker) || strongest.get(rule.ticker)!.stopLossPrice < rule.stopLossPrice)) strongest.set(rule.ticker, rule);
     if (!strongest.size) return;
     const protections = await tx.select().from(strategyProtections).where(and(eq(strategyProtections.owner, owner), eq(strategyProtections.accountId, mandate.accountId))).for('update');
@@ -410,7 +410,7 @@ export class StrategyMandateService {
         market, marketDate: schedule.tradingDate, rules, sessionIds: task.sessionIds, reportIds: councilIds,
         summary: current.config.objective, expiresAt, memoryInventory }).returning();
       const positions = await tx.select().from(paperPositions).where(eq(paperPositions.accountId, mandate.accountId));
-      for (const rule of rules) if (positions.some(p => p.ticker === rule.ticker && Number(p.shares) > 0)) {
+      for (const rule of rules) if (rule.stopLossPrice > 0 && positions.some(p => p.ticker === rule.ticker && Number(p.shares) > 0)) {
         await tx.insert(strategyProtections).values({ owner, accountId: mandate.accountId, ticker: rule.ticker, market,
           stopLossPrice: String(rule.stopLossPrice), planId: plan.id, ruleId: rule.id }).onConflictDoUpdate({
           target: [strategyProtections.owner, strategyProtections.accountId, strategyProtections.ticker],

@@ -3,16 +3,25 @@ import { LlmService } from '../multi-agent/llm.service';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
 import type { CouncilMember } from '../../../shared/council.interface';
 import { LlmBudgetService, type BudgetReservation } from '../llm-budget/llm-budget.service';
+import { PortfolioResearchRouteService } from '../experience/portfolio-research-route.service';
+import { extractResearchObject } from '../../../shared/research-reading';
 
 /** One durable caller claim is required before entering this adapter. Never retry a paid request. */
 @Injectable()
 export class StrategyModelService {
   constructor(private readonly llm: LlmService, private readonly local: LocalAgentsService,
-    @Optional() private readonly budgets?: LlmBudgetService) {}
+    @Optional() private readonly budgets?: LlmBudgetService,@Optional()private readonly routes?:PortfolioResearchRouteService) {}
 
   async json(owner: string, member: CouncilMember | undefined, taskId: string, purpose: string,
     prompt: string, shouldContinue: () => Promise<boolean>, fast: boolean, budgetTaskId = taskId): Promise<unknown> {
     if (!await shouldContinue()) throw new Error('Strategy profile is no longer active');
+    if(!member&&this.routes){
+      const selected=await this.routes.resolve(owner);
+      if(!selected)throw new Error('No available strategy research member');
+      member={id:'strategy-preparation',name:selected.label,role:'researcher',instructions:'',model:fast?'fast':'slow',
+        ...(selected.route.mode==='local'?{executionMode:'local',agentId:selected.route.agentId,agentSettings:selected.route.agentSettings}
+          :{executionMode:'model',connectionId:selected.connectionId})};
+    }
     if (member?.executionMode === 'local') {
       if (!member.agentId) throw new Error('Native reviewer is unavailable');
       let reservation: BudgetReservation | undefined;
@@ -28,8 +37,9 @@ export class StrategyModelService {
         onTask: async () => undefined, onProgress: async () => undefined, shouldContinue });
       if (reservation) await this.budgets!.settle(owner, reservation.id);
       if (!await shouldContinue()) throw new Error('Strategy profile changed');
-      const text = result.text.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '');
-      return JSON.parse(text) as unknown;
+      const parsed=extractResearchObject(result.text);
+      if(parsed.value===undefined)throw new Error('Local strategy result needs formatting');
+      return parsed.value;
       } catch (error) { if (reservation) await this.budgets!.settle(owner, reservation.id, undefined, true).catch(() => undefined); throw error; }
     }
     const options = { connectionId: member?.connectionId, route: member ? { mode: 'api' as const } : undefined,
