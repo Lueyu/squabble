@@ -9,13 +9,17 @@ import { and, eq } from 'drizzle-orm';
 import { ChannelBriefsService } from './channel-briefs.service';
 import { ChannelService } from './channel.service';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
+import { businessDate } from '../experience/simple-experience.rules';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { channelBriefs, channelBubbles, channelReports, channelTemplateRegistry } from '../../database/channel.schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { holdings } from '../../database/schema';
 
 const url = process.env.CHANNEL_TEST_DATABASE_URL ?? process.env.COUNCIL_TEST_DATABASE_URL;
-test('production Brief compilation persists report contracts and dispatches actual completed research and price conditions', { skip: !url }, async () => {
+test('production Brief compilation persists report contracts and dispatches actual completed research and price conditions', { skip: !url }, async (t) => {
+  // Freeze Date only: this is Shanghai midnight, while real PostgreSQL/network timers keep running.
+  const now = new Date('2026-11-06T16:00:00.000Z');
+  t.mock.timers.enable({ apis: ['Date'], now });
   const namespace = `briefs_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(url!, { max: 1, onnotice: () => {} });
   const client = postgres(url!, { max: 6, onnotice: () => {}, connection: { search_path: namespace } });
@@ -29,11 +33,11 @@ test('production Brief compilation persists report contracts and dispatches actu
     const channel = new ChannelService(db, quotes as never); await channel.onModuleInit();
     const briefs = new ChannelBriefsService(db, channel, quotes as never);
     const [holding] = await db.insert(holdings).values({ owner, ticker: 'ACME', shares: '3', buyPrice: '80', currentPrice: '90' }).returning();
-    const now = new Date(), evidenceId = 'filing-one';
+    const evidenceId = 'filing-one';
     const [session] = await db.insert(councilSessions).values({ owner, ticker: 'PORTFOLIO', scene: 'portfolio_daily', status: 'completed',
       profileVersion: 1, profileSnapshot: {} as never, createdAt: new Date(now.getTime() - 130000),
-      checkpoint: { simple: { researchOnly: true, contextDate: '2026-11-06' } } as never }).returning();
-    const [report] = await db.insert(councilReports).values({ owner, sessionId: session.id, version: 1, revision: 1,
+      checkpoint: { simple: { researchOnly: true, contextDate: businessDate(new Date(now.getTime() - 86400000), 'Asia/Shanghai') } } as never }).returning();
+    const [report] = await db.insert(councilReports).values({ owner, sessionId: session.id, version: 1, revision: 1, createdAt: now,
       decision: 'wait', summary: '# Daily report\n\nACME original filing condition.\n\n## Strategy draft\n\nObserve only.', dissent: [], nextReviewCondition: 'Original price condition',
       engine: 'local', publicationOutcome: 'succeeded', evidence: [{ id: evidenceId, title: 'Fictional filing', content: 'ACME observation condition', sourceUrl: 'https://example.test/filing', fetchedAt: now.toISOString(),
         metadata: { sources: [{ origin: 'provider', verification: 'server-verified', provider: 'fixture', kind: 'financial', sourceUrl: 'https://example.test/filing', sourceRevision: '1', supersedesSourceRevision: null,
@@ -46,6 +50,10 @@ test('production Brief compilation persists report contracts and dispatches actu
     await db.update(councilReports).set({ researchVersionId: version.id }).where(eq(councilReports.id, report.id));
     await channel.ingestReport(owner, { id: version.id, revision: version.version, title: version.title, content: report.summary, sections: version.sections, createdAt: report.createdAt.toISOString(), source: { type: 'council', id: report.id, researchOnly: true } });
 
+    await briefs.tick();
+    assert.equal((await db.select().from(channelBriefs).where(eq(channelBriefs.owner, owner))).length, 0, 'a freshly published report cannot revive a previous-day research context');
+    assert.equal((await db.select().from(channelBubbles).where(eq(channelBubbles.owner, owner))).length, 0, 'stale research does not publish channel bubbles');
+    await db.update(councilSessions).set({ checkpoint: { simple: { researchOnly: true, contextDate: businessDate(now, 'Asia/Shanghai') } } as never }).where(eq(councilSessions.id, session.id));
     await briefs.tick();
     const stored = await db.select().from(channelBriefs).where(eq(channelBriefs.owner, owner));
     assert.equal(stored.length, 3, 'close, actual process duration and calculable cross are persisted as real Briefs');

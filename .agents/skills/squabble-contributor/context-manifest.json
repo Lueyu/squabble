@@ -244,6 +244,7 @@
   "reviewNotes": {
     "architecture": "All five current flows checked; diagrams updated against the recorded application baseline.",
     "behavior": "This change updates development knowledge and tooling only; running application and ledgers are outside its mutation scope.",
-    "tooling": "Helper and CI integration source is verified separately from the unchanged application baseline."
+    "tooling": "Helper and CI integration source is verified separately from the unchanged application baseline.",
+    "testFixtures": "CI crossed Shanghai midnight: three integration suites now align scenario clocks and dates; stale-report and ledger guards remain unchanged. These test-only changes do not alter any of the five architecture flows."
   }
 }

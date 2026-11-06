@@ -59,6 +59,12 @@ node node_modules/tsx/dist/cli.mjs --tsconfig tsconfig.node.json --test --test-c
 node --test client/src/utils/channel-workbench.test.cjs
 ```
 
+Keep scenario dates and service clocks consistent. A fixed transaction or report
+business date must not be combined with live `new Date()` checkpoints. Freeze
+only `Date` with the Node test context for deterministic dated fixtures, preserving
+network timers; calculate business dates in the explicit account timezone. Include
+stale-day rejection coverage rather than relaxing expiry or ledger baseline guards.
+
 Do not broaden/repeat passing suites without a new change or unresolved risk.
 Report database skips explicitly; an offline pass does not prove integration
 coverage. Required GitHub checks remain **Lint & typecheck**, **Agent tests**,

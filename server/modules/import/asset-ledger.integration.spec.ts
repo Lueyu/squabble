@@ -13,7 +13,9 @@ import { CashAccountsService } from '../cash-accounts/cash-accounts.service';
 import type { QuoteService } from '../quote/quote.service';
 import { TransactionImportsService } from './transaction-imports.service';
 
-test('snapshot baseline, transactions and concurrent cash initialization stay consistent in PostgreSQL', { skip: !process.env.EXPERIENCE_TEST_DATABASE_URL }, async () => {
+test('snapshot baseline, transactions and concurrent cash initialization stay consistent in PostgreSQL', { skip: !process.env.EXPERIENCE_TEST_DATABASE_URL }, async t => {
+  // Position and cash checkpoints must use the dated transaction fixture's business day.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-06T04:00:00Z') });
   const admin = postgres(process.env.EXPERIENCE_TEST_DATABASE_URL!, { max: 1, onnotice: () => {} });
   const namespace = 'ledger_' + randomUUID().replaceAll('-', '');
   await admin`CREATE SCHEMA ${admin(namespace)}`;
@@ -59,6 +61,8 @@ test('snapshot baseline, transactions and concurrent cash initialization stay co
     await assert.rejects(imports.preview(randomUUID(), batch.id), /BATCH_NOT_FOUND/);
     const currentCash = (await cash.list(owner)).find(row => row.currency === 'USD')!;
     const confirmation = { requestKey: randomUUID(), balances: [{ currency: 'USD' as const, balance: 114, expectedUpdatedAt: currentCash.updatedAt }] };
+    // A successful confirmation advances the optimistic-concurrency timestamp.
+    t.mock.timers.tick(1000);
     assert.equal((await cash.confirm(owner, confirmation)).items.find(row => row.currency === 'USD')?.reconciliationStatus, 'confirmed');
     await cash.confirm(owner, confirmation);
     await assert.rejects(cash.confirm(owner, { ...confirmation, requestKey: randomUUID() }), /CASH_CHANGED/);
@@ -90,7 +94,7 @@ test('snapshot baseline, transactions and concurrent cash initialization stay co
     const identifiedOverlap = await imports.create(unidentifiedOwner, { ...input, rows: [{ ...unidentifiedRow, brokerId: 'distinct-1' }, { ...unidentifiedRow, brokerId: 'distinct-2' }] });
     assert.deepEqual(identifiedOverlap.rows.map(row => row.status), ['review', 'review'], 'one unidentified execution cannot silently consume two distinct broker references');
     assert.ok(identifiedOverlap.rows.every(row => row.issues.includes('AMBIGUOUS_IDENTITY')));
-  } finally { await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
+  } finally { t.mock.timers.reset(); await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
 });
 
 test('cash upgrade retains ambiguous original balances and stays conservative on repeated migration', { skip: !process.env.EXPERIENCE_TEST_DATABASE_URL }, async () => {
@@ -142,7 +146,9 @@ test('cash confirmations protect included same-day ledger history while later en
   } finally { await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
 });
 
-test('HK and CN ticker aliases share the imported checkpoint and preserve upgraded ledger identities', { skip: !process.env.EXPERIENCE_TEST_DATABASE_URL }, async () => {
+test('HK and CN ticker aliases share the imported checkpoint and preserve upgraded ledger identities', { skip: !process.env.EXPERIENCE_TEST_DATABASE_URL }, async t => {
+  // Imported checkpoints and the dated alias transactions must share the same business day.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-06T04:00:00Z') });
   const admin = postgres(process.env.EXPERIENCE_TEST_DATABASE_URL!, { max: 1, onnotice: () => {} }), namespace = 'ticker_checkpoint_' + randomUUID().replaceAll('-', '');
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   const client = postgres(process.env.EXPERIENCE_TEST_DATABASE_URL!, { max: 1, onnotice: () => {}, connection: { search_path: namespace } });
@@ -179,7 +185,7 @@ test('HK and CN ticker aliases share the imported checkpoint and preserve upgrad
     const wrongCurrencyOwner = randomUUID();
     await service.create(wrongCurrencyOwner, { txDate: '2026-11-06', txType: 'Deposit', ticker: '', shares: 100, price: 1, currency: 'USD' });
     await assert.rejects(service.create(wrongCurrencyOwner, { txDate: '2026-11-06', txType: 'Buy', ticker: '0700.HK', shares: 1, price: 10, currency: 'USD' }), /POSITION_CURRENCY_MISMATCH/);
-  } finally { await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
+  } finally { t.mock.timers.reset(); await client.end(); await admin`DROP SCHEMA ${admin(namespace)} CASCADE`; await admin.end(); }
 });
 
 test('startup migration replay does not confirm new cash or checkpoint post-upgrade trades', { skip: !process.env.EXPERIENCE_TEST_DATABASE_URL }, async () => {
