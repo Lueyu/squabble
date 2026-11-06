@@ -114,7 +114,7 @@ function Layout() {
   }
 
   return (
-    <div className={`app-shell flex w-screen overflow-hidden bg-background text-foreground ${inSettings ? 'app-shell-settings' : ''} ${location.pathname === '/council' ? 'h-dvh' : 'h-screen'}`}>
+    <div className={`app-shell ${simple ? 'app-shell-simple' : ''} flex w-screen overflow-hidden bg-background text-foreground ${inSettings ? 'app-shell-settings' : ''} ${location.pathname === '/council' ? 'h-dvh' : 'h-screen'}`}>
       {/* Sidebar */}
       <aside
         aria-label={zh ? '主导航' : 'Main navigation'}
@@ -242,7 +242,7 @@ function Layout() {
         <main ref={pageScrollRef} className={inSettings
           ? 'app-content app-settings-content flex min-h-0 flex-1 flex-col overflow-hidden'
           : location.pathname === '/council'
-          ? 'app-content flex min-h-0 flex-1 flex-col overflow-hidden safe-bottom'
+          ? 'app-content app-council-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden safe-bottom'
           : 'app-content flex-1 overflow-y-auto safe-bottom'}>
           <Outlet />
         </main>

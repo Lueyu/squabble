@@ -1,4 +1,9 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import type { ModelRoute } from '../../../shared/model-route.interface';
+import type { PortfolioReportSnapshot } from '../../../shared/portfolio-report.interface';
+import { PortfolioResearchRouteService } from './portfolio-research-route.service';
+import { researchPresentation } from './research-presentation';
+import { researchAnalysisRequests } from '../../database/research-analysis-requests.schema';
 import { and, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { researchCurrentViews,experiencePreferences } from '../../database/simple-experience.schema';
@@ -18,11 +23,12 @@ export class CurrentResearchService {
   private readonly logger=new Logger(CurrentResearchService.name);
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db:PostgresJsDatabase,
     private readonly documents:ResearchDocumentsService,private readonly portfolio:PortfolioAnalysisService,
-    private readonly conversations:SimpleCouncilService) {}
+    private readonly conversations:SimpleCouncilService,@Optional() private readonly routes?:PortfolioResearchRouteService) {}
 
   async refreshDaily(owner:string,facts:unknown,timezone:string,accountId:string|null):Promise<CurrentResearchView> {
     const day=businessDate(new Date(),timezone),current=await this.get(owner,'portfolio',day);
-    if(current.state!=='empty')return current;
+    if(current.state!=='empty'||current.cancelled)return current;
+    if(this.routes&&!await this.routes.resolve(owner))return current;
     const budget=new AutomaticResearchBudgetService(this.db),claim=await budget.claimAutomaticResearch(owner,accountId,`daily:${day}`,'portfolio');
     if(!claim.claimed||!claim.taskId){
       if(claim.reason==='ALREADY_CLAIMED')return current;
@@ -47,21 +53,58 @@ export class CurrentResearchService {
       const [preferences]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
       material=rows.find(r=>dateKey==='current'||businessDate(r.version.dataAsOf??r.version.createdAt,preferences?.timezone??'Asia/Shanghai')===dateKey)?.version;
     }
-    return {topicKey,dateKey,documentId:material?.id??null,title:material?.title??'',content:material?.content??'',
+    let report:unknown, researchLevel:'facts_only'|'ai'='ai',executorLabel:string|null=null;
+    let run:typeof portfolioAnalysisRuns.$inferSelect|undefined;
+    if(material?.source?.type==='portfolio'){
+      const [sourceRun]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,material.source.id)));
+      report=sourceRun?.report;researchLevel=(sourceRun?.route as ModelRoute|undefined)?.mode==='basic'?'facts_only':'ai';
+    }
+    if(material?.source?.type==='council'){const [sourceReport]=await this.db.select().from(councilReports).where(and(eq(councilReports.owner,owner),eq(councilReports.id,material.source.id)));report=sourceReport;}
+    if(['portfolio','cancelling_portfolio'].includes(view?.taskKind??'')&&view?.taskId)[run]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,view.taskId)));
+    const route=(run?.route??view?.dispatchRoute) as ModelRoute|undefined;
+    if(route)executorLabel=route.mode==='local'?route.agentId.replace(/^(native|companion)-/u,''):route.mode==='api'?'AI':null;
+    const presentation=researchPresentation(report,material?.sections??[]);
+    const content=material?.source?presentation.content:material?.content??'';
+    return {topicKey,dateKey,documentId:material?.id??null,title:material?.title??'',
       updatedAt:material?.createdAt.toISOString()??null,dataAsOf:material?.dataAsOf?.toISOString()??null,
-      changeSummary:view?.changeSummary??material?.changeReason??null,state:(view?.state==='generating'?'generating':view?.state==='failed'?'failed':material?'ready':'empty'),taskId:view?.taskId??null,error:view?.error??null,source:material?.source??null};
+      changeSummary:view?.changeSummary??material?.changeReason??null,state:(view?.state==='generating'?'generating':view?.state==='failed'?'failed':material&&researchLevel==='ai'?'ready':'empty'),taskId:view?.taskId??null,error:view?.error??null,source:material?.source??null,
+      researchLevel:material?researchLevel:'facts_only',...presentation,content,progress:(run?.progress as CurrentResearchView['progress'])??(view?.state==='generating'?{phase:'queued',message:'正在等待可用的 AI 股友…',percent:0}:null),executorLabel,
+      startedAt:run?.startedAt?.toISOString()??(view?.state==='generating'?view.updatedAt.toISOString():null),cancelling:view?.taskKind==='cancelling_portfolio',cancelled:view?.taskKind==='cancelled'};
   }
 
-  async refresh(owner:string,input:unknown,facts:unknown,timezone:string,options?:{automaticTaskId:string}):Promise<CurrentResearchView> {
+  async cancel(owner:string,input:unknown,timezone:string):Promise<CurrentResearchView>{
+    const value=parseRefresh(input),dateKey=value.topicKey==='portfolio'?(value.date??businessDate(new Date(),timezone)):'current';
+    if(value.topicKey!=='portfolio')throw new BadRequestException('PORTFOLIO_TASK_REQUIRED');
+    await this.documents.withSubmission(owner,`simple-cancel:${value.requestKey}`,value,async tx=>{
+      const [view]=await tx.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey)));
+      if(!view||view.state!=='generating')return{cancelled:true};
+      await tx.update(researchAnalysisRequests).set({state:'cancelled',updatedAt:new Date()}).where(and(eq(researchAnalysisRequests.owner,owner),eq(researchAnalysisRequests.dateKey,dateKey),inArray(researchAnalysisRequests.state,['queued','dispatching'])));
+      let draining=false;
+      if(view.taskKind==='portfolio'&&view.taskId){
+        const [run]=await tx.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,view.taskId)));
+        if(run&&['running','cancelling'].includes(run.status)){draining=true;await tx.update(portfolioAnalysisRuns).set({status:'cancelling',progress:{phase:'analyzing',message:'正在停止分析，等待股友确认…',percent:50},updatedAt:new Date()}).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,run.id),inArray(portfolioAnalysisRuns.status,['running','cancelling'])));}
+        else if(run?.status==='pending')await tx.update(portfolioAnalysisRuns).set({status:'cancelled',completedAt:new Date(),updatedAt:new Date()}).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,run.id),eq(portfolioAnalysisRuns.status,'pending')));
+      }
+      await tx.update(researchCurrentViews).set({state:draining?'generating':view.currentDocumentId?'ready':'empty',taskKind:draining?'cancelling_portfolio':'cancelled',generationSequence:view.generationSequence+1,generationKey:null,error:null,changeSummary:'本次分析已停止。 / Analysis stopped.',updatedAt:new Date()}).where(eq(researchCurrentViews.id,view.id));
+      return{cancelled:true};
+    });return this.get(owner,value.topicKey,dateKey);
+  }
+
+  async refresh(owner:string,input:unknown,facts:unknown,timezone:string,options?:{automaticTaskId?:string;route?:ModelRoute;snapshot?:PortfolioReportSnapshot;expectedGenerationKey?:string}):Promise<CurrentResearchView> {
     const value=parseRefresh(input), dateKey=value.topicKey==='portfolio'?(value.date??businessDate(new Date(),timezone)):'current';
     if(value.topicKey==='portfolio'&&dateKey!==businessDate(new Date(),timezone)) throw new BadRequestException('PAST_RESEARCH_IS_READ_ONLY');
-    const generationKey=generationIdentity(value.topicKey,dateKey,facts);
+    const selected=value.topicKey==='portfolio'&&this.routes?await this.routes.resolve(owner):undefined;
+    const route=options?.route??selected?.route;
+    if(value.topicKey==='portfolio'&&this.routes&&!route)throw new BadRequestException('请先连接一位可用的 AI 股友。 / Connect an available AI friend first.');
+    const generationKey=generationIdentity(value.topicKey,dateKey,{facts,...(route?{route,executor:selected?.fingerprint}:{} )});
     const receipt=await this.documents.withSubmission(owner,`simple-refresh:${value.requestKey}`,value,async tx=>{
       const [current]=await tx.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey)));
-      if(current?.generationKey===generationKey&&['generating','ready'].includes(current.state)) return {sequence:current.generationSequence,dispatch:false};
+      if(options?.expectedGenerationKey&&current?.generationKey!==options.expectedGenerationKey)throw new ConflictException('RESEARCH_REQUEST_SUPERSEDED');
+      if(current?.generationKey===generationKey&&(current.state==='generating'||current.state==='ready'&&value.trigger!=='manual')) return {sequence:current.generationSequence,dispatch:false};
       const sequence=(current?.generationSequence??0)+1;
-      await tx.insert(researchCurrentViews).values({owner,topicKey:value.topicKey,dateKey,generationKey,generationSequence:sequence,state:'generating',automaticTaskId:options?.automaticTaskId??null})
-        .onConflictDoUpdate({target:[researchCurrentViews.owner,researchCurrentViews.topicKey,researchCurrentViews.dateKey],set:{generationKey,generationSequence:sequence,state:'generating',taskId:null,taskKind:null,error:null,automaticTaskId:options?.automaticTaskId??null}});
+      const dispatch={dispatchSnapshot:options?.snapshot??null,dispatchRoute:route??null};
+      await tx.insert(researchCurrentViews).values({owner,topicKey:value.topicKey,dateKey,generationKey,generationSequence:sequence,state:'generating',automaticTaskId:options?.automaticTaskId??null,...dispatch})
+        .onConflictDoUpdate({target:[researchCurrentViews.owner,researchCurrentViews.topicKey,researchCurrentViews.dateKey],set:{generationKey,generationSequence:sequence,state:'generating',taskId:null,taskKind:null,error:null,automaticTaskId:options?.automaticTaskId??null,...dispatch}});
       return {sequence,dispatch:true};
     });
     // Dispatch is claimed durably before calling an executor; ambiguous delivery is never replayed.
@@ -74,13 +117,16 @@ export class CurrentResearchService {
       try {
         let id:string,kind:string;
         if(value.topicKey==='portfolio') {
+          if(selected?.busy){await this.db.update(researchCurrentViews).set({taskKind:'waiting_executor',updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence))));return this.get(owner,value.topicKey,dateKey);}
           const [active]=await this.db.select({id:portfolioAnalysisRuns.id}).from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),inArray(portfolioAnalysisRuns.status,['pending','running','cancelling']))).limit(1);
           if(active){await this.db.update(researchCurrentViews).set({taskKind:'waiting_portfolio',updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence))));return this.get(owner,value.topicKey,dateKey);}
-          if(options?.automaticTaskId)await new AutomaticResearchBudgetService(this.db).reserveCall(owner,options.automaticTaskId);const run=await this.portfolio.create(owner, 'zh-CN');id=run.id;kind='portfolio';}
+          if(options?.automaticTaskId)await new AutomaticResearchBudgetService(this.db).reserveCall(owner,options.automaticTaskId);const run=await this.portfolio.create(owner, 'zh-CN',route,options?.snapshot);id=run.id;kind='portfolio';}
         else {const result=await this.conversations.create(owner,{message:'请研究当前情况，给出支持理由、主要疑点、当前判断和下一步需要关注的证据。',context:{kind:'stock',ticker:value.topicKey.slice(7)},requestKey:`refresh:${value.requestKey}`},options);
           if(!('id' in result)) throw new BadRequestException('STOCK_IDENTITY_REQUIRED');id=result.id;kind='council';}
         await this.db.update(researchCurrentViews).set({taskId:id,taskKind:kind,updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence))));
-      } catch(error) { await this.db.update(researchCurrentViews).set({state:'failed',error:error instanceof Error?error.message.slice(0,300):'Research unavailable',updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence)))); }
+      } catch(error) {
+        const busy=error instanceof Error&&error.message==='PORTFOLIO_BUSY_RETRY';
+        await this.db.update(researchCurrentViews).set(busy?{taskKind:'waiting_portfolio',updatedAt:new Date()}:{state:'failed',error:error instanceof Error?error.message.slice(0,300):'Research unavailable',updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence)))); }
     }
     return this.get(owner,value.topicKey,dateKey);
   }
@@ -88,11 +134,18 @@ export class CurrentResearchService {
   async reconcile():Promise<void> {
     const rows=await this.db.select().from(researchCurrentViews).where(eq(researchCurrentViews.state,'generating')).limit(100);
     for(const row of rows) {
-      if(row.taskKind==='waiting_portfolio') {
+      if(row.taskKind==='import_pending')continue;
+      if(row.taskKind==='cancelling_portfolio'){
+        const [run]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,row.owner),eq(portfolioAnalysisRuns.id,row.taskId!)));
+        if(!run||['completed','failed','cancelled'].includes(run.status))await this.db.update(researchCurrentViews).set({state:row.currentDocumentId?'ready':'empty',taskKind:'cancelled',taskId:null,error:null,updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));
+        continue;
+      }
+      if(row.taskKind==='waiting_portfolio'||row.taskKind==='waiting_executor') {
+        if(row.taskKind==='waiting_executor'&&this.routes){const ready=await this.routes.resolve(row.owner);if(!ready||ready.busy)continue;}
         const [active]=await this.db.select({id:portfolioAnalysisRuns.id}).from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,row.owner),inArray(portfolioAnalysisRuns.status,['pending','running','cancelling']))).limit(1);
         if(!active){
-          const [claimed]=await this.db.update(researchCurrentViews).set({taskKind:'dispatching',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence),eq(researchCurrentViews.taskKind,'waiting_portfolio'))).returning();
-          if(claimed)try{if(row.automaticTaskId)await new AutomaticResearchBudgetService(this.db).reserveCall(row.owner,row.automaticTaskId);const run=await this.portfolio.create(row.owner,'zh-CN');await this.db.update(researchCurrentViews).set({taskId:run.id,taskKind:'portfolio',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));}catch(error){await this.db.update(researchCurrentViews).set({state:'failed',error:error instanceof Error?error.message:'Research unavailable'}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));}
+          const [claimed]=await this.db.update(researchCurrentViews).set({taskKind:'dispatching',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence),eq(researchCurrentViews.taskKind,row.taskKind))).returning();
+          if(claimed)try{if(row.automaticTaskId)await new AutomaticResearchBudgetService(this.db).reserveCall(row.owner,row.automaticTaskId);const run=await this.portfolio.create(row.owner,'zh-CN',row.dispatchRoute??undefined,row.dispatchSnapshot??undefined);await this.db.update(researchCurrentViews).set({taskId:run.id,taskKind:'portfolio',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));}catch(error){await this.db.update(researchCurrentViews).set({state:'failed',error:error instanceof Error?error.message:'Research unavailable'}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));}
         }continue;
       }
       if(!row.taskId) {if(Date.now()-row.updatedAt.getTime()>300_000) await this.db.update(researchCurrentViews).set({state:'failed',error:'Research delivery was interrupted; update again to retry.'}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));continue;}

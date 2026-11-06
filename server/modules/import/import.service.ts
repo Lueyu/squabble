@@ -1,200 +1,212 @@
-/**
- * @file server/modules/import/import.service.ts
- * @description Portfolio import engine.
- *
- * Three sources share one commit path:
- *  - 'csv'       generic CSV (parsed and mapped client-side with papaparse)
- *  - 'robinhood' Robinhood CSV (a saved column mapping over the same flow)
- *  - 'ocr'       broker screenshot OCR (rows extracted by the user's own
- *                multimodal LLM key, see ocr.service.ts)
- *
- * Commit semantics (deliberately conservative):
- *  - ticker is normalized and its market/currency auto-detected from shape
- *  - rows whose ticker already exists as a holding are SKIPPED (never
- *    silently merged — edit the holding instead)
- *  - every outcome is persisted to import_logs with per-row reasons
- */
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
+  Optional,
 } from '@nestjs/common';
-import { desc, eq } from 'drizzle-orm';
-import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
+import { createHash, randomUUID } from 'node:crypto';
+import { and, desc, eq } from 'drizzle-orm';
+import {
+  DRIZZLE_DATABASE,
+  type PostgresJsDatabase,
+} from '../../common/platform';
 import { holdings, importLogs } from '../../database/schema';
+import { importCommitReceipts } from '../../database/import-batches.schema';
 import { QuoteService } from '../quote/quote.service';
-import type { ImportCommitDto, ImportHistoryItem, ImportRowCandidate } from '@shared/api.interface';
-
-/** Max rows accepted in one import. */
-const MAX_ROWS_PER_IMPORT = 200;
-
+import { ImportAnalysisHandoffService } from '../experience/import-analysis-handoff.service';
+import type {
+  ImportCommitDto,
+  ImportCommitResult,
+  ImportHistoryItem,
+} from '@shared/api.interface';
+import type { ImportCommitReceipt } from '../../../shared/screenshot-import.interface';
+import { securityIdentity } from './screenshot-merge';
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+export type ConfirmImportDto = ImportCommitDto & {
+  requestKey?: string;
+  analyze?: boolean;
+};
+export type ConfirmImportResult = ImportCommitResult & {
+  receiptId: string;
+  updated: number;
+  analysisRequestId?: string;
+};
+/** All entry points upsert a reviewed snapshot atomically and leave unmentioned positions alone. */
 @Injectable()
 export class ImportService {
   constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    @Inject(DRIZZLE_DATABASE)
+    private readonly db: PostgresJsDatabase,
     private readonly quoteService: QuoteService,
+    @Optional()
+    private readonly handoff?: ImportAnalysisHandoffService,
   ) {}
-
-  /**
-   * Validate and create holdings from mapped rows.
-   * Existing tickers are skipped (with a reason) so an import never
-   * silently duplicates or merges existing positions.
-   */
-  async commit(userId: string, dto: ImportCommitDto): Promise<{
-    logId: string;
-    created: number;
-    skipped: number;
-    failed: Array<{ ticker: string; reason: string }>;
-  }> {
-    const rows = dto.rows ?? [];
-    if (rows.length === 0) throw new BadRequestException('No rows to import');
-    if (rows.length > MAX_ROWS_PER_IMPORT) {
-      throw new BadRequestException(`单次最多导入 ${MAX_ROWS_PER_IMPORT} 行（收到 ${rows.length} 行）`);
-    }
-    if (!['csv', 'robinhood', 'ocr'].includes(dto.source)) {
-      throw new BadRequestException('Unknown import source');
-    }
-
-    // Existing tickers -> skip list. Comparison happens on a canonical key
-    // so '0700', '700.HK' and '00700' are all recognized as the same stock.
-    const existing = await this.db
-      .select({ ticker: holdings.ticker })
-      .from(holdings)
-      .where(eq(holdings.owner, userId));
-    const existingSet = new Set(existing.map((h) => canonicalKey(h.ticker)));
-
-    const failures: Array<{ ticker: string; reason: string }> = [];
+  async commit(
+    owner: string,
+    dto: ConfirmImportDto,
+  ): Promise<ConfirmImportResult> {
+    if (
+      !dto ||
+      !Array.isArray(dto.rows) ||
+      !dto.rows.length ||
+      dto.rows.length > 200 ||
+      !['csv', 'robinhood', 'ocr'].includes(dto.source)
+    )
+      throw new BadRequestException('INVALID_ROWS');
+    if (
+      dto.requestKey !== undefined &&
+      (typeof dto.requestKey !== 'string' ||
+        !dto.requestKey ||
+        dto.requestKey.length > 150)
+    )
+      throw new BadRequestException('INVALID_REQUEST');
     const seen = new Set<string>();
-    const valid: Array<{ row: ImportRowCandidate; ticker: string }> = [];
-
-    for (const row of rows) {
-      const raw = (row.ticker ?? '').toString().trim();
-      if (!raw) {
-        failures.push({ ticker: '(空)', reason: 'Missing ticker' });
-        continue;
+    const rows = dto.rows.map((row) => {
+      if (
+        !row ||
+        typeof row.ticker !== 'string' ||
+        (row.company != null && typeof row.company !== 'string') ||
+        !['number', 'string'].includes(typeof row.shares) ||
+        (row.avgCost != null &&
+          !['number', 'string'].includes(typeof row.avgCost))
+      )
+        throw new BadRequestException('INVALID_ROWS');
+      const identity = securityIdentity(String(row.ticker ?? '')),
+        shares = Number(row.shares),
+        cost =
+          row.avgCost == null || row.avgCost === ''
+            ? null
+            : Number(row.avgCost);
+      if (
+        !identity ||
+        !Number.isFinite(shares) ||
+        shares <= 0 ||
+        shares > Number.MAX_SAFE_INTEGER ||
+        (cost !== null && (!Number.isFinite(cost) || cost < 0)) ||
+        (row.currency && !['USD', 'HKD', 'CNY'].includes(row.currency)) ||
+        (row.company && row.company.length > 200)
+      )
+        throw new BadRequestException('INVALID_ROWS');
+      if (seen.has(identity.key))
+        throw new BadRequestException('DUPLICATE_TICKER');
+      seen.add(identity.key);
+      return { row, identity, shares, cost };
+    });
+    const requestKey = dto.requestKey ?? randomUUID(),
+      inputHash = createHash('sha256')
+        .update(JSON.stringify(dto))
+        .digest('hex');
+    return this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, owner);
+      const [prior] = await tx
+        .select()
+        .from(importCommitReceipts)
+        .where(
+          and(
+            eq(importCommitReceipts.owner, owner),
+            eq(importCommitReceipts.requestKey, requestKey),
+          ),
+        );
+      if (prior) {
+        if (prior.inputHash !== inputHash)
+          throw new ConflictException('IDEMPOTENCY_CONFLICT');
+        return {
+          logId: prior.id,
+          receiptId: prior.id,
+          created: prior.receipt.created,
+          updated: prior.receipt.updated,
+          skipped: 0,
+          failed: [],
+          analysisRequestId: prior.receipt.analysisRequestId,
+        };
       }
-      let info: ReturnType<QuoteService['detectMarket']>;
-      try {
-        info = this.quoteService.detectMarket(raw);
-      } catch {
-        failures.push({ ticker: raw, reason: 'Cannot identify market for this ticker' });
-        continue;
+      const positions = await tx
+        .select()
+        .from(holdings)
+        .where(eq(holdings.owner, owner))
+        .for('update');
+      const receipt: ImportCommitReceipt = {
+        id: randomUUID(),
+        requestKey,
+        rowIds: [],
+        created: 0,
+        updated: 0,
+        createdAt: new Date().toISOString(),
+      };
+      for (const { row, identity, shares, cost } of rows) {
+        const existing = positions.find(
+          (position) =>
+            securityIdentity(position.ticker, position.market ?? undefined)
+              ?.key === identity.key,
+        );
+        const value = {
+          ticker: identity.ticker,
+          company: row.company?.trim() || null,
+          shares: String(shares),
+          buyPrice: cost === null ? null : String(cost),
+          market: identity.market,
+          currency: row.currency ?? identity.currency,
+          buyDate: dto.buyDate || null,
+          updatedAt: new Date(),
+        };
+        if (existing) {
+          await tx
+            .update(holdings)
+            .set(value)
+            .where(
+              and(eq(holdings.owner, owner), eq(holdings.id, existing.id)),
+            );
+          receipt.updated++;
+        } else {
+          await tx.insert(holdings).values({ owner, ...value });
+          receipt.created++;
+        }
       }
-      const shares = Number(row.shares);
-      if (!Number.isFinite(shares) || shares <= 0) {
-        failures.push({ ticker: raw, reason: 'Invalid share count (must be > 0)' });
-        continue;
-      }
-      const avgCost = row.avgCost == null ? null : Number(row.avgCost);
-      if (avgCost != null && (!Number.isFinite(avgCost) || avgCost < 0)) {
-        failures.push({ ticker: raw, reason: 'Invalid cost price' });
-        continue;
-      }
-      const ticker = normalizeTickerForStorage(raw, info.market);
-      if (existingSet.has(canonicalKey(ticker))) {
-        failures.push({ ticker: raw, reason: '持仓已存在，请在持仓页编辑而非重复导入' });
-        continue;
-      }
-      if (seen.has(canonicalKey(ticker))) {
-        failures.push({ ticker: raw, reason: '本次导入中重复' });
-        continue;
-      }
-      seen.add(canonicalKey(ticker));
-      valid.push({ row, ticker });
-    }
-
-    let created = 0;
-    for (const { row, ticker } of valid) {
-      const info = this.quoteService.detectMarket(row.ticker.trim());
-      await this.db.insert(holdings).values({
-        owner: userId,
-        ticker,
-        company: row.company?.trim() || null,
-        shares: String(shrinkNumber(row.shares)),
-        buyPrice: row.avgCost == null ? null : String(shrinkNumber(row.avgCost)),
-        buyDate: dto.buyDate || null,
-        market: info.market,
-        currency: info.currency,
-        symbolNative: info.symbolNative,
-        displaySymbol: info.displaySymbol,
-      });
-      created += 1;
-    }
-
-    const [log] = await this.db
-      .insert(importLogs)
-      .values({
-        owner: userId,
+      await tx.insert(importLogs).values({
+        id: receipt.id,
+        owner,
         source: dto.source,
-        filename: dto.filename ?? null,
+        filename: dto.filename?.slice(0, 255) ?? null,
         rowsTotal: rows.length,
-        rowsImported: created,
-        errors: failures,
-      })
-      .returning({ id: importLogs.id });
-
-    return {
-      logId: log.id,
-      created,
-      skipped: failures.length,
-      failed: failures,
-    };
+        rowsImported: rows.length,
+        errors: [],
+      });
+      if (dto.analyze) {
+        if (!this.handoff) throw new ConflictException('ANALYSIS_UNAVAILABLE');
+        receipt.analysisRequestId = (
+          await this.handoff.enqueueInTransaction(tx, owner, receipt.id)
+        ).id;
+      }
+      await tx
+        .insert(importCommitReceipts)
+        .values({ id: receipt.id, owner, requestKey, inputHash, receipt });
+      return {
+        logId: receipt.id,
+        receiptId: receipt.id,
+        created: receipt.created,
+        updated: receipt.updated,
+        skipped: 0,
+        failed: [],
+        analysisRequestId: receipt.analysisRequestId,
+      };
+    });
   }
-
-  /** Recent import history for the caller. */
-  async history(userId: string, limit = 20): Promise<ImportHistoryItem[]> {
+  async history(owner: string, limit = 20): Promise<ImportHistoryItem[]> {
     const rows = await this.db
       .select()
       .from(importLogs)
-      .where(eq(importLogs.owner, userId))
+      .where(eq(importLogs.owner, owner))
       .orderBy(desc(importLogs.createdAt))
       .limit(Math.min(Math.max(limit, 1), 100));
-    return rows.map((r) => ({
-      id: r.id,
-      source: r.source as ImportHistoryItem['source'],
-      filename: r.filename,
-      rowsTotal: r.rowsTotal,
-      rowsImported: r.rowsImported,
-      errors: (r.errors as ImportHistoryItem['errors']) ?? [],
-      createdAt: r.createdAt.toISOString(),
+    return rows.map((row) => ({
+      id: row.id,
+      source: row.source as ImportHistoryItem['source'],
+      filename: row.filename,
+      rowsTotal: row.rowsTotal,
+      rowsImported: row.rowsImported,
+      errors: (row.errors as ImportHistoryItem['errors']) ?? [],
+      createdAt: row.createdAt.toISOString(),
     }));
   }
-}
-
-/** Render a number without float noise (e.g. 1e-7 -> '0'). */
-function shrinkNumber(value: number | string): string {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '0';
-  return String(Math.round(n * 1e6) / 1e6);
-}
-
-/**
- * Canonical comparison key for a ticker: '0700', '700.HK' and '00700' all
- * collapse to 'HK:700'; US tickers uppercase; CN codes keep 6 digits.
- */
-function canonicalKey(rawTicker: string): string {
-  const raw = rawTicker.trim().toUpperCase();
-  const hkMatch = /^(\d{1,5})(?:\.HK)?$/.exec(raw);
-  if (hkMatch && (raw.endsWith('.HK') || /^\d{4,5}$/.test(raw))) {
-    return `HK:${Number(hkMatch[1])}`;
-  }
-  if (/^\d{6}(?:\.(?:SH|SZ|BJ))?$/.test(raw)) return `CN:${raw.slice(0, 6)}`;
-  return `US:${raw}`;
-}
-
-/**
- * Storage form for a ticker: HK as 4-digit zero-padded code ('700' ->
- * '0700', matching how the app's own pages store HK tickers), CN as the
- * 6-digit code, US uppercased as typed.
- */
-function normalizeTickerForStorage(rawTicker: string, market: 'US' | 'HK' | 'CN'): string {
-  const raw = rawTicker.trim().toUpperCase();
-  if (market === 'HK') {
-    const digits = raw.replace(/\D/g, '');
-    return digits.padStart(4, '0');
-  }
-  if (market === 'CN') {
-    return raw.replace(/\D/g, '');
-  }
-  return raw;
 }

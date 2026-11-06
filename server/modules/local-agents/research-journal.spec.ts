@@ -10,6 +10,14 @@ import type { ResearchToolResult, ResearchToolScope } from '../../../shared/rese
 const scope = (): ResearchToolScope => ({ sessionId: randomUUID(), memberId: 'analyst', memberName: 'Analyst',
   revision: 2, turn: 0, ticker: 'AAPL', language: 'en', webResearch: false, expiresAt: Date.now() + 600_000 });
 const bundle = { descriptors: [], snapshot: '{"evidence":[]}' };
+test('portfolio activity context records lifecycle without granting security tool scope', async () => fixture(async store => {
+  await store.connectNative('alice', 'codex'); const context = scope();
+  const task = await store.stage('alice', 'native-codex', 'codex', randomUUID(), 'Research portfolio', 'run', undefined, undefined, undefined, undefined, false, context);
+  await store.activate('alice', task.id); await store.takeNative('alice', task.id);
+  await store.update('alice', task.id, { state: 'completed', text: 'A portfolio report' });
+  const stored = await store.task('alice', task.id); assert.equal(stored.researchScope, undefined);
+  assert.deepEqual((await store.eventsForSession('alice', context.sessionId)).events.map(e => e.status), ['queued', 'running', 'succeeded']);
+}));
 const result: ResearchToolResult = { status: 'succeeded', data: { price: '100', currency: 'USD' }, sources: [], asOf: '2026-11-03T00:00:00Z', truncated: false };
 async function fixture(run: (store: LocalAgentStore, root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), 'squabble-research-journal-'));

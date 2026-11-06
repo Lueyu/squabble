@@ -17,7 +17,7 @@ function ActivityIcon({ status }: { status: ResearchEventStatus }) {
   return <MinusCircle aria-hidden className={`${className} text-muted-foreground`} />;
 }
 
-function ActivityRow({ activity, now }: { activity: ResearchActivityView; now: number }) {
+function ActivityRow({ activity, now, grouped = [] }: { activity: ResearchActivityView; now: number; grouped?: ResearchActivityView[] }) {
   const { t, i18n } = useTranslation();
   const observation = activity.kind === 'summary';
   const elapsed = activity.kind === 'tool'
@@ -29,6 +29,7 @@ function ActivityRow({ activity, now }: { activity: ResearchActivityView; now: n
     <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <span className="font-medium">{label}</span>
+        {grouped.length > 1 && <span className="rounded-full bg-muted px-1.5 font-medium">× {grouped.length}</span>}
         {!observation && <span className="text-muted-foreground">{t(`council.progress.taskStates.${activity.status}`)}</span>}
         <time className="text-muted-foreground" dateTime={activity.at}>
           {new Date(activity.at).toLocaleTimeString(i18n.language, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>
@@ -36,6 +37,7 @@ function ActivityRow({ activity, now }: { activity: ResearchActivityView; now: n
           {t('council.progress.duration', { seconds: Math.max(0, Math.floor(elapsed! / 1000)) })}</span>}
       </div>
       <p className="whitespace-pre-wrap text-muted-foreground">{activity.summary}</p>
+      {grouped.length > 1 && <details className="mt-1 text-muted-foreground"><summary className="cursor-pointer">{i18n.language.startsWith('zh') ? '展开每次活动' : 'Show each activity'}</summary><ul className="mt-2 space-y-2 border-l pl-3">{grouped.map(item => <li key={item.key}><time dateTime={item.at}>{new Date(item.at).toLocaleTimeString(i18n.language, { hour: '2-digit', minute: '2-digit' })}</time><p className="whitespace-pre-wrap">{item.summary}</p></li>)}</ul></details>}
       {Boolean(activity.sources?.length) && <details className="mt-1">
         <summary className="cursor-pointer text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
           {t('council.chat.sources', { count: activity.sources!.length })}</summary>
@@ -68,6 +70,13 @@ export default function CouncilResearchTimeline({ task }: { task: ResearchTaskVi
   const needsAttention = ['failed', 'interrupted', 'unavailable', 'cancelled'].includes(task.status);
   const sourceGaps = task.activities.filter(activity => activity.kind === 'tool'
     && ['failed', 'interrupted', 'unavailable', 'cancelled'].includes(activity.status)).length;
+  const groups: ResearchActivityView[][] = [];
+  for (const activity of task.activities) {
+    const previous = groups.at(-1);
+    if (previous && activity.kind === 'tool' && previous[0].kind === 'tool'
+      && activity.toolName === previous[0].toolName && activity.status === previous[0].status) previous.push(activity);
+    else groups.push([activity]);
+  }
   return <details className={`min-w-0 text-xs ${needsAttention ? 'text-destructive' : 'text-muted-foreground'}`}>
     <summary className="cursor-pointer rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
       <span className="inline-flex max-w-[calc(100%-1rem)] items-center gap-2 align-middle leading-5">
@@ -81,7 +90,7 @@ export default function CouncilResearchTimeline({ task }: { task: ResearchTaskVi
     </summary>
     <div className="mt-3 space-y-3 border-t border-border/70 pt-3">
       {task.summary && <p className="whitespace-pre-wrap leading-6 [overflow-wrap:anywhere]">{task.summary}</p>}
-      <ol className="space-y-3 text-foreground">{task.activities.map(activity => <ActivityRow key={activity.key} activity={activity} now={now} />)}</ol>
+      <ol className="space-y-3 text-foreground">{groups.map(group => <ActivityRow key={group[0].key} activity={{ ...group[group.length - 1], sources: group.flatMap(item => item.sources || []) }} now={now} grouped={group} />)}</ol>
       {task.truncated && <p className="leading-5 text-muted-foreground">{t('council.progress.truncated')}</p>}
     </div>
   </details>;

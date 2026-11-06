@@ -12,6 +12,52 @@ import { newCheckpoint } from './council.dialogue';
 import { LocalAgentError, type LocalAgentExecution, type LocalAgentResult } from '../local-agents/local-agents.types';
 import type { CouncilMember } from '../../../shared/council.interface';
 import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
+import { mkdtemp,writeFile,rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
+import { createNativeRuntime } from '../../local-agents/native';
+import { LocalAgentsService } from '../local-agents/local-agents.service';
+import { LocalAgentStore } from '../local-agents/local-agents.store';
+
+test('real offline Codex CLI events survive extraction, journal, Council parsing and independent draft',async()=>{
+  assert.ok(process.env.COUNCIL_TEST_DATABASE_URL,'Temporary database required');
+  const namespace=`cli_chain_${randomUUID().replaceAll('-','')}`;const root=await mkdtemp(join(tmpdir(),'squabble-cli-chain-'));
+  const admin=postgres(process.env.COUNCIL_TEST_DATABASE_URL!,{max:1,onnotice:()=>{}});
+  const client=postgres(process.env.COUNCIL_TEST_DATABASE_URL!,{max:6,onnotice:()=>{},connection:{search_path:namespace}});
+  const previous={mode:process.env.LOCAL_AGENTS_MODE,host:process.env.SERVER_HOST};
+  let local:LocalAgentsService|undefined;
+  try{
+    process.env.LOCAL_AGENTS_MODE='native';process.env.SERVER_HOST='127.0.0.1';
+    await admin`CREATE SCHEMA ${admin(namespace)}`;
+    for(const name of readdirSync('scripts/db').filter(n=>/^\d+.*\.sql$/u.test(n)&&!n.startsWith('02_')&&Number(n.slice(0,2))<=34).sort())await client.unsafe(readFileSync(`scripts/db/${name}`,'utf8'));
+    const owner=randomUUID();await client`INSERT INTO users(id,username,password_hash) VALUES(${owner},'cli-chain-fixture','test')`;
+    const data={response:{thesis:'A fictional issuer conclusion.',evidencePoints:['Evidence'],risks:['Risk'],nextChecks:['Check'],details:{basis:'SEGMENT_ONE',context:'SEGMENT_TWO',allocation:'SEGMENT_THREE',price:'SEGMENT_FOUR',sources:'SEGMENT_FIVE'}},
+      sources:Array.from({length:7},(_,i)=>({id:`s${i}`,title:`Fixture source ${i}`,url:`https://issuer.example/filing/${i}`,content:`Fictional source excerpt ${i}`})),
+      claims:Array.from({length:6},(_,i)=>({id:`c${i}`,statement:`Fictional claim ${i}`,evidenceIds:[`s${i}`]})),evidenceIds:['s0'],questions:[]};
+    const script=join(root,'fixture.cjs');
+    await writeFile(script,`const args=process.argv.slice(2);if(args.includes('--version')){console.log('codex-cli 1.2.3');process.exit(0)}if(args.includes('status')){console.log('ready');process.exit(0)}if(args.includes('list')){console.log('[]');process.exit(0)}process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({type:'item.started',item:{type:'web_search'}}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(JSON.stringify(data))}}}));console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:3,output_tokens:5}}));});`);
+    const runtime=createNativeRuntime({home:root,env:{...process.env,CODEX_HOME:root},commandResolver:provider=>provider==='codex'?{executable:process.execPath,prefixArgs:[script]}:null});
+    const store=new LocalAgentStore(join(root,'journal'));await store.connectNative(owner,'codex');local=new LocalAgentsService(runtime,store);
+    const forbidden=async()=>{throw new Error('Fixture must not call API research');};
+    const council=new CouncilService(drizzle(client),{validateConnectionIds:async()=>{},isConfigured:forbidden} as never,{} as never,{} as never,{} as never,local);
+    const member={id:'local-codex',name:'Codex',role:'researcher' as const,model:'fast' as const,instructions:'',executionMode:'local' as const,agentId:'native-codex'};
+    const session=await council.createSession(owner,{scene:'period_strategy',ticker:'PORTFOLIO',title:'Fixture portfolio',subject:'Research fictional positions',members:[member],language:'en'},{independent:true});
+    await council.runSession(owner,session.id);
+    let result=await council.getSession(owner,session.id);for(let i=0;i<300&&result.status==='running';i++){await new Promise(r=>setTimeout(r,20));result=await council.getSession(owner,session.id);}
+    assert.equal(result.status,'completed');const opening=result.messages.find(m=>m.phase==='opening')!;assert.ok(opening);
+    for(const value of Object.values(data.response.details))assert.ok(opening.response?.details?.includes(value));
+    assert.equal(opening.claims?.length,6);assert.equal(new Set(result.reports[0].evidence.filter(e=>e.sourceUrl?.startsWith('https://issuer.example/')).map(e=>e.sourceUrl)).size,7);
+    const states=result.researchEvents?.filter(e=>e.memberId==='local-codex'&&e.kind==='task').map(e=>e.status)??[];
+    assert.deepEqual(states.slice(0,3),['queued','running','succeeded']);
+    const submissions=await client`SELECT contribution FROM council_independent_submissions WHERE session_id=${session.id}`;assert.equal(submissions.length,1);
+    assert.ok(submissions[0].contribution.response.details.includes('SEGMENT_FIVE'));
+  }finally{
+    await local?.onModuleDestroy();if(previous.mode===undefined)delete process.env.LOCAL_AGENTS_MODE;else process.env.LOCAL_AGENTS_MODE=previous.mode;
+    if(previous.host===undefined)delete process.env.SERVER_HOST;else process.env.SERVER_HOST=previous.host;
+    await client.end();await admin`DROP SCHEMA IF EXISTS ${admin(namespace)} CASCADE`;await admin.end();await rm(root,{recursive:true,force:true});
+  }
+});
 
 const team: CouncilMember[] = [
   { id: 'research', name: 'Research', role: 'researcher', instructions: '', model: 'fast', executionMode: 'local', agentId: 'local',

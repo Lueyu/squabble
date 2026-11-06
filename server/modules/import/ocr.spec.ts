@@ -7,7 +7,7 @@ import { OcrService } from './ocr.service';
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 const dto = { imageBase64: `data:image/png;base64,${png}`, apiKey: 'fixture-secret', model: 'fixture-vision', baseUrl: 'https://vision.example/v1' };
 const endpoint = { normalize: async (input: string) => input };
-const content = '{"broker":null,"rows":[{"ticker":"TEST","shares":1,"avgCost":null}]}';
+const content = '{"broker":null,"rows":[{"ticker":"TEST","shares":1,"avgCost":null,"currency":"USD"}]}';
 
 test('vision sends correct MIME, one call, no redirects and bounded response', async () => {
   let calls = 0;

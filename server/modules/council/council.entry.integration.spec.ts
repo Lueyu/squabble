@@ -18,7 +18,7 @@ test('zero-form general discussion is owner scoped, idempotent, and persists wit
   const client = postgres(url!, { max: 8, onnotice: () => {}, connection: { search_path: namespace } });
   try {
     await admin`CREATE SCHEMA ${admin(namespace)}`;
-    for (const file of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && Number(name.slice(0, 2)) <= 33).sort()) {
+    for (const file of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && Number(name.slice(0, 2)) <= 34).sort()) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     const owner = randomUUID();
@@ -27,6 +27,15 @@ test('zero-form general discussion is owner scoped, idempotent, and persists wit
     const llm = { validateConnectionIds: async () => {}, isConfigured: async () => false };
     const council = new CouncilService(db, llm as never, {} as never, {} as never, {} as never);
     const service = new SimpleCouncilService(db, council, llm as never);
+    const slow=new SimpleCouncilService(db,council,llm as never);
+    let finishDetection!:()=>void;const detection=new Promise<void>(resolve=>{finishDetection=resolve;});
+    slow.resolveMembers=async()=>{await detection;return{members:[],executors:[]};};
+    const receiptRequest=slow.create(owner,{message:'Cold detection receipt fixture',requestKey:'cold-receipt'});
+    const receipt=await Promise.race([receiptRequest.then(value=>({value})),new Promise<{timeout:true}>(resolve=>setTimeout(()=>resolve({timeout:true}),1000))]);
+    finishDetection();await receiptRequest;
+    assert.equal('timeout' in receipt,false,'cold CLI probes must not delay the durable receipt');
+    if('value' in receipt&&'id' in receipt.value)assert.equal(receipt.value.initializing,true);
+    await client`DELETE FROM council_sessions WHERE owner=${owner}`;
     const input = { message: 'How should an investor think about uncertainty?', requestKey: 'first' };
     const results = await Promise.all([service.create(owner, input), service.create(owner, input)]);
     assert.ok(results.every(result => 'id' in result));

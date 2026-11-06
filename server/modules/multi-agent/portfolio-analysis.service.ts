@@ -181,19 +181,22 @@ export class PortfolioAnalysisService implements OnApplicationBootstrap {
     } catch { return false; }
   }
 
-  async create(userId: string, languageInput?: unknown, requestedRoute?: ModelRoute): Promise<PortfolioReportRun> {
+  async create(userId: string, languageInput?: unknown, requestedRoute?: ModelRoute, frozenSnapshot?: PortfolioReportSnapshot): Promise<PortfolioReportRun> {
     let language: AnalysisLanguage;
     try { language = normalizeAnalysisLanguage(languageInput); }
     catch { throw new BadRequestException('Invalid analysis language'); }
     const existing = await this.db.select().from(portfolioAnalysisRuns).where(and(
       eq(portfolioAnalysisRuns.owner, userId), inArray(portfolioAnalysisRuns.status, ['pending', 'running', 'cancelling']))).limit(1);
-    if (existing[0] && !await this.reconcileCancellation(userId, existing[0])) return this.publicRun(existing[0]);
+    if (existing[0] && !await this.reconcileCancellation(userId, existing[0])) {
+      if(frozenSnapshot)throw new BadRequestException('PORTFOLIO_BUSY_RETRY');
+      return this.publicRun(existing[0]);
+    }
     let route: ModelRoute;
     try { route = parseModelRoute(requestedRoute ?? await this.settings.getDefaultModelRoute(userId)); }
     catch { throw new BadRequestException('Invalid model route'); }
     await this.llm.validateRoute(userId, route);
     const capturedAt = new Date();
-    const [holdingRows, cashRows, dailyFacts] = await this.db.transaction(async tx => {
+    const [holdingRows, cashRows, dailyFacts] = frozenSnapshot ? [[], [], frozenSnapshot.dailyFacts] : await this.db.transaction(async tx => {
       const ownedHoldings = await tx.select().from(holdings).where(eq(holdings.owner, userId));
       const ownedCash = await tx.select().from(cashAccounts).where(eq(cashAccounts.owner, userId));
       const dailyFacts = await capturePortfolioDailyFacts(tx, userId, capturedAt, language);
@@ -202,11 +205,11 @@ export class PortfolioAnalysisService implements OnApplicationBootstrap {
       Array<typeof holdings.$inferSelect>, Array<typeof cashAccounts.$inferSelect>,
       NonNullable<PortfolioReportSnapshot['dailyFacts']>,
     ];
-    const snapshot = await buildPortfolioReportSnapshot(holdingRows, cashRows,
+    const snapshot = frozenSnapshot ? structuredClone(frozenSnapshot) : await buildPortfolioReportSnapshot(holdingRows, cashRows,
       currency => this.fx.convert(1, currency, 'USD'), language);
-    snapshot.capturedAt = capturedAt.toISOString();
+    if(!frozenSnapshot) snapshot.capturedAt = capturedAt.toISOString();
     snapshot.dailyFacts = dailyFacts;
-    snapshot.gaps = [...new Set([...snapshot.gaps, ...dailyFacts.gaps])];
+    snapshot.gaps = [...new Set([...snapshot.gaps, ...(dailyFacts?.gaps??[])])];
     let row: typeof portfolioAnalysisRuns.$inferSelect;
     try {
       [row] = await this.db.insert(portfolioAnalysisRuns).values({ owner: userId, status: 'pending', route,
@@ -214,7 +217,7 @@ export class PortfolioAnalysisService implements OnApplicationBootstrap {
     } catch (error) {
       const active = await this.db.select().from(portfolioAnalysisRuns).where(and(
         eq(portfolioAnalysisRuns.owner, userId), inArray(portfolioAnalysisRuns.status, ['pending', 'running', 'cancelling']))).limit(1);
-      if (active[0]) return this.publicRun(active[0]);
+      if (active[0]) {if(frozenSnapshot)throw new BadRequestException('PORTFOLIO_BUSY_RETRY');return this.publicRun(active[0]);}
       throw error;
     }
     void this.execute(userId, row.id, language).catch(error => this.logger.error(`Portfolio run ${row.id}: ${safeAnalysisError(error, language)}`));

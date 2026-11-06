@@ -117,7 +117,8 @@ test('built-in research tools have translated names while unknown native tools r
 test('all retained activities remain available inside collapsed per-turn research, including interrupted history', () => {
   const tree = progress().render({ session: session([...Array.from({ length: 10 }, (_, i) => event(i, { status: 'succeeded' })),
     event(1, { taskId: 'old', revision: 1 })], { researchEventsTruncated: true }) });
-  const disclosures = nodes(tree).filter(node => node.type === 'details');
+  const disclosures = nodes(tree).filter(node => node.type === 'details' && [node.props.children].flat()
+    .some(child => child?.type === 'summary' && text(child).includes('council.progress.taskStates.')));
   assert.equal(disclosures.length, 2);
   assert.ok(disclosures.every(node => !node.props.open));
   for (let i = 0; i < 10; i++) assert.ok(text(tree).includes(`Public step ${i}`));

@@ -7,7 +7,12 @@ import { and, desc, eq, gte, ilike, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperOrders } from '../../database/schema';
 import { councilMessages, councilReports, councilSessions, councilRevisionRequests } from '../../database/council.schema';
-import { councilIndependentSubmissions } from '../../database/simple-council.schema';
+import { councilIndependentSubmissions, councilMemberAttempts } from '../../database/simple-council.schema';
+import { CouncilMemberAttemptsService, type MemberAttempt } from './council-member-attempts.service';
+import { safeExecutionFailure } from '../../local-agents/failures';
+import { CouncilRecoveryService } from './council-recovery.service';
+import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
+import { experiencePreferences } from '../../database/simple-experience.schema';
 import { AutomaticResearchBudgetService } from '../paper-trading/automatic-research-budget.service';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { llmBudgetUsage } from '../../database/llm-budget.schema';
@@ -47,7 +52,7 @@ import type { ReportReference, ResolvedReportReference } from '../../../shared/r
 import type { CouncilMessageInput, CouncilMessage, CouncilReviewContext, ForkCouncilSession, CouncilRevisionRequest } from '../../../shared/council.interface';
 import { normalizeThread, freezeThreadContext, threadPromptContext, isPortfolioThread, hasThreadContext, hasDeliberation } from './council.thread';
 
-type SessionRow = typeof councilSessions.$inferSelect;
+type SessionRow = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 type ReportRow = typeof councilReports.$inferSelect;
 interface ResearchSnapshot { evidence: CouncilEvidence[]; sourceRunId: string | null }
 interface MemberOutput { member: CouncilMember; contribution: DiscussionContribution; tokens: number; replyToMessageId: string | null;
@@ -87,6 +92,12 @@ export class CouncilService implements OnModuleInit {
     const interrupted = await this.db.select().from(councilSessions).where(eq(councilSessions.status, 'running'));
     for (const row of interrupted) {
       const checkpoint = row.checkpoint;
+      if(checkpoint?.simple){
+        const attempts=await new CouncilMemberAttemptsService(this.db).list(row.owner,row.id,checkpoint.cycleId);
+        for(const attempt of attempts.filter(a=>['queued','running'].includes(a.status)))await this.db.update(councilMemberAttempts).set({
+          status:attempt.dispatchStarted?'unknown':'failed',failure:attempt.dispatchStarted?{code:'LOCAL_DISPATCH_UNCERTAIN',stage:'runtime',recoveries:['check_existing']}:
+            {code:'LOCAL_INTERRUPTED_BEFORE_DISPATCH',stage:'dispatch',recoveries:['retry_member']},updatedAt:new Date()}).where(eq(councilMemberAttempts.id,attempt.id));
+      }
       if (!checkpoint?.simple || !checkpoint.inflight || checkpoint.remote) continue;
       // An API dispatch may have reached the provider. Never replay an uncertain paid step after restart.
       const memberId = checkpoint.turns[checkpoint.nextTurn]?.memberId;
@@ -338,11 +349,142 @@ export class CouncilService implements OnModuleInit {
 
   async pauseSession(userId: string, id: string): Promise<CouncilSession> {
     this.assertId(id);
-    const [row] = await this.db.update(councilSessions).set({ status: 'paused',
-      revision: sql`${councilSessions.revision} + 1`, updatedAt: new Date() })
-      .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).returning();
-    if (!row) throw new NotFoundException('Council session not found');
+    const row = await this.db.transaction(async tx => {
+      const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,userId),eq(councilSessions.id,id))).for('update');
+      if (!current) throw new NotFoundException('Council session not found');
+      const checkpoint = current.checkpoint?.simple ? { ...current.checkpoint, simple: { ...current.checkpoint.simple, stopped: true } } : current.checkpoint;
+      const [paused] = await tx.update(councilSessions).set({ status:'paused', revision:current.revision+1, checkpoint, updatedAt:new Date() })
+        .where(eq(councilSessions.id,id)).returning();
+      if (checkpoint?.simple) await tx.update(councilMemberAttempts).set({ status:'unknown',
+        failure:{code:'LOCAL_DISPATCH_UNCERTAIN',stage:'runtime',recoveries:['check_existing']},updatedAt:new Date() })
+        .where(and(eq(councilMemberAttempts.owner,userId),eq(councilMemberAttempts.sessionId,id),eq(councilMemberAttempts.cycleId,checkpoint.cycleId),sql`${councilMemberAttempts.status} in ('queued','running','unknown')`));
+      return paused;
+    });
+    const attempts = await new CouncilMemberAttemptsService(this.db).list(userId,id,row.checkpoint?.cycleId);
+    for (const attempt of attempts.filter(a=>a.status==='unknown')) {
+      if (attempt.taskId && attempt.resourceKey.startsWith('local:')) await this.localAgents?.cancelTask(userId,attempt.taskId).catch(()=>undefined);
+      await this.settleStoppedAttempt(userId,attempt,attempt.dispatchStarted);
+    }
     return this.hydrate(userId, row);
+  }
+
+  private async settleStoppedAttempt(owner:string, attempt:MemberAttempt, uncertain:boolean):Promise<void> {
+    if (uncertain && attempt.resourceKey.startsWith('local:') && attempt.taskId && this.localAgents) {
+      const task=await this.localAgents.store.task(owner,attempt.taskId).catch(()=>null);
+      if(task&&['completed','failed','cancelled'].includes(task.state)&&task.error!=='LOCAL_DISPATCH_UNCERTAIN'
+        &&!(task.error==='LOCAL_INTERRUPTED'&&(task.runtimeEntered||task.commandEmitted))) uncertain=false;
+    }
+    await new CouncilMemberAttemptsService(this.db).settleStopped(owner,attempt.id,uncertain);
+  }
+
+  async recoverMember(owner:string,id:string,input:ResearchRecoveryInput):Promise<void>{
+    const reserved=await new CouncilRecoveryService(this.db).reserve(owner,id,input);
+    if(!reserved.created||!reserved.attempt)return;
+    const {session,attempt}=reserved;const store=new CouncilMemberAttemptsService(this.db);
+    if(input.action==='fix_configuration')return;
+    if(input.action==='check_existing'){
+      if(!attempt.taskId||!this.localAgents)return;
+      const task=await this.localAgents.store.task(owner,attempt.taskId);
+      const status=task.state==='completed'?'completed':task.state==='cancelled'?'cancelled':task.state==='failed'&& !['LOCAL_INTERRUPTED','LOCAL_DISPATCH_UNCERTAIN'].includes(task.error??'')?'failed':'unknown';
+      await this.db.update(councilMemberAttempts).set({status,rawText:task.text??attempt.rawText,
+        resultAcceptance:status==='completed'?'rejected':attempt.resultAcceptance,
+        failure:status==='completed'?{code:'LOCAL_INVALID_RESULT',stage:'parse',recoveries:['reparse_existing']}:
+          status==='unknown'?{code:'LOCAL_DISPATCH_UNCERTAIN',stage:'runtime',recoveries:['check_existing']}:
+            {code:task.error??'LOCAL_TASK_FAILED',stage:'runtime',recoveries:['retry_member']},updatedAt:new Date()})
+        .where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.id,attempt.id)));
+      return;
+    }
+    if(session.status==='running')throw new BadRequestException('RESEARCH_ALREADY_RUNNING');
+    const [preferences]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
+    if(input.action==='retry_member'&&preferences?.enabled===false)throw new BadRequestException('RESEARCH_PAUSED');
+    let member=this.members(session.profileSnapshot).find(m=>m.id===input.memberId)!;
+    if(input.action==='retry_member'&&member.agentId&&preferences?.memberSettings?.[member.agentId])member={...member,agentSettings:preferences.memberSettings[member.agentId]};
+    if(input.action==='retry_member'&&member.executionMode==='local')await this.localAgents?.validate(owner,member.agentId!,member.agentSettings);
+    const [active]=await this.db.update(councilSessions).set({status:'running',revision:session.revision+1,error:null,updatedAt:new Date()})
+      .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.revision,session.revision))).returning();
+    if(!active)throw new BadRequestException('RESEARCH_REVISION_CHANGED');
+    let selected:MemberAttempt|null;
+    if(input.action==='reparse_existing'){
+      const [updated]=await this.db.update(councilMemberAttempts).set({revision:active.revision,status:'running',updatedAt:new Date()})
+        .where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.id,attempt.id))).returning();selected=updated;
+    }else selected=await store.claim({owner,sessionId:id,cycleId:attempt.cycleId,memberId:member.id,revision:active.revision,turn:attempt.turn,
+      resourceKey:attempt.resourceKey,inputHash:attempt.inputHash,inputSnapshot:attempt.inputSnapshot,retry:true});
+    if(!selected){await this.db.update(councilSessions).set({status:session.status}).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.revision,active.revision)));return;}
+    const frozen=attempt.inputSnapshot;
+    const assigned:SessionRow={...active,memberAttempt:selected,evidenceSnapshot:(frozen.commonEvidence as CouncilEvidence[]|undefined)??session.checkpoint!.simple?.commonEvidence??session.evidenceSnapshot,
+      checkpoint:{...active.checkpoint!,nextTurn:selected.turn,simple:{...active.checkpoint!.simple!,stage:'independent',
+        commonEvidence:(frozen.commonEvidence as CouncilEvidence[]|undefined)??active.checkpoint!.simple?.commonEvidence,
+        commonMessageIds:(frozen.commonMessageIds as string[]|undefined)??active.checkpoint!.simple?.commonMessageIds}}};
+    const run=async()=>{
+      try{
+        let output:MemberOutput;
+        if(input.action==='reparse_existing'){
+          const turn:DialogueTurn={memberId:member.id,phase:'opening'};
+          const parsed=member.executionMode==='local'?agentContribution({text:selected!.rawText!},assigned.evidenceSnapshot,turn,assigned.candidate,assigned.language):
+            {contribution:parseContribution(JSON.parse(selected!.rawText!),new Set(assigned.evidenceSnapshot.map(e=>e.id)),turn,assigned.candidate),sources:[]};
+          output={member,...parsed,tokens:selected!.tokensUsed,taskId:selected!.taskId??undefined,replyToMessageId:null,externalUsageUnknown:member.executionMode==='local'};
+        }else{
+          const automatic=active.checkpoint?.automaticTaskId??active.checkpoint?.simple?.automaticTaskId;
+          if(automatic)await new AutomaticResearchBudgetService(this.db).reserveCall(owner,automatic);
+          const counted=await this.db.update(councilSessions).set({checkpoint:sql`jsonb_set(${councilSessions.checkpoint},'{simple,calls}',to_jsonb(coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)+1))`})
+            .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id),sql`coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)<12`)).returning({id:councilSessions.id});
+          if(!counted.length)throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
+          output=await this.runMember(owner,assigned,member,{memberId:member.id,phase:'opening'});
+        }
+        if(await this.acceptIndependentAttempt(owner,assigned,output)){
+          // A recovered view supplements history; it never rewrites a completed synthesis.
+          await this.db.transaction(async tx=>{
+          const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
+          if(current?.status!=='running'||current.revision!==active.revision)return;
+          await tx.insert(councilMessages).values({owner,sessionId:id,role:member.role,memberName:member.name,
+            revision:active.revision,tokensUsed:output.tokens,content:output.contribution.content,
+            metadata:{cycleId:attempt.cycleId,memberId:member.id,phase:'response',response:output.contribution.response,
+              taskId:output.taskId,evidenceIds:output.contribution.evidenceIds,claims:output.contribution.claims,
+              actualExecutor:active.checkpoint?.simple?.executors.find(e=>e.memberId===member.id),externalAgent:member.executionMode==='local',evidenceCheckStatus:'unverified'}});
+          });
+        }else await this.settleStoppedAttempt(owner,selected!,false);
+      }catch(error){const latest=await store.get(owner,selected!.id);const parse=latest.rawText!==null;
+        const failure=safeExecutionFailure(error,parse?'parse':'runtime');
+        await store.settle(owner,selected!.id,{status:failure.recoveries.includes('check_existing')?'unknown':parse?'completed':'failed',resultAcceptance:parse?'rejected':'pending',failure});
+        await this.settleStoppedAttempt(owner,latest,failure.recoveries.includes('check_existing'));
+      }finally{
+        await this.db.update(councilSessions).set({status:session.status==='completed'?'completed':'paused',updatedAt:new Date()})
+          .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.status,'running'),eq(councilSessions.revision,active.revision)));
+      }
+    };
+    if(input.action==='reparse_existing')await run();else{const job=run();this.jobs.set(`${owner}:${id}`,job);void job.finally(()=>{if(this.jobs.get(`${owner}:${id}`)===job)this.jobs.delete(`${owner}:${id}`);}).catch(()=>undefined);}
+  }
+
+  /** Controlled migration helper, deliberately absent from HTTP. Never dispatches a provider. */
+  async reparseSavedTask(owner:string,id:string,memberId:string,taskId:string):Promise<CouncilSession>{
+    if(!this.localAgents)throw new BadRequestException('LOCAL_UNAVAILABLE');
+    const row=await this.requireSession(owner,id);const member=this.members(row.profileSnapshot).find(m=>m.id===memberId);
+    const task=await this.localAgents.store.task(owner,taskId);
+    if(!member||member.agentId!==task.agentId||task.state!=='completed'||!task.text||!row.checkpoint?.simple)throw new BadRequestException('SAVED_TASK_NOT_COMPATIBLE');
+    let assignment:Record<string,unknown>;
+    try{assignment=JSON.parse(task.prompt.split('\n').at(-1)!);}catch{throw new BadRequestException('SAVED_TASK_CONTEXT_UNAVAILABLE');}
+    const messages=Array.isArray(assignment.messages)?assignment.messages as Array<Record<string,unknown>>:[];
+    const frozenIds=row.checkpoint.simple.commonMessageIds??[];
+    if(assignment.ticker!==row.ticker||(assignment.member as CouncilMember|undefined)?.id!==memberId||
+      !messages.some(message=>message.sessionId===id&&message.owner===owner&&typeof message.id==='string'&&frozenIds.includes(message.id))||
+      JSON.stringify(assignment.thread)!==JSON.stringify(threadPromptContext(row)))throw new BadRequestException('SAVED_TASK_CONTEXT_MISMATCH');
+    const common=row.checkpoint.simple.commonEvidence??row.evidenceSnapshot;
+    const expected=common.slice(0,20).map(e=>({id:e.id,content:e.content.slice(0,1500)}));
+    const provided=Array.isArray(assignment.evidence)?assignment.evidence.map((e:Record<string,unknown>)=>({id:e.id,content:e.content})):[];
+    if(JSON.stringify(expected)!==JSON.stringify(provided))throw new BadRequestException('SAVED_TASK_CONTEXT_MISMATCH');
+    await this.db.transaction(async tx=>{
+      const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
+      if(current?.revision!==row.revision||current.status==='running')throw new BadRequestException('RESEARCH_REVISION_CHANGED');
+      const [existing]=await tx.select().from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.sessionId,id),eq(councilMemberAttempts.cycleId,row.checkpoint!.cycleId),eq(councilMemberAttempts.memberId,memberId)));
+      if(existing&&existing.taskId!==taskId)throw new BadRequestException('SAVED_TASK_CONTEXT_MISMATCH');
+      if(!existing)await tx.insert(councilMemberAttempts).values({owner,sessionId:id,cycleId:row.checkpoint!.cycleId,memberId,attempt:1,revision:row.revision,
+        turn:row.checkpoint!.turns.findIndex(t=>t.memberId===memberId),resourceKey:`local:${member.agentId}`,inputHash:createHash('sha256').update(task.prompt).digest('hex'),
+        inputSnapshot:{commonEvidence:common,commonMessageIds:frozenIds,references:row.references},messageId:task.messageId,taskId,dispatchStarted:true,
+        status:'completed',resultAcceptance:'rejected',rawText:task.text,tokensUsed:task.usageTokens??0,
+        failure:{code:'LOCAL_INVALID_RESULT',stage:'parse',recoveries:['reparse_existing']}});
+    });
+    await this.recoverMember(owner,id,{memberId,action:'reparse_existing',requestKey:`legacy-reparse:${taskId}`,expectedRevision:row.revision});
+    return this.getSession(owner,id);
   }
 
   async runSession(userId: string, id: string, retryKeys?: ResearchTaskKind[]): Promise<CouncilSession> {
@@ -351,7 +493,7 @@ export class CouncilService implements OnModuleInit {
     await this.validatePinnedReferences(previous);
     if (previous.status === 'running') return this.hydrate(userId, previous);
     const members = this.members(previous.profileSnapshot);
-    await this.validateMembers(userId, members);
+    if(!previous.checkpoint?.simple) await this.validateMembers(userId, members);
     await this.preflightWorkflowBudget(previous, retryKeys);
     if (members.some((member) => member.connectionId || member.executionMode === 'local')) {
       const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId, { mode: 'api' })));
@@ -363,7 +505,11 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
       if (current.status === 'running') return { row: current, started: false };
-      const resume = current.checkpoint && (retryKeys || current.checkpoint.nextTurn < current.checkpoint.turns.length);
+      if(current.checkpoint?.simple?.stopped){
+        const unresolved=await tx.select({id:councilMemberAttempts.id}).from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,userId),eq(councilMemberAttempts.sessionId,id),eq(councilMemberAttempts.cycleId,current.checkpoint.cycleId),sql`${councilMemberAttempts.status} in ('queued','running','unknown')`));
+        if(unresolved.length)throw new BadRequestException('ORIGINAL_TASK_NOT_TERMINATED');
+      }
+      const resume = current.checkpoint && !current.checkpoint.simple?.stopped && (retryKeys || current.checkpoint.nextTurn < current.checkpoint.turns.length);
       const checkpoint = resume ? current.checkpoint : await this.newCycleCheckpoint(current, tx);
       if (checkpoint.simple && !checkpoint.simple.commonMessageIds) {
         const messages = await tx.select({ id: councilMessages.id }).from(councilMessages)
@@ -610,6 +756,11 @@ export class CouncilService implements OnModuleInit {
         row = await this.requireSession(userId, id);
         if (row.status !== 'running' || !row.checkpoint) return;
       }
+      if (row.checkpoint.simple?.stage === 'independent' && row.checkpoint.nextTurn < this.members(row.profileSnapshot).length) {
+        const progressed = await this.runIndependentMembers(userId, row);
+        if (!progressed) return;
+        attempt--; continue;
+      }
       if (row.checkpoint.simple?.stage === 'independent' && row.checkpoint.nextTurn >= this.members(row.profileSnapshot).length) {
         await this.releaseIndependent(userId, row);
         attempt--; // Releasing the barrier is bookkeeping, not a paid contribution.
@@ -718,6 +869,89 @@ export class CouncilService implements OnModuleInit {
       await tx.update(councilSessions).set({ checkpoint: { ...checkpoint, inflight: { id, turn: checkpoint.nextTurn, revision: row.revision } } })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return id;
+    });
+  }
+
+  /** Private immutable inputs; early reader projections never enter this dispatch path. */
+  private async runIndependentMembers(owner: string, row: SessionRow): Promise<boolean> {
+    const store = new CouncilMemberAttemptsService(this.db); const checkpoint = row.checkpoint!;
+    const members = this.members(row.profileSnapshot); const attempts = await store.list(owner, row.id, checkpoint.cycleId);
+    const submissions = await this.db.select().from(councilIndependentSubmissions).where(and(eq(councilIndependentSubmissions.owner, owner),
+      eq(councilIndependentSubmissions.sessionId, row.id), eq(councilIndependentSubmissions.cycleId, checkpoint.cycleId)));
+    const selected: Array<{ member: CouncilMember; attempt: MemberAttempt }> = [];
+    for (const member of members) {
+      if (selected.length >= 2) break;
+      if (attempts.some(a => a.memberId === member.id) || submissions.some(s => s.memberId === member.id)
+        || checkpoint.simple!.unavailable.some(u => u.memberId === member.id)) continue;
+      const resourceKey = member.executionMode === 'local' ? `local:${member.agentId}` : `api:${member.connectionId ?? 'default'}`;
+      const inputSnapshot = { commonEvidence: checkpoint.simple!.commonEvidence ?? row.evidenceSnapshot,
+        commonMessageIds: checkpoint.simple!.commonMessageIds ?? [], references: row.references };
+      const claimed = await store.claim({ owner, sessionId: row.id, cycleId: checkpoint.cycleId, memberId: member.id, revision: row.revision,
+        turn: members.findIndex(m => m.id === member.id), resourceKey, inputSnapshot,
+        inputHash: createHash('sha256').update(JSON.stringify(inputSnapshot)).digest('hex') });
+      if (claimed) selected.push({ member, attempt: claimed });
+    }
+    await Promise.all(selected.map(async ({ member, attempt }) => {
+      const assigned: SessionRow = { ...row, memberAttempt: attempt, checkpoint: { ...checkpoint, nextTurn: attempt.turn } };
+      try {
+        const automaticTaskId = checkpoint.automaticTaskId ?? checkpoint.simple?.automaticTaskId;
+        if (automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(owner, automaticTaskId);
+        const counted = await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint},'{simple,calls}',to_jsonb(coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)+1))` })
+          .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.status,'running'),eq(councilSessions.revision,row.revision),
+            sql`coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)<12`)).returning({id:councilSessions.id});
+        if (!counted.length) throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
+        const output = await this.runMember(owner, assigned, member, { memberId: member.id, phase: 'opening' });
+        if(!await this.acceptIndependentAttempt(owner, assigned, output))await this.settleStoppedAttempt(owner,attempt,false);
+      } catch (error) {
+        const latest = await store.get(owner, attempt.id);
+        const parse = latest.rawText !== null; const failure = safeExecutionFailure(error, parse ? 'parse' : latest.dispatchStarted ? 'runtime' : 'preflight');
+        await store.settle(owner, attempt.id, { status: failure.recoveries.includes('check_existing') ? 'unknown' : parse ? 'completed' : 'failed',
+          resultAcceptance: parse ? 'rejected' : 'pending', failure });
+        await this.settleStoppedAttempt(owner,latest,failure.recoveries.includes('check_existing'));
+        await this.markIndependentUnavailable(owner, row, member.id, failure.code);
+      }
+    }));
+    const latest = await store.list(owner,row.id,checkpoint.cycleId);
+    const terminal = new Set([...submissions.map(s=>s.memberId), ...checkpoint.simple!.unavailable.map(u=>u.memberId),
+      ...latest.filter(a=>['completed','failed','cancelled','skipped'].includes(a.status)).map(a=>a.memberId)]);
+    if (latest.some(a=>a.status==='unknown')) {
+      await this.db.update(councilSessions).set({status:'paused',error:'正在确认原任务状态；已保留其他股友的观点。 / Confirming the original task; other views are retained.'})
+        .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.revision,row.revision))); return false;
+    }
+    await this.db.update(councilSessions).set({checkpoint:sql`jsonb_set(${councilSessions.checkpoint},'{nextTurn}',${JSON.stringify(terminal.size)}::jsonb)`})
+      .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.status,'running'),eq(councilSessions.revision,row.revision)));
+    return selected.length>0 || terminal.size>=members.length;
+  }
+
+  private async markIndependentUnavailable(owner: string,row: SessionRow,memberId: string,code: string) {
+    await this.db.transaction(async tx=>{
+      const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id))).for('update');
+      if(current?.status!=='running'||current.revision!==row.revision||current.checkpoint?.cycleId!==row.checkpoint?.cycleId||!current.checkpoint?.simple)return;
+      const unavailable=current.checkpoint.simple.unavailable.filter(u=>u.memberId!==memberId);
+      await tx.update(councilSessions).set({checkpoint:{...current.checkpoint,simple:{...current.checkpoint.simple,
+        unavailable:[...unavailable,{memberId,reason:agentErrorMessage(code,row.language)}]}}}).where(eq(councilSessions.id,row.id));
+    });
+  }
+
+  private async acceptIndependentAttempt(owner:string,row:SessionRow,output:MemberOutput):Promise<boolean> {
+    const attempt=row.memberAttempt!;
+    return this.db.transaction(async tx=>{
+      const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id))).for('update');
+      const [latest]=await tx.select().from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.id,attempt.id))).for('update');
+      if(!current||!latest||current.status!=='running'||current.revision!==attempt.revision||current.checkpoint?.cycleId!==attempt.cycleId||!['queued','running'].includes(latest.status))return false;
+      const [newer]=await tx.select({id:councilMemberAttempts.id}).from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.sessionId,row.id),eq(councilMemberAttempts.cycleId,attempt.cycleId),eq(councilMemberAttempts.memberId,attempt.memberId),sql`${councilMemberAttempts.attempt}>${attempt.attempt}`));
+      if(newer)return false;
+      const executor=current.checkpoint.simple!.executors.find(e=>e.memberId===output.member.id)??{memberId:output.member.id,identity:attempt.resourceKey,connection:output.member.agentId??output.member.connectionId??'default',provider:output.member.agentId??'api',model:output.member.agentSettings?.model??'configured-default'};
+      await tx.insert(councilIndependentSubmissions).values({owner,sessionId:row.id,cycleId:attempt.cycleId,memberId:output.member.id,attempt:attempt.attempt,
+        executorIdentity:executor,contribution:output.contribution,evidence:output.sources??[],tokensUsed:output.tokens,taskId:output.taskId,
+        externalUsageUnknown:output.externalUsageUnknown?'true':null}).onConflictDoNothing();
+      await tx.update(councilMemberAttempts).set({status:'completed',resultAcceptance:'accepted',failure:null,
+        failureHistory:latest.failure?[...latest.failureHistory,latest.failure]:latest.failureHistory,
+        completedAt:new Date(),updatedAt:new Date(),tokensUsed:output.tokens})
+        .where(eq(councilMemberAttempts.id,attempt.id));
+      const simple=current.checkpoint.simple!;
+      await tx.update(councilSessions).set({updatedAt:new Date(),checkpoint:{...current.checkpoint,simple:{...simple,unavailable:simple.unavailable.filter(u=>u.memberId!==output.member.id)}}}).where(eq(councilSessions.id,row.id));
+      return true;
     });
   }
 
@@ -852,7 +1086,7 @@ export class CouncilService implements OnModuleInit {
       const next: DialogueTurn[] = disputed ? completed.map(member => ({ memberId: member.id, phase: 'challenge' }))
         : manager ? [{ memberId: manager.id, phase: 'summary' }] : [];
       await tx.update(councilSessions).set({ status: manager ? 'running' : 'paused',
-        error: manager ? null : current.language === 'en' ? 'No member completed the initial research. Connect an available AI.' : '本轮没有成员完成研究，请连接可用的 AI。',
+        error: manager ? null : current.language === 'en' ? 'No usable conclusion this round. Review each member’s cause and recovery options.' : '本轮尚无可用结论，请查看各位股友的原因与恢复操作。',
         evidenceSnapshot: [...(checkpoint.simple.commonEvidence ?? []), ...submissions.flatMap(item => item.evidence)].slice(-60),
         checkpoint: { ...checkpoint, turns: [...checkpoint.turns, ...next], pendingResearch: [],
           simple: { ...checkpoint.simple, privateEvidence: undefined, stage: manager ? 'discussion' : 'waiting' } } })
@@ -899,8 +1133,10 @@ export class CouncilService implements OnModuleInit {
     await activity('queued', row.language === 'en' ? 'Preparing the assigned model request' : '正在准备本轮模型请求');
     await activity('running', row.language === 'en' ? 'Waiting for the model’s research response' : '正在等待模型的研究回复');
     try {
+      if (row.memberAttempt) await new CouncilMemberAttemptsService(this.db).update(userId,row.memberAttempt.id,{status:'running',startedAt:new Date(),dispatchStarted:true});
       const result = member.model === 'slow' ? await this.llm.chatSlowJSON(prompt, userId, options)
         : await this.llm.chatFastJSON(prompt, userId, options);
+      if (row.memberAttempt) await new CouncilMemberAttemptsService(this.db).update(userId,row.memberAttempt.id,{rawText:JSON.stringify(result.data),taskId});
       const contribution = parseContribution(result.data, new Set(data.evidence.map((item) => item.id)), turn, row.candidate);
       await activity('succeeded', row.language === 'en' ? 'Research response received' : '已收到研究回复');
       return { member, taskId, contribution, tokens: Number.isFinite(result.tokens) ? Math.max(0, Math.trunc(result.tokens)) : 0,
@@ -967,7 +1203,13 @@ export class CouncilService implements OnModuleInit {
   private async runAgentMember(userId: string, row: SessionRow, member: CouncilMember, turn: DialogueTurn): Promise<MemberOutput> {
     if (!this.localAgents || !member.agentId || !row.checkpoint) throw new Error('LOCAL_UNAVAILABLE');
     const current = await this.requireSession(userId, row.id);
-    const saved = current.checkpoint?.remote;
+    // Recovery after public discussion keeps the original private prompt. The live room
+    // tool-context endpoint reads the current room, so do not expose it to this retry.
+    const independentRetry=Boolean(row.memberAttempt&&current.checkpoint?.simple?.stage!=='independent');
+    const attemptStore = new CouncilMemberAttemptsService(this.db);
+    const saved = row.memberAttempt ? { agentId:member.agentId,messageId:row.memberAttempt.messageId,taskId:row.memberAttempt.taskId??undefined,
+      turn:row.memberAttempt.turn,revision:row.memberAttempt.revision,dispatchStarted:row.memberAttempt.dispatchStarted,contextId:row.memberAttempt.taskId??undefined,
+      awaitingInput:false,lastUserMessageId:undefined as string|undefined } : current.checkpoint?.remote;
     const history = await this.db.select().from(councilMessages).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id)))
       .orderBy(councilMessages.createdAt);
     const messages = row.checkpoint.simple?.stage === 'independent' && row.checkpoint.simple.commonMessageIds
@@ -978,10 +1220,12 @@ export class CouncilService implements OnModuleInit {
     const remote = resumeInput ? { ...saved!, messageId: randomUUID(), revision: row.revision, dispatchStarted: false }
       : saved ?? { agentId: member.agentId, messageId: randomUUID(), turn: row.checkpoint.nextTurn,
         revision: row.revision, dispatchStarted: false, lastUserMessageId };
-    if (!saved || resumeInput) await this.db.update(councilSessions).set({ checkpoint: { ...current.checkpoint!, remote } })
+    if (!row.memberAttempt && (!saved || resumeInput)) await this.db.update(councilSessions).set({ checkpoint: { ...current.checkpoint!, remote } })
       .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     const result = await this.localAgents.execute(userId, { agentId: member.agentId, messageId: remote.messageId,
-      researchScope: isPortfolioThread(row) ? undefined : { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
+      activityContext: { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
+        turn: row.checkpoint.nextTurn, language: row.language, cycleId: row.checkpoint.cycleId,attempt:row.memberAttempt?.attempt },
+      researchScope: isPortfolioThread(row)||independentRetry ? undefined : { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
         turn: row.checkpoint.nextTurn, ticker: row.ticker, language: row.language,
         webResearch: row.profileSnapshot.council?.webResearch === true, expiresAt: Date.now() + 600_000 },
       agentSettings: member.agentSettings,
@@ -993,6 +1237,7 @@ export class CouncilService implements OnModuleInit {
         evidence: row.checkpoint?.simple?.stage === 'independent' ? row.checkpoint.simple.commonEvidence ?? row.evidenceSnapshot : row.evidenceSnapshot }),
       onDispatch: async () => {
         await this.validatePinnedReferences(row);
+        if(row.memberAttempt){if(!await attemptStore.update(userId,row.memberAttempt.id,{dispatchStarted:true}))throw new LocalAgentError('LOCAL_PAUSED');return;}
         const dispatched = { ...remote, lastUserMessageId, awaitingInput: false, dispatchStarted: true };
         const marked = await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint}, '{remote}', (${councilSessions.checkpoint}->'remote') || ${JSON.stringify(dispatched)}::jsonb)` })
           .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id),
@@ -1001,6 +1246,7 @@ export class CouncilService implements OnModuleInit {
         if (!marked.length) throw new LocalAgentError('LOCAL_PAUSED');
       },
       onTask: async (ref) => {
+        if(row.memberAttempt){if(!await attemptStore.update(userId,row.memberAttempt.id,{taskId:ref.taskId,status:'running',startedAt:new Date()}))throw new LocalAgentError('LOCAL_PAUSED');return;}
         await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
           const [latest] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
@@ -1014,6 +1260,7 @@ export class CouncilService implements OnModuleInit {
       shouldContinue: async () => { const latest = await this.requireSession(userId, row.id);
         return latest.status === 'running' && latest.revision === row.revision; },
     });
+    if(row.memberAttempt)await attemptStore.update(userId,row.memberAttempt.id,{rawText:result.text,taskId:result.taskId??row.memberAttempt.taskId,tokensUsed:result.usageTokens??0});
     try {
       const latest = row.checkpoint.simple?.stage === 'independent' ? await this.requireSession(userId, row.id) : row;
       const privateEvidence = latest.checkpoint?.simple?.privateEvidence?.[member.id] ?? [];
@@ -1022,7 +1269,7 @@ export class CouncilService implements OnModuleInit {
         taskId: result.taskId,
         tokens: result.usageTokens ?? 0, externalUsageUnknown: result.usageTokens === null,
         replyToMessageId: messages.filter((item) => item.role !== 'system').at(-1)?.id ?? null };
-    } catch { throw new LocalAgentError('LOCAL_INVALID_RESULT'); }
+    } catch(error) { if(row.memberAttempt)throw error; throw new LocalAgentError('LOCAL_INVALID_RESULT'); }
   }
 
   private async runResearch(userId: string, row: SessionRow): Promise<void> {

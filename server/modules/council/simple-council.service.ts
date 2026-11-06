@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { cashAccounts,holdings, paperOrders, watchlist } from '../../database/schema';
 import { councilMessages, councilReports, councilSessions } from '../../database/council.schema';
-import { simpleCouncilRequests } from '../../database/simple-council.schema';
+import { simpleCouncilRequests, councilIndependentSubmissions, councilMemberAttempts } from '../../database/simple-council.schema';
 import { experiencePreferences, researchCurrentViews } from '../../database/simple-experience.schema';
 import { modelConnections } from '../../database/model-connections.schema';
 import { strategySignals } from '../../database/strategy.schema';
@@ -23,6 +23,10 @@ import type { CouncilMember } from '../../../shared/council.interface';
 import type { ActualExecutor, CreateResearchConversationInput, ResearchContext, ResearchConversationMessageInput,
   ResearchConversationResult, ResearchConversationView } from '../../../shared/simple-conversation.interface';
 import type { ReportReference, ResolvedReportReference } from '../../../shared/research-document.interface';
+import { CouncilMemberAttemptsService } from './council-member-attempts.service';
+import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from '../local-agents/local-agents.requests';
+import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
+import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
 
 const key = z.string().trim().min(1).max(200);
 const message = z.string().trim().min(1).max(2000);
@@ -58,27 +62,33 @@ export class SimpleCouncilService {
     if (prior) { this.same(prior.inputHash, inputHash); return this.get(owner, prior.sessionId); }
     const frozen = await this.resolveContext(owner, value.context, value.message);
     if ('needsInput' in frozen) return frozen;
-    const { members, executors } = await this.resolveMembers(owner);
+    const pendingMembers=this.resolveMembers(owner).catch(()=>({members:[] as CouncilMember[],executors:[] as ActualExecutor[]}));
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const immediate=await Promise.race([pendingMembers,new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),100);})]);
+    if(timer)clearTimeout(timer);
+    const initializing=immediate===null;
+    const { members, executors } = immediate??{members:[],executors:[]};
     const result = await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
       const [existing] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
       if (existing) { this.same(existing.inputHash, inputHash); return { id: existing.sessionId, created: false }; }
       const checkpoint = newCheckpoint(members, { independent: true });
       checkpoint.simple = { ...checkpoint.simple!, executors, contextLabel: frozen.label, contextDate: frozen.contextDate,commonEvidence: frozen.evidence,
-        automaticTaskId: options.automaticTaskId };
+        automaticTaskId: options.automaticTaskId,initializing };
       const config = normalizeBuilderConfig({ name: 'Research conversation', template: 'guard', tickers: [frozen.ticker], minimumRating: 'Buy',
         customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1, notifyOnProposal: false, priceRules: [], language: 'zh-CN' });
       config.council = { enabled: true, members, webResearch: false };
       const [session] = await tx.insert(councilSessions).values({ owner, profileVersion: 1, profileSnapshot: config,
         ticker: frozen.ticker, scene: frozen.scene, title: [...value.message].slice(0, 48).join(''), subject: value.message.slice(0, 240),
         references: frozen.references, resolvedReferences: frozen.resolvedReferences, evidenceSnapshot: frozen.evidence,
-        checkpoint, status: members.length ? 'idle' : 'paused', error: members.length ? null : '连接 AI 后可生成分析。 / Connect an available AI to generate research.' }).returning();
+        checkpoint, status: members.length||initializing ? 'idle' : 'paused', error: members.length||initializing ? null : '连接 AI 后可生成分析。 / Connect an available AI to generate research.' }).returning();
       await tx.insert(councilMessages).values({ owner, sessionId: session.id, role: 'user', memberName: 'You', content: value.message,
         revision: 1, tokensUsed: 0, metadata: { referenceSnapshot: frozen.references } });
       await tx.insert(simpleCouncilRequests).values({ owner, requestKey: value.requestKey, inputHash, sessionId: session.id });
       return { id: session.id, created: true };
     });
     if (result.created && members.length) await this.start(owner, result.id);
+    if(result.created&&initializing)void pendingMembers.then(resolved=>this.initializeMembers(owner,result.id,resolved)).catch(()=>undefined);
     return this.get(owner, result.id);
   }
 
@@ -89,9 +99,21 @@ export class SimpleCouncilService {
     if (!row) throw new NotFoundException('Research conversation not found');
     const simple = row.checkpoint?.simple;
     const executors = simple?.executors.length ? simple.executors : session.messages.flatMap(item => item.actualExecutor ? [item.actualExecutor] : []);
-    const actualExecutors = [...new Map(executors.map(item => [item.memberId, item])).values()];
-    const sources = new Set(actualExecutors.filter(item => !simple?.unavailable.some(missing => missing.memberId === item.memberId)).map(item => item.identity));
+    const actualExecutors = [...new Map(executors.map(item => [item.memberId, {...item,connectionId:item.connection}])).values()];
+    const sources = new Set(actualExecutors.map(item => item.identity));
+    const attempts = await new CouncilMemberAttemptsService(this.db).list(owner,id,row.checkpoint?.cycleId);
+    const latestAttempts = [...new Map(attempts.map(item=>[item.memberId,item])).values()];
+    const projected = simple?.stage==='independent' ? await this.db.select().from(councilIndependentSubmissions).where(and(eq(councilIndependentSubmissions.owner,owner),
+      eq(councilIndependentSubmissions.sessionId,id),eq(councilIndependentSubmissions.cycleId,row.checkpoint!.cycleId))).orderBy(councilIndependentSubmissions.submittedAt) : [];
+    const preliminary:import('../../../shared/council.interface').CouncilMessage[]=projected.filter(item=>!item.releasedAt).map(item=>({id:item.id,role:session.members?.find(m=>m.id===item.memberId)?.role??'researcher',
+      memberId:item.memberId,memberName:session.members?.find(m=>m.id===item.memberId)?.name??item.memberId,
+      content:(row.language==='en'?'Preliminary view; other members have not completed.\n\n':'初步观点，其他股友尚未完成。\n\n')+item.contribution.content,
+      revision:row.revision,tokensUsed:item.tokensUsed,createdAt:item.submittedAt.toISOString(),actualExecutor:item.executorIdentity,phase:'opening',cycleId:item.cycleId,
+      response:item.contribution.response,claims:item.contribution.claims,evidenceIds:item.contribution.evidenceIds,externalUsageUnknown:item.externalUsageUnknown==='true'}));
     return { ...session, mode: sources.size > 1 ? 'team' : sources.size ? 'single' : 'unavailable', actualExecutors,
+      initializing:simple?.initializing===true,
+      messages:[...session.messages,...preliminary],
+      memberStates: latestAttempts.map(item=>new CouncilMemberAttemptsService(this.db).publicState(item)),
       stage: session.status === 'completed' ? 'completed' : simple?.stage ?? 'waiting', supplementRounds: simple?.supplementRounds ?? 0,
       unavailableMembers: simple?.unavailable ?? [], outcome: simple?.outcome ?? null, contextLabel: simple?.contextLabel };
   }
@@ -128,7 +150,11 @@ export class SimpleCouncilService {
       const completed = history.filter(item => item.role !== 'system').slice(0, -12);
       const continuationSummary = completed.length >= 20 ? { content: completed.map(item => `${item.memberName}: ${item.metadata?.response?.thesis ?? item.content.slice(0, 180)}`).join('\n').slice(-6000),
         sourceSessionId: id, sourceMessageIds: completed.map(item => item.id), references: row.references } : row.continuationSummary;
-      const convert = row.status !== 'running' && (!row.checkpoint?.simple || row.status === 'completed'
+      if(row.checkpoint?.simple?.stopped){
+        const unresolved=await tx.select({status:councilMemberAttempts.status}).from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.sessionId,id),eq(councilMemberAttempts.cycleId,row.checkpoint.cycleId)));
+        if(unresolved.some(a=>['queued','running','unknown'].includes(a.status)))throw new ConflictException('ORIGINAL_TASK_NOT_TERMINATED');
+      }
+      const convert = row.status !== 'running' && (!row.checkpoint?.simple || row.status === 'completed' || row.checkpoint.simple.stopped
         || !row.profileSnapshot.council?.members.length);
       const checkpoint = convert ? newCheckpoint(actual.members, { independent: true }) : row.checkpoint;
       if (convert && checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, executors: actual.executors, commonEvidence: row.evidenceSnapshot };
@@ -163,6 +189,19 @@ export class SimpleCouncilService {
   }
 
   private same(stored: string, current: string): void { if (stored !== current) throw new ConflictException('REQUEST_KEY_CONFLICT'); }
+  private async initializeMembers(owner:string,id:string,resolved:{members:CouncilMember[];executors:ActualExecutor[]}){
+    const ready=await this.db.transaction(async tx=>{
+      await lockMemoryOwner(tx,owner);const [row]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
+      if(!row?.checkpoint?.simple?.initializing)return false;
+      if(row.status!=='idle'||row.revision!==1){await tx.update(councilSessions).set({checkpoint:{...row.checkpoint,simple:{...row.checkpoint.simple,initializing:false}}}).where(eq(councilSessions.id,id));return false;}
+      const checkpoint=newCheckpoint(resolved.members,{independent:true});
+      checkpoint.simple={...checkpoint.simple!,...row.checkpoint.simple,stage:resolved.members.length?'independent':'waiting',executors:resolved.executors,initializing:false};
+      await tx.update(councilSessions).set({checkpoint,profileSnapshot:{...row.profileSnapshot,council:{...row.profileSnapshot.council!,members:resolved.members}},
+        status:resolved.members.length?'idle':'paused',error:resolved.members.length?null:'尚未连接可执行的 AI 股友。 / No executable AI member is connected.',updatedAt:new Date()}).where(eq(councilSessions.id,id));
+      return resolved.members.length>0;
+    });
+    if(ready)await this.start(owner,id);
+  }
   private async start(owner: string, id: string): Promise<void> {
     try { await this.council.runSession(owner, id); }
     catch { await this.db.update(councilSessions).set({ status: 'paused', error: 'AI 暂不可用，请检查连接。 / AI unavailable; check the connection.' })
@@ -172,14 +211,18 @@ export class SimpleCouncilService {
   async resolveMembers(owner: string): Promise<{ members: CouncilMember[]; executors: ActualExecutor[] }> {
     const [preferences] = await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
     const allowed = (id: string) => !preferences?.defaultMembers.length || preferences.defaultMembers.includes(id);
+    const defaultRoute=this.settings?await this.settings.getDefaultModelRoute(owner).catch(()=>null):null;
     const selected: Array<{ member: CouncilMember; executor: ActualExecutor }> = [];
     if (this.localAgents) for (const item of (await this.localAgents.status(owner)).items) {
-      if (!item.connected || !item.available || item.busy || !allowed(item.id)) continue;
+      if (!item.connected || !item.available || !allowed(item.id)) continue;
       const memberId = `local-${item.provider}`;
-      selected.push({ member: { id: memberId, name: item.name.slice(0, 40), role: 'researcher', model: 'fast', instructions: '', executionMode: 'local', agentId: item.id },
-        executor: { memberId, identity: `${item.provider}:configured-default`,
-          identityVerified: ['codex', 'claude', 'gemini', 'kimi', 'doubao'].includes(item.provider), modelVerified: false,
-          connection: item.id, provider: item.provider, model: 'configured-default (unreported)' } });
+      const agentSettings = parseNativeAgentConfiguration(preferences?.memberSettings?.[item.id]??(defaultRoute?.mode==='local'&&defaultRoute.agentId===item.id?defaultRoute.agentSettings:undefined));
+      const model=agentSettings?.model??item.defaultModel;
+      selected.push({ member: { id: memberId, name: item.name.slice(0, 40), role: 'researcher', model: 'fast', instructions: '', executionMode: 'local', agentId: item.id,
+        ...(agentSettings?{agentSettings}:{}) },
+        executor: { memberId, identity: `${item.provider}:${model??'configured-default'}`,
+          identityVerified: ['codex', 'claude', 'gemini', 'kimi', 'doubao'].includes(item.provider),
+          connection: item.id, provider: item.provider, model: model??'configured-default', modelVerified:Boolean(model) } });
     }
     if (this.settings) {
       const connections = await this.db.select({ id: modelConnections.id, name: modelConnections.name }).from(modelConnections).where(eq(modelConnections.owner, owner)).orderBy(modelConnections.createdAt);
@@ -204,6 +247,43 @@ export class SimpleCouncilService {
     }
     const unique = [...new Map(selected.map(item => [item.executor.identity, item])).values()].slice(0, 3);
     return { members: unique.map((item, index) => ({ ...item.member, role: index === unique.length - 1 && unique.length > 1 ? 'manager' : 'researcher' })), executors: unique.map(item => item.executor) };
+  }
+
+  async executionReadiness(owner:string) {
+    const [preferences]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
+    const memberSettings={...(preferences?.memberSettings??{})};
+    const route=this.settings?await this.settings.getDefaultModelRoute(owner).catch(()=>null):null;
+    if(route?.mode==='local'&&route.agentSettings&&!memberSettings[route.agentId])memberSettings[route.agentId]=route.agentSettings;
+    return {items:this.localAgents?await this.localAgents.readiness(owner,memberSettings):[]};
+  }
+  async recover(owner:string,id:string,input:ResearchRecoveryInput){
+    parse(z.uuid(),id);
+    const value=parse(z.object({memberId:z.string().min(1).max(100),action:z.enum(['check_existing','reparse_existing','retry_member','fix_configuration']),requestKey:key,expectedRevision:z.number().int().min(1)}).strict(),input);
+    await this.council.recoverMember(owner,id,value);return this.get(owner,id);
+  }
+  async memberResult(owner:string,id:string,memberId:string){
+    await this.council.getSession(owner,id);const attempts=await new CouncilMemberAttemptsService(this.db).list(owner,id);
+    const attempt=attempts.filter(a=>a.memberId===memberId).at(-1);if(!attempt?.rawText)throw new NotFoundException('Saved research text unavailable');
+    return{text:attempt.rawText,verified:false as const,resultAcceptance:attempt.resultAcceptance};
+  }
+  async stop(owner:string,id:string){
+    parse(z.uuid(),id);await this.council.pauseSession(owner,id);
+    const attempts=await new CouncilMemberAttemptsService(this.db).list(owner,id);
+    for(const attempt of attempts.filter(a=>['queued','running','unknown'].includes(a.status)&&a.taskId))await this.localAgents?.cancelTask(owner,attempt.taskId!);
+    return this.get(owner,id);
+  }
+  async configureMember(owner:string,connectionId:string,input:NativeAgentConfiguration) {
+    const value=parseNativeAgentConfiguration(input);
+    const item=this.localAgents?(await this.localAgents.status(owner)).items.find(item=>item.id===connectionId&&item.connected):undefined;
+    if(!this.localAgents ||!item)throw new NotFoundException('Connection not found');
+    validateNativeAgentConfiguration(value,item);
+    await this.db.transaction(async tx=>{
+      await lockMemoryOwner(tx,owner);const [current]=await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner)).for('update');
+      const memberSettings={...(current?.memberSettings??{})};if(value)memberSettings[connectionId]=value;else delete memberSettings[connectionId];
+      await tx.insert(experiencePreferences).values({owner,memberSettings}).onConflictDoUpdate({target:experiencePreferences.owner,set:{memberSettings,updatedAt:new Date()}});
+    });
+    this.localAgents.invalidateDetection();
+    return this.executionReadiness(owner);
   }
 
   private async resolveContext(owner: string, input: ResearchContext | undefined, question: string): Promise<FrozenContext | Extract<ResearchConversationResult, { needsInput: unknown }>> {

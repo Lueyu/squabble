@@ -8,6 +8,8 @@ export interface NativeAgentConfiguration { model?: string; reasoningEffort?: st
 export interface NativeAgentModel { id: string; name: string; reasoningEfforts?: string[] }
 export type NativeAgentState = 'not_installed' | 'login_required' | 'ready' | 'error';
 export interface NativeAgentStatus {
+  /** Read-only configured native default, when discoverable without a model request. */
+  defaultModel?: string;
   imageInput?: boolean;
   researchTools?: ResearchToolCapability;
   provider: LocalAgentProvider;

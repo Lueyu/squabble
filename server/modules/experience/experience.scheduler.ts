@@ -5,17 +5,18 @@ import { TodayService } from './today.service';
 import { CurrentResearchService } from './current-research.service';
 import { ResearchFollowupService } from './research-followup.service';
 import { businessDate } from './simple-experience.rules';
+import { ImportAnalysisHandoffService } from './import-analysis-handoff.service';
 
 @Injectable()
 export class ExperienceScheduler implements OnApplicationBootstrap,OnApplicationShutdown {
   private timer?:ReturnType<typeof setInterval>;private busy=false;private lastScan=0;private readonly logger=new Logger(ExperienceScheduler.name);
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db:PostgresJsDatabase,private readonly today:TodayService,private readonly research:CurrentResearchService,private readonly followup:ResearchFollowupService) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db:PostgresJsDatabase,private readonly today:TodayService,private readonly research:CurrentResearchService,private readonly followup:ResearchFollowupService,private readonly handoff:ImportAnalysisHandoffService) {}
   onApplicationBootstrap(){this.timer=setInterval(()=>void this.tick(),15_000);this.timer.unref();}
   onApplicationShutdown(){if(this.timer)clearInterval(this.timer);}
   async tick(){
     if(this.busy||process.env.SQUABBLE_SIMPLE_EXPERIENCE!=='true')return;this.busy=true;
     try {
-      await this.research.reconcile();if(Date.now()-this.lastScan<60_000)return;this.lastScan=Date.now();
+      await this.handoff.dispatch();await this.research.reconcile();if(Date.now()-this.lastScan<60_000)return;this.lastScan=Date.now();
       const owners=await this.db.select({id:users.id}).from(users);await this.followup.enqueue();
       for(const {id:owner}of owners){
         const preferences=await this.today.preferences(owner);if(!preferences.enabled)continue;

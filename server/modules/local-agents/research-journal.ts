@@ -16,7 +16,7 @@ export function publicText(value: string, max = 600): string {
 
 /** A second trust boundary after provider parsing / companion input validation. */
 export function appendResearchEvents(task: AgentTask, entries: ResearchActivity[], internal = false): void {
-  const scope = task.researchScope;
+  const scope = task.activityContext ?? task.researchScope;
   if (!scope || !internal && !['queued', 'running', 'cancelling'].includes(task.state)) return;
   for (const entry of entries.slice(0, 64)) {
     if (!entry || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(entry.id) || !statuses.includes(entry.status)
@@ -42,6 +42,8 @@ export function appendResearchEvents(task: AgentTask, entries: ResearchActivity[
       return [{ title: publicText(source.title, 160), fetchedAt: source.fetchedAt, ...(url ? { url } : {}) }];
     });
     const event: ResearchEvent = { id: entry.id, kind: entry.kind, status: entry.status, at, summary: publicText(entry.summary),
+      ...('attempt' in scope && typeof scope.attempt === 'number' ? { attempt:scope.attempt } : {}),
+      ...('cycleId' in scope && typeof scope.cycleId === 'string' ? { cycleId:scope.cycleId } : {}),
       sequence: (task.eventSequence ?? 0) + 1, taskId: task.id, sessionId: scope.sessionId, revision: scope.revision,
       memberId: scope.memberId, memberName: publicText(scope.memberName, 80), turn: scope.turn,
       ...(entry.toolName && /^[A-Za-z][A-Za-z0-9_.:-]{0,100}$/u.test(entry.toolName) ? { toolName: entry.toolName } : {}),
@@ -62,15 +64,16 @@ export function appendResearchEvents(task: AgentTask, entries: ResearchActivity[
 
 /** Server-owned task lifecycle: provider output cannot declare a task completed. */
 export function recordTaskLifecycle(task: AgentTask, previousState?: AgentTask['state']): void {
-  if (!task.researchScope || task.state === previousState) return;
+  const context = task.activityContext ?? task.researchScope;
+  if (!context || task.state === previousState) return;
   const map: Partial<Record<AgentTask['state'], ResearchEventStatus>> = {
     staged: 'queued', running: 'running', completed: 'succeeded', failed: task.error === 'LOCAL_INTERRUPTED' ? 'interrupted' : 'failed', cancelled: 'cancelled',
   };
   const status = map[task.state]; if (!status) return;
-  const en = task.researchScope.language === 'en';
+  const en = context.language === 'en';
   const text: Record<string, [string, string]> = {
     queued: ['等待助手执行任务', 'Waiting for the research agent'], running: ['助手正在研究', 'Research agent is working'],
-    succeeded: ['本次研究已完成', 'Research task completed'], failed: ['研究失败，请查看连接状态后重试', 'Research failed. Check the agent connection before retrying.'],
+    succeeded: ['研究内容已返回，等待整理', 'Research content returned; awaiting acceptance'], failed: ['这位股友未完成，请查看原因与恢复选项', 'This member did not complete; review the cause and recovery options'],
     interrupted: ['执行已中断，未自动重试', 'Execution interrupted; no automatic retry was started'], cancelled: ['任务已取消', 'Task cancelled'],
   };
   if (['succeeded', 'failed', 'cancelled', 'interrupted'].includes(status)) {
@@ -85,6 +88,6 @@ export function recordTaskLifecycle(task: AgentTask, previousState?: AgentTask['
   }
   appendResearchEvents(task, [{ id: `task:${task.id}:${status}`, kind: 'task', status,
     at: new Date(task.updatedAt).toISOString(),
-    summary: (status === 'failed' ? localAgentLimitMessage(task.error, task.researchScope.language) : undefined) ?? text[status][en ? 1 : 0],
+    summary: (status === 'failed' ? localAgentLimitMessage(task.error, context.language) : undefined) ?? text[status][en ? 1 : 0],
     ...(['succeeded', 'failed', 'cancelled', 'interrupted'].includes(status) ? { durationMs: task.updatedAt - task.createdAt } : {}) }], true);
 }

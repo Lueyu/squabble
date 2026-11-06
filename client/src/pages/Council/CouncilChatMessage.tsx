@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { threadCopy } from './thread-copy';
 import type { ActualExecutor } from '@shared/simple-conversation.interface';
+import { researchModelLabel } from '@/utils/research-experience';
 
 function safeSourceUrl(value: string | null): string | null {
   if (!value) return null;
@@ -55,7 +56,7 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
         <time dateTime={createdAt}>{new Date(createdAt).toLocaleTimeString(i18n.language, { hour: '2-digit', minute: '2-digit' })}</time>
         {task && <span>{t('council.progress.taskTurn', { turn: task.turn + 1 })}</span>}
         {!simple && revision !== session.revision && <span>{t('council.progress.previousRevision', { revision })}</span>}
-        {executor && <span className="break-words">{executor.provider} · {executor.model}</span>}
+        {executor && <details className="min-w-0 [overflow-wrap:anywhere]"><summary className="cursor-pointer">{i18n.language.startsWith('zh') ? '执行来源' : 'Execution details'}</summary><p>{executor.connection} · {executor.provider} · {researchModelLabel(executor.model, i18n.language.startsWith('zh'))}</p></details>}
       </div>
       <div className="council-bubble">
         {task && <div className={message ? 'mb-4 border-b border-border/60 pb-3' : undefined}>

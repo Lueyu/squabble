@@ -31,6 +31,20 @@ export function jsonValues(text: string): unknown[] {
   return values;
 }
 function jsonFile(path: string): JsonObject { return object(jsonValues(readLocalText(path))[0]); }
+/** Local scalar metadata only. This never returns provider configuration or credentials. */
+export function configuredDefaultModel(provider: LocalAgentProvider, options: NativeResolverOptions): string | undefined {
+  const env = options.env ?? process.env; const home = options.home ?? homedir();
+  let value: unknown;
+  if (provider === 'codex') value = tomlSections(readLocalText(join(env.CODEX_HOME ?? join(home, '.codex'), 'config.toml'))).get('')?.model;
+  else if (provider === 'claude') value = env.ANTHROPIC_MODEL ?? jsonFile(join(env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), 'settings.json')).model;
+  else if (provider === 'opencode') {
+    const root = join(env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode');
+    value = jsonFile(join(root, 'opencode.json')).model ?? jsonFile(join(root, 'opencode.jsonc')).model;
+    if (env.OPENCODE_CONFIG) value = jsonFile(env.OPENCODE_CONFIG).model ?? value;
+    if (env.OPENCODE_CONFIG_CONTENT) value = object(jsonValues(env.OPENCODE_CONFIG_CONTENT)[0]).model ?? value;
+  }
+  return validLabel(value) ? value : undefined;
+}
 function validLabel(value: unknown, length: number = 160): value is string {
   return typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= length && !/[\u0000-\u001f\u007f]/u.test(value);
 }
