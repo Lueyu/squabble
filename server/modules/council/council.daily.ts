@@ -3,7 +3,7 @@ import type { DialogueTurn } from './council.types';
 import type { CouncilMember } from '../../../shared/council.interface';
 import type { CouncilEvidence } from './council.rules';
 
-/** Keep cited proposal sources inside the existing bounded report evidence inventory. */
+/** Keep strategy and reverse-check citations inside the existing bounded report evidence inventory. */
 export function reportExecutionEvidence(evidence:CouncilEvidence[],requiredIds:readonly string[]=[]):CouncilEvidence[]{
   if(!requiredIds.length)return evidence.slice(-60);
   const required=new Set(requiredIds);

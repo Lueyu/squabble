@@ -804,7 +804,7 @@ export class CouncilService implements OnModuleInit {
         const recorded = await this.recordTurn(userId, row, turn, claimId, output);
         claimId = null;
         if (!recorded) continue;
-        if (output.sources?.length && row.checkpoint.simple?.stage !== 'independent') row = { ...row, evidenceSnapshot: reportExecutionEvidence([...row.evidenceSnapshot, ...output.sources],output.contribution.executionPlan?.evidenceIds) };
+        if (output.sources?.length && row.checkpoint.simple?.stage !== 'independent') row = { ...row, evidenceSnapshot: (await this.requireSession(userId,id)).evidenceSnapshot };
         if (turn.phase === 'summary' && output.contribution.opinion) {
           const opinion = output.contribution.opinion;
           if (row.candidate && opinion.decision === 'approve' && criticalEvidenceGaps(row.evidenceSnapshot)
@@ -1037,7 +1037,11 @@ export class CouncilService implements OnModuleInit {
             supplementRounds: checkpoint.simple.supplementRounds + (supplement ? 1 : 0) } };
       }
       await tx.update(councilSessions).set({ updatedAt: new Date(),
-        ...(output.sources?.length ? { evidenceSnapshot: reportExecutionEvidence([...current.evidenceSnapshot, ...output.sources],contribution.executionPlan?.evidenceIds) } : {}),
+        ...(output.sources?.length ? { evidenceSnapshot: reportExecutionEvidence([...current.evidenceSnapshot, ...output.sources],[
+          ...(contribution.executionPlan?.evidenceIds??[]),...(contribution.reverseCheck?.evidenceIds??[]),
+          // The reverse gate and the strategy share the bounded source inventory; prior cycles cannot compete.
+          ...publicClaims.filter(item=>item.metadata?.cycleId===checkpoint.cycleId).flatMap(item=>item.metadata?.reverseCheck?.evidenceIds??[]),
+        ]) } : {}),
         checkpoint: nextCheckpoint })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return true;

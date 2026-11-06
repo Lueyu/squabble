@@ -7,7 +7,9 @@ import postgres from 'postgres';
 import {drizzle} from 'drizzle-orm/postgres-js';
 import {eq} from 'drizzle-orm';
 import {CouncilService} from './council.service';
-import {councilSessions} from '../../database/council.schema';
+import {parseContribution} from './council.dialogue';
+import type {CouncilEvidence} from './council.rules';
+import {councilMessages,councilSessions} from '../../database/council.schema';
 import {ResearchDocumentsService} from '../research-documents/research-documents.service';
 import {UserInvestmentStrategyService} from '../paper-trading/user-investment-strategy.service';
 import {ChannelService} from '../channel/channel.service';
@@ -60,5 +62,19 @@ test('daily generation publishes and hands off an executable immutable proposal 
   assert.equal(manual.snapshot?.executionPlan,undefined,'manual report changes cannot inherit hidden executable authority');
   assert.equal(manual.snapshot?.executionPlanError,undefined);
   await assert.rejects(strategies.importSource(owner,{kind:'report',versionId:manual.id,sectionId:'execution-strategy'}),/No validated report execution strategy/);
+  // A native summary adds sources after the mandatory reverse gate. Both artifacts keep their raw evidence.
+  const inventory=Array.from({length:72},(_,index)=>({...stored.evidenceSnapshot[0],id:`retained-${index}`} as CouncilEvidence));
+  const claimId=randomUUID(),summaryTurn={memberId:'summary',phase:'summary' as const};
+  const checkpoint={...stored.checkpoint!,simple:{...stored.checkpoint!.simple!,stage:'discussion' as const,researchOnly:true},turns:[summaryTurn],nextTurn:0,inflight:{id:claimId,turn:0,revision:stored.revision}};
+  await db.update(councilSessions).set({status:'running',checkpoint,evidenceSnapshot:inventory.slice(0,60)}).where(eq(councilSessions.id,session.id));
+  await db.insert(councilMessages).values({owner,sessionId:session.id,role:'challenger',memberName:'Reverse evidence fixture',revision:stored.revision,content:'Check original source.',metadata:{cycleId:checkpoint.cycleId,reverseCheck:{outcome:'no_counterevidence_found',checked:['Original source'],findings:[],gaps:[],affectedPremises:['Portfolio exposure'],evidenceIds:['retained-40']}}});
+  const contribution=parseContribution({response:{thesis:'Conditional proposal',evidencePoints:[],risks:[],nextChecks:[]},evidenceIds:[],executionPlan:{...proposal,evidenceIds:inventory.slice(0,40).map(e=>e.id)}},new Set(inventory.map(e=>e.id)),summaryTurn,null);
+  const [current]=await db.select().from(councilSessions).where(eq(councilSessions.id,session.id));
+  const retained=await (council as unknown as {recordTurn(...args:unknown[]):Promise<boolean>}).recordTurn(owner,current,summaryTurn,claimId,{member:{id:'summary',name:'Summary',role:'manager',model:'fast',instructions:''},contribution,tokens:1,replyToMessageId:null,sources:inventory.slice(60)});
+  assert.equal(retained,true);
+  const [saved]=await db.select().from(councilSessions).where(eq(councilSessions.id,session.id));
+  assert.equal(saved.evidenceSnapshot.length,60);
+  for(const id of [...inventory.slice(0,40).map(e=>e.id),'retained-40'])assert.ok(saved.evidenceSnapshot.some(e=>e.id===id),`Missing cited raw evidence: ${id}`);
+
  }finally{await client.end();await admin`DROP SCHEMA ${admin(namespace)} CASCADE`;await admin.end();}
 });
