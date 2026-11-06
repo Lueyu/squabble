@@ -10,15 +10,45 @@ import { CouncilService } from './council.service';
 import { holdings, paperAccounts, paperOrders } from '../../database/schema';
 import { councilSessions } from '../../database/council.schema';
 import { eq } from 'drizzle-orm';
+import { experiencePreferences } from '../../database/simple-experience.schema';
 
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
+test('restart recovers only unpaid initializing receipts once and closes disabled or stopped receipts',async()=>{
+  assert.ok(url,'Temporary database required');
+  const namespace=`receipt_restart_${randomUUID().replaceAll('-','')}`,admin=postgres(url!,{max:1,onnotice:()=>{}}),client=postgres(url!,{max:6,onnotice:()=>{},connection:{search_path:namespace}});
+  try{
+    await admin`CREATE SCHEMA ${admin(namespace)}`;
+    for(const file of readdirSync('scripts/db').filter(name=>/^\d+.*\.sql$/u.test(name)&&!name.startsWith('02_')).sort())await client.unsafe(readFileSync(`scripts/db/${file}`,'utf8'));
+    const owner=randomUUID();await client`INSERT INTO users(id,username,password_hash) VALUES(${owner},'restart-receipt','fixture')`;
+    const db=drizzle(client),llm={validateConnectionIds:async()=>{},isConfigured:async()=>false};
+    const council=new CouncilService(db,llm as never,{} as never,{} as never,{} as never);
+    const lost=new SimpleCouncilService(db,council,llm as never);
+    lost.resolveMembers=()=>new Promise(()=>{});
+    const pending=await lost.create(owner,{message:'Question survives process loss',requestKey:'unpaid-receipt'});
+    assert.ok('id' in pending&&pending.initializing);if(!('id' in pending))throw Error('Unexpected clarification');
+    let resolutions=0,starts=0;
+    const restarted=new SimpleCouncilService(db,{getSession:council.getSession.bind(council),runSession:async()=>{starts++;}} as never,llm as never);
+    restarted.resolveMembers=async()=>{resolutions++;return{members:[{id:'fixture',name:'Fixture',role:'researcher',model:'fast',instructions:''}],executors:[{memberId:'fixture',identity:'fixture:only',connection:'fixture',provider:'fixture',model:'fixture'}]};};
+    await restarted.onApplicationBootstrap();await restarted.onApplicationBootstrap();
+    const restored=await restarted.get(owner,pending.id);assert.equal(restored.initializing,false);assert.equal(restored.members?.length,1);assert.equal(resolutions,1);assert.equal(starts,1);
+    const disabled=await lost.create(owner,{message:'Disabled after receipt',requestKey:'disabled-receipt'});if(!('id' in disabled))throw Error('Unexpected clarification');
+    await db.insert(experiencePreferences).values({owner,enabled:false});
+    await restarted.onApplicationBootstrap();
+    const paused=await restarted.get(owner,disabled.id);assert.equal(paused.initializing,false);assert.equal(paused.status,'paused');assert.match(paused.error??'',/暂停|paused/iu);assert.equal(resolutions,1);assert.equal(starts,1);
+    await db.update(experiencePreferences).set({enabled:true}).where(eq(experiencePreferences.owner,owner));
+    const stopped=await lost.create(owner,{message:'Stopped after receipt',requestKey:'stopped-receipt'});if(!('id' in stopped))throw Error('Unexpected clarification');
+    await db.update(councilSessions).set({status:'paused',revision:2}).where(eq(councilSessions.id,stopped.id));
+    await restarted.onApplicationBootstrap();
+    const fenced=await restarted.get(owner,stopped.id);assert.equal(fenced.initializing,false);assert.equal(fenced.status,'paused');assert.equal(resolutions,1);assert.equal(starts,1);
+  }finally{await client.end();await admin`DROP SCHEMA IF EXISTS ${admin(namespace)} CASCADE`;await admin.end();}
+});
 test('zero-form general discussion is owner scoped, idempotent, and persists without inventing an AI response', { skip: !url }, async () => {
   const namespace = `simple_entry_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(url!, { max: 1, onnotice: () => {} });
   const client = postgres(url!, { max: 8, onnotice: () => {}, connection: { search_path: namespace } });
   try {
     await admin`CREATE SCHEMA ${admin(namespace)}`;
-    for (const file of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && Number(name.slice(0, 2)) <= 33).sort()) {
+    for (const file of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && Number(name.slice(0, 2)) <= 34).sort()) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     const owner = randomUUID();
@@ -27,6 +57,15 @@ test('zero-form general discussion is owner scoped, idempotent, and persists wit
     const llm = { validateConnectionIds: async () => {}, isConfigured: async () => false };
     const council = new CouncilService(db, llm as never, {} as never, {} as never, {} as never);
     const service = new SimpleCouncilService(db, council, llm as never);
+    const slow=new SimpleCouncilService(db,council,llm as never);
+    let finishDetection!:()=>void;const detection=new Promise<void>(resolve=>{finishDetection=resolve;});
+    slow.resolveMembers=async()=>{await detection;return{members:[],executors:[]};};
+    const receiptRequest=slow.create(owner,{message:'Cold detection receipt fixture',requestKey:'cold-receipt'});
+    const receipt=await Promise.race([receiptRequest.then(value=>({value})),new Promise<{timeout:true}>(resolve=>setTimeout(()=>resolve({timeout:true}),1000))]);
+    finishDetection();await receiptRequest;
+    assert.equal('timeout' in receipt,false,'cold CLI probes must not delay the durable receipt');
+    if('value' in receipt&&'id' in receipt.value)assert.equal(receipt.value.initializing,true);
+    await client`DELETE FROM council_sessions WHERE owner=${owner}`;
     const input = { message: 'How should an investor think about uncertainty?', requestKey: 'first' };
     const results = await Promise.all([service.create(owner, input), service.create(owner, input)]);
     assert.ok(results.every(result => 'id' in result));

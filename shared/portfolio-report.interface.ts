@@ -30,6 +30,8 @@ export interface PortfolioReportHoldingSnapshot {
 }
 
 export interface PortfolioReportSnapshot {
+  /** Owner-validated named API connection; credential-free execution identity. */
+  executionConnectionId?: string;
   capturedAt: string;
   holdings: PortfolioReportHoldingSnapshot[];
   cashUsd: number | null;

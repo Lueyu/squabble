@@ -1,3 +1,21 @@
+import type { FailureStage, SafeFailure } from '../../shared/research-execution.interface';
+import { nativeFailureCode } from '../modules/local-agents/local-agents.types';
+
+export function safeExecutionFailure(error: unknown, stage: FailureStage = 'runtime'): SafeFailure {
+  const row = error && typeof error === 'object' ? error as Record<string, unknown> : {};
+  const message = error instanceof Error ? error.message : '';
+  const transportUncertain=message==='LLM_REQUEST_TIMEOUT'||message==='LLM request failed. Check provider URL and server network.';
+  const code = transportUncertain ? 'LOCAL_DISPATCH_UNCERTAIN' : /^LOCAL_[A-Z_]+$/u.test(message) ? message : stage === 'parse' ? 'LOCAL_INVALID_RESULT' : nativeFailureCode(error);
+  const uncertain = ['LOCAL_DISPATCH_UNCERTAIN','LOCAL_PAUSED','LOCAL_INTERRUPTED'].includes(code);
+  const config = ['LOCAL_INVALID_CONFIGURATION','LOCAL_CONFIGURATION_UNSUPPORTED','LOCAL_LOGIN_REQUIRED','LOCAL_VERSION_UNSUPPORTED'].includes(code);
+  const result = row.result && typeof row.result === 'object' ? row.result as Record<string, unknown> : {};
+  const field = (key: string, max: number) => typeof row[key] === 'string' && /^[A-Za-z0-9_. ()–-]+$/u.test(String(row[key])) ? String(row[key]).slice(0,max) : undefined;
+  return { code, stage, recoveries: stage === 'parse' ? ['reparse_existing'] : uncertain ? ['check_existing'] : config ? ['fix_configuration','retry_member'] : ['retry_member'],
+    ...(field('fieldPath',160) ? { fieldPath: field('fieldPath',160), expectedType: field('expectedType',120), actualType: field('actualType',80) } : {}),
+    ...(Number.isInteger(result.code) ? { exitCode: Number(result.code) } : {}),
+    ...(typeof result.stdout === 'string' ? { outputBytes: Buffer.byteLength(result.stdout) } : {}) };
+}
+
 type ProviderFailureCode = 'NATIVE_AGENT_USAGE_LIMIT' | 'NATIVE_AGENT_RATE_LIMIT';
 
 /** Only this typed, allowlisted failure may cross a process callback boundary. */

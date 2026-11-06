@@ -8,7 +8,7 @@ import type { OcrService } from './ocr.service';
 import type { ScreenshotExtractRequest } from '../../../shared/screenshot-import.interface';
 
 const image = { mimeType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' };
-const reply = '{"broker":null,"rows":[{"ticker":"TEST","shares":2}]}';
+const reply = '{"broker":null,"rows":[{"ticker":"TEST","shares":2,"currency":"USD"}]}';
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 function request(): ScreenshotExtractRequest { return { requestId: randomUUID(), image, executor: 'local', agentId: 'native-codex' }; }
 function setup(execute: (owner: string, options: LocalAgentExecution) => Promise<unknown>, options = {}) {

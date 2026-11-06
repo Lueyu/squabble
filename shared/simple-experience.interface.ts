@@ -9,6 +9,11 @@ export interface CurrentResearchView {
   updatedAt: string | null; dataAsOf: string | null; changeSummary: string | null;
   state: 'empty' | 'ready' | 'generating' | 'failed'; taskId: string | null; error: string | null;
   source: { type: string; id: string } | null;
+  researchLevel?: 'facts_only' | 'ai';
+  summary?: string | null; keyPoints?: string[]; risks?: string[]; nextChecks?: string[];
+  progress?: {phase:string;message:string;percent:number} | null;
+  executorLabel?: string | null;
+  startedAt?: string | null; cancelling?: boolean; cancelled?: boolean;
 }
 export interface TodayAttention {
   id: string; kind: 'concentration' | 'data_gap' | 'research'; title: string; detail: string; ticker?: string;
@@ -20,6 +25,8 @@ export interface TodayView {
   holdings: PortfolioReportSnapshot['holdings']; summary: string | null; attention: TodayAttention[];
   analysis: CurrentResearchView; gaps: string[]; aiAvailable: boolean;
   marketTimes: Array<{ market: string; dataAsOf: string | null }>;
+  currencyTotals?: Array<{currency:string;holdingsValue:number|null;cash:number|null}>;
+  dailyBaselineMissing?: boolean;
   teamActivity?: Array<{ id: string; sessionId: string; title: string; summary: string; hasDisagreement: boolean; createdAt: string }>;
   recentActions?: Array<{ id: string; ticker: string; side: string; status: string; reason: string | null; createdAt: string }>;
 }

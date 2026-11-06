@@ -8,5 +8,7 @@ export const saveExperiencePreferences = async (input: { defaultMembers?: string
 export const fetchToday = async (): Promise<TodayView> => (await http.get('/api/today')).data;
 export const fetchCurrentResearch = async (topicKey: string, date?: string): Promise<CurrentResearchView> =>
   (await http.get('/api/research/current', { params: { topicKey, date } })).data;
-export const refreshCurrentResearch = async (input: { topicKey: string; date?: string; requestKey: string; trigger?: 'first_open' }): Promise<CurrentResearchView> =>
+export const refreshCurrentResearch = async (input: { topicKey: string; date?: string; requestKey: string; trigger?: 'first_open' | 'manual' }): Promise<CurrentResearchView> =>
   (await http.post('/api/research/current/refresh', input)).data;
+export const cancelCurrentResearch = async (input: { topicKey: string; date?: string; requestKey: string }): Promise<CurrentResearchView> =>
+  (await http.post('/api/research/current/cancel', input)).data;

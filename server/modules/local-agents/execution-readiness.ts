@@ -1,0 +1,29 @@
+import type { LocalAgentConnection, NativeAgentConfiguration } from '../../../shared/local-agents.interface';
+import type { ResearchExecutionReadiness } from '../../../shared/research-execution.interface';
+import { validateNativeAgentConfiguration } from './local-agents.requests';
+
+/** No probes or paid requests: project local metadata and app overrides. */
+export function executionReadiness(item: LocalAgentConnection, settings?: NativeAgentConfiguration): ResearchExecutionReadiness {
+  const model = settings?.model ?? item.defaultModel;
+  const effectiveModel: ResearchExecutionReadiness['effectiveModel'] = { ...(model ? { id: model } : {}),
+    source: settings?.model ? 'override' : model ? 'default' : 'unknown', verified: Boolean(model),
+    ...(item.provider === 'opencode' && model?.includes('/') ? { provider: model.split('/')[0] } : {}) };
+  const base = { connectionId: item.id, provider: item.provider, name: item.name, connected: item.connected, busy: item.busy, effectiveModel,
+    ...(settings?{configuration:settings}:{}),...(item.models?{models:item.models}:{}),...(item.reasoningEfforts?{reasoningEfforts:item.reasoningEfforts}:{}) };
+  if (!item.connected) return { ...base, state: 'not_connected', executable: false };
+  if (item.state === 'login_required') return { ...base, state: 'login_required', executable: false,
+    failure: { code: 'LOCAL_LOGIN_REQUIRED', stage: 'preflight', recoveries: ['fix_configuration'] } };
+  try {
+    validateNativeAgentConfiguration(settings, item);
+    // OpenCode splits provider/model. A bare default becomes provider + empty model.
+    if (item.provider === 'opencode' && model && !/^[^/\s]+\/[^\s]+$/u.test(model)) throw new Error('LOCAL_INVALID_CONFIGURATION');
+  } catch (error) {
+    return { ...base, state: 'configuration_required', executable: false, failure: {
+      code: error instanceof Error && error.message === 'LOCAL_CONFIGURATION_UNSUPPORTED' ? error.message : 'LOCAL_INVALID_CONFIGURATION',
+      stage: 'preflight', recoveries: ['fix_configuration'] } };
+  }
+  if (!item.available) return { ...base, state: 'unknown', executable: false, failure: { code: 'LOCAL_UNAVAILABLE', stage: 'preflight', recoveries: ['check_existing'] } };
+  const route = { mode: 'local' as const, agentId: item.id, ...(settings ? { agentSettings: settings } : {}) };
+  if (item.busy) return { ...base, route, state: 'busy', executable: false };
+  return { ...base, state: 'ready', executable: true, route };
+}

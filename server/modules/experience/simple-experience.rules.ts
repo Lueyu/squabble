@@ -6,7 +6,7 @@ const validZone = (value: string) => { try { new Intl.DateTimeFormat('en',{timeZ
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(s => {const d=new Date(s+'T12:00:00Z');return Number.isFinite(d.getTime())&&d.toISOString().startsWith(s);});
 export const requestKey = z.string().min(1).max(200);
 export const topicKey = z.string().regex(/^(portfolio|ticker:[A-Z0-9.^][A-Z0-9.^/_-]{0,19})$/);
-export const refreshSchema = z.object({topicKey,date:date.optional(),requestKey,trigger:z.literal('first_open').optional()}).strict();
+export const refreshSchema = z.object({topicKey,date:date.optional(),requestKey,trigger:z.enum(['first_open','manual']).optional()}).strict();
 export const currentQuerySchema = z.object({topicKey,date:date.optional()}).strict();
 export const preferencesSchema = z.object({timezone:z.string().refine(validZone).optional(),defaultMembers:z.array(z.string().min(1).max(200)).max(3).optional(),requestKey}).strict();
 export function parseRefresh(input: unknown) { const p=refreshSchema.safeParse(input);if(!p.success) throw new BadRequestException('INVALID_RESEARCH_REQUEST');return p.data; }

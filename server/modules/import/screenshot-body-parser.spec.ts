@@ -12,7 +12,7 @@ class FixtureController {
 }
 class FixtureModule {}
 Controller('api/import')(FixtureController);
-Post(['screenshot-jobs', 'ocr/extract', 'commit', 'screenshot-jobs/id'])(FixtureController.prototype, 'echo', Object.getOwnPropertyDescriptor(FixtureController.prototype, 'echo')!);
+Post(['screenshot-jobs', 'ocr/extract', 'commit', 'screenshot-jobs/id', 'batches/00000000-0000-0000-0000-000000000001/images'])(FixtureController.prototype, 'echo', Object.getOwnPropertyDescriptor(FixtureController.prototype, 'echo')!);
 Req()(FixtureController.prototype, 'echo', 0);
 Module({ controllers: [FixtureController] })(FixtureModule);
 
@@ -25,6 +25,7 @@ test('only screenshot POST uploads can exceed the ordinary 1MiB body limit', asy
     const body = JSON.stringify({ imageBase64: 'A'.repeat(2 * 1024 * 1024) });
     for (const [path, method, expected] of [
       ['/api/import/screenshot-jobs', 'POST', 201], ['/api/import/ocr/extract', 'POST', 201],
+      ['/api/import/batches/00000000-0000-0000-0000-000000000001/images', 'POST', 201],
       ['/api/import/commit', 'POST', 413], ['/api/import/screenshot-jobs/id', 'POST', 413],
       ['/api/import/screenshot-jobs', 'PUT', 413],
     ] as const) {

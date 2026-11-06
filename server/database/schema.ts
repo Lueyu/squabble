@@ -934,3 +934,5 @@ export * from './research-workflow.schema';
 export * from './simple-experience.schema';
 export * from './investment-policy.schema';
 export * from './simple-council.schema';
+export * from './import-batches.schema';
+export * from './research-analysis-requests.schema';

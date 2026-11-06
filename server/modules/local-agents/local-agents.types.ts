@@ -6,6 +6,7 @@ export interface LocalAgentTaskRef { taskId: string; contextId: string }
 /** Validation may fence the local handoff, but must never await remote execution. */
 export type LocalAgentHandoff = (handoff: () => Promise<void>) => Promise<void>;
 export interface LocalAgentExecution {
+  activityContext?: import('../../../shared/research-execution.interface').ResearchTaskActivityContext;
   image?: NativeAgentImage;
   /** Transient cancellation for screenshot dispatch; never serialized with the task. */
   signal?: AbortSignal;
@@ -43,6 +44,10 @@ export class LocalAgentError extends Error {
 export function nativeFailureCode(error: unknown): string {
   if (error instanceof LocalAgentError) return error.code;
   const codes: Record<string, string> = {
+    NATIVE_AGENT_TIMEOUT: 'LOCAL_TIMEOUT',
+    NATIVE_AGENT_OUTPUT_LIMIT: 'LOCAL_OUTPUT_LIMIT',
+    NATIVE_AGENT_LAUNCH_FAILED: 'LOCAL_LAUNCH_FAILED',
+    NATIVE_AGENT_INCOMPLETE: 'LOCAL_PROTOCOL_INCOMPLETE',
     NATIVE_AGENT_INVALID_IMAGE: 'LOCAL_INVALID_INPUT',
     NATIVE_AGENT_IMAGE_UNSUPPORTED: 'LOCAL_IMAGE_UNSUPPORTED',
     MEMORY_CONTEXT_CHANGED: 'MEMORY_CONTEXT_CHANGED',

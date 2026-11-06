@@ -12,6 +12,8 @@ import type { NativeAgentImage } from '../../../shared/native-image.interface';
 import { nativeImageCapability, validateNativeImage } from '../../local-agents/native-image';
 
 export interface AgentTask {
+  failure?: import('../../../shared/research-execution.interface').SafeFailure;
+  activityContext?: import('../../../shared/research-execution.interface').ResearchTaskActivityContext;
   hasImage?: boolean;
   researchScope?: ResearchToolScope; researchBundle?: ResearchToolBundle;
   events?: ResearchEventPage['events']; eventSequence?: number; eventIds?: string[]; eventsTruncated?: boolean;
@@ -258,7 +260,8 @@ export class LocalAgentStore {
   stage(owner: string, agentId: string, provider: LocalAgentProvider, messageId: string, prompt: string,
     kind: 'run' | 'login' = 'run', inputSettings?: NativeAgentConfiguration,
     research?: { scope: ResearchToolScope; bundle: ResearchToolBundle }, imageOrHandoff?: NativeAgentImage | boolean, imageSignal?: AbortSignal,
-    handoffRequired = typeof imageOrHandoff === 'boolean' && imageOrHandoff): Promise<AgentTask> {
+    handoffRequired = typeof imageOrHandoff === 'boolean' && imageOrHandoff,
+    activityContext?: AgentTask['activityContext']): Promise<AgentTask> {
     const inputImage = typeof imageOrHandoff === 'boolean' ? undefined : imageOrHandoff;
     const agentSettings = parseNativeAgentConfiguration(inputSettings);
     let image: NativeAgentImage | undefined;
@@ -280,6 +283,7 @@ export class LocalAgentStore {
         validateNativeAgentConfiguration(agentSettings, device?.agents.find((agent) => agent.provider === provider));
       } else if (!this.sharedNative && state.nativeOwner !== owner || (kind === 'run' && !state.nativeProviders.includes(provider))) fail('LOCAL_AGENT_NOT_FOUND');
       const task: AgentTask = { id: randomUUID(), owner, agentId, provider, deviceId: device?.id, kind, messageId, prompt,
+        ...(activityContext ? { activityContext } : {}),
         ...(image ? { hasImage: true } : {}),
         ...(agentSettings ? { agentSettings } : {}),
         ...(research ? { researchScope: research.scope, researchBundle: research.bundle } : {}),
@@ -310,7 +314,7 @@ export class LocalAgentStore {
   markNativeEntry(owner: string, id: string): Promise<void> {
     return this.access(true, state => { ownedTask(state, owner, id).runtimeEntered = true; });
   }
-  update(owner: string, id: string, change: Partial<Pick<AgentTask, 'state' | 'progress' | 'text' | 'usageTokens' | 'error'>>): Promise<void> {
+  update(owner: string, id: string, change: Partial<Pick<AgentTask, 'state' | 'progress' | 'text' | 'usageTokens' | 'error' | 'failure'>>): Promise<void> {
     return this.access(true, (state) => {
       const task = ownedTask(state, owner, id);
       if (recordLateUncertainty(task, change)) return;
@@ -349,7 +353,7 @@ export class LocalAgentStore {
 
   eventsForSession(owner: string, sessionId: string): Promise<ResearchEventPage> {
     return this.access(false, state => {
-      const tasks = Object.values(state.tasks).filter(task => task.owner === owner && task.researchScope?.sessionId === sessionId)
+      const tasks = Object.values(state.tasks).filter(task => task.owner === owner && (task.activityContext ?? task.researchScope)?.sessionId === sessionId)
         .sort((a, b) => a.createdAt - b.createdAt);
       const events = tasks.flatMap(task => task.events ?? []);
       return { events: events.slice(-2048), cursor: events.length,

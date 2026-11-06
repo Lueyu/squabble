@@ -4,11 +4,11 @@ import { providerCatalog } from '../../shared/local-agent-catalog';
 import { nativeChildEnv } from './environment';
 import { NativeEventCollector } from './events';
 import { launchNativeLogin } from './login';
-import { executeNativeProcess, type NativeProcessResult } from './process';
+import { executeNativeProcess, NativeProcessFailure, type NativeProcessResult } from './process';
 import { readOpenCodeDiagnostic } from './failures';
 import { resolveNativeCommand, type NativeLaunch, type NativeResolverOptions } from './resolver';
 import { createNativeWorkspace } from './workspace';
-import { authenticationState, configuredModels, defaultCapabilities, geminiMetadata, kimiCredentialEnv, kimiMetadata, parseModels, supportsAntigravity } from './metadata';
+import { authenticationState, configuredModels, configuredDefaultModel, defaultCapabilities, geminiMetadata, kimiCredentialEnv, kimiMetadata, parseModels, supportsAntigravity } from './metadata';
 import { normalizedConfiguration, researchInvocation, type NativeProbe } from './research';
 import { runDoubao } from './doubao';
 import type { ResearchActivity } from '../../shared/research-events.interface';
@@ -49,6 +49,7 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
     async detectNativeAgents(): Promise<NativeAgentStatus[]> {
       return Promise.all(LOCAL_AGENT_PROVIDERS.map(async (provider: LocalAgentProvider): Promise<NativeAgentStatus> => {
         const status: NativeAgentStatus = { ...providerCatalog[provider], ...defaultCapabilities(provider), state: 'not_installed',
+          defaultModel: configuredDefaultModel(provider, options),
           researchTools: researchToolCapability(provider), imageInput: nativeImageCapability(provider) };
         const launch: NativeLaunch | null = resolveCommand(provider);
         if (!launch) return status;
@@ -133,7 +134,7 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
         const collector: NativeEventCollector = new NativeEventCollector(provider, run.onProgress, run.onEvent);
         const result = await executeNativeProcess(launch, invocation.args, { ...processOptions, onLine: (line: string) => collector.read(line),
           ...(provider === 'opencode' ? { onStderrLine: readOpenCodeDiagnostic } : {}) });
-        if (result.code !== 0) throw new Error('NATIVE_AGENT_FAILED');
+        if (result.code !== 0) throw new NativeProcessFailure('NATIVE_AGENT_FAILED', result);
         collector.completeProcess();
         return collector.result();
       } finally { try { await bridge?.close(); } finally { await workspace.dispose(); } }

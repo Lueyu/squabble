@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { CouncilCandidate, CouncilMember, CouncilResearchKind, CouncilReport, CouncilMessage, CouncilResponse } from '@shared/council.interface';
+import { parseResponse } from './council-output';
 import { byteExcerpt, type CouncilEvidence, type CouncilOpinion, parseOpinion } from './council.rules';
 import type { CouncilCheckpoint, DialogueTurn, ResearchRequest } from './council.types';
 
@@ -21,32 +22,13 @@ export interface DiscussionContribution {
 /** Shared reader-facing contract for API and native-agent execution. Lengths are guidance, not cuts. */
 export function responseGuidance(language: string): string {
   return [
-    'Return response:{thesis,evidencePoints:[],risks:[],nextChecks:[],details?}. Start with a clear thesis; explain the evidence and why it matters. Preserve material caveats and disagreements. Put extended supporting analysis in optional details.',
+    'Return response:{thesis:string,evidencePoints:string[],risks:string[],nextChecks:string[],details?:string}. details must be text, never object/null. Character limits: thesis 6000; lists 12×4000; details 30000; response 50000. claims:{id,statement,evidenceIds:string[]}; sources:{id,title,url,content}. Cite exact supplied/source IDs. Omit absent optional fields. Explain evidence and significance; preserve caveats and disagreements.',
     language === 'en'
       ? 'Aim for 180–300 words across the main response, or 300–450 for the moderator summary; use more when facts require it. Do not pad or omit substantive evidence to meet a length target.'
       : '主要回复通常300–600个中文字符，主持人总结500–800字；这是参考范围。保留关键事实、依据、风险与分歧，不要为了压缩字数而省略论证，也不要凑字数。',
-    'Use short clear sentences, consistent terms, and one subject per bullet. Give public evidence-based rationale, never private chain-of-thought. Avoid repeating the thesis in evidencePoints or duplicating rationale in another field.',
-    'JSON: {"response":{"thesis":"conclusion","evidencePoints":["fact and its significance"],"risks":["risk or uncertainty"],"nextChecks":["specific verification"]},"questions":[],"evidenceIds":[],"researchRequests":[]}. Do not repeat response in content. Keep questions and research requests focused.',
+    'Use clear sentences, one subject per bullet, public rationale only; never private chain-of-thought. Avoid repetition.',
+    'JSON only. Include questions:[], evidenceIds:[], researchRequests:[]. Do not duplicate response in content. Keep requests focused.',
   ].join('\n');
-}
-
-function parseResponse(value: unknown): CouncilResponse | undefined {
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid structured response');
-  const data = value as Record<string, unknown>;
-  const text = (raw: unknown, max: number): string => {
-    if (typeof raw !== 'string' || !raw.trim() || raw.length > max) throw new Error('Invalid structured response text');
-    return raw.trim();
-  };
-  const points = (raw: unknown): string[] => {
-    if (!Array.isArray(raw) || raw.length > 12) throw new Error('Invalid structured response points');
-    return raw.map((item: unknown) => text(item, 4000));
-  };
-  const response: CouncilResponse = { thesis: text(data.thesis, 6000), evidencePoints: points(data.evidencePoints),
-    risks: points(data.risks), nextChecks: points(data.nextChecks),
-    ...(data.details === undefined ? {} : { details: text(data.details, 30000) }) };
-  if (JSON.stringify(response).length > 50000) throw new Error('Structured response is too large');
-  return response;
 }
 
 export function newCheckpoint(members: CouncilMember[], options?: { independent?: boolean }): CouncilCheckpoint {
@@ -89,7 +71,11 @@ export function parseContribution(value: unknown, validIds: Set<string>, turn: D
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid discussion response');
   const data = value as Record<string, unknown>;
   if (['quantity', 'side', 'candidate', 'price', 'ticker'].some((key) => key in data)) throw new Error('Council members cannot change a candidate');
-  const response = parseResponse(data.response);
+  // Some native JSON renderers flatten the response object. The same exact typed
+  // fields and limits still apply; evidence and trading checks remain independent.
+  const flatResponse=data.response===undefined&&['thesis','evidencePoints','risks','nextChecks'].every(key=>Object.hasOwn(data,key))
+    ? {thesis:data.thesis,evidencePoints:data.evidencePoints,risks:data.risks,nextChecks:data.nextChecks,...(data.details===undefined?{}:{details:data.details})}:undefined;
+  const response = parseResponse(data.response===undefined?flatResponse:data.response);
   const legacyContent = typeof data.content === 'string' ? data.content.trim() : typeof data.summary === 'string' ? data.summary.trim() : '';
   const structuredContent = response ? [response.thesis, ...response.evidencePoints,
     ...response.risks, ...response.nextChecks, response.details].filter(Boolean).join('\n\n') : '';

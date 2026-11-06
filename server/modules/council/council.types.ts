@@ -8,6 +8,8 @@ export interface ResearchRequest { kind: CouncilResearchKind; query?: string }
 export interface CouncilCheckpoint {
   automaticTaskId?: string;
   simple?: {
+    initializing?: boolean;
+    stopped?: boolean;
     stage: 'independent' | 'discussion' | 'supplement' | 'completed' | 'waiting';
     supplementRounds: number;
     executors: import('../../../shared/simple-conversation.interface').ActualExecutor[];

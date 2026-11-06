@@ -481,6 +481,227 @@ body {
   margin-inline: auto;
 }
 
+/* The room is a fixed fraction of the available workspace, independent of
+   message length, participant count, or an open overlay drawer. */
+.app-council-content {
+  min-width: 0;
+  scrollbar-gutter: auto;
+}
+
+.app-shell-simple .app-nav-link {
+  border-radius: 12px;
+}
+
+/* A friendly everyday workspace. Market gain/loss tokens remain semantic. */
+:root[data-design-theme='classic']:not(.dark) .app-shell-simple {
+  --background: #f6f7fc;
+  --foreground: #30354c;
+  --card: #fff;
+  --card-foreground: #30354c;
+  --primary: #7456b5;
+  --primary-foreground: #fff;
+  --primary-border: #684ba7;
+  --secondary: #eeebf8;
+  --secondary-foreground: #54416e;
+  --muted: #f0eff7;
+  --muted-foreground: #676b80;
+  --accent: #eae6f5;
+  --border: #e2e4ef;
+  --input: #d8dcea;
+  --ring: #9578c5;
+  --sidebar: #f0edf7;
+  --sidebar-foreground: #58536c;
+  --sidebar-accent: #e4dcf3;
+  --sidebar-accent-foreground: #5b4187;
+  --sidebar-border: #e2dcef;
+}
+
+:root[data-design-theme='classic'].dark .app-shell-simple {
+  --primary: #bda5ef;
+  --primary-foreground: #251c39;
+  --primary-border: #aa8edb;
+  --ring: #bda5ef;
+  --sidebar-accent: #292335;
+  --sidebar-accent-foreground: #d4c1f4;
+}
+
+.app-shell-simple .app-nav-link[aria-current='page'] {
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--brand) 9%, transparent);
+}
+
+.app-shell-simple .app-nav-group:first-child .app-nav-link:nth-child(3) svg {
+  color: #8b6bb0;
+}
+
+.app-shell-simple .app-nav-group:first-child .app-nav-link:nth-child(4) svg {
+  color: #cc8452;
+}
+
+.research-analysis {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 4%, var(--card)), var(--card) 60%);
+  box-shadow: 0 5px 24px color-mix(in srgb, var(--primary) 5%, transparent);
+}
+
+.research-room {
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--primary) 5%, transparent);
+}
+
+.app-council-content > .research-room {
+  width: 100%;
+  max-width: none;
+}
+
+@media (width >= 1280px) {
+  .app-council-content > .research-room {
+    width: 92%;
+  }
+}
+
+.research-room-header {
+  background: linear-gradient(110deg, color-mix(in srgb, var(--primary) 5%, var(--card)), var(--card));
+}
+
+.research-member-strip {
+  min-width: 0;
+  flex-shrink: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.research-member-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.research-member-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--persona-line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--persona-tint) 68%, var(--card));
+  text-align: left;
+}
+
+.research-member-card:focus-visible {
+  outline: 2px solid var(--persona);
+  outline-offset: 2px;
+}
+
+.research-room-messages {
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+}
+
+.research-room-messages > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.research-room :where(pre, .research-table-scroll),
+.research-prose :where(pre, .research-table-scroll) {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.research-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.research-table-scroll :is(th, td) {
+  min-width: 6rem;
+  max-width: 28rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.research-room :where(a, p, li, code),
+.research-prose :where(a, p, li, code) {
+  overflow-wrap: anywhere;
+}
+
+.research-room pre code,
+.research-prose pre code {
+  overflow-wrap: normal;
+}
+
+.research-room .council-message {
+  min-width: 0;
+}
+
+.research-room .council-message-body {
+  width: calc(100% - 64px);
+  max-width: 920px;
+}
+
+.research-room .council-message[data-role='user'] .council-message-body {
+  width: auto;
+  max-width: calc(100% - 48px);
+}
+
+@media (width <= 640px) {
+  .research-member-strip {
+    padding: 8px;
+  }
+
+  .research-member-grid {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 168px;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    overscroll-behavior-x: contain;
+  }
+
+  .research-member-card {
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .research-member-card .council-avatar {
+    width: 28px;
+    height: 28px;
+  }
+
+  .research-room .council-message-body {
+    width: calc(100% - 43px);
+  }
+
+  .research-room-header > div:first-child {
+    flex-basis: 100%;
+  }
+}
+
+@media (height <= 700px) {
+  .research-member-time,
+  .research-composer-hint {
+    display: none;
+  }
+
+  .research-member-strip {
+    max-height: 96px;
+    overflow-y: auto;
+    padding-block: 6px;
+  }
+
+  .research-composer {
+    padding-block: 8px;
+  }
+
+  .research-composer textarea {
+    min-height: 48px;
+    max-height: 96px;
+  }
+}
+
 /* Arcade: stepped mascot, console labels, hard corners and offset pixels. */
 [data-design-theme='arcade'] .squabble-mascot img {
   image-rendering: pixelated;

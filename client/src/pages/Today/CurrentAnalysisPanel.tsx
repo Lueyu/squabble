@@ -1,33 +1,69 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import type { CurrentResearchView } from '@shared/simple-experience.interface';
-import { refreshCurrentResearch } from '@/api/simple-experience';
+import type { CurrentResearchView, TodayView } from '@shared/simple-experience.interface';
+import { cancelCurrentResearch, refreshCurrentResearch } from '@/api/simple-experience';
 import { Button } from '@/components/ui/button';
 import { createRequestIntent, questionPath } from '@/utils/simple-experience';
+import { readableResearchText } from '@/utils/research-experience';
+import ResearchMarkdown from '@/components/ResearchMarkdown';
+import TodaySummary from './TodaySummary';
+import CouncilMemberAvatar from '../Council/CouncilMemberAvatar';
 
-export default function CurrentAnalysisPanel({ view, topicKey, date }: { view: CurrentResearchView; topicKey: string; date?: string }) {
+export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable = true, primary = false, summary }: {
+  view: CurrentResearchView; topicKey: string; date?: string; aiAvailable?: boolean; primary?: boolean; summary?: string | null;
+}) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
   const client = useQueryClient();
   const intent = useRef(createRequestIntent(() => crypto.randomUUID()));
+  const cancelIntent = useRef(createRequestIntent(() => crypto.randomUUID()));
+  const [now, setNow] = useState(Date.now);
+  const applyResearch = (data: CurrentResearchView) => {
+    client.setQueryData(['current-research', topicKey, date], data);
+    if (topicKey === 'portfolio') client.setQueryData<TodayView>(['today'], previous => previous ? { ...previous, analysis: data } : previous);
+    void client.invalidateQueries({ queryKey: ['today'] });
+  };
   const refresh = useMutation({ mutationFn: () => {
-    const payload = { topicKey, ...(date ? { date } : {}) };
+    const payload = { topicKey, ...(date ? { date } : {}), trigger: 'manual' as const };
     return refreshCurrentResearch({ ...payload, requestKey: intent.current.keyFor(payload) });
-  }, retry: false, onSuccess: data => { intent.current.complete(); client.setQueryData(['current-research', topicKey, date], data); void client.invalidateQueries({ queryKey: ['today'] }); } });
-  const updating = view.state === 'generating' || refresh.isPending;
-  return <section className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
-    <header className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0">
-      <h2 className="break-words text-lg font-semibold">{view.title || (zh ? '当前分析' : 'Current analysis')}</h2>
-      {view.updatedAt && <p className="mt-1 text-xs text-muted-foreground">{zh ? '更新于 ' : 'Updated '}{new Date(view.updatedAt).toLocaleString(i18n.language)}</p>}
-    </div><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" asChild><Link to={questionPath(topicKey.startsWith('ticker:') ? { ticker: topicKey.slice(7) } : { date })}>{zh ? '问问大家' : 'Ask the team'}</Link></Button>
-      <Button size="sm" disabled={updating} onClick={() => refresh.mutate()}>{updating ? (zh ? '更新中…' : 'Updating…') : (zh ? '更新分析' : 'Update analysis')}</Button></div></header>
-    {view.changeSummary && <p className="rounded-lg bg-primary/5 p-3 text-sm">{view.changeSummary}</p>}
-    {view.content ? <div className="prose prose-sm max-w-none break-words dark:prose-invert"><ReactMarkdown remarkPlugins={[remarkGfm]}>{view.content}</ReactMarkdown></div>
-      : <p className="text-sm text-muted-foreground">{zh ? '还没有完整分析。可先提问，或连接 AI 后更新。' : 'No complete analysis yet. Ask a question, or connect AI and update.'}</p>}
-    {(view.state === 'failed' || refresh.isError) && <p role="alert" className="text-sm text-destructive">{zh ? '本次更新未完成，上次完整分析继续保留。请重试。' : 'The update did not complete. The last complete analysis remains available. Please retry.'}</p>}
-    {view.dataAsOf && <p className="text-xs text-muted-foreground">{zh ? '数据截至：' : 'Data as of: '}{view.dataAsOf}</p>}
+  }, retry: false, onSuccess: data => {
+    intent.current.complete(); applyResearch(data);
+  } });
+  const cancel = useMutation({ mutationFn: () => {
+    const payload = { topicKey, ...(date ? { date } : {}) };
+    return cancelCurrentResearch({ ...payload, requestKey: cancelIntent.current.keyFor({ ...payload, taskId: view.taskId, startedAt: view.startedAt }) });
+  }, retry: false, onSuccess: data => { cancelIntent.current.complete(); applyResearch(data); } });
+  // The live query remains authoritative after the initial dispatch receipt.
+  const current = view;
+  const updating = current.state === 'generating' || current.cancelling === true || refresh.isPending;
+  useEffect(() => {
+    if (!updating || !current.startedAt) return;
+    setNow(Date.now()); const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [updating, current.startedAt]);
+  const elapsed = current.startedAt ? Math.max(0, Math.floor((now - Date.parse(current.startedAt)) / 1000)) : null;
+  const factsOnly = current.researchLevel === 'facts_only' || current.state === 'empty';
+  const content = readableResearchText(current.content);
+  const readableSummary = readableResearchText(current.summary) || readableResearchText(summary);
+  const points = current.keyPoints?.map(readableResearchText).filter(Boolean).slice(0, 3) || [];
+  const askPath = questionPath(current.documentId ? { versionId: current.documentId } : topicKey.startsWith('ticker:') ? { ticker: topicKey.slice(7) } : { date });
+  return <section className="research-analysis min-w-0 space-y-4 rounded-2xl border bg-card p-4 sm:p-6" aria-label={zh ? '今日持仓分析' : 'Today’s portfolio analysis'}>
+    <header className="flex flex-wrap items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-3"><CouncilMemberAvatar avatar="technical" role="researcher" className="mt-1 size-12" /><div className="min-w-0">
+      <div className="mb-2 inline-flex rounded-full bg-primary/8 px-2.5 py-1 text-[11px] font-medium text-primary">{factsOnly ? (zh ? '持仓事实 · 等待 AI 研究' : 'Portfolio facts · AI research pending') : (zh ? 'AI 股友研究' : 'Research by your AI stock friends')}</div>
+      <h2 className="text-lg font-semibold [overflow-wrap:anywhere]">{primary ? (zh ? '今日持仓分析' : 'Today’s portfolio analysis') : current.title || (zh ? '当前分析' : 'Current analysis')}</h2>
+      {current.updatedAt && <p className="mt-1 text-xs text-muted-foreground">{zh ? '更新于 ' : 'Updated '}{new Date(current.updatedAt).toLocaleString(i18n.language)}</p>}
+    </div></div><div className="flex min-w-0 flex-wrap gap-2"><Button size="sm" disabled={updating || !aiAvailable} onClick={() => refresh.mutate()}>{updating ? (zh ? '更新中…' : 'Updating…') : current.state === 'failed' || refresh.isError ? (zh ? '重试分析' : 'Retry analysis') : factsOnly ? (zh ? '开始分析' : 'Start analysis') : (zh ? '更新分析' : 'Update analysis')}</Button>
+      {updating && topicKey === 'portfolio' && <Button size="sm" variant="outline" disabled={cancel.isPending || current.cancelling} onClick={() => cancel.mutate()}>{cancel.isPending || current.cancelling ? (zh ? '正在停止…' : 'Stopping…') : (zh ? '停止分析' : 'Stop analysis')}</Button>}
+      <Button size="sm" variant="outline" asChild><Link to={askPath}>{zh ? '和股友聊聊' : 'Discuss with stock friends'}</Link></Button></div></header>
+    {updating && <div className="rounded-xl bg-primary/5 p-3 text-sm"><p role="status" className="font-medium">{current.cancelling ? (zh ? '正在确认执行任务已停止，尚未重新发送。' : 'Confirming that the original task has stopped. No new request has been sent.') : readableResearchText(current.progress?.message) || (zh ? '分析请求已收到，等待执行股友的最新进度。' : 'Analysis requested. Waiting for the latest status from your stock friends.')}</p>{current.executorLabel && <p className="mt-1 text-xs text-muted-foreground">{current.executorLabel}</p>}{elapsed !== null && Number.isFinite(elapsed) && <p aria-live="off" className="mt-1 text-xs tabular-nums text-muted-foreground">{zh ? '已用时 ' : 'Elapsed '}{elapsed < 60 ? `${elapsed}${zh ? '秒' : 's'}` : `${Math.floor(elapsed / 60)}${zh ? '分' : 'm'} ${elapsed % 60}${zh ? '秒' : 's'}`}</p>}</div>}
+    {cancel.isError && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{zh ? '停止操作尚未确认，可以重试。原任务的资料继续保留。' : 'Stopping is not confirmed. Retry; the original research remains available.'}</p>}
+    <TodaySummary summary={readableSummary} aiAvailable={aiAvailable} factsOnly={factsOnly} />
+    {points.length > 0 && <ol className="grid min-w-0 gap-3 sm:grid-cols-3" aria-label={zh ? '最多三条重点' : 'Up to three key points'}>{points.map((point, index) => <li key={point} className="min-w-0 rounded-xl bg-primary/5 p-3 text-sm leading-6 [overflow-wrap:anywhere]"><span className="mb-2 flex size-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">{index + 1}</span>{point}</li>)}</ol>}
+    {(current.risks?.length || current.nextChecks?.length) ? <div className="grid gap-4 text-sm sm:grid-cols-2">{[[zh ? '主要风险' : 'Main risks', current.risks], [zh ? '接下来关注' : 'Next checks', current.nextChecks]].map(([label, items]) => Array.isArray(items) && items.length > 0 && <div key={String(label)} className="min-w-0"><h3 className="mb-1 font-medium">{String(label)}</h3><ul className="list-disc space-y-1 pl-4 text-muted-foreground">{items.slice(0, 2).map(item => <li key={item} className="[overflow-wrap:anywhere]">{readableResearchText(item)}</li>)}</ul></div>)}</div> : null}
+    {readableResearchText(current.changeSummary) && <p className="rounded-lg bg-primary/5 p-3 text-sm">{current.changeSummary}</p>}
+    {content && (primary || readableSummary ? <details className="min-w-0 border-t pt-3 text-sm"><summary className="cursor-pointer font-medium">{zh ? '展开完整研究' : 'Read full research'}</summary><div className="mt-4 min-w-0"><ResearchMarkdown>{content}</ResearchMarkdown></div></details> : <ResearchMarkdown>{content}</ResearchMarkdown>)}
+    {(current.state === 'failed' || refresh.isError) && <div role="alert" className="space-y-1 rounded-xl bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300"><p>{zh ? '本次更新未完成，上次完整分析继续保留。可以重试本次分析。' : 'The update did not complete. The last complete analysis remains available. Retry this analysis when ready.'}</p>{readableResearchText(current.error) && <p className="[overflow-wrap:anywhere]">{readableResearchText(current.error).slice(0, 280)}</p>}</div>}
+    {current.dataAsOf && <p className="text-xs text-muted-foreground">{zh ? '数据截至：' : 'Data as of: '}{current.dataAsOf}</p>}
   </section>;
 }

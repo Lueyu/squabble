@@ -16,6 +16,10 @@ import { isLocalWorkspaceMode } from '../auth/local-workspace';
 import { nativeImageCapability, validateNativeImage } from '../../local-agents/native-image';
 import type { NativeAgentImage } from '../../../shared/native-image.interface';
 import { researchSnapshotPrompt } from '../../local-agents/tool-config';
+import { executionReadiness } from './execution-readiness';
+import type { ResearchExecutionReadiness } from '../../../shared/research-execution.interface';
+import type { ModelRoute } from '../../../shared/model-route.interface';
+import { safeExecutionFailure } from '../../local-agents/failures';
 
 interface Runtime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -47,10 +51,12 @@ export class LocalAgentsService implements OnModuleDestroy {
   }
   private detect(): Promise<NativeAgentStatus[]> {
     if (!this.detection || this.detection.until <= Date.now()) {
-      this.detection = { until: Date.now() + 3_000, promise: this.runtime.detectNativeAgents() };
+      this.detection = { until: Date.now() + 60_000, promise: this.runtime.detectNativeAgents() };
     }
     return this.detection.promise;
   }
+  /** Metadata cache only. Per-invocation tool isolation and runtime preflight still execute. */
+  invalidateDetection():void { this.detection=undefined; }
   async status(owner: string): Promise<LocalAgentsStatus> {
     const mode = this.mode;
     const device = mode === 'companion' ? await this.store.deviceFor(owner) : undefined;
@@ -67,6 +73,21 @@ export class LocalAgentsService implements OnModuleDestroy {
     return { mode, items, companion: { connected: mode === 'companion' && online, ...(device ? { name: device.name } : {}) } };
   }
   async list(owner: string): Promise<LocalAgentConnection[]> { return (await this.status(owner)).items.filter((item) => item.connected); }
+  async readiness(owner: string, memberSettings: Record<string, NativeAgentConfiguration> = {}): Promise<ResearchExecutionReadiness[]> {
+    return (await this.status(owner)).items.map(item => executionReadiness(item, memberSettings[item.id]));
+  }
+  async chooseReadyRoute(owner: string, memberSettings: Record<string, NativeAgentConfiguration> = {}): Promise<ModelRoute | null> {
+    return (await this.readiness(owner, memberSettings)).find(item => item.executable)?.route ?? null;
+  }
+  async inspectTask(owner: string, id: string) {
+    const task = await this.store.task(owner, id);
+    return { id: task.id, state: task.state, error: task.error, createdAt: task.createdAt, updatedAt: task.updatedAt,
+      commandEmitted: task.commandEmitted === true, runtimeEntered: task.runtimeEntered === true,
+      outputBytes: task.text ? Buffer.byteLength(task.text) : 0 };
+  }
+  async cancelTask(owner: string, id: string) {
+    const state = await this.store.cancel(owner, id); this.running.get(id)?.abort.abort(); return state;
+  }
   /** Wait until an acknowledged cancellation has released its native or companion task slot. */
   async waitForTaskSettlement(owner: string, taskId: string, timeoutMs = 30_000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
@@ -84,8 +105,11 @@ export class LocalAgentsService implements OnModuleDestroy {
     if (!item.available) throw new LocalAgentError(item.state === 'login_required' ? 'LOCAL_LOGIN_REQUIRED' : 'LOCAL_UNAVAILABLE');
     if (requiresImage && item.imageInput !== true) throw new LocalAgentError('LOCAL_IMAGE_UNSUPPORTED');
     validateNativeAgentConfiguration(agentSettings, item);
+    const ready = executionReadiness(item, agentSettings);
+    if (ready.state === 'configuration_required') throw new LocalAgentError(ready.failure?.code ?? 'LOCAL_INVALID_CONFIGURATION');
   }
   async connect(owner: string, id: string): Promise<void> {
+    this.invalidateDetection();
     const provider = providerFromId(id, this.mode);
     if (this.mode === 'native') {
       const agent = (await this.detect()).find((entry) => entry.provider === provider);
@@ -94,6 +118,7 @@ export class LocalAgentsService implements OnModuleDestroy {
     } else await this.store.connectCompanion(owner, provider);
   }
   async disconnect(owner: string, id: string): Promise<void> {
+    this.invalidateDetection();
     const provider = providerFromId(id, this.mode);
     if (this.mode === 'native') await this.store.disconnectNative(owner, provider);
     else await this.store.disconnectCompanion(owner, provider);
@@ -178,10 +203,11 @@ export class LocalAgentsService implements OnModuleDestroy {
         await this.store.update(task.owner, task.id, { state: 'completed', text: result.text, usageTokens: result.usageTokens });
       } catch (error) {
         await progressWrites.catch(() => undefined);
+        this.invalidateDetection();
         const code = nativeFailureCode(error);
         const cancelled = signal.aborted && code !== 'LOCAL_DISPATCH_UNCERTAIN';
         await this.store.update(task.owner, task.id, { state: cancelled ? 'cancelled' : 'failed',
-          error: cancelled ? 'LOCAL_CANCELLED' : code });
+          error: cancelled ? 'LOCAL_CANCELLED' : code, failure: safeExecutionFailure(error) });
       } finally { this.running.delete(task.id); }
     })();
     this.running.set(task.id, { owner: task.owner, agentId: task.agentId, abort, done });
@@ -191,6 +217,9 @@ export class LocalAgentsService implements OnModuleDestroy {
 
   async execute(owner: string, options: LocalAgentExecution): Promise<LocalAgentResult> {
     if (this.stopping) throw new LocalAgentError('LOCAL_UNAVAILABLE');
+    const activity=options.activityContext;
+    if(activity&&(![activity.sessionId,activity.memberId,activity.memberName,activity.language].every(value=>typeof value==='string'&&value.trim().length>0)
+      ||!Number.isSafeInteger(activity.revision)||activity.revision<1||!Number.isSafeInteger(activity.turn)||activity.turn<0))throw new LocalAgentError('LOCAL_INVALID_INPUT');
     const provider = providerFromId(options.agentId, this.mode);
     let image;
     try { image = options.image === undefined ? undefined : validateNativeImage(options.image); }
@@ -221,7 +250,7 @@ export class LocalAgentsService implements OnModuleDestroy {
       if (!options.prompt.trim() || Buffer.byteLength(options.prompt) > 256_000) throw new LocalAgentError('LOCAL_INVALID_INPUT');
       const research = options.researchScope && this.researchTools
         ? { scope: options.researchScope, bundle: await this.researchTools.bundle(owner, options.researchScope) } : undefined;
-      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research, image, options.signal, true);
+      task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research, image, options.signal, true, options.activityContext);
       try {
         await options.onTask({ taskId: task.id, contextId: task.id });
         await options.onDispatch?.({ inputBytes: Buffer.byteLength(researchSnapshotPrompt(options.prompt, research?.bundle.snapshot ?? ''), 'utf8') });

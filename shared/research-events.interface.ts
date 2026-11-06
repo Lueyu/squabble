@@ -8,6 +8,7 @@ export interface ResearchActivity {
   sources?: ResearchSource[];
 }
 export interface ResearchEvent extends ResearchActivity {
+  attempt?: number; cycleId?: string;
   sequence: number; taskId: string; sessionId: string; revision: number;
   memberId: string; memberName: string; turn: number;
 }
