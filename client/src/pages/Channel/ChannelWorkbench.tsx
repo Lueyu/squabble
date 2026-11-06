@@ -1,11 +1,17 @@
 import {useState} from 'react';
 import {Link} from 'react-router-dom';
 import {ArrowUpRight,ChevronDown,FileText,FlaskConical,Info,MessageCircle,Pin,ShieldCheck,Sparkles} from 'lucide-react';
-import type {ChannelAction,ChannelBubble,ChannelEvidenceCard,ChannelProjection,ChannelRuntimeSnapshot,ChannelVibe,DeferredQuestion} from '@shared/channel.interface';
+import type {ChannelAction,ChannelBubble,ChannelEvidenceCard,ChannelProjection,ChannelRuntimeSnapshot,ChannelSpeaker,ChannelVibe,DeferredQuestion} from '@shared/channel.interface';
 import {Sheet,SheetContent,SheetDescription,SheetHeader,SheetTitle} from '@/components/ui/sheet';
+import CouncilMemberAvatar from '../Council/CouncilMemberAvatar';
 import {channelText} from './channel-copy';
 import './channel.css';
 
+const friendAvatars={laozhou:'value',ajie:'technical',xiaoqi:'macro'} as const;
+function ChannelFriendAvatar({speaker,language}:{speaker:ChannelSpeaker;language:string}){
+ const c=channelText(language),names={laozhou:c.actorLao,ajie:c.actorJie,xiaoqi:c.actorQi};
+ return <span className="channel-avatar" role="img" aria-label={names[speaker]}><CouncilMemberAvatar avatar={friendAvatars[speaker]} role="researcher"/></span>;
+}
 export function channelDate(value:string|null|undefined,language:string){
  if(!value||!Number.isFinite(Date.parse(value)))return channelText(language).unknownTime;
  return new Intl.DateTimeFormat(language,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(value));
@@ -57,9 +63,9 @@ export function EvidenceCard({card,language}:{card:ChannelEvidenceCard;language:
 }
 export function ChannelBubbleCard({bubble,language,pending=false,onAction,onPrior}:{bubble:ChannelBubble;language:string;pending?:boolean;onAction?:(action:ChannelAction,bubble:ChannelBubble)=>void;onPrior?:(id:string)=>void}){
  const c=channelText(language),[evidenceOpen,setEvidenceOpen]=useState(false);
- const names={laozhou:c.actorLao,ajie:c.actorJie,xiaoqi:c.actorQi},portraits={laozhou:'周',ajie:'杰',xiaoqi:'柒'};
+ const names={laozhou:c.actorLao,ajie:c.actorJie,xiaoqi:c.actorQi};
  return <article className={`channel-bubble channel-bubble-${bubble.weight} channel-speaker-${bubble.speaker}`} id={`channel-bubble-${bubble.id}`} tabIndex={-1} data-channel-bubble={bubble.id} data-weight={bubble.weight} data-stance={bubble.stance}>
-  <span className="channel-avatar" aria-hidden="true">{portraits[bubble.speaker]}</span><div className="channel-bubble-content">
+  <ChannelFriendAvatar speaker={bubble.speaker} language={language}/><div className="channel-bubble-content">
    <header><strong>{names[bubble.speaker]}</strong><time dateTime={bubble.createdAt}>{channelDate(bubble.createdAt,language)}</time>{bubble.weight==='poke'&&<span className="channel-attention-dot" aria-label={c.pinned}/>}</header>
    <p className="channel-line">{bubble.text}</p>
    {bubble.sourceState&&bubble.sourceState!=='current'&&<span className="channel-source-state" role="note">{bubble.sourceState==='corrected'?c.sourceCorrected:c.sourceSuperseded}</span>}
@@ -83,7 +89,7 @@ export function ChannelWorkbenchView({view,language,pending=false,onVibe,onActio
   <RuntimeBoard snapshot={view.runtime} language={language}/>
   <div className="channel-pinned-slot">{view.pinned&&<section className="channel-pinned" aria-label={c.pinned}><div className="channel-pinned-label"><Pin size={13}/><strong>{c.pinned}</strong>{view.pendingCount>1&&<button type="button" onClick={onPending}>{c.otherPending} · {view.pendingCount-1}</button>}</div><ChannelBubbleCard bubble={view.pinned} language={language} pending={pending} onAction={onAction} onPrior={onPrior}/></section>}</div>
   <section className="channel-episodes" aria-label={c.keyChanges}>
-   {episodes.length?episodes.map(group=><section className="channel-episode" key={group.episode.id} data-episode={group.episode.id}><div className="channel-episode-heading"><span>{group.episode.phase==='closed'?c.postureClose:group.episode.phase==='accompany'?c.postureAccompany:c.postureAlarm}</span><span className="channel-muted">{group.bubbles.length}</span></div>{group.bubbles.map(bubble=><ChannelBubbleCard key={bubble.id} bubble={bubble} language={language} pending={pending} onAction={onAction} onPrior={onPrior}/>)}</section>):!view.pinned&&<div className="channel-empty"><div className="channel-empty-friends" aria-hidden="true"><span>周</span><span>杰</span><span>柒</span></div><h2>{c.emptyTitle}</h2><p>{view.report?c.emptyBody:c.emptyWithoutReport}</p><Link className="channel-inline-link" to={view.report?.href??'/'}><FileText size={14}/>{view.report?c.today:c.reportNotReady}<ArrowUpRight size={13}/></Link></div>}
+   {episodes.length?episodes.map(group=><section className="channel-episode" key={group.episode.id} data-episode={group.episode.id}><div className="channel-episode-heading"><span>{group.episode.phase==='closed'?c.postureClose:group.episode.phase==='accompany'?c.postureAccompany:c.postureAlarm}</span><span className="channel-muted">{group.bubbles.length}</span></div>{group.bubbles.map(bubble=><ChannelBubbleCard key={bubble.id} bubble={bubble} language={language} pending={pending} onAction={onAction} onPrior={onPrior}/>)}</section>):!view.pinned&&<div className="channel-empty"><div className="channel-empty-friends">{(['laozhou','ajie','xiaoqi'] as const).map(speaker=><ChannelFriendAvatar key={speaker} speaker={speaker} language={language}/>)}</div><h2>{c.emptyTitle}</h2><p>{view.report?c.emptyBody:c.emptyWithoutReport}</p><Link className="channel-inline-link" to={view.report?.href??'/'}><FileText size={14}/>{view.report?c.today:c.reportNotReady}<ArrowUpRight size={13}/></Link></div>}
    <DeferredQuestions questions={view.deferredQuestions} language={language} pending={pending} onSelect={onSelect}/>
   </section>
   <section className="channel-asides" aria-label={c.aside} aria-live="off"><div className="channel-aside-title"><MessageCircle size={13}/><button type="button" onClick={onLogs} title={c.viewAllTaps}>{c.aside}</button><label><span className="sr-only">{c.vibe}</span><select value={view.vibe} onChange={event=>onVibe?.(event.target.value as ChannelVibe)} disabled={pending} aria-label={c.vibe}>{(['quiet','deskmate','chatty'] as const).map(vibe=><option key={vibe} value={vibe}>{c[vibe]}</option>)}</select></label></div><div className="channel-aside-items">{view.visibleTaps.length?view.visibleTaps.map(bubble=><ChannelBubbleCard key={bubble.id} bubble={bubble} language={language} pending={pending} onAction={onAction} onPrior={onPrior}/>):<p className="channel-muted">{c.noTaps}</p>}</div></section>
