@@ -34,6 +34,8 @@ import type {
   ImportExecutor,
 } from '@shared/screenshot-import.interface';
 import type { Response } from 'express';
+import { TransactionImportsService } from './transaction-imports.service';
+import type { TransactionImportCommit, TransactionImportInput } from '../../../shared/transaction-import.interface';
 @Controller('api/import')
 export class ImportController {
   constructor(
@@ -41,7 +43,17 @@ export class ImportController {
     private readonly ocr: OcrService,
     private readonly screenshots: ScreenshotJobsService,
     private readonly batches: ImportBatchesService,
+    private readonly transactionBatches: TransactionImportsService,
   ) {}
+  @NeedLogin()
+  @Post('transaction-batches')
+  createTransactionBatch(@Req() req: Request, @Body() dto: TransactionImportInput) { return this.transactionBatches.create(req.userContext.userId, dto); }
+  @NeedLogin()
+  @Get('transaction-batches/:id/preview')
+  previewTransactionBatch(@Req() req: Request, @Param('id') id: string) { return this.transactionBatches.preview(req.userContext.userId, id); }
+  @NeedLogin()
+  @Post('transaction-batches/:id/commit')
+  commitTransactionBatch(@Req() req: Request, @Param('id') id: string, @Body() dto: TransactionImportCommit) { return this.transactionBatches.commit(req.userContext.userId, id, dto); }
   /** Create holdings from mapped/extracted rows (source-tagged). */
   @NeedLogin()
   @Post('commit')

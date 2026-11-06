@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { eq } from 'drizzle-orm';
-import { investmentFixture } from './investment-test.fixture';
+import { investmentFixture, startPreUserStrategyInvestmentFixture, restorePreUserStrategyRunningPolicyFixture } from './investment-test.fixture';
 import { InvestmentPolicyService } from './investment-policy.service';
 import { SimulationExperimentsService } from './simulation-experiments.service';
 import { AutonomousResearchService } from './autonomous-research.service';
@@ -15,7 +15,7 @@ test('verified team changes create a new independent-review cycle and never repl
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-06T15:00:00Z') });
     const policies = new InvestmentPolicyService(db, new SimulationExperimentsService(db, {} as never, {} as never));
     const preview = await policies.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'recover-preview' });
-    const start = await policies.start(owner, { previewId: preview.id, requestKey: 'recover-start' });
+    const start = await startPreUserStrategyInvestmentFixture(policies, db, owner, { previewId: preview.id, requestKey: 'recover-start' });
     const [original] = await db.select().from(investmentCycles);
     await db.update(investmentCycles).set({ state: 'waiting', input: { actualExecutors: [{ memberId: 'one', identity: 'source-one', identityVerified: true }] }, result: { reason: 'WAITING_INDEPENDENT_REVIEW', completedResearch: [{ ticker: 'ABC', summary: 'Original paid research remains' }] } }).where(eq(investmentCycles.id, original.id));
     await db.insert(investmentCycles).values({ owner, accountId: start.accountId, policyId: start.policy.id, policyRevision: 1, market: 'US', marketDate: original.marketDate, trigger: 'market_open', eventKey: 'earlier-success', state: 'completed', createdAt: new Date(original.createdAt.getTime()-3600000) });
@@ -49,7 +49,7 @@ test('overview and recovery ignore resolved older waits and waits belonging to a
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-06T15:00:00Z') });
     const policies = new InvestmentPolicyService(db, new SimulationExperimentsService(db, {} as never, {} as never));
     const preview = await policies.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'overview-preview' });
-    const start = await policies.start(owner, { previewId: preview.id, requestKey: 'overview-start' });
+    const start = await startPreUserStrategyInvestmentFixture(policies, db, owner, { previewId: preview.id, requestKey: 'overview-start' });
     const [original] = await db.select().from(investmentCycles);
     await db.update(investmentCycles).set({ state: 'waiting', result: { reason: 'CONNECT_AVAILABLE_AI' } }).where(eq(investmentCycles.id, original.id));
     await db.insert(investmentCycles).values({ owner, accountId: start.accountId, policyId: start.policy.id, policyRevision: 1, market: 'US', marketDate: original.marketDate, trigger: 'important_event', eventKey: 'recovered-current', state: 'completed', createdAt: new Date(original.createdAt.getTime()+1000) });
@@ -61,7 +61,7 @@ test('overview and recovery ignore resolved older waits and waits belonging to a
     assert.equal((await db.select().from(investmentCycles)).length, 2);
     assert.equal((await db.select().from(investmentCycles)).find(c => c.id === original.id)!.state, 'waiting', 'the resolved older wait is retained as history, never requeued');
     await policies.pause(owner, { expectedRevision: 1, requestKey: 'overview-pause' });
-    await policies.resume(owner, { expectedRevision: 2, requestKey: 'overview-resume' });
+    await restorePreUserStrategyRunningPolicyFixture(policies, db, owner, true);
     await db.update(investmentCycles).set({ state: 'waiting', result: { reason: 'OLD_REVISION_WAIT' }, createdAt: new Date(Date.now()+10000) }).where(eq(investmentCycles.id, original.id));
     const current = (await db.select().from(investmentCycles)).find(c => c.policyRevision === 3)!;
     await db.update(investmentCycles).set({ state: 'completed' }).where(eq(investmentCycles.id, current.id));
@@ -74,7 +74,7 @@ test('a later unpaid connection wait recovers after an earlier completed cycle',
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-06T15:00:00Z') });
     const policies = new InvestmentPolicyService(db, new SimulationExperimentsService(db, {} as never, {} as never));
     const preview = await policies.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'later-wait-preview' });
-    const start = await policies.start(owner, { previewId: preview.id, requestKey: 'later-wait-start' });
+    const start = await startPreUserStrategyInvestmentFixture(policies, db, owner, { previewId: preview.id, requestKey: 'later-wait-start' });
     const [waiting] = await db.select().from(investmentCycles);
     await db.update(investmentCycles).set({ state: 'waiting', result: { reason: 'CONNECT_AVAILABLE_AI' } }).where(eq(investmentCycles.id, waiting.id));
     await db.insert(investmentCycles).values({ owner, accountId: start.accountId, policyId: start.policy.id, policyRevision: 1, market: 'US', marketDate: waiting.marketDate, trigger: 'market_open', eventKey: 'earlier-completed', state: 'completed', createdAt: new Date(waiting.createdAt.getTime()-3600000) });
@@ -94,7 +94,7 @@ test('a connection wait with a claimed provider task cannot reuse its cycle iden
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-06T15:00:00Z') });
     const policies = new InvestmentPolicyService(db, new SimulationExperimentsService(db, {} as never, {} as never));
     const preview = await policies.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'claimed-preview' });
-    const start = await policies.start(owner, { previewId: preview.id, requestKey: 'claimed-start' });
+    const start = await startPreUserStrategyInvestmentFixture(policies, db, owner, { previewId: preview.id, requestKey: 'claimed-start' });
     const [cycle] = await db.select().from(investmentCycles);
     await db.update(investmentCycles).set({ state: 'waiting', result: { reason: 'CONNECT_AVAILABLE_AI' } }).where(eq(investmentCycles.id, cycle.id));
     const budget = new AutomaticResearchBudgetService(db);

@@ -17,7 +17,7 @@ import type { PortfolioReport, PortfolioReportProgress, PortfolioReportRun, Port
 
 interface HoldingInput { ticker: string; company: string | null; market: string | null; currency: string | null;
   shares: string | number; currentPrice: string | number | null; buyPrice: string | number | null }
-interface CashInput { currency: string; balance: string | number }
+interface CashInput { currency: string; balance: string | number; reconciliationStatus?: string }
 
 function amount(value: string | number | null): number | null {
   if (value === null || value === '') return null;
@@ -49,11 +49,13 @@ export async function buildPortfolioReportSnapshot(
     }
   };
   let cashUsd: number | null = 0;
-  for (const row of cashRows) {
-    const balance = amount(row.balance);
-    const fx = balance === 0 ? 1 : await rate(row.currency);
-    if (balance === null || fx === null) {
-      gaps.push(localized(`${row.currency} cash balance unavailable`, `${row.currency} 现金余额不可用`));
+  const cashCurrencies = new Set([...holdingRows.map(row => (row.currency || 'USD').toUpperCase()), ...cashRows.map(row => row.currency.toUpperCase())]);
+  for (const currency of cashCurrencies) {
+    const rows = cashRows.filter(row => row.currency.toUpperCase() === currency);
+    const balance = rows.length === 1 && rows[0].reconciliationStatus === 'confirmed' ? amount(rows[0].balance) : null;
+    const fx = balance === 0 ? 1 : await rate(currency);
+    if (balance === null || balance < 0 || fx === null) {
+      gaps.push(localized(`${currency} cash balance requires reconciliation`, `${currency} 现金余额需要核对`));
       cashUsd = null;
     } else if (cashUsd !== null) cashUsd += balance * fx;
   }

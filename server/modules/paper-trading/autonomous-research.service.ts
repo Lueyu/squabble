@@ -41,7 +41,7 @@ export class AutonomousResearchService {
 
   async queueCurrentMarkets(): Promise<void> {
     const policies = await this.db.select().from(investmentPolicies).where(eq(investmentPolicies.status, 'running'));
-    for (const policy of policies) for (const market of policy.effectiveConfig.markets) {
+    for (const policy of policies.filter(p => !p.baseConfig.userStrategy)) for (const market of policy.effectiveConfig.markets) {
       const schedule = await this.market.getSchedule(market);
       if (!schedule.calendarVerified || !schedule.isTradingDay || !schedule.closesAt || !schedule.opensAt
         || Date.now() < Date.parse(schedule.opensAt) - 60 * 60000 || Date.now() >= Date.parse(schedule.closesAt)) continue;
@@ -85,7 +85,7 @@ export class AutonomousResearchService {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
       const [policy] = await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.id, policyId)));
-      if (!policy || policy.status !== 'running' || !policy.effectiveConfig.markets.includes(market)) return null;
+      if (!policy || policy.baseConfig.userStrategy || policy.status !== 'running' || !policy.effectiveConfig.markets.includes(market)) return null;
       const [cycle] = await tx.insert(investmentCycles).values({ owner, policyId, accountId: policy.accountId, policyRevision: policy.revision,
         market, marketDate: paperRiskDay(new Date(), market === 'US' ? 'America/New_York' : market === 'HK' ? 'Asia/Hong_Kong' : 'Asia/Shanghai'), eventKey, trigger, priority: trigger === 'evidence_invalidated' ? 0 : 1 }).onConflictDoNothing().returning();
       return cycle ?? null;
@@ -107,7 +107,7 @@ export class AutonomousResearchService {
         await tx.update(investmentCycles).set({ state: 'uncertain', result: { reason: 'LEASE_EXPIRED_DISPATCH_NOT_REPLAYED' }, updatedAt: new Date() }).where(eq(investmentCycles.id, id)); return null;
       }
       if (cycle.state !== 'queued') return null;
-      if (!account?.isActive || !account.botEnabled || policy.status !== 'running' || policy.revision !== cycle.policyRevision) {
+      if (policy.baseConfig.userStrategy || !account?.isActive || !account.botEnabled || policy.status !== 'running' || policy.revision !== cycle.policyRevision) {
         await tx.update(investmentCycles).set({ state: 'cancelled', result: { reason: 'POLICY_CHANGED' }, updatedAt: new Date() }).where(eq(investmentCycles.id, id)); return null;
       }
       const token = randomUUID();
@@ -120,7 +120,7 @@ export class AutonomousResearchService {
     const [policy] = await this.db.select().from(investmentPolicies).where(eq(investmentPolicies.id, cycle.policyId));
     const [account] = await this.db.select().from(paperAccounts).where(eq(paperAccounts.id, cycle.accountId));
     return Boolean(current?.state === 'researching' && current.leaseUntil && current.leaseUntil.getTime() > Date.now()
-      && policy?.status === 'running' && policy.revision === cycle.policyRevision && account?.isActive && account.botEnabled);
+      && policy?.status === 'running' && !policy.baseConfig.userStrategy && policy.revision === cycle.policyRevision && account?.isActive && account.botEnabled);
   }
   private async save(cycle: Cycle, token: string, state: string, result: Record<string, unknown>) {
     await this.db.update(investmentCycles).set({ state, result, updatedAt: new Date() }).where(and(eq(investmentCycles.id, cycle.id), eq(investmentCycles.leaseToken, token), eq(investmentCycles.state, 'researching')));

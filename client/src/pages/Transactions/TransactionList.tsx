@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/empty';
 import { Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { transactionCashDelta } from '@/utils/transaction-cash';
 
 /** Props for {@link TransactionList}. */
 interface TransactionListProps {
@@ -59,7 +60,7 @@ export default function TransactionList({
   onAdd,
   onDelete,
 }: TransactionListProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   if (loading) {
     return (
       <Card className="md:hidden">
@@ -107,11 +108,8 @@ export default function TransactionList({
   return (
     <div className="md:hidden space-y-3">
       {transactions.map((tx) => {
-        const amount =
-          parseFloat(tx.shares) * parseFloat(tx.price) +
-          (tx.txType === 'Buy'
-            ? parseFloat(tx.fees || '0')
-            : -parseFloat(tx.fees || '0'));
+        const delta = transactionCashDelta(tx), amount = Math.abs(delta);
+        const label = tx.txType === 'Buy' ? t('tx.buy') : tx.txType === 'Sell' ? t('tx.sell') : tx.txType === 'Deposit' ? t('ui.tx.typeDeposit') : tx.txType === 'Withdrawal' ? t('ui.tx.typeWithdrawal') : tx.txType === 'Opening' ? t('tx.opening') : i18n.language.startsWith('zh') ? '费用' : 'Fee';
         return (
           <Card key={tx.id}>
             <CardContent className="p-4">
@@ -130,7 +128,7 @@ export default function TransactionList({
                       )}
                       variant="outline"
                     >
-                      {tx.txType === 'Buy' ? t('tx.buy') : t('tx.sell')}
+                      {label}
                     </Badge>
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5 font-mono-nums">
@@ -142,7 +140,7 @@ export default function TransactionList({
                     className="font-mono-nums text-lg font-semibold text-foreground"
                   >
                     <span className="text-muted-foreground">
-                      {tx.txType === 'Buy' ? '-' : '+'}
+                      {delta < 0 ? '-' : '+'}
                     </span>
                     {formatCurrencyWithCurrency(amount, tx.currency || 'USD')}
                   </div>

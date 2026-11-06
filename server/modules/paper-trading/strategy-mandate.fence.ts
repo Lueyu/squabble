@@ -3,12 +3,14 @@ import { and, eq, gte, inArray, or } from 'drizzle-orm';
 import type { MemoryFenceTransaction } from '../research-memory/research-memory.fence';
 import { strategyMandates, strategyRouteReviews, strategyReservations } from '../../database/strategy-mandates.schema';
 import { strategySignals } from '../../database/strategy.schema';
-import { paperOrders, paperPositions, paperTrades } from '../../database/schema';
+import { paperOrders, paperPositions, paperTrades, paperAccounts } from '../../database/schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { routeStrategyCandidate } from './strategy-route.rules';
 import type { StrategyCandidate, StrategyRule } from '../../../shared/strategy.interface';
 import type { StrategyMandateInput } from '../../../shared/strategy-mandate.interface';
 import type { TradingMarketSnapshot } from '../../../shared/trading-market.interface';
+import { investorTargetQuantity } from './user-strategy-runtime';
+import { executionEconomics } from './simulation-experiments.rules';
 import { measuredLiquidityRisk } from './strategy-liquidity.rules';
 import { councilReports } from '../../database/council.schema';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
@@ -77,6 +79,14 @@ export async function assertMandateExecution(tx: MemoryFenceTransaction, owner: 
   if (candidate.side === 'buy' && (versions.length !== new Set(rule.evidenceIds).size
     || versions.some(v => v.revokedAt || (v.availableAt ?? v.createdAt).getTime() > now.getTime()))) {
     throw new BadRequestException('Referenced research was revoked, missing or unavailable at the decision time');
+  }
+  if (authorized.userDirective?.positionPct !== undefined) {
+    const [position] = await tx.select().from(paperPositions).where(and(eq(paperPositions.owner, owner), eq(paperPositions.accountId, accountId), eq(paperPositions.ticker, candidate.ticker)));
+    const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId)));
+    if (!snapshot?.price || !account) throw new BadRequestException('Target exposure requires verified current valuation');
+    const execution = executionEconomics(snapshot.price, 1, candidate.side, account.executionModel?.feeBps ?? 0, account.executionModel?.slippageBps ?? 0);
+    const maximum = investorTargetQuantity({ ticker: candidate.ticker, market: candidate.market, side: candidate.side, heldShares: Number(position?.shares ?? 0), equityUsd, price: snapshot.price, fx: unitUsd / execution.price, positionPct: authorized.userDirective.positionPct, feeBps: account.executionModel?.feeBps, slippageBps: account.executionModel?.slippageBps, lotSize: snapshot.lotSize });
+    if (candidate.quantity > maximum) throw new BadRequestException('Order exceeds the confirmed total target exposure');
   }
   const exposure = await mandateExposure(tx, owner, accountId, candidate, config, equityUsd, unitUsd, now);
   if (candidate.side === 'buy' && (exposure.dailyBuys + exposure.pendingTotalBuyUsd + exposure.candidateNotionalUsd) / equityUsd * 100 > config.limits.maxDailyIncreasePct + 1e-8) {

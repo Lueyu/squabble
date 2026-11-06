@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { BuilderConfig } from '../../../shared/api.interface';
-import { decideBuilderSignal, normalizeBuilderConfig, validateManualFill } from './agent-builder.rules';
+import { normalizeCouncil, decideBuilderSignal, normalizeBuilderConfig, validateManualFill } from './agent-builder.rules';
 
 const config: BuilderConfig = {
   name: 'My agent',
@@ -136,3 +136,10 @@ test('normalizes price rule ticker and rejects invalid thresholds', () => {
 function configWith(template: BuilderConfig['template']): BuilderConfig {
   return { ...config, template };
 }
+
+test('an investor runtime can retain one real research source without fabricating another member', () => {
+  const config = normalizeCouncil({ enabled: true, members: [{ id: 'only-real-source', name: 'Actual connected source', role: 'researcher', model: 'fast', instructions: '' }] });
+  assert.equal(config.members.length, 1);
+  assert.equal(config.members[0].id, 'only-real-source');
+  assert.equal(config.members[0].role, 'manager');
+});

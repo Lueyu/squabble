@@ -66,7 +66,7 @@ export default function AddTransactionDialog({
   defaultCurrency = 'USD',
   defaultTxType = 'Buy',
 }: AddTransactionDialogProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [saving, setSaving] = useState(false);
   const [tickerInvalid, setTickerInvalid] = useState(false);
   const [form, setForm] = useState({
@@ -106,7 +106,7 @@ export default function AddTransactionDialog({
     }
   }, [open, defaultTicker, defaultCurrency, defaultTxType]);
 
-  const isCashFlow = form.txType === 'Deposit' || form.txType === 'Withdrawal';
+  const isCashFlow = form.txType === 'Deposit' || form.txType === 'Withdrawal' || form.txType === 'Fee';
 
   /** Estimated cash required for a Buy/Sell: shares × price + fees. */
   const requiredAmount = useMemo(() => {
@@ -120,9 +120,16 @@ export default function AddTransactionDialog({
   /** Extract a human-readable error message from an unknown thrown value. */
   const extractErrMsg = (err: unknown): string => {
     const rawMsg = err instanceof Error ? err.message : t('ui.tx.failed');
-    const respErr = (err as { response?: { data?: { message?: string; error?: string } } })
+    const respErr = (err as { response?: { data?: { message?: string; error?: string | { message?: string } } } })
       ?.response?.data;
-    return respErr?.message || respErr?.error || rawMsg;
+    const message = (typeof respErr?.error === 'object' ? respErr.error.message : respErr?.error) || respErr?.message || rawMsg;
+    const zh = i18n.language.startsWith('zh');
+    if (['BEFORE_POSITION_BASELINE', 'BEFORE_CASH_BASELINE'].includes(message)) return zh ? '这笔记录早于已确认的资产起点，请先核对原持仓或现金，避免重复记账。' : 'This record predates the confirmed asset starting point. Reconcile the original positions or cash to avoid counting it twice.';
+    if (message === 'CASH_REQUIRES_RECONCILIATION') return zh ? '这个币种有待核对的重复余额，请先在今日页确认现金。' : 'This currency has conflicting balances. Confirm its cash balance on Today first.';
+    if (['CHECKPOINT_HISTORY_REQUIRES_RECONCILIATION', 'CASH_CHECKPOINT_HISTORY_REQUIRES_RECONCILIATION'].includes(message)) return zh ? '这笔记录已包含在确认的资产起点中，请先核对持仓或现金起点后再修改。' : 'This record is included in a confirmed asset starting balance. Reconcile the positions or cash starting balance before changing it.';
+    if (message === 'POSITION_IDENTITY_REQUIRES_RECONCILIATION') return zh ? '同一证券存在多个代码写法，请先核对重复持仓和交易记录。' : 'This security has conflicting ticker aliases. Reconcile its duplicate holdings and transaction records first.';
+    if (message === 'POSITION_CURRENCY_MISMATCH') return zh ? '成交币种与持仓或证券市场币种不一致，请核对后再入账。' : 'The execution currency differs from the position or security market currency. Verify it before saving.';
+    return message;
   };
 
   /**
@@ -292,6 +299,7 @@ export default function AddTransactionDialog({
                   <SelectItem value="Sell">{t('ui.tx.sell')}</SelectItem>
                   <SelectItem value="Deposit">{t('ui.tx.deposit')}</SelectItem>
                   <SelectItem value="Withdrawal">{t('ui.tx.withdrawal')}</SelectItem>
+                  <SelectItem value="Fee">{i18n.language.startsWith('zh') ? '费用' : 'Fee'}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

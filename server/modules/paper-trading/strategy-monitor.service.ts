@@ -37,7 +37,8 @@ export class StrategyMonitorService {
         const [mandate] = signal.candidate.mandateId ? await tx.select().from(strategyMandates).where(and(eq(strategyMandates.id, signal.candidate.mandateId), eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, accountId))) : [];
         const [reservation] = await tx.select().from(strategyReservations).where(and(eq(strategyReservations.owner, owner), eq(strategyReservations.signalId, signal.id), eq(strategyReservations.status, 'active')));
         const ttl = mandate?.config.routePolicy.candidateTtlSeconds ?? 1200;
-        if (!Number.isFinite(Date.parse(signal.candidate.quoteAt)) || now.getTime() - Date.parse(signal.candidate.quoteAt) > ttl * 1000
+        const entryExpired = mandate?.config.rules.some(rule => rule.id === signal.ruleId && Date.parse(rule.expiresAt) <= now.getTime());
+        if (entryExpired || !Number.isFinite(Date.parse(signal.candidate.quoteAt)) || now.getTime() - Date.parse(signal.candidate.quoteAt) > ttl * 1000
           || reservation && reservation.expiresAt <= now) {
           await tx.update(strategySignals).set({ state: 'expired', reason: 'Candidate expired; current data must create a new candidate', updatedAt: now })
             .where(and(eq(strategySignals.id, signal.id), inArray(strategySignals.state, ['reviewing', 'approved', 'wait'])));

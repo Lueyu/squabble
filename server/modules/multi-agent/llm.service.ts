@@ -30,6 +30,8 @@ import { LocalAgentError } from '../local-agents/local-agents.types';
 import { parseModelRoute } from '../settings/model-route.rules';
 
 export interface LlmCallOptions {
+  /** The actual completed dispatch, after a valid non-truncated response. Never selected configuration alone. */
+  onExecuted?: (execution: { provider: string; model: string; identityVerified: boolean }) => void;
   route?: ModelRoute;
   connectionId?: string;
   taskId?: string;
@@ -96,6 +98,7 @@ interface ChatResponse {
 }
 
 interface ProviderChatPayload {
+  model?: string;
   choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 }
@@ -294,6 +297,7 @@ export class LlmService {
       if (choice?.finish_reason === 'length') throw new ModelResponseError('LLM_OUTPUT_LIMIT');
       const content = choice?.message?.content;
       if (typeof content !== 'string' || !content.trim()) throw new ModelResponseError('LLM_EMPTY_RESPONSE');
+      options.onExecuted?.({ provider: new URL(baseUrl).origin, model: typeof result.model === 'string' && result.model.trim() ? result.model.trim() : 'unreported', identityVerified: Boolean(typeof result.model === 'string' && result.model.trim()) });
       return {
         content,
         promptTokens: usage.inputTokens,

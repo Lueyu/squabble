@@ -9,6 +9,7 @@ export interface ConstraintProposal {
   text: string; impact: string; needsInput: string[]; expiresAt: string; state: string;
 }
 export interface InvestmentDecision {
+  strategy?: { id: string; revision: number; title: string; entryId: string; text: string; route: string | null } | null;
   actualExecutors: ActualExecutor[]; evidence: ReportReference[]; discussionId: string | null;
   actualResearch: Array<{ ticker: string; reason?: string;
     drafts?: Array<{ memberId: string; draft: { summary: string; unresolvedDisagreements?: string[] } }>;
@@ -37,3 +38,6 @@ export const revokeInvestmentConstraint = async (id: string, input: { expectedPo
   (await http.post(`/api/ai-investment/constraints/${encodeURIComponent(id)}/revoke`, input)).data;
 
 export const marketLabel = (market: Market, zh: boolean) => ({ US: zh ? '美股' : 'US', HK: zh ? '港股' : 'Hong Kong', CN: zh ? 'A股' : 'China A' })[market];
+
+export const applyInvestmentStrategy = async (input: { strategyId: string; expectedRevision: number; previewHash: string; expectedCurrentId: string | null; requestKey: string }) =>
+  (await http.post('/api/ai-investment/apply-strategy', input)).data;

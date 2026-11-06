@@ -5,6 +5,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 import { builderProfiles, cashAccounts, fxRates, holdings, paperAccounts, paperEvents, paperOrders, paperPositions,
   paperSnapshots, paperTrades } from '../../database/schema';
 import { simulationCash, simulationPreviews, simulationSeeds } from '../../database/simulation-experiments.schema';
+import { simulationValuationBaselines } from '../../database/user-strategy-runtime.schema';
 import { strategySignals } from '../../database/strategy.schema';
 import { strategyMandates, strategyReservations } from '../../database/strategy-mandates.schema';
 import { QuoteService } from '../quote/quote.service';
@@ -13,7 +14,7 @@ import { ResearchDocumentsService } from '../research-documents/research-documen
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { assertLegacyInvestmentWrite } from './investment-policy.fence';
 import { readCorporateActionGaps } from './simulation-corporate-actions';
-import { paperRiskDay } from './paper-risk-day';
+import { paperRiskDay, paperRiskTimezone } from './paper-risk-day';
 import { adjacentSimulationDate, observedDrawdown, simulationDayStart } from './simulation-review.rules';
 import { TradingMarketService } from './trading-market.service';
 import { usableValuationQuote } from './strategy-portfolio-risk';
@@ -36,7 +37,7 @@ export class SimulationExperimentsService {
     ]);
     return { holdings: positions.map((h) => ({ id: h.id, ticker: h.ticker, market: h.market, currency: h.currency,
       company: h.company, shares: String(h.shares), buyPrice: h.buyPrice, currentPrice: h.currentPrice, updatedAt: h.updatedAt })),
-    cash: cash.map((c) => ({ currency: c.currency, balance: String(c.balance), updatedAt: c.updatedAt })) };
+    cash: cash.map((c) => ({ currency: c.currency, balance: String(c.balance), updatedAt: c.updatedAt, reconciliationStatus: c.reconciliationStatus })) };
   }
 
   async preview(owner: string): Promise<SimulationPreview> {
@@ -205,12 +206,13 @@ export class SimulationExperimentsService {
     const [account] = await this.db.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId)));
     if (!account) throw new NotFoundException('Experiment not found');
     const [seed] = await this.db.select().from(simulationSeeds).where(and(eq(simulationSeeds.owner, owner), eq(simulationSeeds.accountId, accountId)));
+    const [baseline] = await this.db.select().from(simulationValuationBaselines).where(and(eq(simulationValuationBaselines.owner, owner), eq(simulationValuationBaselines.accountId, accountId)));
     const cash = await this.db.select().from(simulationCash).where(and(eq(simulationCash.owner, owner), eq(simulationCash.accountId, accountId)));
     const openingRevision = seed ? sourceLedgerRevision(seed.seed) : null;
     const currentRevision = openingRevision && currentSourceRevision === undefined
       ? sourceLedgerRevision(await this.source(owner)) : currentSourceRevision;
     return { id: account.id, name: account.name, active: account.isActive, initialEquityUsd: account.initialCash,
-      createdAt: account.createdAt.toISOString(), seed: seed?.seed ?? null,
+      createdAt: account.createdAt.toISOString(), seed: baseline?.seed ?? seed?.seed ?? null,
       sourceChanged: openingRevision && currentRevision ? openingRevision !== currentRevision : null,
       executionModel: account.executionModel,
       cash: cash.map((c): SimulationCash => ({ currency: c.currency, available: c.available, frozen: c.frozen,
@@ -240,13 +242,61 @@ export class SimulationExperimentsService {
     return this.get(owner, accountId);
   }
 
+  /** A missing opening price is never replaced with historical cost or an invented quote. */
+  async establishBaseline(owner: string, accountId: string): Promise<boolean> {
+    const [opening] = await this.db.select().from(simulationSeeds).where(and(eq(simulationSeeds.owner, owner), eq(simulationSeeds.accountId, accountId)));
+    if (!opening) return true;
+    if (opening.seed.initialEquityUsd !== null) return true;
+    const [savedBaseline] = await this.db.select().from(simulationValuationBaselines).where(and(eq(simulationValuationBaselines.owner, owner), eq(simulationValuationBaselines.accountId, accountId)));
+    if (savedBaseline) return true;
+    if (!this.tradingMarket || opening.seed.gaps.includes('CASH_UNKNOWN') || opening.seed.cash.some(c => !c.availabilityKnown)) return false;
+    const seed = structuredClone(opening.seed); const now = new Date();
+    for (const position of seed.positions) {
+      const quote = await this.tradingMarket.getSnapshot(position.ticker).catch(() => null);
+      if (!usableValuationQuote(quote, now) || quote.currency !== position.currency || quote.market !== position.market) return false;
+      position.initialPrice = String(quote.price); position.quoteAt = quote.quoteTimestamp;
+    }
+    for (const currency of new Set([...seed.positions.map(p => p.currency), ...seed.cash.map(c => c.currency)])) {
+      if (currency === 'USD') { seed.fx = [...seed.fx.filter(f => f.currency !== currency), { currency, rate: '1', at: now.toISOString() }]; continue; }
+      const rate = await this.fx.convert(1, currency, 'USD').catch(() => null);
+      const [dated] = await this.db.select().from(fxRates).where(sql`(${fxRates.base} = ${currency} AND ${fxRates.quote} = 'USD') OR (${fxRates.base} = 'USD' AND ${fxRates.quote} = ${currency})`).orderBy(desc(fxRates.rateDate)).limit(1);
+      if (!dated || !Number.isFinite(rate) || Number(rate) <= 0) return false;
+      seed.fx = [...seed.fx.filter(f => f.currency !== currency), { currency, rate: String(rate), at: String(dated.rateDate) }];
+    }
+    const rate = (currency: string) => Number(seed.fx.find(f => f.currency === currency)!.rate);
+    const cash = seed.cash.reduce((sum, c) => sum + Number(c.total) * rate(c.currency), 0);
+    const equity = cash + seed.positions.reduce((sum, p) => sum + Number(p.shares) * Number(p.initialPrice) * rate(p.currency), 0);
+    if (!Number.isFinite(equity) || equity <= 0) return false;
+    seed.initialEquityUsd = equity.toFixed(2); seed.valuationStartedAt = now.toISOString();
+    seed.gaps = seed.gaps.filter(g => !/^(QUOTE_MISSING|FX_MISSING)/u.test(g));
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId))).for('update');
+      const [current] = await tx.select().from(simulationSeeds).where(eq(simulationSeeds.accountId, opening.accountId)).for('update');
+      if (!account?.isActive) return false;
+      if (current.seed.initialEquityUsd !== null) return true;
+      const [existingBaseline] = await tx.select().from(simulationValuationBaselines).where(eq(simulationValuationBaselines.accountId, accountId));
+      if (existingBaseline) return true;
+      const [trade] = await tx.select().from(paperTrades).where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, accountId))).limit(1);
+      if (trade) return false;
+      const timezone = await paperRiskTimezone(tx, owner, accountId);
+      const values = { equity: seed.initialEquityUsd!, benchmarkEquity: seed.initialEquityUsd, cash: cash.toFixed(2), positionsValue: (equity - cash).toFixed(2), dailyPl: '0', valuedAt: now };
+      await tx.insert(simulationValuationBaselines).values({ owner, accountId, seed });
+      for (const position of seed.positions) await tx.update(paperPositions).set({ avgCost: position.initialPrice! }).where(and(eq(paperPositions.owner, owner), eq(paperPositions.accountId, accountId), eq(paperPositions.ticker, position.ticker)));
+      await tx.update(paperAccounts).set({ initialCash: seed.initialEquityUsd!, cashBalance: cash.toFixed(2) }).where(eq(paperAccounts.id, accountId));
+      await tx.insert(paperSnapshots).values({ owner, accountId, snapshotDate: paperRiskDay(now, timezone), ...values }).onConflictDoUpdate({ target: [paperSnapshots.accountId, paperSnapshots.snapshotDate], set: values });
+      await tx.insert(paperEvents).values({ owner, accountId, eventType: 'valuation_baseline', detail: { valuedAt: now.toISOString(), initialEquityUsd: seed.initialEquityUsd } });
+      return true;
+    });
+  }
+
   async review(owner: string, accountId: string, from?: string, to?: string): Promise<SimulationReview> {
     const experiment = await this.get(owner, accountId);
     const now = new Date();
     const mandates = await this.db.select().from(strategyMandates).where(and(eq(strategyMandates.owner, owner),
       eq(strategyMandates.accountId, accountId), isNotNull(strategyMandates.publishedAt))).orderBy(desc(strategyMandates.publishedAt));
-    const timezone = mandates.find(mandate => mandate.status === 'published')?.config.timezone ?? mandates[0]?.config.timezone ?? 'UTC';
-    const openingAt = new Date(experiment.seed?.capturedAt ?? experiment.createdAt);
+    const timezone = await paperRiskTimezone(this.db, owner, accountId);
+    const openingAt = new Date(experiment.seed?.valuationStartedAt ?? experiment.seed?.capturedAt ?? experiment.createdAt);
     const openingDay = paperRiskDay(openingAt, timezone);
     const start = from ?? openingDay;
     const end = to ?? paperRiskDay(now, timezone);
@@ -264,7 +314,7 @@ export class SimulationExperimentsService {
     const snapshots = allSnapshots.filter(snapshot => snapshot.snapshotDate <= end);
     const prior = snapshots.find(snapshot => snapshot.snapshotDate === adjacentSimulationDate(start, -1));
     const fromOpening = start <= openingDay;
-    const baseline = fromOpening ? amount(experiment.initialEquityUsd) : amount(prior?.equity);
+    const baseline = fromOpening ? amount(experiment.seed ? experiment.seed.initialEquityUsd : experiment.initialEquityUsd) : amount(prior?.equity);
     const ending = snapshots.find(snapshot => snapshot.snapshotDate === end);
     const latestObserved = snapshots.find(snapshot => snapshot.snapshotDate >= start);
     const trades = await this.db.select().from(paperTrades).where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, accountId),

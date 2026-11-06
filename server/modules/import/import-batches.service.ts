@@ -38,6 +38,7 @@ import { mergeScreenshotRows, securityIdentity } from './screenshot-merge';
 import { parseNativeAgentConfiguration } from '../local-agents/local-agents.requests';
 import { ImportAnalysisHandoffService } from '../experience/import-analysis-handoff.service';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { recordPositionCheckpoint } from './position-checkpoint';
 const terminal = (state: string) =>
   ['completed', 'failed', 'cancelled'].includes(state);
 const terminationConfirmed = (task: {
@@ -792,6 +793,7 @@ export class ImportBatchesService implements OnModuleInit, OnModuleDestroy {
           ...(price !== null ? { currentPrice: String(price) } : {}),
           updatedAt: new Date(),
         };
+        values.ticker = await recordPositionCheckpoint(tx, owner, { ...values, currency: row.currency! }, existing, 'screenshot', receipt.id);
         if (existing) {
           await tx
             .update(holdings)

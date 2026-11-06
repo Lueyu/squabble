@@ -13,6 +13,9 @@ export interface InvestmentConstraintRecord {
   status: 'active' | 'expired' | 'revoked'; constraint: InvestmentConstraint;
 }
 export interface InvestmentConfig {
+  /** Immutable investor authority; research never replaces it. */
+  reviewMembers?: import('./council.interface').CouncilMember[];
+  userStrategy?: import('./user-investment-strategy.interface').ConfirmedInvestmentStrategy;
   /** Server-frozen starting securities for adopted legacy ledgers without a simulation seed. */
   initialTickers?: string[];
   markets: Market[]; assetTypes: Array<'stock' | 'etf'>; timezone: string;
@@ -27,17 +30,18 @@ export interface InvestmentPolicy {
   confirmedAt: string; updatedAt: string;
 }
 export interface InvestmentStartRequest {
-  previewId: string; requestKey: string; markets?: Market[]; limits?: Partial<InvestmentConfig['limits']>;
+  previewId: string; requestKey: string; additionalVirtualCash?: Partial<Record<'USD' | 'HKD' | 'CNY', number>>; confirmOpeningCash?: boolean; markets?: Market[]; limits?: Partial<InvestmentConfig['limits']>;
   confirmNoCash?: boolean; cashAvailable?: Record<string, number>; sellableShares?: Record<string, number>;
   adoptAccountId?: string;
 }
 export interface AiInvestmentView {
   status: InvestmentStatus;
   account: { id: string; name: string; isActive: boolean; botEnabled: boolean; initialCash: string; cashBalance: string } | null;
+  currentStrategy?: import('./user-investment-strategy.interface').ConfirmedInvestmentStrategy | null; netAssetUsd?: string | null; todayChangeUsd?: string | null; waitingReasons?: string[]; lastCheckAt?: string | null;
   policy: InvestmentPolicy | null; needsInput: string[]; limits: InvestmentConfig['limits'];
   constraints: InvestmentConstraintRecord[]; currentThinking: string | null;
-  actions: Array<{ id: string; ticker: string; side: string; quantity: string; status: string; reason: string | null; createdAt: string }>;
-  holdings: Array<{ id: string; ticker: string; shares: string; avgCost: string; market: string; currency: string }>;
+  actions: Array<{ id: string; ticker: string; side: string; quantity: string; filledPrice?: string | null; fee?: string | null; strategyId?: string | null; strategyEntryId?: string | null; status: string; reason: string | null; createdAt: string }>;
+  holdings: Array<{ id: string; ticker: string; shares: string; avgCost: string; originalCost?: string | null; market: string; currency: string }>;
   performance: { returnPct: string | null; profitUsd: string | null; excessReturnPct: string | null; gaps: string[] } | null;
   lastHeartbeatAt: string | null;
   legacyAccounts: Array<{ id: string; name: string; active: boolean; botEnabled: boolean }>;

@@ -58,6 +58,7 @@ export class AutonomousPlanCompiler {
       const [unexpired] = await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.id, foundCycle.policyId))).for('update');
       if (!unexpired) throw new ConflictException('INVESTMENT_POLICY_MISSING');
       const policy = await expireInvestmentConstraints(tx, unexpired);
+      if (policy.baseConfig.userStrategy) throw new ConflictException('USER_STRATEGY_CANNOT_BE_REPLACED_BY_AUTONOMOUS_RESEARCH');
       const [cycle] = await tx.select().from(investmentCycles).where(eq(investmentCycles.id, cycleId)).for('update');
       if (!account?.isActive || !account.botEnabled || policy.status !== 'running' || policy.revision !== cycle.policyRevision
         || cycle.state !== 'researching' || cycle.leaseToken !== leaseToken || !cycle.leaseUntil || cycle.leaseUntil.getTime() <= Date.now()) throw new ConflictException('INVESTMENT_POLICY_OR_LEASE_CHANGED');

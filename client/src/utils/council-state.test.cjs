@@ -11,11 +11,15 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const exported = { exports: {} };
 const templates = { exports: {} };
+const reading = { exports: {} };
+runInNewContext(ts.transpileModule(readFileSync(resolve(__dirname, '../../..', 'shared/research-reading.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText, { module: reading, exports: reading.exports });
 runInNewContext(ts.transpileModule(readFileSync(resolve(__dirname, '../../..', 'shared/council-templates.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText, { module: templates, exports: templates.exports });
 runInNewContext(compiled, { module: exported, exports: exported.exports,
-  require: (id) => { if (id === '@shared/council-templates') return templates.exports; throw new Error(`Unexpected import: ${id}`); } });
+  require: (id) => { if (id === '@shared/council-templates') return templates.exports; if(id==='@shared/research-reading')return reading.exports;throw new Error(`Unexpected import: ${id}`); } });
 const { isCurrentCouncilReport, budgetPercent, validateCouncilSettings, validateBudget } = exported.exports;
 
 test('a new note starts one research round only from a ready or completed room', () => {

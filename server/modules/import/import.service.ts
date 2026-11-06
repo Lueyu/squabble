@@ -23,6 +23,7 @@ import type {
 import type { ImportCommitReceipt } from '../../../shared/screenshot-import.interface';
 import { securityIdentity } from './screenshot-merge';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { recordPositionCheckpoint } from './position-checkpoint';
 export type ConfirmImportDto = ImportCommitDto & {
   requestKey?: string;
   analyze?: boolean;
@@ -150,6 +151,7 @@ export class ImportService {
           buyDate: dto.buyDate || null,
           updatedAt: new Date(),
         };
+        value.ticker = await recordPositionCheckpoint(tx, owner, value, existing, dto.source, receipt.id);
         if (existing) {
           await tx
             .update(holdings)

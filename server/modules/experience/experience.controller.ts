@@ -24,4 +24,5 @@ export class ExperienceController {
     return this.research.refresh(owner,p,facts,prefs.timezone);
   }
   @Post('research/current/cancel') async cancel(@Req() req:Request,@Body() body:unknown){const prefs=await this.today.preferences(req.userContext.userId);if(!prefs.enabled)throw new ForbiddenException('SIMPLE_EXPERIENCE_DISABLED');return this.research.cancel(req.userContext.userId,body,prefs.timezone);}
+  @Post('research/current/reformat') async reformat(@Req() req:Request,@Body() body:unknown){const prefs=await this.today.preferences(req.userContext.userId);return this.research.reformat(req.userContext.userId,body,prefs.timezone);}
 }

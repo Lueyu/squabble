@@ -1,15 +1,18 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import { builderProfiles, cashAccounts, holdings, paperAccounts, paperEvents, paperOrders, paperPositions, paperSnapshots } from '../../database/schema';
+import { builderProfiles, cashAccounts, holdings, paperAccounts, paperEvents, paperOrders, paperPositions, paperSnapshots, paperTrades } from '../../database/schema';
 import { investmentConstraintProposals, investmentCycles, investmentPolicies, investmentPreviews, investmentRequests } from '../../database/investment-policy.schema';
 import { experiencePreferences } from '../../database/simple-experience.schema';
 import { simulationCash, simulationPreviews, simulationSeeds } from '../../database/simulation-experiments.schema';
 import { strategyMandates, strategyReservations, strategyMonitorState, strategyRouteReviews } from '../../database/strategy-mandates.schema';
-import { strategySignals } from '../../database/strategy.schema';
+import { strategySignals, strategyRuntime } from '../../database/strategy.schema';
 import { councilSessions } from '../../database/council.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { SimpleCouncilService } from '../council/simple-council.service';
+import { UserInvestmentStrategyService } from './user-investment-strategy.service';
+import { installInvestorMandate } from './user-strategy-runtime';
 import { SimulationExperimentsService } from './simulation-experiments.service';
 import { DEFAULT_INVESTMENT_CONFIG, effectiveInvestmentConfig, investmentConstraintSchema, normalizeInvestmentRequest } from './investment-policy.rules';
 import { seedRevision } from './simulation-experiments.rules';
@@ -29,6 +32,10 @@ export async function cancelInvestmentCandidates(tx: InvestmentTx, owner: string
   const signals = await tx.select().from(strategySignals).where(and(eq(strategySignals.owner, owner), inArray(strategySignals.state, ['claimed', 'pending', 'reviewing', 'approved', 'wait'])));
   const ids = signals.filter(s => s.candidate.accountId === accountId).map(s => s.id);
   if (ids.length) await tx.update(strategySignals).set({ state: 'cancelled', reason, updatedAt: new Date() }).where(inArray(strategySignals.id, ids));
+  if (ids.length) {
+    const openReviews = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.scene, 'trade_pre_review'), inArray(councilSessions.status, ['running', 'idle'])));
+    for (const review of openReviews.filter(session => ids.some(id => session.subject.includes(`signal:${id};`)))) await tx.update(councilSessions).set({ status: 'paused', revision: review.revision + 1, error: reason, updatedAt: new Date() }).where(eq(councilSessions.id, review.id));
+  }
   await tx.update(strategyReservations).set({ status: 'released', reason, updatedAt: new Date() }).where(and(eq(strategyReservations.owner, owner), eq(strategyReservations.accountId, accountId), eq(strategyReservations.status, 'active')));
   await tx.update(paperOrders).set({ status: 'cancelled', reason }).where(and(eq(paperOrders.owner, owner), eq(paperOrders.accountId, accountId), eq(paperOrders.status, 'pending_approval')));
   if (cancelCycles) await tx.update(investmentCycles).set({ state: 'cancelled', updatedAt: new Date(), result: { reason } }).where(and(eq(investmentCycles.owner, owner), eq(investmentCycles.accountId, accountId), inArray(investmentCycles.state, ['queued', 'researching', 'waiting'])));
@@ -42,12 +49,13 @@ export async function expireInvestmentConstraints(tx: InvestmentTx, policy: Poli
   await tx.update(strategyMandates).set({ status: 'paused', updatedAt: now }).where(and(eq(strategyMandates.owner, policy.owner), eq(strategyMandates.accountId, policy.accountId), eq(strategyMandates.status, 'published')));
   const [saved] = await tx.update(investmentPolicies).set({ revision: policy.revision + 1, constraintRecords: records,
     effectiveConfig: effectiveInvestmentConfig(policy.baseConfig, records, now), updatedAt: now }).where(eq(investmentPolicies.id, policy.id)).returning();
+  if (saved.status === 'running' && saved.baseConfig.userStrategy) await installInvestorMandate(tx, saved.owner, saved, saved.baseConfig.userStrategy);
   return saved;
 }
 
 @Injectable()
 export class InvestmentPolicyService {
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase, private readonly simulations: SimulationExperimentsService) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase, private readonly simulations: SimulationExperimentsService, @Optional() private readonly userStrategies?: UserInvestmentStrategyService, @Optional() private readonly reviewTeam?: SimpleCouncilService) {}
   async assertFeatureEnabled(owner: string) {
     const [preferences] = await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
     if (process.env.SQUABBLE_SIMPLE_EXPERIENCE !== 'true' || preferences?.enabled === false) throw new NotFoundException('SIMPLE_EXPERIENCE_DISABLED');
@@ -69,13 +77,21 @@ export class InvestmentPolicyService {
     const cycles = policy ? await this.db.selectDistinctOn([investmentCycles.market]).from(investmentCycles).where(and(eq(investmentCycles.owner, owner), eq(investmentCycles.policyId, policy.id), eq(investmentCycles.policyRevision, policy.revision), ne(investmentCycles.state, 'cancelled'), ne(investmentCycles.state, 'superseded')))
       .orderBy(investmentCycles.market, desc(investmentCycles.createdAt), desc(investmentCycles.updatedAt)) : [];
     const waiting = cycles.find(c => ['waiting', 'uncertain', 'failed'].includes(c.state));
+    if (account) await this.simulations.establishBaseline(owner, account.id).catch(() => false);
     const performance = account ? await this.simulations.review(owner, account.id).catch(() => null) : null;
+    const [runtime, snapshots, signals, trades] = account ? await Promise.all([
+      this.db.select().from(strategyRuntime).where(and(eq(strategyRuntime.owner, owner), eq(strategyRuntime.profileId, mandates[0]?.profileId ?? '00000000-0000-0000-0000-000000000000'))),
+      this.db.select().from(paperSnapshots).where(and(eq(paperSnapshots.owner, owner), eq(paperSnapshots.accountId, account.id))).orderBy(desc(paperSnapshots.valuedAt)).limit(1),
+      this.db.select().from(strategySignals).where(eq(strategySignals.owner, owner)).orderBy(desc(strategySignals.createdAt)).limit(200),
+      this.db.select().from(paperTrades).where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, account.id))).orderBy(desc(paperTrades.createdAt)).limit(20),
+    ]) : [[], [], [], []];
+    const [openingSeed] = account ? await this.db.select().from(simulationSeeds).where(and(eq(simulationSeeds.owner, owner), eq(simulationSeeds.accountId, account.id))) : [];
     const decisions = account ? await this.db.select().from(strategyRouteReviews).where(and(eq(strategyRouteReviews.owner, owner), eq(strategyRouteReviews.accountId, account.id))) : [];
-    return { status: policy ? policy.status === 'paused' ? 'paused' : waiting ? 'attention_required' : 'running' : account ? 'needs_confirmation' : 'not_started',
+    return { currentStrategy: policy?.baseConfig.userStrategy ?? null, netAssetUsd: snapshots[0]?.equity ?? performance?.endingEquityUsd ?? null, todayChangeUsd: snapshots[0]?.dailyPl ?? null, waitingReasons: [...new Set([...runtime.map(item => item.data.reason), ...(performance?.gaps ?? [])])], lastCheckAt: runtime.map(item => item.data.lastCheckAt).filter(Boolean).sort().at(-1) ?? null, status: policy ? policy.status === 'paused' ? 'paused' : waiting ? 'attention_required' : 'running' : account ? 'needs_confirmation' : 'not_started',
       account, policy: policy ? policyView(policy) : null, needsInput: !policy && account ? ['CONFIRM_LEGACY_ADOPTION'] : [],
       limits: policy?.effectiveConfig.limits ?? DEFAULT_INVESTMENT_CONFIG.limits, constraints: policy?.constraintRecords ?? [],
       currentThinking: mandates[0]?.config.objective ?? (waiting ? String(waiting.result.reason ?? 'Waiting for verified independent research') : null),
-      actions: actions.map(action => ({ ...action, discussionId: decisions.find(d => d.signalId && d.councilSessionId && action.sessionId === d.councilSessionId)?.councilSessionId ?? action.sessionId })), holdings: positions, performance, lastHeartbeatAt: heartbeats[0]?.lastHeartbeat.toISOString() ?? null,
+      actions: actions.map(action => ({ ...action, strategyId: signals.find(signal => signal.orderId === action.id)?.candidate.userStrategyId ?? null, strategyEntryId: signals.find(signal => signal.orderId === action.id)?.ruleId ?? null, fee: trades.find(trade => trade.orderId === action.id)?.fee ?? null, discussionId: decisions.find(d => d.signalId && d.councilSessionId && action.sessionId === d.councilSessionId)?.councilSessionId ?? action.sessionId })), holdings: positions.map(position => ({ ...position, originalCost: openingSeed?.seed.positions.find(item => item.ticker === position.ticker)?.historicalCost })), performance, lastHeartbeatAt: heartbeats[0]?.lastHeartbeat.toISOString() ?? null,
       legacyAccounts: accounts.filter(a => !policies.some(p => p.accountId === a.id)).map(a => ({ id: a.id, name: a.name, active: a.isActive, botEnabled: a.botEnabled })),
       cycles: cycles.map(c => ({ id: c.id, state: c.state, market: c.market, reason: c.result.reason ?? null })),
     };
@@ -115,7 +131,7 @@ export class InvestmentPolicyService {
   private async sourceRevision(tx: InvestmentTx, owner: string) {
     const positions = await tx.select().from(holdings).where(eq(holdings.owner, owner));
     const cash = await tx.select().from(cashAccounts).where(eq(cashAccounts.owner, owner));
-    return seedRevision({ holdings: positions.map(h => ({ id: h.id, ticker: h.ticker, market: h.market, currency: h.currency, company: h.company, shares: String(h.shares), buyPrice: h.buyPrice, currentPrice: h.currentPrice, updatedAt: h.updatedAt })), cash: cash.map(c => ({ currency: c.currency, balance: String(c.balance), updatedAt: c.updatedAt })) });
+    return seedRevision({ holdings: positions.map(h => ({ id: h.id, ticker: h.ticker, market: h.market, currency: h.currency, company: h.company, shares: String(h.shares), buyPrice: h.buyPrice, currentPrice: h.currentPrice, updatedAt: h.updatedAt })), cash: cash.map(c => ({ currency: c.currency, balance: String(c.balance), updatedAt: c.updatedAt, reconciliationStatus: c.reconciliationStatus })) });
   }
   async start(owner: string, input: unknown) { return this.startInternal(owner, this.parse('start', input)); }
   async restart(owner: string, input: unknown) { return this.startInternal(owner, this.parse('restart', input)); }
@@ -128,24 +144,31 @@ export class InvestmentPolicyService {
         if (request.expectedAccountId && active?.id !== request.expectedAccountId) throw new ConflictException('ACCOUNT_CHANGED');
         const [existingPolicy] = active ? await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, active.id))).for('update') : [];
         if (existingPolicy && !request.expectedAccountId) throw new ConflictException('INVESTMENT_ALREADY_STARTED');
-        if (!existingPolicy && active && request.adoptAccountId !== active.id && !request.expectedAccountId) throw new ConflictException('CONFIRM_LEGACY_ADOPTION');
         const [preview] = await tx.select().from(investmentPreviews).where(and(eq(investmentPreviews.owner, owner), eq(investmentPreviews.id, request.previewId))).for('update');
         if (!preview) throw new NotFoundException('Preview not found');
         if (preview.expiresAt.getTime() <= Date.now()) throw new ConflictException('PREVIEW_EXPIRED');
         if (preview.origin === 'holdings' && await this.sourceRevision(tx, owner) !== preview.seed.sourceRevision) throw new ConflictException('SOURCE_CHANGED_REPREVIEW');
         const seed = structuredClone(preview.seed);
-        if (!seed.initialEquityUsd || Number(seed.initialEquityUsd) <= 0 || seed.gaps.some(g => /^(QUOTE_MISSING|FX_MISSING|INSTRUMENT_UNKNOWN|NEGATIVE_OR_INVALID)/u.test(g))) throw new BadRequestException('STARTING_VALUATION_MISSING');
-        if (seed.gaps.includes('CASH_UNKNOWN') && !request.confirmNoCash) throw new BadRequestException('CONFIRM_ZERO_CASH_REQUIRED');
-        for (const cash of seed.cash) if (!cash.availabilityKnown) {
-          const amount = request.cashAvailable?.[cash.currency];
-          if (amount === undefined || amount > Number(cash.total)) throw new BadRequestException('CASH_AVAILABILITY_REQUIRED');
-          cash.available = String(amount); cash.frozen = String(Number(cash.total) - amount); cash.availabilityKnown = true;
+        if (seed.gaps.some(g => /^(INSTRUMENT_UNKNOWN|NEGATIVE_OR_INVALID)/u.test(g))) throw new BadRequestException('SOURCE_LEDGER_INVALID');
+        for (const position of seed.positions) { position.sellableShares = position.shares; position.restriction = 'Opening simulated inventory'; }
+        seed.gaps = seed.gaps.filter(g => !g.startsWith('SELLABILITY_UNKNOWN:'));
+        for (const cash of seed.cash) if (request.confirmOpeningCash || cash.availabilityKnown) { cash.available = cash.total; cash.frozen = '0'; cash.availabilityKnown = true; }
+        seed.copiedCash = seed.cash.map(cash => ({ currency: cash.currency, total: cash.total }));
+        for (const [currency, amount] of Object.entries(request.additionalVirtualCash ?? {})) {
+          if (!amount) continue;
+          const cash = seed.cash.find(item => item.currency === currency);
+          if (cash) { cash.total = String(Number(cash.total) + amount); cash.available = String(Number(cash.available) + amount); }
+          else seed.cash.push({ currency, total: String(amount), available: String(amount), frozen: '0', unsettled: '0', availabilityKnown: true });
+          if (!seed.fx.some(rate => rate.currency === currency)) {
+            if (currency === 'USD') seed.fx.push({ currency, rate: '1', at: seed.capturedAt });
+            else seed.gaps.push(`FX_MISSING:${currency}`);
+          }
         }
-        for (const position of seed.positions) if (position.sellableShares === null) {
-          const shares = request.sellableShares?.[position.ticker];
-          if (shares === undefined || shares > Number(position.shares)) throw new BadRequestException('SELLABILITY_REQUIRED');
-          position.sellableShares = String(shares);
-        }
+        if (request.confirmNoCash) seed.gaps = seed.gaps.filter(g => g !== 'CASH_UNKNOWN');
+        seed.gaps = seed.gaps.filter(g => !g.startsWith('CASH_AVAILABILITY_UNKNOWN:') || !seed.cash.find(c => g.endsWith(c.currency))?.availabilityKnown);
+        const missingBaseline = seed.gaps.some(g => /^(CASH_UNKNOWN|CASH_AVAILABILITY_UNKNOWN|QUOTE_MISSING|FX_MISSING)/u.test(g));
+        const rate = (currency: string) => Number(seed.fx.find(item => item.currency === currency)?.rate ?? 0);
+        seed.initialEquityUsd = missingBaseline ? null : String(seed.positions.reduce((sum, position) => sum + Number(position.shares) * Number(position.initialPrice) * rate(position.currency), 0) + seed.cash.reduce((sum, cash) => sum + Number(cash.total) * rate(cash.currency), 0));
         const base = structuredClone(DEFAULT_INVESTMENT_CONFIG);
         const [preferences] = await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
         base.timezone = preferences?.timezone ?? base.timezone;
@@ -166,20 +189,19 @@ export class InvestmentPolicyService {
         if (existingPolicy) await tx.update(investmentPolicies).set({ status: 'archived', revision: existingPolicy.revision + 1, updatedAt: new Date() }).where(eq(investmentPolicies.id, existingPolicy.id));
         if (!account) {
           const cashUsd = seed.cash.reduce((sum, c) => sum + Number(c.total) * Number(seed.fx.find(f => f.currency === c.currency)?.rate ?? 0), 0);
-          [account] = await tx.insert(paperAccounts).values({ owner, name: 'AI investment', isActive: true, botEnabled: true, ledgerMode: 'native_currency', initialCash: seed.initialEquityUsd, cashBalance: String(cashUsd), executionModel: seed.model,
+          [account] = await tx.insert(paperAccounts).values({ owner, name: 'AI investment', isActive: true, botEnabled: false, ledgerMode: 'native_currency', initialCash: seed.initialEquityUsd ?? '0', cashBalance: String(cashUsd), executionModel: seed.model,
             guardrails: { maxOrderPct: base.limits.maxOrderPct, dailyLossLimitPct: base.limits.dailyLossLimitPct, maxOrdersPerDay: 20 } }).returning();
           let sourcePreviewId = preview.sourcePreviewId;
           if (!sourcePreviewId) { const [saved] = await tx.insert(simulationPreviews).values({ owner, seed, expiresAt: preview.expiresAt }).returning(); sourcePreviewId = saved.id; }
           await tx.insert(simulationSeeds).values({ owner, accountId: account.id, previewId: sourcePreviewId, idempotencyKey: request.requestKey, requestHash: investmentHash(request), seed });
-          if (seed.cash.length) await tx.insert(simulationCash).values(seed.cash.map(c => ({ owner, accountId: account!.id, currency: c.currency, available: c.available, frozen: c.frozen, unsettled: c.unsettled, availabilityKnown: true })));
-          if (seed.positions.length) await tx.insert(paperPositions).values(seed.positions.map(p => ({ owner, accountId: account!.id, ticker: p.ticker, company: p.company, market: p.market, currency: p.currency, shares: p.shares, avgCost: p.initialPrice!, restrictedShares: String(Number(p.shares) - Number(p.sellableShares)) })));
-          await tx.insert(paperSnapshots).values({ owner, accountId: account.id, snapshotDate: seed.capturedAt.slice(0, 10), valuedAt: new Date(seed.capturedAt), equity: seed.initialEquityUsd, benchmarkEquity: seed.initialEquityUsd, cash: String(cashUsd), positionsValue: String(Number(seed.initialEquityUsd) - cashUsd), dailyPl: '0' });
+          if (seed.cash.length) await tx.insert(simulationCash).values(seed.cash.map(c => ({ owner, accountId: account!.id, currency: c.currency, available: c.available, frozen: c.frozen, unsettled: c.unsettled, availabilityKnown: c.availabilityKnown })));
+          if (seed.positions.length) await tx.insert(paperPositions).values(seed.positions.map(p => ({ owner, accountId: account!.id, ticker: p.ticker, company: p.company, market: p.market, currency: p.currency, shares: p.shares, avgCost: p.initialPrice ?? '0', restrictedShares: '0' })));
+          if (seed.initialEquityUsd !== null) await tx.insert(paperSnapshots).values({ owner, accountId: account.id, snapshotDate: paperRiskDay(new Date(seed.capturedAt), base.timezone), valuedAt: new Date(seed.capturedAt), equity: seed.initialEquityUsd, benchmarkEquity: seed.initialEquityUsd, cash: String(cashUsd), positionsValue: String(Number(seed.initialEquityUsd) - cashUsd), dailyPl: '0' });
           await tx.insert(paperEvents).values({ owner, accountId: account.id, eventType: 'opening_balance', detail: { previewId: preview.id, sourceRevision: seed.sourceRevision, model: seed.model } });
-        } else await tx.update(paperAccounts).set({ isActive: true, botEnabled: true, updatedAt: new Date() }).where(eq(paperAccounts.id, account.id));
-        const [policy] = await tx.insert(investmentPolicies).values({ owner, accountId: account.id, status: 'running', baseConfig: base, effectiveConfig: base }).returning();
+        } else await tx.update(paperAccounts).set({ isActive: true, botEnabled: false, updatedAt: new Date() }).where(eq(paperAccounts.id, account.id));
+        const [policy] = await tx.insert(investmentPolicies).values({ owner, accountId: account.id, status: 'paused', baseConfig: base, effectiveConfig: base }).returning();
         await tx.insert(experiencePreferences).values({ owner, defaultAccountId: account.id, migrationState: request.adoptAccountId ? 'adopted' : 'new' }).onConflictDoUpdate({ target: experiencePreferences.owner, set: { defaultAccountId: account.id, migrationState: request.adoptAccountId ? 'adopted' : 'new', updatedAt: new Date() } });
-        await this.enqueue(tx, policy, 'start');
-        return { status: 'running', policy: policyView(policy), accountId: account.id, evaluationState: 'queued' };
+        return { status: 'paused', policy: policyView(policy), accountId: account.id, evaluationState: seed.initialEquityUsd === null ? 'waiting_valuation' : 'observing' };
       });
     });
   }
@@ -190,7 +212,31 @@ export class InvestmentPolicyService {
     if (!policy) throw new NotFoundException('INVESTMENT_NOT_STARTED');
     return { account, policy };
   }
+  async applyStrategy(owner: string, input: unknown) {
+    const request = this.parse('apply', input);
+    if (!this.userStrategies) throw new BadRequestException('USER_STRATEGY_SERVICE_UNAVAILABLE');
+    const availableReviewers = await this.reviewTeam?.resolveMembers(owner).catch(() => null);
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      return this.idempotent(tx, owner, 'apply-strategy', request, async () => {
+        const { account, policy } = await this.current(tx, owner);
+        let saved = policy;
+        const activate = async (snapshot: import('../../../shared/user-investment-strategy.interface').ConfirmedInvestmentStrategy) => {
+          await cancelInvestmentCandidates(tx, owner, account.id, 'User applied a confirmed strategy; old results cannot execute');
+          const baseConfig = { ...policy.baseConfig, userStrategy: snapshot, timezone: snapshot.content.timezone, limits: { ...policy.baseConfig.limits, ...snapshot.content.limits }, ...(availableReviewers?.members.length ? { reviewMembers: availableReviewers.members } : {}) };
+          const effectiveConfig = effectiveInvestmentConfig(baseConfig, policy.constraintRecords);
+          [saved] = await tx.update(investmentPolicies).set({ revision: policy.revision + 1, status: 'running', baseConfig, effectiveConfig, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id)).returning();
+          await tx.update(paperAccounts).set({ botEnabled: true, updatedAt: new Date() }).where(eq(paperAccounts.id, account.id));
+          await installInvestorMandate(tx, owner, saved, snapshot);
+        };
+        const strategy = await this.userStrategies!.confirmInTransaction(tx, owner, request.strategyId, request.expectedRevision, request.previewHash, request.expectedCurrentId, async (_tx, snapshot) => activate(snapshot));
+        if (saved === policy && policy.baseConfig.userStrategy?.id !== strategy.id) await activate(strategy);
+        return { status: saved.status, policy: policyView(saved), strategy, evaluationState: 'monitoring' };
+      });
+    });
+  }
   async enqueue(tx: InvestmentTx, policy: PolicyRow, trigger: string) {
+    if (policy.baseConfig.userStrategy) return;
     for (const market of policy.effectiveConfig.markets) await tx.insert(investmentCycles).values({ owner: policy.owner, accountId: policy.accountId, policyId: policy.id, policyRevision: policy.revision, market,
       marketDate: paperRiskDay(new Date(), market === 'US' ? 'America/New_York' : market === 'HK' ? 'Asia/Hong_Kong' : 'Asia/Shanghai'), trigger, eventKey: `${trigger}:${policy.revision}` }).onConflictDoNothing();
   }
@@ -201,12 +247,13 @@ export class InvestmentPolicyService {
       await lockMemoryOwner(tx, owner);
       return this.idempotent(tx, owner, running ? 'resume' : 'pause', request, async () => {
         const { account, policy } = await this.current(tx, owner);
+        if (running && !policy.baseConfig.userStrategy) throw new ConflictException('CONFIRMED_USER_STRATEGY_REQUIRED');
         if (policy.revision !== request.expectedRevision) throw new ConflictException('POLICY_REVISION_CHANGED');
         await cancelInvestmentCandidates(tx, owner, account.id, running ? 'Resume requires fresh evaluation' : 'All automatic trading paused, including protective exits');
         await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, account.id), eq(strategyMandates.status, 'published')));
         await tx.update(paperAccounts).set({ botEnabled: running, updatedAt: new Date() }).where(eq(paperAccounts.id, account.id));
         const [saved] = await tx.update(investmentPolicies).set({ status: running ? 'running' : 'paused', revision: policy.revision + 1, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id)).returning();
-        if (running) await this.enqueue(tx, saved, 'resume');
+        if (running && saved.baseConfig.userStrategy) await installInvestorMandate(tx, owner, saved, saved.baseConfig.userStrategy);
         return { status: saved.status, policy: policyView(saved), evaluationState: running ? 'queued' : 'cancelled' };
       });
     });
@@ -263,7 +310,10 @@ export class InvestmentPolicyService {
         await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, account.id), eq(strategyMandates.status, 'published')));
         const [saved] = await tx.update(investmentPolicies).set({ revision: policy.revision + 1, constraintRecords: records, effectiveConfig, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id)).returning();
         await tx.update(investmentConstraintProposals).set({ state: revoke ? 'revoked' : 'confirmed' }).where(eq(investmentConstraintProposals.id, id));
-        if (saved.status === 'running') await this.enqueue(tx, saved, 'constraint');
+        if (saved.status === 'running') {
+          if (saved.baseConfig.userStrategy) await installInvestorMandate(tx, owner, saved, saved.baseConfig.userStrategy);
+          else await this.enqueue(tx, saved, 'constraint');
+        }
         return { status: 'applied', policy: policyView(saved), impact: proposal.impact };
       });
     });
@@ -292,10 +342,10 @@ export class InvestmentPolicyService {
     if (!order) throw new NotFoundException('Decision not found');
     const [signal] = await this.db.select().from(strategySignals).where(and(eq(strategySignals.owner, owner), eq(strategySignals.orderId, id)));
     const [mandate] = signal?.candidate.mandateId ? await this.db.select().from(strategyMandates).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.id, signal.candidate.mandateId))) : [];
-    const rule = mandate?.config.rules.find(r => r.id === signal?.ruleId) as { sourceCycleId?: string } | undefined;
+    const rule = mandate?.config.rules.find(r => r.id === signal?.ruleId) as (import('../../../shared/strategy-mandate.interface').MandateRule & { sourceCycleId?: string }) | undefined;
     const [cycle] = rule?.sourceCycleId ? await this.db.select().from(investmentCycles).where(and(eq(investmentCycles.owner, owner), eq(investmentCycles.id, rule.sourceCycleId))) : [];
     const [review] = signal ? await this.db.select().from(strategyRouteReviews).where(and(eq(strategyRouteReviews.owner, owner), eq(strategyRouteReviews.signalId, signal.id))) : [];
-    return { order, candidate: signal?.candidate ?? null, evidence: mandate?.config.references ?? [], authorization: mandate?.config ?? null,
+    return { strategy: mandate?.config.userStrategyId && rule ? { id: mandate.config.userStrategyId, revision: mandate.config.userStrategyRevision, title: mandate.config.title, entryId: rule.id, text: rule.userDirective?.reviewedText ?? rule.rationale, route: review?.decision.route ?? null } : null, order, candidate: signal?.candidate ?? null, evidence: mandate?.config.references ?? [], authorization: mandate?.config ?? null,
       actualResearch: Array.isArray(cycle?.result.completedResearch) ? cycle.result.completedResearch.filter(item => item && typeof item === 'object' && item.ticker === order.ticker) : [], actualExecutors: cycle?.input.actualExecutors ?? [], discussionId: review?.councilSessionId ?? order.sessionId };
   }
 }

@@ -19,6 +19,11 @@ export const STRATEGY_TRIGGER_KINDS = ['price_above', 'price_below', 'sma20_abov
   'rsi14_above', 'rsi14_below', 'volume_ratio_above'] as const;
 export type StrategyTriggerKind = typeof STRATEGY_TRIGGER_KINDS[number];
 export interface StrategyRule {
+  /** Exact approved intent, independent of technical quote/slippage guards. */
+  userDirective?: import('./user-investment-strategy.interface').CompiledStrategyDirective;
+  userStrategyId?: string; userStrategyRevision?: number;
+  security?: import('./investment-policy.interface').VerifiedInvestmentSecurity;
+  executorIdentities?: string[]; requiresIndependentReview?: boolean;
   /** A bounded daily review may suspend an entry without discarding its protective stop. */
   dailySuspended?: boolean;
   id: string;
@@ -57,6 +62,7 @@ export interface StrategyRuntime {
   notification: { pending: number; failed: number; lastDeliveredAt: string | null };
 }
 export interface StrategyCandidate {
+  userStrategyId?: string; userStrategyRevision?: number;
   parentPolicyId?: string; parentPolicyRevision?: number; cycleId?: string;
   accountId?: string;
   mandateId?: string;

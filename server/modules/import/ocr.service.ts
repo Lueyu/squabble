@@ -5,6 +5,7 @@ import type { OcrExtractDto, OcrExtractResult } from '@shared/api.interface';
 import { validateNativeImage } from '../../local-agents/native-image';
 import { normalizePublicLlmBaseUrl, publicHttpsAgent } from '../settings/settings-security';
 import { EXTRACTION_PROMPT, parseScreenshotResult, ScreenshotError } from './screenshot-result';
+import { ledgerScreenshotPrompt, parseLedgerScreenshot } from './transaction-import.rules';
 
 interface EndpointPolicy { normalize: typeof normalizePublicLlmBaseUrl }
 
@@ -36,6 +37,12 @@ export class OcrService {
   }
 
   async extract(dto: OcrExtractDto, signal?: AbortSignal): Promise<OcrExtractResult> {
+    return parseScreenshotResult(await this.content(dto, EXTRACTION_PROMPT, signal));
+  }
+  async extractLedger(dto: OcrExtractDto, purpose: 'trades' | 'cash-flows', signal?: AbortSignal) {
+    return parseLedgerScreenshot(await this.content(dto, ledgerScreenshotPrompt(purpose), signal), purpose);
+  }
+  private async content(dto: OcrExtractDto, prompt: string, signal?: AbortSignal): Promise<string> {
     if (!dto || typeof dto.apiKey !== 'string' || !dto.apiKey.trim() || dto.apiKey.length > 4096 || /[\r\n]/.test(dto.apiKey)
       || typeof dto.model !== 'string' || !dto.model.trim() || dto.model.length > 200) throw new ScreenshotError('INVALID_API_CONFIGURATION');
     const raw = dto.imageBase64;
@@ -54,7 +61,7 @@ export class OcrService {
     try {
       const response = await firstValueFrom(this.httpService.post(`${baseUrl}/chat/completions`, {
         model: dto.model.trim(), messages: [{ role: 'user', content: [
-          { type: 'text', text: EXTRACTION_PROMPT },
+          { type: 'text', text: prompt },
           { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
         ] }], temperature: 0,
       }, { headers: { Authorization: `Bearer ${dto.apiKey.trim()}` }, timeout: 90_000, signal,
@@ -69,6 +76,6 @@ export class OcrService {
           : ['ECONNABORTED', 'ETIMEDOUT'].includes(failure.code ?? '') ? 'VISION_TIMEOUT' : 'VISION_FAILED';
       throw new ScreenshotError(code);
     } finally { agent.destroy(); }
-    return parseScreenshotResult(typeof content === 'string' ? content : '');
+    return typeof content === 'string' ? content : '';
   }
 }

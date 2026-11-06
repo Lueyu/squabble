@@ -34,37 +34,7 @@ COPY scripts/setup-git-hooks.js scripts/
 RUN npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
-COPY scripts/db/03_agent_builder.sql ./scripts/db/03_agent_builder.sql
-COPY scripts/db/04_user_api_settings.sql ./scripts/db/04_user_api_settings.sql
-COPY scripts/db/05_analysis_language.sql ./scripts/db/05_analysis_language.sql
-COPY scripts/db/06_account_recovery.sql ./scripts/db/06_account_recovery.sql
-COPY scripts/db/07_llm_budget.sql ./scripts/db/07_llm_budget.sql
-COPY scripts/db/08_investment_council.sql ./scripts/db/08_investment_council.sql
-COPY scripts/db/09_builder_cadence.sql ./scripts/db/09_builder_cadence.sql
-COPY scripts/db/10_model_connections.sql ./scripts/db/10_model_connections.sql
-COPY scripts/db/11_research_tools.sql ./scripts/db/11_research_tools.sql
-COPY scripts/db/12_council_dialogue.sql ./scripts/db/12_council_dialogue.sql
-COPY scripts/db/13_budget_toggle.sql ./scripts/db/13_budget_toggle.sql
-COPY scripts/db/14_a2a_agents.sql ./scripts/db/14_a2a_agents.sql
-COPY scripts/db/15_native_agents.sql ./scripts/db/15_native_agents.sql
-COPY scripts/db/16_daily_strategy.sql ./scripts/db/16_daily_strategy.sql
-COPY scripts/db/17_research_memory.sql ./scripts/db/17_research_memory.sql
-COPY scripts/db/18_research_workflow.sql ./scripts/db/18_research_workflow.sql
-COPY scripts/db/19_atomic_research_theses.sql ./scripts/db/19_atomic_research_theses.sql
-COPY scripts/db/20_research_memory_temporal.sql ./scripts/db/20_research_memory_temporal.sql
-COPY scripts/db/21_research_archive_jobs.sql ./scripts/db/21_research_archive_jobs.sql
-COPY scripts/db/22_research_monitors.sql ./scripts/db/22_research_monitors.sql
-COPY scripts/db/23_monitor_observation_order.sql ./scripts/db/23_monitor_observation_order.sql
-COPY scripts/db/24_local_model_route.sql ./scripts/db/24_local_model_route.sql
-COPY scripts/db/25_portfolio_report.sql ./scripts/db/25_portfolio_report.sql
-COPY scripts/db/26_research_documents.sql ./scripts/db/26_research_documents.sql
-COPY scripts/db/27_research_threads.sql ./scripts/db/27_research_threads.sql
-COPY scripts/db/28_simulation_experiments.sql ./scripts/db/28_simulation_experiments.sql
-COPY scripts/db/29_strategy_mandates.sql ./scripts/db/29_strategy_mandates.sql
-COPY scripts/db/30_strategy_daily_adjustments.sql ./scripts/db/30_strategy_daily_adjustments.sql
-COPY scripts/db/31_simple_experience.sql ./scripts/db/31_simple_experience.sql
-COPY scripts/db/32_autonomous_investment.sql ./scripts/db/32_autonomous_investment.sql
-COPY scripts/db/33_simple_council.sql ./scripts/db/33_simple_council.sql
+COPY scripts/db/ ./scripts/db/
 COPY scripts/ensure-settings-key.cjs scripts/ensure-jwt-secret.cjs scripts/start-app.cjs ./scripts/
 
 # Views and static assets are resolved from process.cwd()/dist/client

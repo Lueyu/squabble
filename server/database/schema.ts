@@ -12,7 +12,7 @@
  * insert.
  */
 import { sql } from 'drizzle-orm';
-import { boolean, check, date, foreignKey, index, integer, jsonb, numeric, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
+import { bigint, boolean, check, date, foreignKey, index, integer, jsonb, numeric, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
 
 export const customTimestamptz = customType<{
   data: Date;
@@ -395,6 +395,8 @@ export const cashAccounts = pgTable("cash_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   currency: varchar("currency", { length: 10 }).notNull(),
   balance: numeric("balance").notNull().default('0'),
+  reconciliationStatus: varchar("reconciliation_status", { length: 20 }).notNull().default('unconfirmed'),
+  confirmedAt: customTimestamptz("confirmed_at", { precision: 3 }),
   owner: userProfile("owner").notNull().default(sql`CASE
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
   // System field: Creation time (auto-filled, do not modify)
@@ -408,7 +410,7 @@ export const cashAccounts = pgTable("cash_accounts", {
   updatedBy: userProfile("_updated_by").default(sql`CASE
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
-  // Complex index: CREATE UNIQUE INDEX idx_cash_owner_currency ON cash_accounts USING btree (((owner).user_id), currency),
+  uniqueIndex("idx_cash_owner_currency").on(table.owner, table.currency),
 ]);
 
 export const alphaPicks = pgTable("alpha_picks", {
@@ -519,6 +521,7 @@ export const closed = pgTable("closed", {
 
 export const transactions = pgTable("transactions", {
   id: uuid("id").primaryKey().defaultRandom(),
+  ledgerOrder: bigint("ledger_order", { mode: 'number' }).generatedByDefaultAsIdentity().notNull(),
   txDate: date("tx_date").notNull(),
   ticker: varchar("ticker", { length: 20 }).notNull(),
   txType: varchar("tx_type", { length: 10 }).notNull(),
@@ -526,6 +529,11 @@ export const transactions = pgTable("transactions", {
   price: numeric("price").notNull(),
   fees: numeric("fees").default('0'),
   notes: text("notes"),
+  sourceIdentity: text("source_identity"),
+  sourceFingerprint: text("source_fingerprint"),
+  sourceBatchId: uuid("source_batch_id"),
+  sourceData: jsonb("source_data"),
+  linkedTransactionId: uuid("linked_transaction_id"),
   owner: userProfile("owner").notNull().default(sql`CASE
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
   currency: varchar("currency", { length: 10 }).default('USD'),
@@ -542,6 +550,8 @@ export const transactions = pgTable("transactions", {
 }, (table) => [
   index("idx_transactions_date").on(table.txDate),
   index("idx_transactions_ticker").on(table.ticker),
+  uniqueIndex("idx_transactions_owner_source_identity").on(table.owner, table.sourceIdentity),
+  uniqueIndex("idx_transactions_owner_source_fingerprint").on(table.owner, table.sourceFingerprint).where(sql`${table.sourceIdentity} IS NULL`),
 ]);
 
 export const analysis = pgTable("analysis", {
@@ -936,3 +946,7 @@ export * from './investment-policy.schema';
 export * from './simple-council.schema';
 export * from './import-batches.schema';
 export * from './research-analysis-requests.schema';
+
+export * from './user-investment-strategies.schema';
+export * from './portfolio-value-points.schema';
+export * from './user-strategy-runtime.schema';

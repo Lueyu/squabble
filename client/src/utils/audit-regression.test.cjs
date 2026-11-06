@@ -7,6 +7,10 @@ const ts = require('typescript');
 const root = path.resolve(__dirname, '../../..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const results = [];
+const cashHelper = { exports: {} };
+new Function('module', 'exports', ts.transpileModule(read('client/src/utils/transaction-cash.ts'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText)(cashHelper, cashHelper.exports);
 
 function harness(file, options = {}) {
   const states = [];
@@ -51,6 +55,7 @@ function harness(file, options = {}) {
       sections: ['marketSummary', 'portfolioSummary', 'actions', 'plan', 'lessons'].map((key) => ({ key })),
     },
     '@/api': options.api || {},
+    '@/utils/transaction-cash': cashHelper.exports,
     ...options.imports,
   };
   let source = read(file);

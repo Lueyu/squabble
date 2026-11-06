@@ -12,3 +12,5 @@ export const refreshCurrentResearch = async (input: { topicKey: string; date?: s
   (await http.post('/api/research/current/refresh', input)).data;
 export const cancelCurrentResearch = async (input: { topicKey: string; date?: string; requestKey: string }): Promise<CurrentResearchView> =>
   (await http.post('/api/research/current/cancel', input)).data;
+export const reformatCurrentResearch = async (input: { topicKey: string; date?: string; requestKey: string }): Promise<CurrentResearchView> =>
+  (await http.post('/api/research/current/reformat', input)).data;

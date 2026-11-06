@@ -38,14 +38,17 @@ import { AutonomousResearchService } from './autonomous-research.service';
 import { AutonomousResearchScheduler } from './autonomous-research.scheduler';
 import { AutonomousPlanCompiler } from './autonomous-plan.compiler';
 import { ResearchDiscoveryService } from '../research-tools/research-discovery.service';
+import { UserInvestmentStrategyService } from './user-investment-strategy.service';
+import { UserInvestmentStrategyController } from './user-investment-strategy.controller';
+import { PortfolioResearchRouteService } from '../experience/portfolio-research-route.service';
 
 @Module({
   imports: [HttpModule, QuoteModule, FxModule, NotificationModule, MultiAgentModule, CouncilModule, LocalAgentsModule, ResearchDocumentsModule],
-  controllers: [PaperTradingController, AgentBuilderController, StrategyMandateController, SimulationExperimentsController,InvestmentPolicyController],
+  controllers: [PaperTradingController, AgentBuilderController, StrategyMandateController, SimulationExperimentsController,InvestmentPolicyController,UserInvestmentStrategyController],
   providers: [PaperTradingService, AgentBuilderService, BuilderCadenceService, BotScheduler,
     TradingMarketService, StrategyStore, StrategyModelService, StrategyService, StrategyNotificationsService, StrategyScheduler,
     StrategyMandateService, SimulationExperimentsService, StrategyMonitorService, StrategyDailyAdjustments,InvestmentPolicyService,AutomaticResearchBudgetService,
-    AutonomousResearchService,AutonomousResearchScheduler,AutonomousPlanCompiler,ResearchDiscoveryService],
+    AutonomousResearchService,AutonomousResearchScheduler,AutonomousPlanCompiler,ResearchDiscoveryService,UserInvestmentStrategyService,PortfolioResearchRouteService],
   exports: [PaperTradingService,InvestmentPolicyService,AutomaticResearchBudgetService],
 })
 export class PaperTradingModule {}

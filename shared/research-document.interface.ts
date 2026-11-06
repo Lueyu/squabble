@@ -41,8 +41,10 @@ export type ResearchReportCategory = 'daily' | 'stock' | 'review';
 export interface ResearchDocumentIndexQuery {
   category?: ResearchReportCategory | 'all'; topic?: string; state?: 'all' | 'adopted' | 'draft' | 'strategy';
   search?: string; limit?: number; offset?: number; history?: boolean; from?: string; to?: string;
+  date?: string; source?: ReportSource['type'];
 }
 export interface ResearchDocumentIndexItem {
+  generatedAt?: string | null;
   id: string; reportId: string; version: number; title: string; kind: ResearchDocumentKind; ticker: string | null;
   topicKey: string; category: ResearchReportCategory; dataAsOf: string | null; availableAt: string | null; createdAt: string;
   status: ResearchDocumentVersion['status']; sourceStatus: ResearchDocumentVersion['sourceStatus']; source: ReportSource | null;

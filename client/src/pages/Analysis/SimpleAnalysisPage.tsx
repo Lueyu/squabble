@@ -6,6 +6,7 @@ import { fetchCurrentResearch } from '@/api/simple-experience';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import CurrentAnalysisPanel from '@/pages/Today/CurrentAnalysisPanel';
+import ReportHistory from './ReportHistory';
 
 export default function SimpleAnalysisPage() {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
@@ -17,5 +18,6 @@ export default function SimpleAnalysisPage() {
     {!ticker && <label className="flex max-w-xs flex-col gap-2 text-sm"><span>{zh ? '查看日期' : 'View date'}</span><Input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>}
     {query.isPending ? <p role="status">{zh ? '正在读取分析…' : 'Loading analysis…'}</p> : query.data ? <CurrentAnalysisPanel key={`${topicKey}:${date}`} view={query.data} topicKey={topicKey} date={date || undefined} />
       : <div role="alert" className="space-y-3"><p>{zh ? '分析暂时不可用。' : 'Analysis is unavailable.'}</p><Button onClick={() => void query.refetch()}>{zh ? '重试' : 'Retry'}</Button></div>}
+    <ReportHistory topic={ticker?topicKey:undefined} date={date||undefined}/>
   </div>;
 }

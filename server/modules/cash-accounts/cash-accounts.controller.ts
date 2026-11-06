@@ -17,7 +17,7 @@ import {
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 
-import { CashAccountsService } from './cash-accounts.service';
+import { CashAccountsService, type ConfirmCashInput } from './cash-accounts.service';
 import type { CashAccount, ListResponse } from '@shared/api.interface';
 
 /**
@@ -27,6 +27,8 @@ import type { CashAccount, ListResponse } from '@shared/api.interface';
 @NeedLogin()
 export class CashAccountsController {
   constructor(private readonly cashAccountsService: CashAccountsService) {}
+  @Post('confirm')
+  confirm(@Req() req: Request, @Body() body: ConfirmCashInput) { return this.cashAccountsService.confirm(req.userContext.userId, body); }
 
   /**
    * Lists all cash accounts for the current user (one per supported currency).

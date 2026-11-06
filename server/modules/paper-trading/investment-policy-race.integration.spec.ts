@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { eq } from 'drizzle-orm';
-import { investmentFixture } from './investment-test.fixture';
+import { investmentFixture, startPreUserStrategyInvestmentFixture, restorePreUserStrategyRunningPolicyFixture } from './investment-test.fixture';
 import { InvestmentPolicyService } from './investment-policy.service';
 import { investmentExecutionFence } from './investment-policy.fence';
 import { SimulationExperimentsService } from './simulation-experiments.service';
@@ -13,7 +13,7 @@ test('pause-first and execution-first owner/account fences serialize both legal 
   await investmentFixture(async (db, _client, owner) => {
     const service = new InvestmentPolicyService(db, new SimulationExperimentsService(db, {} as never, {} as never));
     const preview = await service.preview(owner, { origin: 'cash', cash: { amount: 10000, currency: 'USD' }, requestKey: 'race-preview-one' });
-    const start = await service.start(owner, { previewId: preview.id, requestKey: 'race-start-one' });
+    const start = await startPreUserStrategyInvestmentFixture(service, db, owner, { previewId: preview.id, requestKey: 'race-start-one' });
     let unlock!: () => void; let locked!: () => void;
     const barrier = new Promise<void>(r => { unlock = r; }); const acquired = new Promise<void>(r => { locked = r; });
     const first = db.transaction(async tx => {

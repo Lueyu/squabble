@@ -49,14 +49,16 @@ test('debate summary distinguishes an unresolved claim from missing evidence wit
   assert.match(html, /Audited next quarter filing/);
   assert.doesNotMatch(html, /consensus|votes|majority/i);
 });
-test('an empty portfolio leads with direct import and a research alternative without unknown KPI blocks', () => {
+test('an empty portfolio leads with import while retaining cash and strategy access', () => {
   const Page = load('pages/Today/TodayPage.tsx').default;
   state.language = 'en';
-  state.queries.set('today', { data: { date: '2026-11-06', timezone: 'Asia/Shanghai', overview: { holdingCount: 0 }, attention: [], gaps: [], holdings: [], analysis: { state: 'empty' }, aiAvailable: false, marketTimes: [] } });
+  state.queries.set('today', { data: { date: '2026-11-06', timezone: 'Asia/Shanghai', asOf:'2026-11-06T04:00:00Z', overview: { holdingCount: 0,totalValueUsd:null,cashUsd:null,dailyPnlUsd:null,returnPct:null }, attention: [], gaps: [], holdings: [], analysis: { state: 'empty' }, aiAvailable: false, marketTimes: [] } });
   const html = render(Page);
   assert.match(html, /href="\/import"[^>]*>Import holdings/);
   assert.match(html, /Start with a research conversation/);
-  assert.doesNotMatch(html, /Total assets \(USD\)|Today’s P\/L|Full portfolio analysis/);
+  assert.match(html, /Confirm cash/);
+  assert.match(html, /Write a strategy/);
+  assert.doesNotMatch(html, /Full portfolio analysis/);
 });
 test('settings names actual participants and stops selecting a fourth connection', () => {
   const Participants = load('pages/Settings/ResearchParticipantsPanel.tsx').default;

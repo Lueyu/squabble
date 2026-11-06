@@ -8,6 +8,7 @@ export interface ActualExecutor { identity: string; connection: string; connecti
 export interface PublicClaim { id: string; statement: string; evidenceIds: string[] }
 export interface StanceChange { status: 'retained' | 'changed' | 'unconfirmed'; reason: string }
 export interface DebateOutcome {
+  summary?: string;
   confirmed: string[];
   disagreements: Array<{ claimId: string; positions: Array<{ memberId: string; view: string; evidenceIds: string[] }> }>;
   currentAction: 'observe' | 'research_more' | 'consider_action';

@@ -1,7 +1,7 @@
 import type { Market } from '../../../shared/api.interface';
 import { executionEconomics } from './simulation-experiments.rules';
 
-function roundLot(ticker: string, market: Market, side: 'buy' | 'sell', quantity: number, lotSize?: number | null): number {
+export function roundStrategyLot(ticker: string, market: Market, side: 'buy' | 'sell', quantity: number, lotSize?: number | null): number {
   const whole = Math.max(0, Math.floor(quantity));
   if (market === 'US') return whole;
   if (market === 'HK') return Number.isSafeInteger(lotSize) && Number(lotSize) > 0 ? Math.floor(whole / Number(lotSize)) * Number(lotSize) : 0;
@@ -14,10 +14,10 @@ export function sizeStrategyBuy(input: { ticker: string; market: Market; budgetU
   if (![input.budgetUsd, input.cashUsd, input.price, input.fx].every(value => Number.isFinite(value) && value > 0)) return 0;
   const unit = executionEconomics(input.price, 1, 'buy', input.feeBps ?? 0, input.slippageBps ?? 0);
   const quantity = Math.min(input.budgetUsd / (unit.price * input.fx), input.cashUsd / (unit.cashAmount * input.fx));
-  return roundLot(input.ticker, input.market, 'buy', quantity, input.lotSize);
+  return roundStrategyLot(input.ticker, input.market, 'buy', quantity, input.lotSize);
 }
 export function sizeStrategySell(ticker: string, market: Market, shares: number, restricted: number,
   unavailableToday: number, lotSize?: number | null): number {
   if (![shares, restricted, unavailableToday].every(value => Number.isFinite(value) && value >= 0)) return 0;
-  return roundLot(ticker, market, 'sell', Math.max(0, shares - restricted - unavailableToday), lotSize);
+  return roundStrategyLot(ticker, market, 'sell', Math.max(0, shares - restricted - unavailableToday), lotSize);
 }

@@ -14,7 +14,7 @@ export interface CouncilContinuationSummary {
 }
 export interface ForkCouncilSession { messageId: string; title?: string; summary?: string; reportId?: string }
 export interface CouncilRevisionRequest { parentVersionId: string; sectionId?: string; generate?: boolean; requestId?: string }
-export interface CouncilReviewContext { references?: ReportReference[]; subject?: string; requireDeliberation?: boolean;
+export interface CouncilReviewContext { references?: ReportReference[]; subject?: string; requireDeliberation?: boolean; requireIndependentReview?: boolean;
   /** Internal scheduler binding; never accepted from the conversation HTTP contract. */
   automaticTaskId?: string }
 /** Public contracts for bounded, user-owned investment research. */

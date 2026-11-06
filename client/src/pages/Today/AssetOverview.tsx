@@ -1,0 +1,35 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { Wallet,ChartNoAxesCombined,ArrowUpRight,Coins } from 'lucide-react';
+import type { TodayView } from '@shared/simple-experience.interface';
+import { Button } from '@/components/ui/button';
+import CashBalanceDialog from './CashBalanceDialog';
+import AssetValuationBasis from './AssetValuationBasis';
+
+export default function AssetOverview({data}:{data:TodayView}) {
+  const {i18n}=useTranslation(),zh=i18n.language.startsWith('zh'),[cashOpen,setCashOpen]=useState(false),[range,setRange]=useState(7);
+  const metrics=data.assetMetrics;
+  const money=(value:number|null|undefined)=>value==null?'—':new Intl.NumberFormat(i18n.language,{style:'currency',currency:'USD',maximumFractionDigits:2}).format(value);
+  const percent=(value:number|null)=>value===null?'—':`${value>=0?'+':''}${value.toFixed(2)}%`;
+  const cards=[{label:metrics?.partial?(zh?'已知资产（美元）':'Known assets (USD)'):(zh?'总资产（美元）':'Total assets (USD)'),value:money(data.overview.totalValueUsd??metrics?.knownValueUsd),Icon:Wallet,style:'bg-primary/8 text-primary'},
+    {label:data.overview.dailyPnlUsd===null&&metrics?.knownDailyPnlUsd!=null?(zh?'今日盈亏（已知部分）':'Today’s P/L (known portion)'):(zh?'今日盈亏':'Today’s P/L'),value:money(data.overview.dailyPnlUsd??metrics?.knownDailyPnlUsd),Icon:ChartNoAxesCombined,style:'bg-sky-500/10 text-sky-600'},
+    {label:zh?'今日收益率':'Today’s return',value:percent(data.overview.returnPct),Icon:ArrowUpRight,style:'bg-emerald-500/10 text-emerald-600'},
+    {label:data.overview.cashUsd===null?(zh?'已核对现金（部分）':'Reconciled cash (partial)'):(zh?'账户现金':'Account cash'),value:data.overview.cashUsd===null&&!metrics?.knownCashUsd?(zh?'待核对':'Unconfirmed'):money(data.overview.cashUsd??metrics?.knownCashUsd),Icon:Coins,style:'bg-amber-500/10 text-amber-600'}];
+  const trend=data.assetTrend,cutoff=Date.parse(data.asOf)-range*86_400_000;
+  const points=(trend?.points??[]).filter(p=>p.complete&&(range===0||Date.parse(p.capturedAt)>=cutoff));
+  const plotted=points.filter((_,i)=>points.length<=180||i%Math.ceil(points.length/180)===0||i===points.length-1);
+  const values=plotted.map(p=>p.valueUsd),min=values.length?Math.min(...values):0,max=values.length?Math.max(...values):0;
+  const padding=Math.max((max-min)*0.1,max*0.002,1),low=min-padding,span=max-min+2*padding;
+  const coordinates=plotted.map((p,i)=>`${24+(plotted.length===1?0:i/(plotted.length-1))*852},${136-(p.valueUsd-low)/span*112}`).join(' ');
+  return <section className="space-y-4" aria-label={zh?'资产与变化':'Assets and changes'}>
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{cards.map(({label,value,Icon,style})=><article key={label} className="min-w-0 space-y-3 rounded-2xl border bg-card p-4 shadow-xs"><div className="flex items-center gap-2"><span className={`rounded-xl p-2 ${style}`}><Icon size={17}/></span><p className="text-xs leading-5 text-muted-foreground">{label}</p></div><p className="break-words text-xl font-semibold tabular-nums xl:text-2xl">{value}</p></article>)}</div>
+    <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><p>{zh?`${data.overview.holdingCount} 项持仓 · 持仓市值 + 已核对现金`:`${data.overview.holdingCount} positions · holdings + reconciled cash`}{metrics?.partial&&(zh?' · 目前为已知部分':' · known portion only')}{metrics?.refreshing&&(zh?' · 正在更新行情':' · updating quotes')}</p><div className="flex flex-wrap gap-3"><Button size="sm" variant="outline" onClick={()=>setCashOpen(true)}>{zh?'核对现金':'Confirm cash'}</Button><Button size="sm" variant="ghost" asChild><Link to="/transactions">{zh?'记一笔买卖或资金变动':'Record a trade or cash flow'}</Link></Button></div></div>
+    {(metrics?.estimated||metrics?.partial||data.overview.dailyPnlUsd===null)&&<p className="rounded-xl bg-muted/40 px-3 py-2 text-xs leading-6 text-muted-foreground">{metrics?.partial?(zh?'已知持仓仍可查看，核对现金与缺项后显示完整资产。':'Known positions stay visible; confirm cash and missing data for complete equity.'):(zh?'按各市场最近交易日的昨收和已记录成交估算；行情有延迟，缺项不会填成零。':'Estimated from each market’s previous close and recorded trades. Quotes may be delayed; missing data is not zero.')}</p>}
+    <div className="rounded-2xl border bg-card p-4 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">{zh?'资产怎么变了':'How your assets changed'}</h2><p className="mt-1 text-xs text-muted-foreground">{trend?.since?(zh?`完整记录始于 ${new Date(trend.since).toLocaleString(i18n.language)}`:`Complete records start ${new Date(trend.since).toLocaleString(i18n.language)}`):(zh?'核对现金和行情后记录完整资产；曲线只显示已核对的估值。':'Confirm cash and quotes to begin complete equity history. The curve uses reconciled valuations only.')}</p></div><div className="flex gap-1">{[[7,zh?'近一周':'1 week'],[30,zh?'近一月':'1 month'],[0,zh?'记录以来':'All records']].map(([n,label])=><Button key={n} variant={range===n?'secondary':'ghost'} size="sm" onClick={()=>setRange(Number(n))}>{label}</Button>)}</div></div>
+      {plotted.length>1?<figure className="mt-4 min-w-0"><svg viewBox="0 0 900 160" className="h-40 w-full text-primary" role="img" aria-label={zh?'资产变化曲线，单位美元':'Equity history in USD'}><line x1="24" x2="876" y1="136" y2="136" stroke="currentColor" opacity="0.15"/><polyline points={coordinates} fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round"/>{plotted.map((p,i)=>i===0||i===plotted.length-1?<circle key={p.capturedAt} cx={24+(i/(plotted.length-1))*852} cy={136-(p.valueUsd-low)/span*112} r="4" fill="currentColor"><title>{new Date(p.capturedAt).toLocaleString(i18n.language)} · {money(p.valueUsd)}{!p.complete?(zh?' · 已知部分':' · known portion'):''}</title></circle>:null)}</svg><figcaption className="flex justify-between gap-4 text-xs text-muted-foreground"><span>{new Date(plotted[0].capturedAt).toLocaleDateString(i18n.language)} · {money(plotted[0].valueUsd)}</span><span>{new Date(plotted.at(-1)!.capturedAt).toLocaleDateString(i18n.language)} · {money(plotted.at(-1)!.valueUsd)}</span></figcaption></figure>:<p className="py-7 text-center text-sm text-muted-foreground">{zh?'有了下一个记录点，就能看到资产变化。':'Your next observation will begin the asset curve.'}</p>}
+      <div className="mt-4 grid gap-3 border-t pt-4 sm:grid-cols-3">{[[zh?'记录以来资产变化':'Asset change since start',trend?.assetChangeUsd],[zh?'期间净入金':'Net external funding',trend?.netExternalFlowUsd],[zh?'扣除入出金后的盈亏':'P/L excluding external funding',trend?.investmentPnlUsd]].map(([label,value])=><div key={String(label)}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 font-medium tabular-nums">{money(value as number|null|undefined)}</p></div>)}</div>
+      {!!trend?.gaps.length&&<p className="mt-3 text-xs text-muted-foreground">{zh?'历史资金记录有变动，期间投资盈亏需要重新核对。':'Historical cash-flow records changed; period performance needs reconciliation.'}</p>}
+    </div>{metrics?.provenance&&<AssetValuationBasis provenance={metrics.provenance} timezone={data.timezone}/>}<CashBalanceDialog open={cashOpen} onClose={()=>setCashOpen(false)}/>
+  </section>;
+}

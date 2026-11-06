@@ -98,3 +98,15 @@ test('cancellation before a delayed POST registration fences the paid call for t
   assert.equal(calls, 1);
   await service.onModuleDestroy();
 });
+test('trade screenshots preserve uncertain fields for explicit preview without creating holding rows', async () => {
+  let prompt = '';
+  const service = setup(async (_owner, options) => { prompt = options.prompt; return { text: JSON.stringify({ kind: 'trades', rows: [{ txDate: '2026-11-06', txType: 'Buy', ticker: 'FIXT', shares: 2, price: '?', currency: 'USD', fees: '' }] }) }; });
+  const job = service.start('alice', { ...request(), purpose: 'trades' }); await tick();
+  const done = service.get('alice', job.id);
+  assert.equal(done.status, 'completed');
+  assert.deepEqual(done.result?.rows, []);
+  assert.equal(done.result?.ledgerRows?.[0].price, '?');
+  assert.equal(done.result?.ledgerRows?.[0].fees, '');
+  assert.ok(prompt.includes('never external deposits/withdrawals'));
+  await service.onModuleDestroy();
+});

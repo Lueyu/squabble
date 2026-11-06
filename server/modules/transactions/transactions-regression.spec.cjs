@@ -4,7 +4,7 @@ const path = require('node:path');
 const ts = require('typescript');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../../..');
-const names = ['transactions', 'holdings', 'closed', 'cashAccounts', 'snapshots', 'fxRates', 'paperAccounts', 'paperOrders', 'paperPositions', 'paperTrades', 'paperEvents', 'builderProfiles', 'agentSessions', 'paperSnapshots', 'strategyReservations'];
+const names = ['positionBaselines', 'cashAccountConflicts', 'cashBalanceConfirmations', 'transactions', 'holdings', 'closed', 'cashAccounts', 'snapshots', 'fxRates', 'paperAccounts', 'paperOrders', 'paperPositions', 'paperTrades', 'paperEvents', 'builderProfiles', 'agentSessions', 'paperSnapshots', 'strategyReservations'];
 const tables = Object.fromEntries(names.map(name => [name, new Proxy({ table: name }, {
   get: (t, key) => key === 'table' ? t.table : { table: t.table, key },
 })]));
@@ -32,7 +32,7 @@ const orm = {
 const decorator = () => () => {};
 const common = {
   Inject: decorator, Injectable: decorator, Optional: decorator, forwardRef: fn => fn,
-  BadRequestException: class extends Error {}, NotFoundException: class extends Error {},
+  BadRequestException: class extends Error {}, NotFoundException: class extends Error {}, ConflictException: class extends Error {},
   Logger: class { warn() {} error() {} log() {} },
 };
 function loadService(relativePath, className, extraModules = {}) {
@@ -47,7 +47,11 @@ function loadService(relativePath, className, extraModules = {}) {
     if (name === '@nestjs/common') return common;
     if (name === '@lark-apaas/fullstack-nestjs-core' || name === '../../common/platform') return { DRIZZLE_DATABASE: Symbol('db') };
     if (name === 'drizzle-orm') return orm;
-    if (name === '@server/database/schema') return tables;
+    if (name === '@server/database/schema' || name.endsWith('/database/schema')) return tables;
+    if (name.includes('asset-ledger.schema')) return tables;
+    if (name.includes('position-checkpoint')) return { resolvePositionTicker: loadService('server/modules/import/position-checkpoint.ts', 'resolvePositionTicker') };
+    if (name.includes('screenshot-merge')) return { securityIdentity: loadService('server/modules/import/screenshot-merge.ts', 'securityIdentity') };
+    if (name.includes('research-memory.fence')) return { lockMemoryOwner: async () => {} };
     if (name.includes('fx.service')) return { FxService: class {} };
     if (name.includes('quote.service')) return { QuoteService: class {} };
     if (name === '@nestjs/axios') return { HttpService: class {} };
@@ -77,6 +81,7 @@ class MemoryDb {
       limit(n) { limit = n; return q; },
       offset(n) { offset = n; return q; },
       for() { return q; },
+      onConflictDoNothing() { return q; },
       values(v) { values = Array.isArray(v) ? v : [v]; return q; },
       set(v) { patch = v; return q; },
       returning(f) { fields = f; return q; },
@@ -109,7 +114,7 @@ const TransactionsService = loadService('server/modules/transactions/transaction
 const SnapshotsService = loadService('server/modules/snapshots/snapshots.service.ts', 'SnapshotsService');
 const DashboardService = loadService('server/modules/dashboard/dashboard.service.ts', 'DashboardService');
 const user = 'audit-user-memory-only';
-const quote = { detectMarket: ticker => ticker.endsWith('.HK') ? { market: 'HK', currency: 'HKD' } : ticker.endsWith('.SH') ? { market: 'CN', currency: 'CNY' } : { market: 'US', currency: 'USD' } };
+const quote = { detectMarket: ticker => ticker.endsWith('.HK') || /^\d{4,5}$/.test(ticker) ? { market: 'HK', currency: 'HKD' } : ticker.endsWith('.SH') || /^\d{6}$/.test(ticker) ? { market: 'CN', currency: 'CNY' } : { market: 'US', currency: 'USD' } };
 const dto = (txType, overrides = {}) => ({ txDate: '2026-10-01', ticker: 'AAPL', txType, shares: 10, price: 10, fees: 0, currency: 'USD', ...overrides });
 const evidence = [];
 function record(id, actual, expected, note) { evidence.push({ id, actual, expected, note }); }
