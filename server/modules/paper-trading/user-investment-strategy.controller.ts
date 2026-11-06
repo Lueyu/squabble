@@ -39,4 +39,8 @@ export class UserInvestmentStrategyController {
   prepare(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number; requestKey: string }) {
     return this.service.prepare(req.userContext.userId, id, body.expectedRevision, body.requestKey);
   }
+  @NeedLogin() @Get(':id/preparation')
+  preparation(@Req() req: Request, @Param('id') id: string, @Query('expectedRevision') expectedRevision?: string) {
+    return this.service.preparation(req.userContext.userId, id, Number(expectedRevision));
+  }
 }

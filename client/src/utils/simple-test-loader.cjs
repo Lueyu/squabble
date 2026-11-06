@@ -23,7 +23,7 @@ module.exports = function fixture() {
         useQueryClient: () => ({ invalidateQueries() {}, setQueryData() {} }),
       };
       if (id === './http') return { __esModule: true, default: Object.fromEntries(['get', 'post', 'patch', 'put', 'delete'].map(method =>
-        [method, async (...args) => { state.requests.push({ method, args }); return { data: state.responses?.get(args[0]) ?? {} }; }])) };
+        [method, async (...args) => { state.requests.push({ method, args }); return { data: state.responses?.get(args[0]) ?? (method === 'get' && args[0].endsWith('/preparation') ? { status: 'none' } : {}) }; }])) };
       if (id.startsWith('@/') || id.startsWith('@shared/') || id.startsWith('.')) {
         const target = id.startsWith('@/') ? path.resolve(__dirname, '..', id.slice(2))
           : id.startsWith('@shared/') ? path.resolve(__dirname, '../../../shared', id.slice(8)) : path.resolve(path.dirname(filename), id);

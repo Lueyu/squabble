@@ -47,6 +47,15 @@ export interface UserInvestmentStrategy {
   content: StrategyDraftInput; sources: StrategySourceSnapshot[]; preview: StrategyExecutionPreview | null;
   createdAt: string; updatedAt: string; confirmedAt: string | null;
 }
+export interface StrategyPreparationError {
+  code: string; message: { en: string; 'zh-CN': string };
+}
+/** Sanitized terminal failure stored in the existing preparation result JSON. */
+export interface StrategyPreparationFailure { kind: 'preparation_failure'; error: StrategyPreparationError }
+export type StrategyPreparationStatus = { status: 'none' }
+  | { status: 'pending'; requestKey: string }
+  | { status: 'succeeded'; requestKey: string; result: UserInvestmentStrategy }
+  | { status: 'failed'; requestKey: string; error: StrategyPreparationError };
 export interface ConfirmedInvestmentStrategy extends UserInvestmentStrategy {
   status: 'confirmed'; preview: StrategyExecutionPreview; confirmedAt: string;
 }

@@ -9,10 +9,14 @@ import { councilMessages, councilReports, councilSessions } from '../../database
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { StrategyModelService } from './strategy-model.service';
+import { BudgetExceededException } from '../llm-budget/llm-budget.rules';
+import { LocalAgentError } from '../local-agents/local-agents.types';
+import { safeAnalysisError } from '../multi-agent/analysis-report';
 import { readableResearch, readableResearchSection, readableResearchSections } from '../../../shared/research-reading';
 import { normalizeStrategyDraft, previewStrategy, sourceAddition, strategyContentHash } from './user-investment-strategy.rules';
 import type { ConfirmedInvestmentStrategy, StrategyDraftInput, StrategySourceInput, StrategySourceSnapshot, UserInvestmentStrategy,
-  UserInvestmentStrategyWorkspace, UserInvestmentStrategyPage, UserInvestmentStrategyRevisionPage, StrategySourceAddition } from '../../../shared/user-investment-strategy.interface';
+  UserInvestmentStrategyWorkspace, UserInvestmentStrategyPage, UserInvestmentStrategyRevisionPage, StrategySourceAddition,
+  StrategyPreparationError, StrategyPreparationFailure, StrategyPreparationStatus } from '../../../shared/user-investment-strategy.interface';
 
 export type UserStrategyTransaction = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 type StrategyReadWrite = Pick<PostgresJsDatabase, 'select' | 'insert' | 'update'>;
@@ -23,6 +27,35 @@ const sourceSchema = z.discriminatedUnion('kind', [z.object({ kind: z.literal('r
 const map = (row: Row): UserInvestmentStrategy => ({ id: row.id, revision: row.revision, parentId: row.parentId, status: row.status, content: row.content,
   sources: row.sources, preview: row.preview, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(), confirmedAt: row.confirmedAt?.toISOString() ?? null });
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+const preparationInputHash = (id: string, expectedRevision: number) => hash(JSON.stringify({ id, expectedRevision }));
+const isPreparationFailure = (result: UserInvestmentStrategy | StrategyPreparationFailure): result is StrategyPreparationFailure => 'kind' in result && result.kind === 'preparation_failure';
+/** Keep provider payloads, prompts and stack traces out of durable authoring state. */
+function preparationError(error: unknown): StrategyPreparationError {
+  const localized = (code: string, en: string, zh: string): StrategyPreparationError => ({ code, message: { en, 'zh-CN': zh } });
+  if (error instanceof BudgetExceededException) {
+    return { code: `LLM_BUDGET_EXCEEDED_${error.reason.toUpperCase()}`,
+      message: { en: safeAnalysisError(error, 'en'), 'zh-CN': safeAnalysisError(error, 'zh-CN') } };
+  }
+  if (error instanceof z.ZodError || error instanceof Error && ['Local strategy result needs formatting', 'Preparation returned unknown entry identities', 'Invalid strategy text, entry, period or limits'].includes(error.message)) {
+    return localized('STRATEGY_PREPARATION_FORMAT', 'The prepared explanation did not pass format validation. Your draft is retained; check the model before explicitly retrying.',
+      '整理结果未通过格式校验。草稿已保留，请检查模型后手动重试。');
+  }
+  if (error instanceof Error && ['No available strategy research member', 'Native reviewer is unavailable'].includes(error.message)) {
+    return localized('STRATEGY_REVIEWER_UNAVAILABLE', 'No research member is available to prepare this draft. Check Model Settings before retrying.',
+      '当前没有可整理草稿的研究成员，请检查模型设置后重试。');
+  }
+  if (error instanceof ConflictException || error instanceof Error && ['Strategy profile changed', 'Strategy profile is no longer active', 'LLM request cancelled'].includes(error.message)) {
+    return localized('STRATEGY_PREPARATION_CHANGED', 'The draft changed while its explanation was being prepared. Reload the saved draft before reviewing again.',
+      '整理执行说明期间草稿已变化，请读取保存的草稿后重新核对。');
+  }
+  const safeCodes = new Set(['LOCAL_UNAVAILABLE', 'LOCAL_AGENT_NOT_FOUND', 'LOCAL_LOGIN_REQUIRED', 'LOCAL_BUSY', 'LOCAL_CANCELLED', 'LOCAL_PAUSED',
+    'LOCAL_INTERRUPTED', 'LOCAL_COMPANION_OFFLINE', 'LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_VERSION_UNSUPPORTED', 'LOCAL_INVALID_RESULT',
+    'LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED', 'LOCAL_USAGE_LIMIT', 'LOCAL_RATE_LIMIT', 'LOCAL_TASK_FAILED',
+    'LLM_BASIC_ROUTE', 'LLM_REQUEST_TIMEOUT', 'LLM_OUTPUT_LIMIT', 'LLM_EMPTY_RESPONSE', 'LLM_INVALID_JSON']);
+  const candidate = error instanceof LocalAgentError ? error.code : error instanceof Error ? error.message : '';
+  const code = safeCodes.has(candidate) ? candidate : 'STRATEGY_PREPARATION_FAILED';
+  return { code, message: { en: safeAnalysisError(error, 'en'), 'zh-CN': safeAnalysisError(error, 'zh-CN') } };
+}
 
 @Injectable()
 export class UserInvestmentStrategyService {
@@ -184,18 +217,36 @@ export class UserInvestmentStrategyService {
       const [row] = await tx.update(strategies).set({ preview, updatedAt: new Date() }).where(eq(strategies.id, id)).returning(); return map(row);
     });
   }
+  /** Read-only recovery never invokes a model or retries a previously claimed request. */
+  async preparation(owner: string, id: string, expectedRevision: number): Promise<StrategyPreparationStatus> {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new BadRequestException('Invalid preparation revision');
+    await this.row(this.db, owner, id);
+    const identity = and(eq(preparations.owner, owner), eq(preparations.strategyId, id), eq(preparations.inputHash, preparationInputHash(id, expectedRevision)));
+    // Pending legacy claims remain authoritative even if another old receipt finished later.
+    const [pending] = await this.db.select().from(preparations).where(and(identity, eq(preparations.status, 'pending'))).orderBy(desc(preparations.createdAt)).limit(1);
+    if (pending) return { status: 'pending', requestKey: pending.requestKey };
+    const [receipt] = await this.db.select().from(preparations).where(identity).orderBy(desc(preparations.createdAt)).limit(1);
+    if (!receipt) return { status: 'none' };
+    if (receipt.status === 'pending') return { status: 'pending', requestKey: receipt.requestKey };
+    if (receipt.status === 'succeeded' && receipt.result && !isPreparationFailure(receipt.result)) return { status: 'succeeded', requestKey: receipt.requestKey, result: receipt.result };
+    return { status: 'failed', requestKey: receipt.requestKey,
+      error: receipt.result && isPreparationFailure(receipt.result) ? receipt.result.error : preparationError(undefined) };
+  }
   /** Explicit user action only. A durable claim is committed before the single model request. */
   async prepare(owner: string, id: string, expectedRevision: number, requestKey: string): Promise<UserInvestmentStrategy> {
     if (!z.string().min(8).max(200).safeParse(requestKey).success) throw new BadRequestException('A preparation request key is required');
     const claim = await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner); const row = await this.row(tx, owner, id, true);
-      const inputHash = hash(JSON.stringify({ id, expectedRevision }));
+      const inputHash = preparationInputHash(id, expectedRevision);
       const [receipt] = await tx.select().from(preparations).where(and(eq(preparations.owner, owner), eq(preparations.requestKey, requestKey)));
       if (receipt) {
         if (receipt.inputHash !== inputHash) throw new ConflictException('Preparation request key was reused');
-        if (receipt.status === 'succeeded' && receipt.result) return { result: receipt.result, row };
+        if (receipt.status === 'succeeded' && receipt.result && !isPreparationFailure(receipt.result)) return { result: receipt.result, row };
         throw new ConflictException('This preparation was already dispatched; explicitly start a new preparation to retry');
       }
+      const [pending] = await tx.select().from(preparations).where(and(eq(preparations.owner, owner), eq(preparations.strategyId, id),
+        eq(preparations.inputHash, inputHash), eq(preparations.status, 'pending'))).limit(1);
+      if (pending) throw new ConflictException('A preparation for this draft revision is already pending; check its saved status');
       this.assertDraft(row, expectedRevision);
       if (row.content.entries.reduce((size, entry) => size + entry.text.length, row.content.body.length) > 40000) throw new BadRequestException('Select or edit at most 40000 characters for one preparation');
       await tx.insert(preparations).values({ owner, requestKey, strategyId: id, inputHash, status: 'pending' });
@@ -225,14 +276,18 @@ export class UserInvestmentStrategyService {
       }) });
       return await this.db.transaction(async tx => {
         await lockMemoryOwner(tx, owner); const previous = await this.row(tx, owner, id, true); this.assertDraft(previous, expectedRevision);
-        const revision = previous.revision + 1; const preview = previewStrategy(content, previous.sources, revision);
-        const [saved] = await tx.update(strategies).set({ content, preview, revision, updatedAt: new Date() }).where(eq(strategies.id, id)).returning();
+        const revision = previous.revision + 1;
+        const [written] = await tx.update(strategies).set({ content, preview: null, revision, updatedAt: new Date() }).where(eq(strategies.id, id)).returning();
+        // JSONB orders object keys on storage; bind the explanation to the exact persisted representation.
+        const preview = previewStrategy(written.content, written.sources, revision);
+        const [saved] = await tx.update(strategies).set({ preview }).where(eq(strategies.id, id)).returning();
         await this.saveRevision(tx, saved); const result = map(saved);
         await tx.update(preparations).set({ status: 'succeeded', result }).where(and(eq(preparations.owner, owner), eq(preparations.requestKey, requestKey)));
         return result;
       });
     } catch (error) {
-      await this.db.update(preparations).set({ status: 'failed' }).where(and(eq(preparations.owner, owner), eq(preparations.requestKey, requestKey)));
+      const result: StrategyPreparationFailure = { kind: 'preparation_failure', error: preparationError(error) };
+      await this.db.update(preparations).set({ status: 'failed', result }).where(and(eq(preparations.owner, owner), eq(preparations.requestKey, requestKey)));
       throw error;
     }
   }

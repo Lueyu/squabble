@@ -1,5 +1,5 @@
 import { pgTable, text, uuid, integer, timestamp, jsonb, uniqueIndex, index } from 'drizzle-orm/pg-core';
-import type { StrategyDraftInput, StrategySourceSnapshot, StrategyExecutionPreview, UserInvestmentStrategy } from '../../shared/user-investment-strategy.interface';
+import type { StrategyDraftInput, StrategySourceSnapshot, StrategyExecutionPreview, UserInvestmentStrategy, StrategyPreparationFailure } from '../../shared/user-investment-strategy.interface';
 
 /** Authoring and immutable confirmation records; execution remains in the existing policy/mandate pipeline. */
 export const userInvestmentStrategies = pgTable('user_investment_strategies', {
@@ -22,5 +22,5 @@ export const userInvestmentStrategyCurrent = pgTable('user_investment_strategy_c
 export const userInvestmentStrategyPreparations = pgTable('user_investment_strategy_preparations', {
   owner: text('owner').notNull(), requestKey: text('request_key').notNull(), strategyId: uuid('strategy_id').notNull().references(() => userInvestmentStrategies.id),
   inputHash: text('input_hash').notNull(), status: text('status').$type<'pending' | 'succeeded' | 'failed'>().notNull(),
-  result: jsonb('result').$type<UserInvestmentStrategy | null>(), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  result: jsonb('result').$type<UserInvestmentStrategy | StrategyPreparationFailure | null>(), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('user_investment_strategy_preparation_key').on(table.owner, table.requestKey)]);

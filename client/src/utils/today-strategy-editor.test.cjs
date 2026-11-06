@@ -5,6 +5,7 @@ const React=require('react');
 const {createRoot}=require('react-dom/client');
 const {MemoryRouter}=require('react-router-dom');
 const {JSDOM}=require('jsdom');
+const writes=f=>f.state.requests.filter(request=>request.method!=='get');
 function editorFixture(){
  const f=fixture();
  // The portal shell is unrelated to editor behavior; preserve its children for server rendering.
@@ -51,10 +52,10 @@ test('copying confirmed strategy creates a child draft and retains frozen author
   await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:confirmed,currentId:confirmed.id,timezone:'Asia/Shanghai',onChanged(){},onClose(){}}))));
   const copy=[...document.querySelectorAll('button')].find(button=>button.textContent==='Copy as draft');assert.ok(copy);
   await React.act(async()=>copy.click());
-  assert.equal(f.state.requests.length,1);
-  assert.equal(f.state.requests[0].method,'post');
-  assert.equal(f.state.requests[0].args[1].parentId,'confirmed');
-  assert.equal(f.state.requests[0].args[1].content.entries[0].text,'Watch FICT');
+  assert.equal(writes(f).length,1);
+  assert.equal(writes(f)[0].method,'post');
+  assert.equal(writes(f)[0].args[1].parentId,'confirmed');
+  assert.equal(writes(f)[0].args[1].content.entries[0].text,'Watch FICT');
   assert.match(document.body.textContent,/Frozen execution authority/);
   assert.equal(document.querySelectorAll('section[aria-label="Execution details"]').length,0);
   assert.match(document.body.textContent,/Draft saved/);
@@ -88,9 +89,9 @@ test('report draft explicitly adopts and saves the simulation limits without aut
   assert.equal(document.querySelectorAll('input[type="number"]').length,6);
   const save=[...document.querySelectorAll('button')].find(button=>button.textContent==='Save draft only');
   await React.act(async()=>save.click());
-  assert.equal(f.state.requests.length,1);assert.equal(f.state.requests[0].method,'patch');
-  assert.deepEqual(JSON.parse(JSON.stringify(f.state.requests[0].args[1].content.limits)),{maxPositionPct:15,maxDailyIncreasePct:6,maxDailyTurnoverPct:25,minCashPct:20,maxGrossExposurePct:80,maxOrderPct:4});
-  assert.doesNotMatch(f.state.requests[0].args[0],/apply|prepare/);
+  assert.equal(writes(f).length,1);assert.equal(writes(f)[0].method,'patch');
+  assert.deepEqual(JSON.parse(JSON.stringify(writes(f)[0].args[1].content.limits)),{maxPositionPct:15,maxDailyIncreasePct:6,maxDailyTurnoverPct:25,minCashPct:20,maxGrossExposurePct:80,maxOrderPct:4});
+  assert.doesNotMatch(writes(f)[0].args[0],/apply|prepare/);
  });
 });
 
@@ -102,10 +103,10 @@ test('report draft can explicitly set editable limits before creating a simulati
   assert.match(document.body.textContent,/Review these draft limits/);
   const save=[...document.querySelectorAll('button')].find(button=>button.textContent==='Save draft only');
   await React.act(async()=>save.click());
-  const limits=f.state.requests[0].args[1].content.limits;
+  const limits=writes(f)[0].args[1].content.limits;
   assert.equal(limits.minCashPct,10);assert.equal(limits.maxGrossExposurePct,90);
-  assert.equal(f.state.requests.length,1);assert.equal(f.state.requests[0].method,'patch');
-  assert.doesNotMatch(f.state.requests[0].args[0],/apply|prepare/);
+  assert.equal(writes(f).length,1);assert.equal(writes(f)[0].method,'patch');
+  assert.doesNotMatch(writes(f)[0].args[0],/apply|prepare/);
  });
 });
 
@@ -124,12 +125,12 @@ test('a new draft has an actionable review step and applies only after its prepa
   const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent===text);
   const review=button('Review execution details');assert.ok(review,'unprepared drafts expose the next step instead of a disabled apply button');assert.equal(review.disabled,false);
   await React.act(async()=>review.click());
-  assert.equal(f.state.requests.length,1);assert.equal(f.state.requests[0].args[0],'/api/investment-strategies/ready-draft/prepare');
+  assert.equal(writes(f).length,1);assert.equal(writes(f)[0].args[0],'/api/investment-strategies/ready-draft/prepare');
   assert.equal(closed,0);assert.match(document.body.textContent,/Frozen execution authority/);
   const apply=button('Review and apply to simulation');assert.ok(apply);assert.equal(apply.disabled,false);
   await React.act(async()=>apply.click());
-  assert.equal(f.state.requests.length,2);assert.equal(f.state.requests[1].args[0],'/api/ai-investment/apply-strategy');
-  assert.equal(f.state.requests[1].args[1].expectedRevision,2);assert.equal(f.state.requests[1].args[1].previewHash,'reviewed-hash');assert.equal(closed,1);
+  assert.equal(writes(f).length,2);assert.equal(writes(f)[1].args[0],'/api/ai-investment/apply-strategy');
+  assert.equal(writes(f)[1].args[1].expectedRevision,2);assert.equal(writes(f)[1].args[1].previewHash,'reviewed-hash');assert.equal(closed,1);
  }finally{
   await React.act(async()=>root.unmount());dom.window.close();global.window=previous.window;global.document=previous.document;global.IS_REACT_ACT_ENVIRONMENT=previous.act;
  }
