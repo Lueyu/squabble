@@ -3,7 +3,7 @@ export interface ReportReference { versionId: string; sectionId?: string; excerp
 export interface ReportSource { type: 'daily' | 'deep' | 'portfolio' | 'council'; id: string }
 export type ResearchDocumentKind = ReportSource['type'];
 export interface ResearchDocumentSection { id: string; title: string; content: string }
-export interface ResearchInputSnapshot { capturedAt?: string; gaps?: string[]; [key: string]: unknown }
+export interface ResearchInputSnapshot { capturedAt?: string; gaps?: string[]; executionPlan?: import('./report-execution-plan.interface').ReportExecutionPlan; executionPlanError?: 'missing' | 'invalid'; [key: string]: unknown }
 export interface ResearchDocumentVersion {
   id: string; reportId: string; version: number; title: string; kind: ResearchDocumentKind; ticker: string | null;
   content: string; sections: ResearchDocumentSection[]; dataAsOf: string | null; availableAt: string | null;

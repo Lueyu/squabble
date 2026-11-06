@@ -80,6 +80,75 @@ test('source additions are immutable, deduplicated, and leave manual text unchan
   assert.equal(sourceAddition(draft, [source], source).alreadyAdded, true);
   assert.deepEqual(sourceAddition(draft, [source], source).entries, []);
 });
+
+test('report plan additions copy reviewed entries and their exact validity instead of the report prose', () => {
+  const strategy = input();
+  const source = { key: 'report:owned:execution-strategy', kind: 'report' as const, versionId: 'owned', sectionId: 'execution-strategy',
+    title: 'Report plan', content: 'Readable report strategy card', contentHash: 'abc', createdAt: now.toISOString(), capturedAt: now.toISOString(), ticker: null,
+    executionPlan: { schemaVersion: 1, parameterOrigin: 'ai_proposed', strategy, evidenceIds: [], gaps: [], readiness: 'ready', preview: previewStrategy(strategy, [], 1, now) } };
+  const original = JSON.stringify(source);
+  const addition = sourceAddition(input(), [], source as StrategySourceSnapshot);
+  assert.equal(addition.entries[0].text, strategy.entries[0].text);
+  assert.deepEqual(addition.entries[0].directive?.numericEvidence, strategy.entries[0].directive?.numericEvidence);
+  assert.equal(addition.entries[0].directive?.reviewedText, text);
+  assert.equal(addition.entries[0].startsAt, strategy.startsAt);
+  assert.equal(addition.entries[0].endsAt, strategy.endsAt);
+  assert.deepEqual(addition.entries[0].sourceKeys, [source.key]);
+  assert.equal(JSON.stringify(source), original, 'copying must preserve the immutable source');
+});
+
+test('report plan additions never inherit semantic permission or caller supplied source keys', () => {
+  const strategy = input(); strategy.entries[0].sourceKeys = ['forged']; strategy.entries[0].directive!.semanticAuthorized = true;
+  const source = { key: 'report:owned:execution-strategy', kind: 'report' as const, sectionId: 'execution-strategy', title: 'Report plan', content: 'Observe',
+    contentHash: 'abc', createdAt: now.toISOString(), capturedAt: now.toISOString(), ticker: null,
+    executionPlan: { schemaVersion: 1, parameterOrigin: 'ai_proposed', strategy, evidenceIds: [], gaps: [], readiness: 'ready', preview: previewStrategy(strategy, [], 1, now) } };
+  const addition = sourceAddition(input(), [], source as StrategySourceSnapshot);
+  assert.deepEqual(addition.entries[0].sourceKeys, [source.key]);
+  assert.notEqual(addition.entries[0].directive?.semanticAuthorized, true);
+});
+
+test('an incomplete report proposal remains reviewable without attaching executable directives', () => {
+  const strategy = input();
+  const source = { key: 'report:owned:execution-strategy', kind: 'report' as const, sectionId: 'execution-strategy', title: 'Report plan', content: 'Observe',
+    contentHash: 'abc', createdAt: now.toISOString(), capturedAt: now.toISOString(), ticker: null,
+    executionPlan: { schemaVersion: 1, parameterOrigin: 'ai_proposed', strategy, evidenceIds: [], gaps: ['Customer evidence is unavailable'], readiness: 'needs_info', preview: previewStrategy(strategy, [], 1, now) } };
+  const addition = sourceAddition(input(), [], source as StrategySourceSnapshot);
+  assert.equal(addition.entries[0].directive, undefined);
+  assert.equal(addition.entries[0].text, strategy.entries[0].text);
+  const preview = previewStrategy({ ...strategy, entries: addition.entries }, [source as StrategySourceSnapshot], 1, now);
+  assert.equal(preview.entries[0].state, 'needs_review');
+  assert.equal(preview.canConfirm, false);
+  assert.ok(preview.issues.some(issue => issue.code === 'REPORT_PLAN_NEEDS_INFO'));
+});
+
+test('an empty report proposal with gaps cannot confirm until the investor explicitly edits it', () => {
+  const strategy = input(); strategy.entries = [];
+  const source = { key: 'report:owned:execution-strategy', kind: 'report' as const, sectionId: 'execution-strategy', title: 'Report plan', content: 'Observe',
+    contentHash: 'abc', createdAt: now.toISOString(), capturedAt: now.toISOString(), ticker: null,
+    executionPlan: { schemaVersion: 1, parameterOrigin: 'ai_proposed', strategy, evidenceIds: [], gaps: ['No conditions were supplied'], readiness: 'needs_info', preview: previewStrategy(strategy, [], 1, now) } };
+  assert.equal(previewStrategy(strategy, [source as StrategySourceSnapshot], 1, now).canConfirm, false);
+  assert.equal(previewStrategy({ ...strategy, body: 'Explicitly reviewed observation.' }, [source as StrategySourceSnapshot], 1, now).canConfirm, true);
+});
+
+test('an explicit empty no-trade plan imports its exact reason as one owned observation', () => {
+  const strategy = input(); strategy.entries = []; strategy.body = '';
+  const reason = 'Current evidence does not justify adding risk.';
+  const source = { key: 'report:owned:execution-strategy', kind: 'report' as const, sectionId: 'execution-strategy', title: 'Report plan', content: 'Unrelated whole report prose',
+    contentHash: 'abc', createdAt: now.toISOString(), capturedAt: now.toISOString(), ticker: null,
+    executionPlan: { schemaVersion: 1, parameterOrigin: 'ai_proposed', strategy, evidenceIds: [], gaps: [], noTradeReason: reason,
+      readiness: 'no_trade', preview: previewStrategy(strategy, [], 1, now) } };
+  const addition = sourceAddition(strategy, [], source as StrategySourceSnapshot);
+  assert.equal(addition.entries.length, 1);
+  assert.match(addition.entries[0].text, /AI proposal/u);
+  assert.ok(addition.entries[0].text.endsWith(reason));
+  assert.doesNotMatch(addition.entries[0].text, /Unrelated whole report/u);
+  assert.deepEqual(addition.entries[0].sourceKeys, [source.key]);
+  assert.equal(addition.entries[0].startsAt, strategy.startsAt); assert.equal(addition.entries[0].endsAt, strategy.endsAt);
+  assert.equal(addition.entries[0].directive, undefined); assert.equal(addition.entries[0].mandateRule, undefined);
+  const preview = previewStrategy({ ...strategy, entries: addition.entries }, [source as StrategySourceSnapshot], 1, now);
+  assert.equal(preview.canConfirm, true); assert.equal(preview.entries[0].state, 'observation');
+  assert.equal(preview.directives.length, 0); assert.equal(preview.mandateRules.length, 0);
+});
 test('security symbols use exact tokens and canonical symbols for conflicts', () => {
   const draft = input(); draft.entries[0].directive!.ticker = 'A';
   assert.equal(previewStrategy(normalizeStrategyDraft(draft), [], 1, now).directives.length, 0, 'A must not match the AAPL identifier');

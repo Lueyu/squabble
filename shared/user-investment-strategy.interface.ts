@@ -1,10 +1,13 @@
 import type { MandateRule, StrategyMandateInput } from './strategy-mandate.interface';
+import type { ReportExecutionPlan } from './report-execution-plan.interface';
 
 export type StrategySourceInput = { kind: 'report'; versionId: string; sectionId?: string } | { kind: 'message'; messageId: string };
 /** Copied once from an owned, published report or released discussion message. */
 export interface StrategySourceSnapshot {
   key: string; kind: StrategySourceInput['kind']; versionId?: string; sectionId?: string; messageId?: string; sessionId?: string;
   title: string; content: string; readableContent?: string; contentHash: string; ticker: string | null; createdAt: string; capturedAt: string;
+  /** Revalidated proposal copied only from the owned immutable execution-strategy section. */
+  executionPlan?: ReportExecutionPlan;
 }
 export interface StrategyNumericEvidence { field: string; value: number; quote: string }
 /** Investor intent. Technical quote/slippage guards are supplied by the execution bridge, never invented as investment advice. */

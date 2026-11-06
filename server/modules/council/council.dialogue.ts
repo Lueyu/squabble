@@ -5,10 +5,13 @@ import { readableResearch } from '../../../shared/research-reading';
 import { byteExcerpt, type CouncilEvidence, type CouncilOpinion, parseOpinion } from './council.rules';
 import type { CouncilCheckpoint, DialogueTurn, ResearchRequest } from './council.types';
 import { parseDailyReverseCheck } from './council.daily';
+import { parseReportExecutionPlan } from '../paper-trading/report-execution-plan';
 import { thesisCandidateSchema } from '../research-memory/research-memory.requests';
 import { normalizeThesisContent, validateThesisReferences } from '../research-memory/research-memory.theses';
 
 export interface DiscussionContribution {
+  executionPlan?: import('../../../shared/report-execution-plan.interface').ReportExecutionPlan;
+  executionPlanError?: 'missing' | 'invalid';
   reverseCheck?: import('../../../shared/council.interface').DailyReverseCheck;
   thesisCandidates?: import('../../../shared/research-memory.interface').ThesisCandidateInput[];
   claims?: import('../../../shared/simple-conversation.interface').PublicClaim[];
@@ -102,11 +105,18 @@ export function parseContribution(value: unknown, validIds: Set<string>, turn: D
   }
   const stance = ['positive', 'balanced', 'cautious'].includes(String(data.researchStance))
     ? data.researchStance as NonNullable<CouncilReport['researchStance']> : 'balanced';
-  const opinion = turn.phase === 'summary'
+  let executionPlan:DiscussionContribution['executionPlan'];
+  let executionPlanError:DiscussionContribution['executionPlanError'];
+  if(turn.phase==='summary'&&!candidate){
+    if(data.executionPlan===undefined)executionPlanError='missing';
+    else try{executionPlan=parseReportExecutionPlan(data.executionPlan,validIds);}catch{executionPlanError='invalid';}
+  }
+  const opinion:CouncilOpinion|null = turn.phase === 'summary'
     ? candidate ? { ...parseOpinion({ ...data, summary: content }, validIds), summary: reportContent }
       : { decision: 'wait' as const, summary: reportContent, dissent: strings(data.dissent, 8),
         nextReviewCondition: typeof data.nextReviewCondition === 'string' ? data.nextReviewCondition.slice(0, 1000) : '', evidenceIds: data.evidenceIds as string[] }
     : null;
+  if(opinion&&!candidate){opinion.executionPlan=executionPlan;opinion.executionPlanError=executionPlanError;}
   const claims = Array.isArray(data.claims) ? data.claims.slice(0, 8).map((raw: unknown) => {
     if (!raw || typeof raw !== 'object') throw new Error('Invalid public claim');
     const claim = raw as Record<string, unknown>;
@@ -123,6 +133,7 @@ export function parseContribution(value: unknown, validIds: Set<string>, turn: D
     return data.thesisCandidates.map(raw=>{const parsed=thesisCandidateSchema.safeParse(raw);if(!parsed.success||!validateThesisReferences(parsed.data,validIds))throw new Error('DELIVERY_THESIS_INVALID');return {...normalizeThesisContent(parsed.data,'agent'),...(parsed.data.expiresAt!==undefined?{expiresAt:parsed.data.expiresAt}:{})};});
   })();
   return { content, ...(response ? { response } : {}), evidenceIds: data.evidenceIds as string[],
+    ...(executionPlan?{executionPlan}:{}),...(executionPlanError?{executionPlanError}:{}),
     ...(thesisCandidates?.length?{thesisCandidates}:{}),
     ...(data.reverseCheck!==undefined?{reverseCheck:parseDailyReverseCheck(data.reverseCheck,validIds)}:{}),
     ...(claims ? { claims } : {}), respondsToClaims: strings(data.respondsToClaims, 8),

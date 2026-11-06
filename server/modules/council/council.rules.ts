@@ -17,6 +17,8 @@ export interface CouncilEvidence {
   researchKind?: CouncilResearchKind;
 }
 export interface CouncilOpinion {
+  executionPlan?: import('../../../shared/report-execution-plan.interface').ReportExecutionPlan;
+  executionPlanError?: 'missing' | 'invalid';
   decision: 'approve' | 'wait' | 'reject';
   summary: string;
   dissent: string[];

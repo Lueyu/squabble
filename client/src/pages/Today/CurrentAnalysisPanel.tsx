@@ -12,6 +12,7 @@ import TodaySummary from './TodaySummary';
 import CouncilMemberAvatar from '../Council/CouncilMemberAvatar';
 import type { StrategySourceInput } from '@shared/user-investment-strategy.interface';
 import InvestmentStrategySourceDialog from './InvestmentStrategySourceDialog';
+import ReportExecutionPlan from '@/components/ReportExecutionPlan';
 
 export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable = true, primary = false, summary,activityView,onAddToStrategy }: {
   view: CurrentResearchView; topicKey: string; date?: string; aiAvailable?: boolean; primary?: boolean; summary?: string | null;
@@ -75,6 +76,7 @@ export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable
     {(current.risks?.length || current.nextChecks?.length) ? <div className="grid gap-4 text-sm sm:grid-cols-2">{[[zh ? '主要风险' : 'Main risks', current.risks], [zh ? '接下来关注' : 'Next checks', current.nextChecks]].map(([label, items]) => Array.isArray(items) && items.length > 0 && <div key={String(label)} className="min-w-0"><h3 className="mb-1 font-medium">{String(label)}</h3><ul className="list-disc space-y-1 pl-4 text-muted-foreground">{items.slice(0, 2).map(item => <li key={item} className="[overflow-wrap:anywhere]">{readableResearchText(item)}</li>)}</ul></div>)}</div> : null}
     {readableResearchText(current.changeSummary) && <p className="rounded-lg bg-primary/5 p-3 text-sm">{readableResearchText(current.changeSummary)}</p>}
     {content && (primary || readableSummary ? <details className="min-w-0 border-t pt-3 text-sm"><summary className="cursor-pointer font-medium">{zh ? '展开完整研究' : 'Read full research'}</summary><div className="mt-4 min-w-0"><ResearchMarkdown>{content}</ResearchMarkdown></div></details> : <ResearchMarkdown>{content}</ResearchMarkdown>)}
+    {current.documentId && current.readingState !== 'pending' && <ReportExecutionPlan key={current.documentId} versionId={current.documentId} onAddToStrategy={source => { if (onAddToStrategy) onAddToStrategy(source); else setStrategySource(source); }} />}
     {!formattingPending&&(activity.state === 'failed' || refresh.isError) && <div role="alert" className="space-y-1 rounded-xl bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300"><p>{zh ? '本次更新未完成，上次完整分析继续保留。可以重试本次分析。' : 'The update did not complete. The last complete analysis remains available. Retry this analysis when ready.'}</p>{readableResearchText(activity.error) && <p className="[overflow-wrap:anywhere]">{readableResearchText(activity.error).slice(0, 280)}</p>}</div>}
     <InvestmentStrategySourceDialog source={strategySource} onClose={()=>setStrategySource(null)}/>
     {current.dataAsOf && <p className="text-xs text-muted-foreground">{zh ? '数据截至：' : 'Data as of: '}{current.dataAsOf}</p>}

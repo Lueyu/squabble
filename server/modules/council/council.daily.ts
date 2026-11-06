@@ -1,6 +1,14 @@
 import type { DailyReverseCheck } from '../../../shared/council.interface';
 import type { DialogueTurn } from './council.types';
 import type { CouncilMember } from '../../../shared/council.interface';
+import type { CouncilEvidence } from './council.rules';
+
+/** Keep strategy and reverse-check citations inside the existing bounded report evidence inventory. */
+export function reportExecutionEvidence(evidence:CouncilEvidence[],requiredIds:readonly string[]=[]):CouncilEvidence[]{
+  if(!requiredIds.length)return evidence.slice(-60);
+  const required=new Set(requiredIds);
+  return [...evidence.filter(item=>!required.has(item.id)),...evidence.filter(item=>required.has(item.id))].slice(-60);
+}
 
 export function dailyResearchMembers(members:CouncilMember[]):CouncilMember[]{
   const scopes=['Financial statements, cash conversion and accounting periods','Business events, original announcements and contradictory sources','Valuation sensitivities and whole-portfolio concentration'];
@@ -40,5 +48,13 @@ export function dailyResearchPrompt(phase:string):string {
     phase==='opening'?'Investigate one complementary information domain deeply. State sourced facts, periods, arithmetic, assumptions and material omissions. Do not invent a question to provoke discussion.':
     phase==='challenge'?'Act as the independent devils-advocate gate. Try to overturn the material premises using source checks and new evidence where available. Return reverseCheck:{outcome:"critical_counterevidence|partially_weakened|no_counterevidence_found|unable_to_verify",checked:string[],findings:string[],gaps:string[],affectedPremises:string[],evidenceIds:string[]}. Do not treat unanimity or absence of counterevidence as correctness. Record real checks, never fabricate three paths.':
     'Produce the complete readable daily portfolio report and a separately marked DAILY STRATEGY DRAFT. Cover evidence, counterevidence, actual portfolio concentration, current uncertainties, per-stock horizon and what would change the judgment. Unknown prices/quantities remain unknown. No automatic trading authority. Preserve the reverse-check result and original disagreements. Return thesisCandidates only when exact sourced assumptions and invalidation conditions are available. Each thesisCandidate is {claim,supportingEvidence:[{evidenceId}],opposingEvidence:string[],assumptions:string[],indicators:string[],invalidationConditions:string[],horizon?:{startAt?,endAt?,reviewAt?},boundaryOrigin:"stated|proposed|unknown",monitorConditions?:[{conditionIndex,metric:"price|sma20|rsi14|volumeRatio",unit:"USD|HKD|CNY|points|ratio",operator:"lt|lte|gt|gte",threshold:number,validFrom:ISO,validUntil:ISO,evidenceIds:string[],rationale:string}]}. conditionIndex refers to invalidationConditions. Only include measurable conditions whose threshold is explicitly supported by cited evidence; never invent default levels. Omit unsupported optional fields.',
+    ...(phase==='summary'?[reportExecutionPlanPrompt()]:[]),
   ].join('\n');
+}
+
+/** Proposed parameters are not market facts and never become authority without investor confirmation. */
+export function reportExecutionPlanPrompt():string {
+  return 'Also return executionPlan:{schemaVersion:1,parameterOrigin:"ai_proposed",strategy:{title,body,timezone,startsAt:ISO,endsAt:ISO,entries:[{id,text,sourceKeys:[],directive?:{ticker,side:"buy|sell",trigger:{kind:"price_lte|price_gte|always|semantic",price?,text?},quantity? or positionPct?,minPrice?,maxPrice?,stopLossPrice?,reviewedText,numericEvidence:[{field,value,quote}]} }],limits?:{maxPositionPct,maxDailyIncreasePct,maxDailyTurnoverPct,minCashPct?,maxGrossExposurePct?,maxOrderPct?}},evidenceIds:string[],gaps:string[],noTradeReason?:string}. '
+    +'Produce concise copyable strategy entries, separate from research prose: at most 8 entries, about 600 characters each, body under 1200 characters; the readable proposal must fit 12000 characters. Each proposed trade must state its security, trigger, exact shares OR target TOTAL account position, validity, rationale and risks. Label all suggested prices, sizes and limits as AI proposals, never as observed facts or approved user constraints. Use real supplied holdings/cash and cited evidence; do not fabricate valuation, freshness, balances or market facts. Conversation scaffold limits are not investor authority. Missing sizing or risk data stays explicit in gaps. '
+    +'Each directive.reviewedText must exactly equal its entry.text. Every numeric field needs numericEvidence quoting the exact numeric token in that proposal text; this binds proposed instructions, not proof of market facts. sourceKeys must be empty, semanticAuthorized must never be granted. A semantic condition remains pending explicit investor authorization. Use supplied dates/timezone, a bounded future expiry, and no default stop loss or invented amount. If research does not justify a trade, give noTradeReason and zero executable directives with a clear recheck condition; never force a trade to fill the schema. No new model call is needed to import this proposal; user review and separate application are mandatory.';
 }

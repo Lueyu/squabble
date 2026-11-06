@@ -14,6 +14,7 @@ import { LocalAgentError } from '../local-agents/local-agents.types';
 import { safeAnalysisError } from '../multi-agent/analysis-report';
 import { readableResearch, readableResearchSection, readableResearchSections } from '../../../shared/research-reading';
 import { normalizeStrategyDraft, previewStrategy, sourceAddition, strategyContentHash } from './user-investment-strategy.rules';
+import { parseReportExecutionPlan, REPORT_EXECUTION_SECTION_ID } from './report-execution-plan';
 import type { ConfirmedInvestmentStrategy, StrategyDraftInput, StrategySourceInput, StrategySourceSnapshot, UserInvestmentStrategy,
   UserInvestmentStrategyWorkspace, UserInvestmentStrategyPage, UserInvestmentStrategyRevisionPage, StrategySourceAddition,
   StrategyPreparationError, StrategyPreparationFailure, StrategyPreparationStatus } from '../../../shared/user-investment-strategy.interface';
@@ -150,9 +151,16 @@ export class UserInvestmentStrategyService {
       const readableContent = section ? readableResearchSection(section) : readableResearchSections(version.sections);
       if (!readableContent.trim()) throw new ConflictException('Report content is not ready for readable publication');
       if (readableContent.length > 12000 || content.length > 200000) throw new BadRequestException('Select a report section of at most 12000 readable characters');
+      let executionPlan: StrategySourceSnapshot['executionPlan'];
+      if (source.sectionId === REPORT_EXECUTION_SECTION_ID) {
+        const evidence = Array.isArray(version.snapshot?.evidence) ? version.snapshot.evidence : [];
+        const evidenceIds = new Set<string>(evidence.flatMap(item => item && typeof item === 'object' && typeof item.id === 'string' ? [item.id] : []));
+        try { executionPlan = parseReportExecutionPlan(version.snapshot?.executionPlan, evidenceIds); }
+        catch { throw new BadRequestException('No validated report execution strategy is available; select another section for observation'); }
+      }
       return { key: `report:${version.id}${source.sectionId ? ':' + source.sectionId : ''}`, kind: 'report', versionId: version.id,
         ...(source.sectionId ? { sectionId: source.sectionId } : {}), title: section?.title ?? version.title, content, readableContent, contentHash: hash(content),
-        ticker: version.ticker, createdAt: version.createdAt, capturedAt };
+        ticker: version.ticker, createdAt: version.createdAt, capturedAt, ...(executionPlan ? { executionPlan } : {}) };
     }
     const [row] = await tx.select({ message: councilMessages, session: councilSessions }).from(councilMessages)
       .innerJoin(councilSessions, and(eq(councilSessions.id, councilMessages.sessionId), eq(councilSessions.owner, owner)))
@@ -177,12 +185,20 @@ export class UserInvestmentStrategyService {
       const row = draftId ? await this.row(tx, owner, draftId) : null;
       if (row && row.status !== 'draft') throw new ConflictException('Create an editable draft first');
       const snapshot = await this.resolveSource(tx, owner, source);
-      return sourceAddition(row?.content ?? this.emptyContent(), row?.sources ?? [], snapshot);
+      const addition = sourceAddition(row?.content ?? snapshot.executionPlan?.strategy ?? this.emptyContent(), row?.sources ?? [], snapshot);
+      if (row) this.assertAdditionPeriod(row.content, addition);
+      return addition;
     });
   }
   private emptyContent(): StrategyDraftInput {
     const now = new Date(); return { title: '投资策略 / Investment strategy', body: '', timezone: 'Asia/Shanghai', startsAt: now.toISOString(),
       endsAt: new Date(now.getTime() + 7 * 86400000).toISOString(), entries: [] };
+  }
+  private assertAdditionPeriod(content: StrategyDraftInput, addition: StrategySourceAddition) {
+    if (addition.source.executionPlan && addition.entries.some(entry => Date.parse(entry.startsAt!) < Date.parse(content.startsAt)
+      || Date.parse(entry.endsAt!) > Date.parse(content.endsAt))) {
+      throw new ConflictException('Report strategy validity exceeds this draft; create a new draft to preserve its proposed period');
+    }
   }
   async addSource(owner: string, id: string, expectedRevision: number, source: StrategySourceInput): Promise<UserInvestmentStrategy> {
     return this.db.transaction(async tx => {
@@ -191,11 +207,14 @@ export class UserInvestmentStrategyService {
       if (previous.status === 'draft' && previous.sources.some(source => source.key === key)) return map(previous);
       this.assertDraft(previous, expectedRevision);
       const snapshot = await this.resolveSource(tx, owner, source); const addition = sourceAddition(previous.content, previous.sources, snapshot);
+      this.assertAdditionPeriod(previous.content, addition);
       if (previous.sources.length >= 20 || previous.content.entries.length + addition.entries.length > 20) throw new BadRequestException('At most 20 strategy sources and entries');
       const content = this.normalize({ ...previous.content, entries: [...previous.content.entries, ...addition.entries] });
       const [row] = await tx.update(strategies).set({ content, sources: [...previous.sources, snapshot], preview: null,
         revision: previous.revision + 1, updatedAt: new Date() }).where(eq(strategies.id, id)).returning();
-      await this.saveRevision(tx, row); return map(row);
+      const saved = snapshot.executionPlan ? (await tx.update(strategies).set({ preview: previewStrategy(row.content, row.sources, row.revision) })
+        .where(eq(strategies.id, id)).returning())[0] : row;
+      await this.saveRevision(tx, saved); return map(saved);
     });
   }
   /** A new draft is explicit; importing never chooses and mutates a hidden existing draft. */
@@ -204,10 +223,13 @@ export class UserInvestmentStrategyService {
       await lockMemoryOwner(tx, owner); const snapshot = await this.resolveSource(tx, owner, source);
       const existing = await tx.select().from(strategies).where(and(eq(strategies.owner, owner), includeConfirmed?undefined:eq(strategies.status, 'draft'))).orderBy(desc(strategies.updatedAt));
       const duplicate = existing.find(row => row.sources.some(item => item.key === snapshot.key)); if (duplicate) return map(duplicate);
-      const base = this.emptyContent(); const addition = sourceAddition(base, [], snapshot);
+      const base = snapshot.executionPlan?.strategy ?? this.emptyContent(); const addition = sourceAddition(base, [], snapshot);
       const content = this.normalize({ ...base, entries: addition.entries });
       const [row] = await tx.insert(strategies).values({ owner, content, sources: [snapshot] }).returning();
-      await this.saveRevision(tx, row); return map(row);
+      // Derive the explanation from returned JSONB, whose canonical key order defines confirmation hashes.
+      const saved = snapshot.executionPlan ? (await tx.update(strategies).set({ preview: previewStrategy(row.content, row.sources, row.revision) })
+        .where(eq(strategies.id, row.id)).returning())[0] : row;
+      await this.saveRevision(tx, saved); return map(saved);
     });
   }
   async preview(owner: string, id: string, expectedRevision: number): Promise<UserInvestmentStrategy> {

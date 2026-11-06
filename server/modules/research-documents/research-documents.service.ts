@@ -4,6 +4,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { analysis, deepReport, portfolioAnalysisRuns } from '../../database/schema';
 import { councilReports, councilSessions } from '../../database/council.schema';
+import { REPORT_EXECUTION_SECTION_ID, renderReportExecutionPlan } from '../paper-trading/report-execution-plan';
 import { researchDocuments, researchDocumentVersions, researchRevisionDrafts, researchDocumentStrategyUses, researchDocumentSubmissions, researchDocumentAdoptions } from '../../database/research-documents.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { capturePortfolioDailyFacts } from './portfolio-daily-facts';
@@ -319,7 +320,7 @@ export class ResearchDocumentsService {
     input: Omit<SubmitResearchDocument, 'idempotencyKey'>; sourceKey: string; snapshot: ResearchInputSnapshot | null;
   }> {
     let fields: Record<string, unknown>; let title: string; let ticker: string | null; let sourceKey = `${source.type}:${source.id}`;
-    let snapshot: ResearchInputSnapshot | null = null;
+    let snapshot: ResearchInputSnapshot | null = null;let proposalLanguage='zh-CN';
     const [preferences]=await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
     const timezone=preferences?.timezone??'Asia/Shanghai';
     if (source.type === 'daily') {
@@ -349,15 +350,20 @@ export class ResearchDocumentsService {
       const [row] = lock ? await query.for('share') : await query;
       if (!row || row.report.publicationOutcome === 'failed') throw new NotFoundException('REPORT_SOURCE_NOT_FOUND');
       ticker = row.session.ticker === 'PORTFOLIO' ? null : row.session.ticker;
+      proposalLanguage=row.session.language;
       title = row.session.title || `${ticker ?? 'Portfolio'} · Research discussion`; sourceKey = `council:${row.session.id}`;
       fields = { summary: row.report.summary, dissent: row.report.dissent, nextReviewCondition: row.report.nextReviewCondition,
         evidence: row.report.evidence, researchStance: row.report.researchStance, thesisCandidates: row.report.thesisCandidates };
       snapshot = { businessDate:row.session.checkpoint?.simple?.contextDate??businessDate(row.report.createdAt,timezone),generatedAt:row.report.createdAt.toISOString(),evidence: row.report.evidence, inputRevision: row.report.revision, sessionId: row.session.id,
         scene: row.session.scene, subject: row.session.subject, period: row.session.period, references: row.session.references,
         resolvedReferences: row.session.resolvedReferences, parentSessionId: row.session.parentSessionId,
-        parentMessageId: row.session.parentMessageId, inheritedContext: row.session.inheritedContext, continuationSummary: row.session.continuationSummary };
+        parentMessageId: row.session.parentMessageId, inheritedContext: row.session.inheritedContext, continuationSummary: row.session.continuationSummary,
+        ...(row.report.coverage?.executionPlan?{executionPlan:row.report.coverage.executionPlan}:{}),
+        ...(row.report.coverage?.executionPlanError?{executionPlanError:row.report.coverage.executionPlanError}:{}) };
     }
     const sections = sectionsFromRecord(fields);
+    if(snapshot?.executionPlan)sections.push({id:REPORT_EXECUTION_SECTION_ID,title:'执行策略草案 / Execution strategy proposal',content:renderReportExecutionPlan(snapshot.executionPlan,proposalLanguage)});
+    else if(snapshot?.executionPlanError)sections.push({id:REPORT_EXECUTION_SECTION_ID,title:'执行策略草案 / Execution strategy proposal',content:snapshot.executionPlanError==='invalid'?'本次策略参数未通过校验，尚无可执行方案。请补充条件后重新生成研究。 / Strategy parameters failed validation; no executable proposal is available.':'本次报告未返回结构化执行策略，尚无可执行方案。可更新分析补齐。 / This report did not return a structured execution proposal. Update the analysis to obtain one.'});
     if (!sections.length) throw new BadRequestException('REPORT_EMPTY_SOURCE');
     return { input: { title, kind: source.type, ticker, content: sections.map(s => `## ${s.title}\n\n${s.content}`).join('\n\n'), sections }, sourceKey, snapshot };
   }
@@ -406,10 +412,12 @@ export class ResearchDocumentsService {
       if (parent.revokedAt) throw new ConflictException('REPORT_REVOKED');
       const [document] = await tx.select().from(researchDocuments).where(and(eq(researchDocuments.owner, owner), eq(researchDocuments.id, draft.reportId))).for('update');
       if (document.latestVersionId !== parent.id) throw new ConflictException('REPORT_BASE_CHANGED_CREATE_BRANCH');
+      // A manual report edit is new prose, not a fresh validated AI execution proposal.
+      const {executionPlan:_plan,executionPlanError:_planError,...revisionSnapshot}=parent.snapshot??{};
       const version = await this.submitInTransaction(tx, owner, { idempotencyKey: `draft:${id}`, reportId: draft.reportId,
         title: draft.title, kind: parent.kind, ticker: parent.ticker, content: draft.content, sections: draft.sections,
         parentVersionId: parent.id, changeReason: draft.changeReason, dataAsOf: parent.dataAsOf?.toISOString() ?? null,
-        availableAt: new Date().toISOString(), snapshot: { ...parent.snapshot, reportReferences: [{ versionId: parent.id }, ...(draft.sourceReferences ?? [])] }, source: parent.source });
+        availableAt: new Date().toISOString(), snapshot: { ...revisionSnapshot, reportReferences: [{ versionId: parent.id }, ...(draft.sourceReferences ?? [])] }, source: parent.source });
       await tx.update(researchRevisionDrafts).set({ publishedVersionId: version.id }).where(and(eq(researchRevisionDrafts.owner, owner), eq(researchRevisionDrafts.id, id)));
       return version;
     });
