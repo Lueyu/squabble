@@ -86,7 +86,7 @@ Override `SERVER_PORT=3000` and `CLIENT_DEV_PORT=8080` in `.env.local` if needed
 
 Set `SQUABBLE_SIMPLE_EXPERIENCE=true` on the server to use **Today**, **Research room** and **AI investment**. Today combines position value and confirmed cash, separating daily P&L, asset changes and external net flows. Missing prices, previous closes or FX keep known values visible with an explanation. Record trades and cash flows manually or import CSV, Excel and screenshots for review before posting.
 
-Initial analysis and the latest discussion appear side by side. Full reports remain available by date and source, including each round's report in its original conversation. Current public work steps expand during research and collapse afterward unless you opened them yourself. Reports render as readable text; retained known JSON formats can be reformatted without another AI call.
+Today shows the latest complete report, with earlier reports available through a quiet history link. Full reports remain available by date and source, including each round's report in its original conversation. Current public work steps expand during research and collapse afterward unless you opened them yourself. Reports render as readable text; retained known JSON formats can be reformatted without another AI call.
 
 Write your investment strategy in Today or add report findings to an editable draft. Saving a draft keeps the previous strategy running; review its execution explanation and choose **Apply to simulation** to switch it as a whole. Copy current positions and recorded cash into an independent paper account, optionally adding virtual cash. Missing trustworthy prices allow an observing ledger; simulation performance starts when a credible valuation is available.
 

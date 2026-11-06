@@ -108,3 +108,29 @@ test('report draft can explicitly set editable limits before creating a simulati
   assert.doesNotMatch(f.state.requests[0].args[0],/apply|prepare/);
  });
 });
+
+test('a new draft has an actionable review step and applies only after its prepared explanation is confirmed',async()=>{
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'});
+ const previous={window:global.window,document:global.document,act:global.IS_REACT_ACT_ENVIRONMENT};
+ global.window=dom.window;global.document=dom.window.document;global.IS_REACT_ACT_ENVIRONMENT=true;
+ const root=createRoot(document.getElementById('root'));
+ try{
+  const f=editorFixture(),Editor=f.load('pages/Today/InvestmentStrategyEditor.tsx').default;
+  const draft={...structuredClone(confirmed),id:'ready-draft',status:'draft',revision:1,preview:null,confirmedAt:null};
+  const prepared={...draft,revision:2,preview:{...structuredClone(confirmed.preview),revision:2,contentHash:'reviewed-hash'}};
+  f.state.responses=new Map([['/api/investment-strategies/ready-draft/prepare',prepared]]);
+  let closed=0;
+  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:draft,currentId:null,timezone:'Asia/Shanghai',investment:{account:{id:'paper'}},onChanged(){},onClose(){closed++;}}))));
+  const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent===text);
+  const review=button('Review execution details');assert.ok(review,'unprepared drafts expose the next step instead of a disabled apply button');assert.equal(review.disabled,false);
+  await React.act(async()=>review.click());
+  assert.equal(f.state.requests.length,1);assert.equal(f.state.requests[0].args[0],'/api/investment-strategies/ready-draft/prepare');
+  assert.equal(closed,0);assert.match(document.body.textContent,/Frozen execution authority/);
+  const apply=button('Review and apply to simulation');assert.ok(apply);assert.equal(apply.disabled,false);
+  await React.act(async()=>apply.click());
+  assert.equal(f.state.requests.length,2);assert.equal(f.state.requests[1].args[0],'/api/ai-investment/apply-strategy');
+  assert.equal(f.state.requests[1].args[1].expectedRevision,2);assert.equal(f.state.requests[1].args[1].previewHash,'reviewed-hash');assert.equal(closed,1);
+ }finally{
+  await React.act(async()=>root.unmount());dom.window.close();global.window=previous.window;global.document=previous.document;global.IS_REACT_ACT_ENVIRONMENT=previous.act;
+ }
+});

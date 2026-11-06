@@ -44,10 +44,11 @@ test('analysis exposes saved report history with date and topic filters',()=>{
   const html=render(load('pages/Analysis/SimpleAnalysisPage.tsx').default);
   assert.match(html,/Report history/);assert.match(html,/Report topic/);assert.match(html,/Report date/);
 });
-test('Today has distinct initial and discussion panels with exact report references',()=>{
+test('the Today report panel names the latest report and keeps its exact discussion reference',()=>{
   const Panel=load('pages/Today/CurrentAnalysisPanel.tsx').default;
   const view={documentId:'immutable',topicKey:'portfolio',dateKey:'2026-11-06',content:'Saved finding',summary:'Saved finding',state:'ready',researchLevel:'ai'};
-  const initial=render(Panel,{view,topicKey:'portfolio',variant:'initial'}),discussion=render(Panel,{view,topicKey:'portfolio',variant:'discussion'});
-  assert.match(initial,/Today’s initial analysis/);assert.match(discussion,/Latest portfolio discussion/);
-  assert.doesNotMatch(discussion,/Update analysis/);assert.match(initial,/Report history/);
+  const html=render(Panel,{view,topicKey:'portfolio',primary:true});
+  assert.match(html,/Latest portfolio report/);assert.match(html,/referenceVersionId=immutable/);
+  assert.match(html,/Update analysis/);assert.match(html,/href="\/analysis#report-history"/);
+  assert.doesNotMatch(html,/initial analysis|Latest portfolio discussion/);
 });

@@ -197,20 +197,6 @@
   color: var(--muted-foreground);
 }
 
-.channel-empty-friends span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 39px;
-  border-radius: 14px;
-  background: color-mix(in srgb, #c98555 12%, var(--card));
-  color: #b37a4b;
-  transform: rotate(-9deg);
-  font-size: 15px;
-  font-weight: 650;
-}
-
 .channel-episode-heading > span:first-child {
   border-radius: 20px;
   background: var(--muted);
@@ -247,23 +233,11 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 11px;
-  font-size: 12px;
-  font-weight: 700;
-  background: color-mix(in srgb, var(--primary) 13%, var(--card));
-  color: var(--primary);
-  transform: rotate(-4deg);
 }
 
-.channel-speaker-laozhou .channel-avatar {
-  background: color-mix(in srgb, #c98555 15%, var(--card));
-  color: #b37a4b;
-}
-
-.channel-speaker-xiaoqi .channel-avatar {
-  background: color-mix(in srgb, #609baf 16%, var(--card));
-  color: #5b8b9c;
-  transform: rotate(4deg);
+.channel-avatar > .council-avatar {
+  width: 100%;
+  height: 100%;
 }
 
 .channel-line {
@@ -453,8 +427,6 @@
 .channel-bubble-tap .channel-avatar {
   width: 23px;
   height: 23px;
-  border-radius: 8px;
-  font-size: 10px;
 }
 
 .channel-bubble-tap header {
@@ -608,17 +580,20 @@
   margin-bottom: 6px;
 }
 
-.channel-empty-friends span:nth-child(2) {
-  background: color-mix(in srgb, var(--primary) 15%, var(--card));
-  color: var(--primary);
-  transform: rotate(2deg);
-  height: 46px;
+.channel-empty-friends > .channel-avatar {
+  width: 42px;
+  height: 42px;
+  transform: rotate(-6deg);
 }
 
-.channel-empty-friends span:nth-child(3) {
-  background: color-mix(in srgb, #609baf 15%, var(--card));
-  color: #5b8b9c;
-  transform: rotate(9deg);
+.channel-empty-friends > .channel-avatar:nth-child(2) {
+  transform: rotate(2deg);
+  width: 52px;
+  height: 52px;
+}
+
+.channel-empty-friends > .channel-avatar:nth-child(3) {
+  transform: rotate(6deg);
 }
 
 .channel-inline-link {
