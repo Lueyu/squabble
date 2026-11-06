@@ -208,7 +208,8 @@
       ],
       "diagrams": [
         "system-overview"
-      ]
+      ],
+      "verifiedCommit": "2042445427d9dbd12ee8bd53c7cf31b2fac4dde6"
     },
     {
       "id": "shared-contracts",
