@@ -52,7 +52,7 @@ import type { ReportReference, ResolvedReportReference } from '../../../shared/r
 import type { CouncilMessageInput, CouncilMessage, CouncilReviewContext, ForkCouncilSession, CouncilRevisionRequest } from '../../../shared/council.interface';
 import { normalizeThread, freezeThreadContext, threadPromptContext, isPortfolioThread, hasThreadContext, hasDeliberation } from './council.thread';
 import { readableResearch } from '../../../shared/research-reading';
-import { dailyResearchPrompt, dailyResearchTurns, renderDailyReverseCheck } from './council.daily';
+import { dailyResearchPrompt, dailyResearchTurns, renderDailyReverseCheck, reportExecutionEvidence } from './council.daily';
 import { parseReportExecutionPlan } from '../paper-trading/report-execution-plan';
 
 type SessionRow = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
@@ -804,7 +804,7 @@ export class CouncilService implements OnModuleInit {
         const recorded = await this.recordTurn(userId, row, turn, claimId, output);
         claimId = null;
         if (!recorded) continue;
-        if (output.sources?.length && row.checkpoint.simple?.stage !== 'independent') row = { ...row, evidenceSnapshot: [...row.evidenceSnapshot, ...output.sources].slice(-60) };
+        if (output.sources?.length && row.checkpoint.simple?.stage !== 'independent') row = { ...row, evidenceSnapshot: reportExecutionEvidence([...row.evidenceSnapshot, ...output.sources],output.contribution.executionPlan?.evidenceIds) };
         if (turn.phase === 'summary' && output.contribution.opinion) {
           const opinion = output.contribution.opinion;
           if (row.candidate && opinion.decision === 'approve' && criticalEvidenceGaps(row.evidenceSnapshot)
@@ -1037,7 +1037,7 @@ export class CouncilService implements OnModuleInit {
             supplementRounds: checkpoint.simple.supplementRounds + (supplement ? 1 : 0) } };
       }
       await tx.update(councilSessions).set({ updatedAt: new Date(),
-        ...(output.sources?.length ? { evidenceSnapshot: [...current.evidenceSnapshot, ...output.sources].slice(-60) } : {}),
+        ...(output.sources?.length ? { evidenceSnapshot: reportExecutionEvidence([...current.evidenceSnapshot, ...output.sources],contribution.executionPlan?.evidenceIds) } : {}),
         checkpoint: nextCheckpoint })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return true;

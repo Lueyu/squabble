@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseContribution } from './council.dialogue';
-import { dailyResearchPrompt } from './council.daily';
+import { dailyResearchPrompt, reportExecutionEvidence } from './council.daily';
+import type { CouncilEvidence } from './council.rules';
+import { agentContribution } from './council.native';
 
 const turn={memberId:'summary',phase:'summary' as const};
 function input(){
@@ -28,4 +30,20 @@ test('invalid proposal cannot discard the report or become executable authority'
 test('daily summary explicitly requests proposed parameters and a no-trade alternative',()=>{
  const prompt=dailyResearchPrompt('summary');
  assert.match(prompt,/executionPlan/);assert.match(prompt,/numericEvidence/);assert.match(prompt,/noTradeReason/);assert.match(prompt,/semanticAuthorized/);
+});
+test('native proposals bind newly discovered source aliases to their stored evidence identifiers',()=>{
+ const value={...input(),evidenceIds:[],sources:[{id:'agent-filing',title:'Fictional original filing',url:'https://example.test/filing',content:'Fictional source excerpt.'}]};
+ value.executionPlan.evidenceIds=['agent-filing'];
+ const result=agentContribution({data:value,text:''},[],turn,null);
+ assert.equal(result.contribution.opinion?.executionPlan?.readiness,'ready');
+ assert.deepEqual(result.contribution.executionPlan?.evidenceIds,[result.sources[0].id]);
+ assert.notEqual(result.sources[0].id,'agent-filing');
+ value.executionPlan.evidenceIds=['invented-filing'];
+ assert.equal(agentContribution({data:value,text:''},[],turn,null).contribution.executionPlanError,'invalid');
+});
+test('new native sources cannot evict the supplied evidence cited by the final strategy',()=>{
+ const evidence=Array.from({length:72},(_,index)=>({id:`source-${index}`} as CouncilEvidence));
+ const kept=reportExecutionEvidence(evidence,['source-0','source-71']);
+ assert.equal(kept.length,60);assert.ok(kept.some(e=>e.id==='source-0'));assert.ok(kept.some(e=>e.id==='source-71'));
+ assert.deepEqual(reportExecutionEvidence(evidence),evidence.slice(-60));
 });

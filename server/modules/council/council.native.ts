@@ -57,12 +57,14 @@ export function agentContribution(result: { data?: unknown; text: string }, evid
   const cited = Array.isArray(data.evidenceIds) ? data.evidenceIds.map(id=>aliases.get(id)??id) as string[] : [];
   const allIds = [...cited, ...sources.map((source) => source.id)].slice(0, 20);
   const contribution = parseContribution({ ...data, ...(!value ? { content: result.text } : {}),
+    ...(data.executionPlan&&typeof data.executionPlan==='object'&&!Array.isArray(data.executionPlan)?{executionPlan:{...(data.executionPlan as Record<string,unknown>),
+      evidenceIds:Array.isArray((data.executionPlan as Record<string,unknown>).evidenceIds)?((data.executionPlan as Record<string,unknown>).evidenceIds as unknown[]).map(id=>typeof id==='string'?aliases.get(id)??id:id):(data.executionPlan as Record<string,unknown>).evidenceIds}}:{}),
     ...(data.reverseCheck&&typeof data.reverseCheck==='object'?{reverseCheck:{...(data.reverseCheck as Record<string,unknown>),evidenceIds:Array.isArray((data.reverseCheck as Record<string,unknown>).evidenceIds)?((data.reverseCheck as Record<string,unknown>).evidenceIds as string[]).map(id=>aliases.get(id)??id):[]}}:{}),
     ...(Array.isArray(data.claims) ? { claims: data.claims.map(raw => raw && typeof raw === 'object' ? { ...raw,
       evidenceIds: Array.isArray(raw.evidenceIds) ? raw.evidenceIds.map(id => aliases.get(id) ?? id) : raw.evidenceIds } : raw) } : {}),
     evidenceIds: allIds, researchRequests: [], decision: ['approve', 'wait', 'reject'].includes(String(data.decision)) ? data.decision : 'wait',
     dissent: Array.isArray(data.dissent) ? data.dissent : [], nextReviewCondition: typeof data.nextReviewCondition === 'string' ? data.nextReviewCondition : '' },
-  new Set([...known, ...allIds]), turn, candidate);
+  new Set([...known, ...allIds, ...sources.map(source=>source.id)]), turn, candidate);
   return { contribution, sources };
 }
 

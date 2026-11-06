@@ -1,6 +1,14 @@
 import type { DailyReverseCheck } from '../../../shared/council.interface';
 import type { DialogueTurn } from './council.types';
 import type { CouncilMember } from '../../../shared/council.interface';
+import type { CouncilEvidence } from './council.rules';
+
+/** Keep cited proposal sources inside the existing bounded report evidence inventory. */
+export function reportExecutionEvidence(evidence:CouncilEvidence[],requiredIds:readonly string[]=[]):CouncilEvidence[]{
+  if(!requiredIds.length)return evidence.slice(-60);
+  const required=new Set(requiredIds);
+  return [...evidence.filter(item=>!required.has(item.id)),...evidence.filter(item=>required.has(item.id))].slice(-60);
+}
 
 export function dailyResearchMembers(members:CouncilMember[]):CouncilMember[]{
   const scopes=['Financial statements, cash conversion and accounting periods','Business events, original announcements and contradictory sources','Valuation sensitivities and whole-portfolio concentration'];
