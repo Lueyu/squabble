@@ -56,7 +56,7 @@
       "diagrams": [
         "asset-ledger"
       ],
-      "verifiedCommit": "b8b9069fdbcb60bb6f5a0d256565813bfda4f131"
+      "verifiedCommit": "181536f1edd43c0ebd8bd690ab7fddbfea5d6605"
     },
     {
       "id": "daily-research",
@@ -90,7 +90,7 @@
       "diagrams": [
         "research-report"
       ],
-      "verifiedCommit": "b8b9069fdbcb60bb6f5a0d256565813bfda4f131"
+      "verifiedCommit": "181536f1edd43c0ebd8bd690ab7fddbfea5d6605"
     },
     {
       "id": "strategy-simulation",
@@ -148,7 +148,7 @@
       "diagrams": [
         "channel-publication"
       ],
-      "verifiedCommit": "b8b9069fdbcb60bb6f5a0d256565813bfda4f131"
+      "verifiedCommit": "181536f1edd43c0ebd8bd690ab7fddbfea5d6605"
     },
     {
       "id": "agents-and-evidence",
@@ -246,7 +246,8 @@
         "strategy-execution",
         "channel-publication",
         "asset-ledger"
-      ]
+      ],
+      "verifiedCommit": "181536f1edd43c0ebd8bd690ab7fddbfea5d6605"
     }
   ],
   "reviewNotes": {
