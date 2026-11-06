@@ -610,6 +610,18 @@ body {
   overscroll-behavior-x: contain;
 }
 
+.research-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.research-table-scroll :is(th, td) {
+  min-width: 6rem;
+  max-width: 28rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .research-room :where(a, p, li, code),
 .research-prose :where(a, p, li, code) {
   overflow-wrap: anywhere;

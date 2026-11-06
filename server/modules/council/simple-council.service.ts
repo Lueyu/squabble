@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional, type OnApplicationBootstrap } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -49,11 +49,40 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 
 /** Product entry layer. Only this service chooses members and pins owner-validated context. */
 @Injectable()
-export class SimpleCouncilService {
+export class SimpleCouncilService implements OnApplicationBootstrap {
+  private readonly initializingReceipts=new Map<string,Promise<void>>();
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly council: CouncilService, private readonly llm: LlmService,
     @Optional() private readonly localAgents?: LocalAgentsService, @Optional() private readonly settings?: SettingsService,
     @Optional() private readonly documents?: ResearchDocumentsService) {}
+
+  /** Run after Council's module-init interruption sweep, never alongside it. */
+  async onApplicationBootstrap():Promise<void>{
+    const receipts=await this.db.select().from(councilSessions).where(sql`${councilSessions.checkpoint}->'simple'->>'initializing'='true'`);
+    for(const receipt of receipts){
+      const active=this.initializingReceipts.get(receipt.id);if(active){await active;continue;}
+      const job=(async()=>{
+        const [prefs]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,receipt.owner));
+        if(prefs?.enabled===false){await this.closeInitializingReceipt(receipt.owner,receipt.id,'研究已暂停，问题已保存。 / Research is paused; your question is saved.');return;}
+        if(receipt.status!=='idle'||receipt.revision!==1||receipt.checkpoint?.inflight||receipt.checkpoint?.remote||(receipt.checkpoint?.simple?.calls??0)>0){
+          await this.closeInitializingReceipt(receipt.owner,receipt.id,'问题已保留，请明确继续本讨论。 / Your question is saved. Resume this conversation explicitly.');return;
+        }
+        try{await this.initializeMembers(receipt.owner,receipt.id,await this.resolveMembers(receipt.owner));}
+        catch{await this.closeInitializingReceipt(receipt.owner,receipt.id,'股友配置检查未完成，请重新继续本讨论。 / Member configuration could not be checked. Resume this conversation.');}
+      })();
+      this.initializingReceipts.set(receipt.id,job);
+      try{await job;}finally{if(this.initializingReceipts.get(receipt.id)===job)this.initializingReceipts.delete(receipt.id);}
+    }
+  }
+
+  private async closeInitializingReceipt(owner:string,id:string,error:string):Promise<void>{
+    await this.db.transaction(async tx=>{
+      await lockMemoryOwner(tx,owner);const [row]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
+      if(!row?.checkpoint?.simple?.initializing)return;
+      await tx.update(councilSessions).set({checkpoint:{...row.checkpoint,simple:{...row.checkpoint.simple,initializing:false}},
+        status:row.status==='idle'?'paused':row.status,error:row.error??error,updatedAt:new Date()}).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id)));
+    });
+  }
 
   async create(owner: string, input: CreateResearchConversationInput, options: InternalOptions = {}): Promise<ResearchConversationResult> {
     const value = parse(createSchema, input);
@@ -194,6 +223,9 @@ export class SimpleCouncilService {
       await lockMemoryOwner(tx,owner);const [row]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
       if(!row?.checkpoint?.simple?.initializing)return false;
       if(row.status!=='idle'||row.revision!==1){await tx.update(councilSessions).set({checkpoint:{...row.checkpoint,simple:{...row.checkpoint.simple,initializing:false}}}).where(eq(councilSessions.id,id));return false;}
+      const [prefs]=await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
+      if(prefs?.enabled===false){await tx.update(councilSessions).set({status:'paused',error:'研究已暂停，问题已保存。 / Research is paused; your question is saved.',
+        checkpoint:{...row.checkpoint,simple:{...row.checkpoint.simple,initializing:false}},updatedAt:new Date()}).where(eq(councilSessions.id,id));return false;}
       const checkpoint=newCheckpoint(resolved.members,{independent:true});
       checkpoint.simple={...checkpoint.simple!,...row.checkpoint.simple,stage:resolved.members.length?'independent':'waiting',executors:resolved.executors,initializing:false};
       await tx.update(councilSessions).set({checkpoint,profileSnapshot:{...row.profileSnapshot,council:{...row.profileSnapshot.council!,members:resolved.members}},
