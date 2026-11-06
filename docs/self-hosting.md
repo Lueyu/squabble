@@ -7,7 +7,9 @@ desktop app and a clean Docker Compose stack. There is no Squabble-operated
 hosted account or sync service. Neither path requires a model key for basic
 analysis, but public quotes and currency rates still require network access.
 See [privacy and outbound requests](privacy.md) before adding real holdings or
-provider keys.
+provider keys. These instructions cover trusted local/private installations;
+they do not establish a supported public-hosting service. Local workspace mode
+must not be exposed through a public bind, reverse proxy or tunnel.
 
 | Path | Requirements | Where data lives |
 |---|---|---|
@@ -128,8 +130,9 @@ not ready, run `docker compose logs --tail=100 app db`.
 
 The root Compose project defaults to `squabble-local`. An existing
 `COMPOSE_PROJECT_NAME` in your shell or `.env`, or a `-p` option, overrides that name.
-Before upgrading an old demo, check `docker compose config` shows
-`name: squabble-local`; if it does not, unset the override or use
+Before upgrading an old demo, use `docker compose ls` and `docker compose ps`
+to verify the intended project. Avoid sharing expanded Compose configuration:
+it may contain secrets. If the project name differs, unset the override or use
 `-p squabble-local` on **every** clean-stack command. Do not use `squabble`
 for the clean stack, because that is the old demo project. Keep using this project
 name and the same repository path for maintenance so Docker finds the existing
@@ -232,22 +235,32 @@ Run these commands from the repository folder:
 | Check containers | `docker compose ps` |
 | Read recent logs | `docker compose logs --tail=100 app db` |
 
-Back up before upgrading. The database dump alone is insufficient to decrypt
-saved provider keys; copy the generated secret files as well. These commands
-work in PowerShell and macOS/Linux Terminal:
+Back up before upgrading. Preserve the database, its matching generated secret
+files, private environment/configuration and durable agent pairing/task state
+as one recovery set. A database dump alone cannot decrypt saved provider keys.
+Wait for ongoing research to finish and stop the companion before a maintenance
+window; interrupted tasks must not be replayed. The following commands stop the
+app while leaving PostgreSQL running for a logical dump. Use a new private
+backup directory each time and the instance's original Compose project/options.
+These commands work in PowerShell and macOS/Linux Terminal:
 
 ```sh
 mkdir backups
+docker compose stop app
 docker compose exec -T db pg_dump -U postgres -d portfolio -Fc -f /tmp/squabble-backup.dump
 docker compose cp db:/tmp/squabble-backup.dump ./backups/squabble-backup.dump
 docker compose cp app:/app/.secrets/settings.key ./backups/settings.key
 docker compose cp app:/app/.secrets/jwt.key ./backups/jwt.key
+docker compose cp app:/app/.local-agents ./backups/local-agents
 git rev-parse HEAD
 ```
 
-Change the dump destination to a new dated filename on subsequent backups so
-you never overwrite an earlier copy. Retain the printed Git revision and copy
-the backup and keys to protected storage outside this computer. If you set
+Use a new dated directory for the entire recovery set on subsequent backups so
+you never overwrite earlier database, key or task-state copies. Retain the Git
+revision, current image digest and Compose project/config locations; Git revision
+alone does not identify a prebuilt image. Keep existing `update-backups` storage
+when moving the installation. Copy the recovery set to protected storage outside
+this computer. If you set
 `JWT_SECRET` or `SETTINGS_ENCRYPTION_KEY` explicitly in an untracked `.env`,
 back up those values instead; the corresponding file may not exist. The
 `backups/` folder is ignored by Git.
@@ -272,16 +285,34 @@ After a backup, update with:
 
 ```sh
 git pull --ff-only
+docker compose pull app
 docker compose up -d
 docker compose ps
 ```
 
-Recheck [health](http://localhost:3000/api/health), sign in and run a basic
-analysis. The app applies additive SQL migrations `03` through `15` at startup
-to an existing database. Fresh databases receive the base schema on first
-initialization. Do not remove Docker volumes during an update. If Git reports
-local changes, resolve them before pulling; if startup fails, read both app
-and database logs before making another change.
+This explicitly pulls the prebuilt app image. Source builds instead use the same
+`-f docker-compose.yml -f docker-compose.source.yml` options and `up -d --build`.
+If only making a backup, resume the app with `docker compose start app` after
+verification and reopen the companion when ready.
+
+Recheck [health](http://localhost:3000/api/health), authentication mode and
+existing saved data without starting research or confirming a strategy.
+Opening an automatic research entry can start work, so use read-only views.
+Startup applies the explicit SQL registry in
+[`database.provider.ts`](../server/common/platform/database.provider.ts),
+currently ending with `43_channel_workbench.sql`; numbering is not contiguous.
+Fresh databases receive the consolidated `01_schema.sql` first. Never apply
+that base schema to a populated installation or infer migration state from a
+filename alone. Do not remove Docker volumes during an update. Resolve local
+Git changes before pulling; inspect app/database logs if startup fails.
+
+For rollback, keep the previous image/release and all current volumes. Reuse
+the migrated database with an older app only after checking compatibility.
+Otherwise restore the matched database, keys, configuration and agent state
+to an isolated target and verify it before cutover. Preserve failed-state data
+and do not replay interrupted tasks. For source release discovery, Windows
+process identity, backup verification and a detailed rollback sequence, see the
+[private deployment runbook](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md).
 
 ### 🔧 Troubleshooting
 

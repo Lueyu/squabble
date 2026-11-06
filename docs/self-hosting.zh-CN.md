@@ -2,7 +2,7 @@
 
 [English](self-hosting.md) · [返回首页](../README.zh-CN.md) · [隐私说明](privacy.zh-CN.md)
 
-吵股支持两种本地安装方式：独立的 Windows／macOS 桌面应用和干净的 Docker Compose 应用。项目不运营托管账号或同步服务。两种方式的基础分析都不要求模型 Key，但公共行情和汇率仍需联网。录入真实持仓或供应商密钥前，请阅读[隐私与出网说明](privacy.zh-CN.md)。
+吵股支持两种本地安装方式：独立的 Windows／macOS 桌面应用和干净的 Docker Compose 应用。项目不运营托管账号或同步服务。两种方式的基础分析都不要求模型 Key，但公共行情和汇率仍需联网。录入真实持仓或供应商密钥前，请阅读[隐私与出网说明](privacy.zh-CN.md)。本指南面向可信任的本机／私有安装，不承诺公共托管能力；本地工作区模式不得通过公网监听、反向代理或隧道暴露。
 
 | 方式 | 需要准备 | 数据位置 |
 |---|---|---|
@@ -63,12 +63,13 @@ docker compose ps
 
 首次启动会从 GitHub Container Registry 下载预构建应用镜像，可能需要几分钟。打开 [http://localhost:3000](http://localhost:3000)。干净安装使用空白数据库，没有演示账号，并自动生成稳定的 JWT 和设置加密密钥。创建账号、离线保存一次性恢复码，然后添加持仓或导入 CSV。首个账号创建后，注册入口会自动关闭。应用只绑定本机的 `127.0.0.1:3000`，PostgreSQL 不对主机发布端口。[健康检查](http://localhost:3000/api/health)应返回 `{"status":"ok"}`；页面尚未就绪时运行 `docker compose logs --tail=100 app db`。
 
-根目录 Compose 的默认项目名为 `squabble-local`。终端或 `.env` 中已有的 `COMPOSE_PROJECT_NAME`，以及 `-p` 参数，都会覆盖该名称。旧演示升级前请运行 `docker compose config`，确认输出是 `name: squabble-local`；否则先清除覆盖值，或在**每条**干净实例命令中显式使用 `-p squabble-local`。不要把干净实例命名为旧演示项目 `squabble`，以免碰到旧数据卷。后续维护请保持相同的项目名与仓库路径，以便 Docker 找到已有卷。不要用 `docker compose down -v` 排查或升级；它会删除数据和自动生成的密钥。
+根目录 Compose 的默认项目名为 `squabble-local`。终端或 `.env` 中已有的 `COMPOSE_PROJECT_NAME`，以及 `-p` 参数，都会覆盖该名称。旧演示升级前请用 `docker compose ls` 和 `docker compose ps` 核对目标项目；展开的 Compose 配置可能包含密钥，不要直接分享到聊天或问题单。项目名不符时先清除覆盖值，或在**每条**干净实例命令中显式使用 `-p squabble-local`。不要把干净实例命名为旧演示项目 `squabble`，以免碰到旧数据卷。后续维护请保持相同的项目名与仓库路径，以便 Docker 找到已有卷。不要用 `docker compose down -v` 排查或升级；它会删除数据和自动生成的密钥。
 
 | 数据 | 默认 Docker 卷或容器路径 |
 |---|---|
 | 账号、持仓、报告及加密后的供应商凭证 | `squabble-local_dpa-data`（`db` 容器内 `/var/lib/postgresql/data`） |
 | 自动生成的 JWT 与设置密钥 | `squabble-local_settings-secrets`（`app` 容器内 `/app/.secrets`） |
+| 本地 Agent 配对与任务状态 | `squabble-local_local-agents-data`（`app` 容器内 `/app/.local-agents`） |
 | 点击更新前自动创建的备份 | `squabble-local_update-backups`（`app` 容器内 `/app/.backups`） |
 
 默认网页应用使用预构建镜像。首次升级旧版源码安装时，在原仓库目录执行 `git pull --ff-only` 和 `docker compose up -d`；保持原来的 Compose 项目名，原有数据库与密钥卷会继续使用。此后，首个注册账号可在“设置 → 软件更新”查看新版本并点击“立即更新”。应用先保存 PostgreSQL 转储和密钥，再由仅在 Docker 内部可访问的更新组件替换应用容器；数据库容器不会被替换。更新组件不会定时检查或自动安装；平常执行 `docker compose up -d` 也不会自行拉取更新。升级后检查页面是否显示新版本，以及持仓和登录是否正常。
@@ -104,18 +105,20 @@ docker compose -f docker-compose.demo.yml up -d --build
 | 查看容器状态 | `docker compose ps` |
 | 查看近期日志 | `docker compose logs --tail=100 app db` |
 
-升级前先备份。单独的数据库转储不足以解密已保存的供应商 Key，还要复制自动生成的密钥文件。以下命令适用于 PowerShell 和 macOS／Linux 终端：
+升级前先备份。数据库、匹配的密钥、私有环境／启动配置和 Agent 配对／任务持久状态必须组成同一套恢复集。数据库转储本身无法解密供应商 Key。先等待研究任务结束，在维护窗口停止伴随程序；不得重放已中断任务。以下命令停止应用，保留 PostgreSQL 运行以制作逻辑转储。每次使用新的私有备份目录，并沿用该实例原有的 Compose 项目名与参数。命令适用于 PowerShell 和 macOS／Linux 终端：
 
 ```sh
 mkdir backups
+docker compose stop app
 docker compose exec -T db pg_dump -U postgres -d portfolio -Fc -f /tmp/squabble-backup.dump
 docker compose cp db:/tmp/squabble-backup.dump ./backups/squabble-backup.dump
 docker compose cp app:/app/.secrets/settings.key ./backups/settings.key
 docker compose cp app:/app/.secrets/jwt.key ./backups/jwt.key
+docker compose cp app:/app/.local-agents ./backups/local-agents
 git rev-parse HEAD
 ```
 
-以后备份时，将转储目标文件名改为新的日期文件名，避免覆盖旧备份。保留输出的 Git 修订号，并把备份和密钥复制到这台电脑之外的受保护位置。如果你在未跟踪的 `.env` 中显式设置 `JWT_SECRET` 或 `SETTINGS_ENCRYPTION_KEY`，应改为安全备份对应的值；相应密钥文件可能不存在。`backups/` 已被 Git 忽略。
+后续备份请为整套恢复集使用新的日期目录，避免覆盖旧数据库、密钥或任务状态。记录 Git 修订号、实际镜像摘要和 Compose 项目／配置位置；Git 修订号不能单独代表预构建镜像版本。迁移安装位置时同时保留 `update-backups` 存储，把恢复集复制到本机之外的受保护位置。如果在未跟踪的 `.env` 中显式设置 `JWT_SECRET` 或 `SETTINGS_ENCRYPTION_KEY`，还应安全备份对应的值；相应密钥文件可能不存在。`backups/` 已被 Git 忽略。
 
 可以在同一容器内创建独立的测试数据库，检查转储而不覆盖正在使用的 `portfolio`。若使用了带日期的文件名，请相应修改第一个命令：
 
@@ -132,11 +135,16 @@ docker compose exec -T db psql -U postgres -d portfolio_restore_check -c "SELECT
 
 ```sh
 git pull --ff-only
+docker compose pull app
 docker compose up -d
 docker compose ps
 ```
 
-重新检查[健康状态](http://localhost:3000/api/health)、登录和一份基础分析。应用启动时会对现有数据库执行 `03` 至 `14` 号增量 SQL；全新数据库首次初始化时会加载基础结构。升级时不要删除 Docker 卷。Git 提示本地修改时，先处理再拉取；应用启动失败时先查看应用与数据库日志。
+这里显式拉取预构建镜像；源码构建需沿用 `-f docker-compose.yml -f docker-compose.source.yml` 和 `up -d --build`。若仅进行备份，验证后可用 `docker compose start app` 恢复应用，再按需打开伴随程序。
+
+重新检查[健康状态](http://localhost:3000/api/health)、认证模式和已有保存数据，不要为验收启动研究或确认策略。部分研究入口在打开时自动派发任务，因此使用只读视图。启动迁移以 [`database.provider.ts`](../server/common/platform/database.provider.ts) 的显式列表为准，目前末项为 `43_channel_workbench.sql`，编号并不连续。全新数据库先加载汇总后的 `01_schema.sql`；不得把基础结构脚本应用到已有数据，也不能凭最大文件编号认定数据库迁移状态。升级时不要删除 Docker 卷。Git 提示本地修改时，先处理再拉取；应用启动失败时先查看应用与数据库日志。
+
+回滚时保留旧镜像／发布目录和当前所有卷。只有确认兼容性后，才能让旧应用连接已经迁移的数据库；否则把匹配的数据库、密钥、配置和 Agent 状态恢复到独立目标，验证后再切换。保留失败时的数据，不要重放中断的任务。源码实例发现、Windows 进程身份核对、恢复演练与回滚顺序见[私有部署操作指南](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md)。
 
 ### 常见问题
 

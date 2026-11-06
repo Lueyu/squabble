@@ -1,0 +1,248 @@
+{
+  "schemaVersion": 1,
+  "repository": "Lueyu/squabble",
+  "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
+  "verifiedAt": "2026-11-07",
+  "areas": [
+    {
+      "id": "application",
+      "paths": [
+        "client/src/app.tsx",
+        "client/src/components/Layout",
+        "server/main.ts",
+        "server/app.module.ts",
+        "server/modules/auth/"
+      ],
+      "entrypoints": [
+        "client/src/app.tsx",
+        "server/main.ts",
+        "server/app.module.ts",
+        "server/modules/auth/auth.module.ts"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/development-and-tests.md"
+      ],
+      "diagrams": [
+        "system-overview"
+      ]
+    },
+    {
+      "id": "portfolio-ledger",
+      "paths": [
+        "server/modules/experience/portfolio-metrics",
+        "server/modules/experience/today",
+        "server/modules/import/",
+        "server/modules/transactions/",
+        "server/modules/holdings/",
+        "server/modules/cash-accounts/",
+        "client/src/pages/Import/",
+        "client/src/pages/Holdings/",
+        "server/database/asset-ledger.schema.ts"
+      ],
+      "entrypoints": [
+        "server/modules/experience/today.service.ts",
+        "server/modules/experience/portfolio-metrics.service.ts",
+        "server/modules/import/import-batches.service.ts",
+        "server/modules/import/transaction-imports.service.ts",
+        "server/modules/import/position-checkpoint.ts",
+        "server/modules/transactions/transactions.service.ts",
+        "server/database/asset-ledger.schema.ts"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md"
+      ],
+      "diagrams": [
+        "asset-ledger"
+      ]
+    },
+    {
+      "id": "daily-research",
+      "paths": [
+        "server/modules/council/",
+        "server/modules/experience/",
+        "server/modules/research-documents/",
+        "client/src/pages/Today/",
+        "client/src/pages/Analysis/",
+        "shared/report-execution-plan.interface.ts",
+        "shared/research-document.interface.ts"
+      ],
+      "entrypoints": [
+        "server/modules/experience/current-research.service.ts",
+        "server/modules/experience/daily-channel-research.service.ts",
+        "server/modules/council/council.daily.ts",
+        "server/modules/council/council.native.ts",
+        "server/modules/research-documents/research-documents.service.ts",
+        "shared/report-execution-plan.interface.ts",
+        "client/src/pages/Today/CurrentAnalysisPanel.tsx",
+        "client/src/components/ReportExecutionPlan.tsx"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md",
+        "references/development-and-tests.md"
+      ],
+      "diagrams": [
+        "research-report"
+      ]
+    },
+    {
+      "id": "strategy-simulation",
+      "paths": [
+        "server/modules/paper-trading/",
+        "server/database/user-investment-strategies.schema.ts",
+        "server/database/user-strategy-runtime.schema.ts",
+        "shared/user-investment-strategy.interface.ts",
+        "client/src/pages/Paper/",
+        "client/src/pages/Today/InvestmentStrategy"
+      ],
+      "entrypoints": [
+        "server/modules/paper-trading/report-execution-plan.ts",
+        "server/modules/paper-trading/user-investment-strategy.service.ts",
+        "server/modules/paper-trading/user-investment-strategy.rules.ts",
+        "server/modules/paper-trading/investment-policy.service.ts",
+        "server/modules/paper-trading/user-strategy-runtime.ts",
+        "server/modules/paper-trading/strategy-route.rules.ts",
+        "server/modules/paper-trading/strategy.scheduler.ts",
+        "server/modules/paper-trading/report-execution-runtime.integration.spec.ts",
+        "client/src/pages/Today/InvestmentStrategyEditor.tsx"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md",
+        "references/development-and-tests.md"
+      ],
+      "diagrams": [
+        "strategy-execution"
+      ]
+    },
+    {
+      "id": "channel",
+      "paths": [
+        "server/modules/channel/",
+        "shared/channel.interface.ts",
+        "server/database/channel.schema.ts",
+        "client/src/pages/Channel/",
+        "client/src/pages/Council/"
+      ],
+      "entrypoints": [
+        "client/src/pages/Council/SimpleCouncilPage.tsx",
+        "client/src/pages/Channel/ChannelWorkbench.tsx",
+        "server/modules/channel/channel-contract.ts",
+        "server/modules/channel/template-registry.ts",
+        "server/modules/channel/channel-mood-validation.ts",
+        "server/modules/channel/channel-runtime.ts",
+        "server/modules/channel/channel.service.ts",
+        "server/modules/channel/channel-contract.spec.ts"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md"
+      ],
+      "diagrams": [
+        "channel-publication"
+      ]
+    },
+    {
+      "id": "agents-and-evidence",
+      "paths": [
+        "server/local-agents/",
+        "server/modules/local-agents/",
+        "server/modules/research-memory/",
+        "server/modules/research-tools/",
+        "server/modules/research-skills/",
+        "server/modules/multi-agent/",
+        "shared/local-agent",
+        "agent/"
+      ],
+      "entrypoints": [
+        "server/local-agents/native.ts",
+        "server/modules/local-agents/local-agents.module.ts",
+        "shared/local-agent-catalog.ts",
+        "server/modules/research-memory/research-memory.service.ts",
+        "server/modules/research-tools/research-tools.service.ts",
+        "server/modules/multi-agent/multi-agent.module.ts",
+        "agent/pyproject.toml"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md",
+        "references/development-and-tests.md"
+      ],
+      "diagrams": [
+        "system-overview",
+        "research-report"
+      ]
+    },
+    {
+      "id": "operations",
+      "paths": [
+        "server/common/platform/",
+        "server/database/",
+        "scripts/",
+        "package.json",
+        "package-lock.json",
+        "Dockerfile",
+        "docker-compose",
+        ".github/",
+        "desktop/",
+        ".agents/skills/squabble-contributor/scripts/"
+      ],
+      "entrypoints": [
+        "server/common/platform/database.provider.ts",
+        "scripts/db/01_schema.sql",
+        "scripts/db/sync-fresh-schema.cjs",
+        "scripts/dev.js",
+        "scripts/dev-processes.cjs",
+        "scripts/start-app.cjs",
+        "package.json",
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "docker-compose.yml"
+      ],
+      "references": [
+        "references/development-and-tests.md",
+        "references/deployment-and-recovery.md",
+        "references/maintenance.md"
+      ],
+      "diagrams": [
+        "system-overview"
+      ]
+    },
+    {
+      "id": "shared-contracts",
+      "paths": [
+        "shared/",
+        "client/src/api/",
+        "client/src/hooks/",
+        "client/src/utils/",
+        "client/src/components/"
+      ],
+      "entrypoints": [
+        "shared/investment-policy.interface.ts",
+        "shared/channel.interface.ts",
+        "shared/user-investment-strategy.interface.ts",
+        "client/src/api/ai-investment.ts",
+        "client/src/api/investment-strategies.ts"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md",
+        "references/development-and-tests.md"
+      ],
+      "diagrams": [
+        "system-overview",
+        "research-report",
+        "strategy-execution",
+        "channel-publication",
+        "asset-ledger"
+      ]
+    }
+  ],
+  "reviewNotes": {
+    "architecture": "All five current flows checked; diagrams updated against the recorded application baseline.",
+    "behavior": "This change updates development knowledge and tooling only; running application and ledgers are outside its mutation scope.",
+    "tooling": "Helper and CI integration source is verified separately from the unchanged application baseline."
+  }
+}

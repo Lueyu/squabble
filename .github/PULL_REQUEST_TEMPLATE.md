@@ -17,6 +17,7 @@
 - [ ] I added no secrets or personal data, including real holdings in demo data.
 - [ ] I updated Chinese and English UI text and docs where behavior changed.
 - [ ] I described how existing installations keep their data, if this changes storage or deployment.
+- [ ] I reviewed architecture and contributor-skill impact, updated affected diagrams/references, or explained why their structure remains accurate.
 
 Before merging: wait for all required CI checks, bring the PR up to date with
 `main`, resolve review conversations and follow the maintainer merge convention

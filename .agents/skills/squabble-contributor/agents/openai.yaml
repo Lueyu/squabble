@@ -1,0 +1,6 @@
+interface:
+  display_name: "Squabble 开发与维护"
+  short_description: "用于 Squabble 开发、测试、部署、故障排查与架构知识同步"
+  default_prompt: "使用 $squabble-contributor 接续 Squabble 开发，先读取相关知识并检查版本差异，再实施和验证本次改动。"
+policy:
+  allow_implicit_invocation: true

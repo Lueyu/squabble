@@ -39,7 +39,7 @@ Files: skill `SKILL.md`, `agents/openai.yaml`, `context-manifest.json`; `CONTRIB
 - [ ] Add maintenance completion reminders to contributor instructions and PR template.
 
 ## 6. Validation, merge and installation
-- [ ] Run `python C:/Users/97956/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/squabble-contributor`.
+- [ ] Run `python -X utf8 "$env:USERPROFILE/.codex/skills/.system/skill-creator/scripts/quick_validate.py" .agents/skills/squabble-contributor`.
 - [ ] Run `npm run test:context`, `npm run check:context`, `npm run lint`; validate Mermaid and local documentation links.
 - [ ] Independent fresh agent uses only skill and relevant references to locate report import/confirmation, choose tests, plan current instance discovery and list required documentation updates; second scenario covers channel publication/strategy state without live mutations.
 - [ ] Review actual diff, tracked ignored skill resources, secret exclusion and installation boundaries.

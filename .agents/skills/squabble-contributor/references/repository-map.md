@@ -1,0 +1,62 @@
+# Repository map
+
+Resolve code and document paths against the **selected repository checkout**, not the installed skill directory. Read this map, then only the source and reference for the affected area. Contracts are in [research-and-execution.md](research-and-execution.md); the five maintained diagrams are in `docs/architecture.md`.
+
+Verified against baseline `7de30fb` on **2026-11-07**. This identifies what was checked; compare later changes before relying on it.
+
+## Current and retained product entrypoints
+
+`client/src/app.tsx` owns routes. `ExperienceRoute` selects current/retained pages through `client/src/hooks/use-simple-experience.ts`; backend preferences and `SQUABBLE_SIMPLE_EXPERIENCE` gate availability. A component named `Simple` is not sufficient evidence that an installation has enabled it.
+
+| Route | Current experience | Retained or shared surface |
+|---|---|---|
+| `/` | `client/src/pages/Today/TodayPage.tsx`: assets, daily research and investment strategy | `client/src/pages/Dashboard/DashboardPage.tsx` |
+| `/analysis` | `client/src/pages/Analysis/SimpleAnalysisPage.tsx` | `client/src/pages/Analysis/AnalysisPage.tsx` |
+| `/analysis/reports/:versionId` | `client/src/pages/Analysis/ResearchDocumentPage.tsx`: exact immutable version | Shared; never replace requested ID with the latest report |
+| `/council` | `client/src/pages/Council/SimpleCouncilPage.tsx`, `client/src/pages/Channel/ChannelWorkbench.tsx`: channel projection, fact checks and actions | `client/src/pages/Council/CouncilPage.tsx`: retained research room |
+| `/paper` | `client/src/pages/Paper/AiInvestmentPage.tsx` | `client/src/pages/Paper/PaperPage.tsx` |
+| `/agent-builder` | Redirect to `/settings/agents` | `client/src/pages/AgentBuilder/AgentBuilderPage.tsx` |
+| `/holdings`, `/transactions`, `/import` | Recorded real assets and explicit imports | Shared pages in `client/src/pages/Holdings/`, `client/src/pages/Transactions/`, `client/src/pages/Import/` |
+| `/settings/*` | Connections, integrations, budgets, rules, appearance | `client/src/pages/Settings/SettingsPage.tsx` |
+
+The development phase is **web-only**, established at `fe9df6c`. Desktop code and manual recovery workflow remain, but ordinary PR checks do not require desktop testing/packaging until explicitly resumed. This phase baseline differs from the knowledge verification revision above.
+
+## Change locator
+
+In the table, abbreviated filenames are siblings of the fully qualified directory immediately preceding them. Resolve them there, not at repository root.
+
+| Area | Client/API | Authoritative server and shared contracts |
+|---|---|---|
+| Today and current research | `client/src/pages/Today/CurrentAnalysisPanel.tsx`; `client/src/api/simple-experience.ts` | `server/modules/experience/experience.controller.ts`, `today.service.ts`, `current-research.service.ts`, `experience.scheduler.ts`; `shared/simple-experience.interface.ts` |
+| Daily research/report handoff | `/api/research/current/refresh` | `server/modules/experience/daily-channel-research.service.ts`; `server/modules/council/simple-council.service.ts`, `council.service.ts`, `council.daily.ts`, `council.dialogue.ts`; `shared/council.interface.ts`, `shared/report-execution-plan.interface.ts` |
+| Native dispatch/recovery | `client/src/pages/Settings/LocalAgentsPanel.tsx`; `client/src/api/local-agents.ts` | `server/modules/local-agents/local-agents.service.ts`, `research-journal.ts`; `server/local-agents/native.ts`; `shared/local-agents.interface.ts`, `shared/research-execution.interface.ts` |
+| Report versions, references and revocation | `client/src/api/research-documents.ts` | `server/modules/research-documents/research-documents.controller.ts`, `research-documents.service.ts`, `research-documents.rules.ts`; `shared/research-document.interface.ts`, `shared/research-reading.ts` |
+| Execution-plan display/import | `client/src/components/ReportExecutionPlan.tsx`; `client/src/pages/Today/InvestmentStrategySourceDialog.tsx`; `client/src/api/investment-strategies.ts` | `server/modules/paper-trading/report-execution-plan.ts`, `user-investment-strategy.controller.ts`, `user-investment-strategy.service.ts`, `user-investment-strategy.rules.ts`; `shared/user-investment-strategy.interface.ts` |
+| Strategy editing and explicit application | `client/src/pages/Today/InvestmentStrategySection.tsx`, `InvestmentStrategyEditor.tsx`; `client/src/api/ai-investment.ts` | `server/modules/paper-trading/investment-policy.controller.ts`, `investment-policy.service.ts`, `investment-policy.rules.ts`, `user-strategy-runtime.ts`; `shared/investment-policy.interface.ts` |
+| Simulated triggers/reviews/fills | `/paper`; `client/src/utils/strategy-state.ts` | `server/modules/paper-trading/strategy.service.ts`, `strategy.scheduler.ts`, `strategy-monitor.service.ts`, `paper-trading.service.ts`, `strategy-route.rules.ts`, `strategy-portfolio-risk.ts`; `shared/strategy.interface.ts` |
+| Channel publication/runtime | `client/src/api/channel.ts`; `client/src/pages/Channel/ChannelWorkbench.tsx` | `server/modules/channel/channel.controller.ts`, `channel.service.ts`, `channel-briefs.service.ts`, `channel-contract.ts`, `template-registry.ts`, `channel-slots.ts`, `channel-runtime.ts`, `channel-executions.ts`; `shared/channel.interface.ts` |
+| Saved preference/decision reflection | `client/src/pages/Channel/ChannelPersonalNotes.tsx` | `server/modules/channel/channel-memory.service.ts`; `shared/channel.interface.ts` |
+| Research memory/theses/monitoring | `client/src/hooks/use-research-memory.ts`; `client/src/api/research-memory.ts` | `server/modules/research-memory/research-memory.service.ts`, `research-memory.provenance.ts`, `research-memory.temporal.ts`, `research-memory.fence.ts`, `research-memory.monitor.service.ts`; `shared/research-memory.interface.ts`, `shared/research-monitor.interface.ts` |
+| Real transactions/cash | `client/src/pages/Transactions/TransactionsPage.tsx`; `client/src/api/transaction-imports.ts`, `cash-accounts.ts` | `server/modules/transactions/transactions.service.ts`; `server/modules/import/transaction-imports.service.ts`, `transaction-import.rules.ts`; `server/modules/cash-accounts/cash-accounts.service.ts`; `shared/transaction-import.interface.ts` |
+| Screenshot import/research handoff | `client/src/pages/Import/ImportPage.tsx`; `client/src/api/import-batches.ts` | `server/modules/import/import.controller.ts`, `import-batches.service.ts`, `import-batch-files.ts`, `position-checkpoint.ts`; `server/modules/experience/import-analysis-handoff.service.ts`; `shared/screenshot-import.interface.ts` |
+| Asset valuation/P&L | `client/src/pages/Today/AssetOverview.tsx`, `AssetValuationBasis.tsx` | `server/modules/experience/portfolio-metrics.service.ts`; `server/modules/dashboard/dashboard.service.ts`; `server/database/portfolio-value-points.schema.ts` |
+| Retained bull/bear/critic pipeline | `client/src/pages/Analysis/AnalysisRunner.tsx`; `client/src/api/analysis-runner.ts` | `server/modules/multi-agent/batch.service.ts`, `pipeline.service.ts`, `portfolio-analysis.service.ts`, `analysis-report.ts`; `shared/portfolio-report.interface.ts` |
+
+## Infrastructure and data ownership
+
+- Composition: `server/main.ts`, `server/app.module.ts`, `server/modules/view/view.controller.ts`. `ViewModule` stays last for the SPA fallback. Development runs Vite/Nest separately; the web production build serves the client through Nest.
+- Auth: `server/modules/auth/` and `server/common/platform/`. Protected controllers obtain owner from `req.userContext.userId`. Local mode selects a workspace identity; account mode uses sessions. Services and joins enforce owner scope; do not claim universal PostgreSQL RLS. See `docs/development.md` for identity selection and local-mode binding.
+- Database startup: `server/common/platform/database.provider.ts`; base definitions/exports: `server/database/schema.ts`, with domain `*.schema.ts` siblings. Fresh SQL: `scripts/db/01_schema.sql`. The provider's registered migration list is authoritative; numbering is not contiguous (no registered `38` at this baseline).
+- Research: `server/database/council.schema.ts`, `simple-council.schema.ts`, `research-documents.schema.ts`, `research-analysis-requests.schema.ts`, `research-memory.schema.ts`, `simple-experience.schema.ts`. Sessions/checkpoints, immutable versions, mutable current projections and durable receipts have different lifecycles.
+- Strategy/simulation: `server/database/user-investment-strategies.schema.ts`, `user-strategy-runtime.schema.ts`, `investment-policy.schema.ts`, `strategy-mandates.schema.ts`, `strategy.schema.ts`, plus paper tables in `schema.ts`. Confirmed strategy, installed policy revision and simulated fill are separate records.
+- Channel: `server/database/channel.schema.ts` owns reports, facts/cards, briefs, findings/seals, episodes, events, bubbles, outbox, preferences, memories and reflections. `server/modules/channel/channel-runtime.ts` reads authoritative strategy/simulation records; channel prose is not execution authority.
+- Real ledger: holdings/transactions/closed/cash tables in `server/database/schema.ts`; `server/database/asset-ledger.schema.ts`, `transaction-imports.schema.ts`, `import-batches.schema.ts`. These do not share the paper account/position ledger.
+- Data/providers: `server/modules/quote/`, `server/modules/fx/`, `server/modules/settings/model-connections.service.ts`, `server/modules/llm-budget/`. Encrypted credentials and native-task files are private runtime data, not fixtures.
+- Optional paths: `server/modules/mcp/` exposes scoped agent sessions. `agent/` is a Python CLI scaffold, not the built-in orchestrator. `desktop/` retains Electron/database/companion code. `deploy/` contains earlier public-beta artifacts, not the current development entrypoint.
+
+## Next reference
+
+- Workflow/invariants: [research-and-execution.md](research-and-execution.md).
+- Commands/tests: [development-and-tests.md](development-and-tests.md).
+- Installation discovery/operations: [deployment-and-recovery.md](deployment-and-recovery.md).
+- Documentation impact and synchronization: [maintenance.md](maintenance.md).

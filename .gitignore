@@ -85,7 +85,11 @@ pnpm-lock.yaml
 # ============================================================
 
 # Miaoda skills sync 产物（本地）
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/squabble-contributor/
+.agents/skills/squabble-contributor/.install.json
 
 # Python Agent —— 虚拟环境 / 缓存（可重建）
 agent/.venv/

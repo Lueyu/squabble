@@ -37,6 +37,11 @@ jobs:
       - name: Lint (eslint + stylelint + typecheck)
         run: npm run lint
 
+      - name: Verify contributor skill and knowledge helpers
+        run: |
+          npm run test:context
+          npm run check:context
+
       - name: Initialize isolated integration database
         env:
           PGPASSWORD: test-only
