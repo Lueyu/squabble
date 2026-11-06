@@ -116,7 +116,12 @@ export interface CouncilResponse {
   /** Optional complete supporting analysis; displayed on demand without truncation. */
   details?: string;
 }
+export interface DailyReverseCheck {
+  outcome: 'critical_counterevidence' | 'partially_weakened' | 'no_counterevidence_found' | 'unable_to_verify';
+  checked: string[]; findings: string[]; gaps: string[]; affectedPremises: string[]; evidenceIds: string[];
+}
 export interface CouncilMessage {
+  reverseCheck?: DailyReverseCheck;
   actualExecutor?: import('./simple-conversation.interface').ActualExecutor;
   claims?: import('./simple-conversation.interface').PublicClaim[];
   respondsToClaims?: string[];

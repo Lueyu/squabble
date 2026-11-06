@@ -7,7 +7,7 @@ const report=(id,summary,time)=>({id,summary,createdAt:time,revision:1,version:1
 test('each completed round stays in the conversation after the next round starts or fails',()=>{
   const session={id:'room',title:'Research',revision:3,status:'failed',stage:'waiting',mode:'single',messages:[],reports:[report('first','First saved finding.',at),report('second','Second saved finding.','2026-11-06T02:00:00Z')],members:[],actualExecutors:[],memberStates:[]};
   state.queries.set('research-conversation',{data:session});
-  const html=render(load('pages/Council/SimpleCouncilPage.tsx').default);
+  const html=render(load('pages/Council/ArchivedCouncilPage.tsx').default);
   assert.match(html,/First saved finding/);assert.match(html,/Second saved finding/);
   assert.equal((html.match(/data-round-report=/g)||[]).length,2);
   assert.match(html,/referenceVersionId=version-first/);
@@ -16,7 +16,7 @@ test('each completed round stays in the conversation after the next round starts
 test('ongoing process appears in the conversation and starts expanded',()=>{
   const session={id:'room',title:'Research',revision:1,status:'running',stage:'independent',mode:'single',messages:[],reports:[],members:[],actualExecutors:[],memberStates:[],researchEvents:[{id:'event',sessionId:'room',taskId:'task',revision:1,memberId:'member',memberName:'Stock friend',turn:0,sequence:1,kind:'task',status:'running',at,summary:'Checking public filings.'}]};
   state.queries.set('research-conversation',{data:session});
-  const html=render(load('pages/Council/SimpleCouncilPage.tsx').default);
+  const html=render(load('pages/Council/ArchivedCouncilPage.tsx').default);
   assert.match(html,/Checking public filings/);assert.match(html,/<details[^>]*open/);
 });
 test('historical reader formats known JSON and leaves immutable raw source untouched',()=>{

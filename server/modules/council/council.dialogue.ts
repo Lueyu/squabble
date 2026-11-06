@@ -4,8 +4,13 @@ import { parseResponse } from './council-output';
 import { readableResearch } from '../../../shared/research-reading';
 import { byteExcerpt, type CouncilEvidence, type CouncilOpinion, parseOpinion } from './council.rules';
 import type { CouncilCheckpoint, DialogueTurn, ResearchRequest } from './council.types';
+import { parseDailyReverseCheck } from './council.daily';
+import { thesisCandidateSchema } from '../research-memory/research-memory.requests';
+import { normalizeThesisContent, validateThesisReferences } from '../research-memory/research-memory.theses';
 
 export interface DiscussionContribution {
+  reverseCheck?: import('../../../shared/council.interface').DailyReverseCheck;
+  thesisCandidates?: import('../../../shared/research-memory.interface').ThesisCandidateInput[];
   claims?: import('../../../shared/simple-conversation.interface').PublicClaim[];
   respondsToClaims?: string[];
   stanceChange?: import('../../../shared/simple-conversation.interface').StanceChange;
@@ -113,7 +118,13 @@ export function parseContribution(value: unknown, validIds: Set<string>, turn: D
   const change = data.stanceChange as Record<string, unknown> | undefined;
   if (change && (!['retained', 'changed', 'unconfirmed'].includes(String(change.status)) || typeof change.reason !== 'string'
     || !change.reason.trim() || change.reason.length > 2000)) throw new Error('Invalid public stance change');
+  const thesisCandidates=data.thesisCandidates===undefined?undefined:(()=>{
+    if(!Array.isArray(data.thesisCandidates)||data.thesisCandidates.length>5)throw new Error('DELIVERY_THESIS_INVALID');
+    return data.thesisCandidates.map(raw=>{const parsed=thesisCandidateSchema.safeParse(raw);if(!parsed.success||!validateThesisReferences(parsed.data,validIds))throw new Error('DELIVERY_THESIS_INVALID');return {...normalizeThesisContent(parsed.data,'agent'),...(parsed.data.expiresAt!==undefined?{expiresAt:parsed.data.expiresAt}:{})};});
+  })();
   return { content, ...(response ? { response } : {}), evidenceIds: data.evidenceIds as string[],
+    ...(thesisCandidates?.length?{thesisCandidates}:{}),
+    ...(data.reverseCheck!==undefined?{reverseCheck:parseDailyReverseCheck(data.reverseCheck,validIds)}:{}),
     ...(claims ? { claims } : {}), respondsToClaims: strings(data.respondsToClaims, 8),
     ...(change ? { stanceChange: { status: change.status as 'retained' | 'changed' | 'unconfirmed', reason: String(change.reason).trim() } } : {}),
     evidenceCheckStatus: ['unverified', 'verified', 'disputed', 'unavailable'].includes(String(data.evidenceCheckStatus))

@@ -27,6 +27,7 @@ import { CouncilMemberAttemptsService } from './council-member-attempts.service'
 import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from '../local-agents/local-agents.requests';
 import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
 import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
+import { dailyResearchMembers } from './council.daily';
 
 const key = z.string().trim().min(1).max(200);
 const message = z.string().trim().min(1).max(2000);
@@ -37,7 +38,7 @@ const context = z.discriminatedUnion('kind', [z.object({ kind: z.literal('portfo
 const createSchema = z.object({ message, requestKey: key, context: context.optional() }).strict();
 const messageSchema = z.object({ message, requestKey: key, replyTo: z.uuid().optional() }).strict();
 const renameSchema = z.object({ title: z.string().trim().min(1).max(160), requestKey: key }).strict();
-type InternalOptions = { automaticTaskId?: string };
+type InternalOptions = { automaticTaskId?: string; researchOnly?: boolean };
 interface FrozenContext { ticker: string; scene: 'stock' | 'portfolio_daily' | 'period_strategy' | 'trade_post_review'; label: string;
   contextDate?: string; references: ReportReference[]; resolvedReferences: ResolvedReportReference[]; evidence: CouncilEvidence[] }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -96,14 +97,15 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
     const immediate=await Promise.race([pendingMembers,new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),100);})]);
     if(timer)clearTimeout(timer);
     const initializing=immediate===null;
-    const { members, executors } = immediate??{members:[],executors:[]};
+    const { members:resolvedMembers, executors } = immediate??{members:[],executors:[]};
+    const members=options.researchOnly?dailyResearchMembers(resolvedMembers):resolvedMembers;
     const result = await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
       const [existing] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
       if (existing) { this.same(existing.inputHash, inputHash); return { id: existing.sessionId, created: false }; }
       const checkpoint = newCheckpoint(members, { independent: true });
       checkpoint.simple = { ...checkpoint.simple!, executors, contextLabel: frozen.label, contextDate: frozen.contextDate,commonEvidence: frozen.evidence,
-        automaticTaskId: options.automaticTaskId,initializing };
+        automaticTaskId: options.automaticTaskId,researchOnly:options.researchOnly,initializing };
       const config = normalizeBuilderConfig({ name: 'Research conversation', template: 'guard', tickers: [frozen.ticker], minimumRating: 'Buy',
         customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1, notifyOnProposal: false, priceRules: [], language: 'zh-CN' });
       config.council = { enabled: true, members, webResearch: false };
@@ -227,6 +229,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       const [prefs]=await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
       if(prefs?.enabled===false){await tx.update(councilSessions).set({status:'paused',error:'研究已暂停，问题已保存。 / Research is paused; your question is saved.',
         checkpoint:{...row.checkpoint,simple:{...row.checkpoint.simple,initializing:false}},updatedAt:new Date()}).where(eq(councilSessions.id,id));return false;}
+      if(row.checkpoint.simple.researchOnly)resolved={...resolved,members:dailyResearchMembers(resolved.members)};
       const checkpoint=newCheckpoint(resolved.members,{independent:true});
       checkpoint.simple={...checkpoint.simple!,...row.checkpoint.simple,stage:resolved.members.length?'independent':'waiting',executors:resolved.executors,initializing:false};
       await tx.update(councilSessions).set({checkpoint,profileSnapshot:{...row.profileSnapshot,council:{...row.profileSnapshot.council!,members:resolved.members}},

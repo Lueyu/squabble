@@ -12,6 +12,8 @@ import { councilSessions } from '../../database/council.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { SimpleCouncilService } from '../council/simple-council.service';
 import { UserInvestmentStrategyService } from './user-investment-strategy.service';
+import { channelDecisionReflections,channelEpisodes,channelUserActions } from '../../database/channel.schema';
+import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { installInvestorMandate } from './user-strategy-runtime';
 import { SimulationExperimentsService } from './simulation-experiments.service';
 import { DEFAULT_INVESTMENT_CONFIG, effectiveInvestmentConfig, investmentConstraintSchema, normalizeInvestmentRequest } from './investment-policy.rules';
@@ -231,6 +233,19 @@ export class InvestmentPolicyService {
         };
         const strategy = await this.userStrategies!.confirmInTransaction(tx, owner, request.strategyId, request.expectedRevision, request.previewHash, request.expectedCurrentId, async (_tx, snapshot) => activate(snapshot));
         if (saved === policy && policy.baseConfig.userStrategy?.id !== strategy.id) await activate(strategy);
+        if(saved!==policy){
+          const at=new Date().toISOString(),decisionId=randomUUID();
+          await tx.insert(channelUserActions).values({id:decisionId,owner,requestKey:`strategy-apply:${request.requestKey}`,inputHash:request.previewHash,
+            data:{kind:'strategy_applied',strategyId:strategy.id,strategyRevision:strategy.revision,policyRevision:saved.revision},result:{active:true}}).onConflictDoNothing();
+          const base={decisionId:strategy.id,recordedAt:at,kind:'reason_at_adoption' as const};
+          const pinnedReports=(await Promise.all(strategy.sources.filter(s=>s.versionId).map(s=>tx.select({id:researchDocumentVersions.id,revision:researchDocumentVersions.version}).from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocumentVersions.id,s.versionId!)))))).flat();
+          await tx.insert(channelDecisionReflections).values([
+            {id:`strategy:${strategy.id}:${strategy.revision}:snapshot`,owner,decisionId:strategy.id,data:{...base,id:`strategy:${strategy.id}:${strategy.revision}:snapshot`,author:'system_snapshot',snapshot:{strategyId:strategy.id,strategyRevision:strategy.revision,runtimeRevision:saved.revision,reportRefs:pinnedReports,evidenceIds:strategy.sources.map(s=>s.key),knownGapIds:strategy.preview.issues.map(i=>i.code)}}},
+            {id:`strategy:${strategy.id}:${strategy.revision}:unrecorded`,owner,decisionId:strategy.id,data:{...base,id:`strategy:${strategy.id}:${strategy.revision}:unrecorded`,author:'unrecorded'}},
+          ]).onConflictDoNothing();
+          const episodes=await tx.select().from(channelEpisodes).where(eq(channelEpisodes.owner,owner));
+          for(const episode of episodes.filter(e=>e.data.phase!=='closed'))await tx.update(channelEpisodes).set({data:{...episode.data,revision:episode.data.revision+1,userDecisionIds:[...episode.data.userDecisionIds,decisionId]},updatedAt:new Date()}).where(and(eq(channelEpisodes.owner,owner),eq(channelEpisodes.id,episode.id)));
+        }
         return { status: saved.status, policy: policyView(saved), strategy, evaluationState: 'monitoring' };
       });
     });

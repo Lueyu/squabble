@@ -49,6 +49,6 @@ import { PortfolioResearchRouteService } from '../experience/portfolio-research-
     TradingMarketService, StrategyStore, StrategyModelService, StrategyService, StrategyNotificationsService, StrategyScheduler,
     StrategyMandateService, SimulationExperimentsService, StrategyMonitorService, StrategyDailyAdjustments,InvestmentPolicyService,AutomaticResearchBudgetService,
     AutonomousResearchService,AutonomousResearchScheduler,AutonomousPlanCompiler,ResearchDiscoveryService,UserInvestmentStrategyService,PortfolioResearchRouteService],
-  exports: [PaperTradingService,InvestmentPolicyService,AutomaticResearchBudgetService],
+  exports: [PaperTradingService,InvestmentPolicyService,AutomaticResearchBudgetService,UserInvestmentStrategyService],
 })
 export class PaperTradingModule {}

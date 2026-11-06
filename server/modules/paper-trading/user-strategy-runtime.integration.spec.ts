@@ -15,6 +15,7 @@ import { strategyMandates, strategyReservations } from '../../database/strategy-
 import { strategySignals } from '../../database/strategy.schema';
 import { DEFAULT_INVESTMENT_CONFIG } from './investment-policy.rules';
 import { investmentExecutionFence } from './investment-policy.fence';
+import { channelDecisionReflections, channelEpisodes, channelUserActions } from '../../database/channel.schema';
 
 test('copy opens an observing ledger without quotes, copies cash once and preserves real assets and old history', async () => {
   await investmentFixture(async (db, client, owner) => {
@@ -60,8 +61,17 @@ test('applying the reviewed revision is atomic, idempotent, invalidates old work
     const content = { title: 'My reviewed plan', body: text, limits: { maxPositionPct: 10, maxDailyIncreasePct: 5, maxDailyTurnoverPct: 20, minCashPct: 10, maxGrossExposurePct: 90, maxOrderPct: 5 }, timezone: 'Asia/Shanghai', startsAt: now.toISOString(), endsAt: new Date(now.getTime() + 86400000).toISOString(), entries: [{ id: 'aapl-buy', text, ticker: 'AAPL', sourceKeys: [], directive: { ticker: 'AAPL', side: 'buy' as const, trigger: { kind: 'price_lte' as const, price: 100 }, quantity: 2, reviewedText: text, numericEvidence: [{ field: 'quantity', value: 2, quote: text }, { field: 'trigger.price', value: 100, quote: text }] } }] };
     const draft = await drafts.create(owner, content); const ready = await drafts.preview(owner, draft.id, draft.revision);
     const payload = { strategyId: draft.id, expectedRevision: ready.revision, previewHash: ready.preview!.contentHash, expectedCurrentId: null, requestKey: 'apply-strategy-001' };
+    await db.insert(channelEpisodes).values({ id: 'active-observation', owner, title: 'Fictional observation', data: { id: 'active-observation', revision: 1, entityId: 'fixture-rule', phase: 'alarm', severity: 'ordinary', lastEventSequence: 1, consumedDeltaIds: [], hadBreach: false, executionIds: [], userDecisionIds: [] } });
     const applied = await service.applyStrategy(owner, payload);
     const repeat = await service.applyStrategy(owner, payload);
+    const reflections = await db.select().from(channelDecisionReflections);
+    assert.equal(reflections.length, 2, 'repeated apply never creates duplicate snapshots');
+    assert.equal(reflections.filter(r => r.data.author === 'system_snapshot').length, 1);
+    assert.equal(reflections.filter(r => r.data.author === 'unrecorded').length, 1);
+    assert.ok(reflections.every(r => !('text' in r.data)), 'the system never invents the investor reason');
+    const [decision] = await db.select().from(channelUserActions);
+    const [episode] = await db.select().from(channelEpisodes);
+    assert.deepEqual(episode.data.userDecisionIds, [decision.id], 'actual apply is attributed to the user exactly once');
     assert.equal(applied.policy.revision, repeat.policy.revision);
     assert.equal(applied.policy.baseConfig.userStrategy?.id, draft.id);
     const [mandate] = await db.select().from(strategyMandates);

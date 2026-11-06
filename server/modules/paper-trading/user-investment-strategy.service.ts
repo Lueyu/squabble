@@ -166,10 +166,10 @@ export class UserInvestmentStrategyService {
     });
   }
   /** A new draft is explicit; importing never chooses and mutates a hidden existing draft. */
-  async importSource(owner: string, source: StrategySourceInput): Promise<UserInvestmentStrategy> {
+  async importSource(owner: string, source: StrategySourceInput, includeConfirmed = false): Promise<UserInvestmentStrategy> {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner); const snapshot = await this.resolveSource(tx, owner, source);
-      const existing = await tx.select().from(strategies).where(and(eq(strategies.owner, owner), eq(strategies.status, 'draft'))).orderBy(desc(strategies.updatedAt));
+      const existing = await tx.select().from(strategies).where(and(eq(strategies.owner, owner), includeConfirmed?undefined:eq(strategies.status, 'draft'))).orderBy(desc(strategies.updatedAt));
       const duplicate = existing.find(row => row.sources.some(item => item.key === snapshot.key)); if (duplicate) return map(duplicate);
       const base = this.emptyContent(); const addition = sourceAddition(base, [], snapshot);
       const content = this.normalize({ ...base, entries: addition.entries });

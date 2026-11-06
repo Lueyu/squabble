@@ -5,6 +5,7 @@ export interface ExperiencePreferences {
   migrationState: 'new' | 'legacy' | 'adopted';
 }
 export interface CurrentResearchView {
+  reportRole?: 'initial' | 'discussion';
   topicKey: string; dateKey: string; documentId: string | null; title: string; content: string;
   updatedAt: string | null; dataAsOf: string | null; changeSummary: string | null;
   state: 'empty' | 'ready' | 'generating' | 'failed'; taskId: string | null; error: string | null;

@@ -1,7 +1,7 @@
 export function simpleNavigation(language: string) {
   const zh = language.startsWith('zh');
   return [{ path: '/', label: zh ? '今日' : 'Today', end: true },
-    { path: '/council', label: zh ? '投研室' : 'Research room' },
+    { path: '/council', label: zh ? '频道' : 'Channel' },
     { path: '/paper', label: zh ? 'AI 投资' : 'AI investing' }];
 }
 

@@ -12,6 +12,9 @@ import { PortfolioResearchRouteService } from './portfolio-research-route.servic
 import { ImportAnalysisHandoffService } from './import-analysis-handoff.service';
 import { PortfolioMetricsService } from './portfolio-metrics.service';
 import { QuoteModule } from '../quote/quote.module';
+import { DailyChannelResearchService } from './daily-channel-research.service';
+import { ChannelModule } from '../channel/channel.module';
+import { PaperTradingModule } from '../paper-trading/paper-trading.module';
 
-@Module({imports:[MultiAgentModule,CouncilModule,ResearchDocumentsModule,LocalAgentsModule,QuoteModule],controllers:[ExperienceController],providers:[TodayService,CurrentResearchService,ExperienceScheduler,ResearchFollowupService,PortfolioResearchRouteService,ImportAnalysisHandoffService,PortfolioMetricsService],exports:[TodayService,CurrentResearchService,ImportAnalysisHandoffService]})
+@Module({imports:[MultiAgentModule,CouncilModule,ResearchDocumentsModule,LocalAgentsModule,QuoteModule,ChannelModule,PaperTradingModule],controllers:[ExperienceController],providers:[TodayService,CurrentResearchService,ExperienceScheduler,ResearchFollowupService,PortfolioResearchRouteService,ImportAnalysisHandoffService,PortfolioMetricsService,DailyChannelResearchService],exports:[TodayService,CurrentResearchService,ImportAnalysisHandoffService]})
 export class ExperienceModule {}

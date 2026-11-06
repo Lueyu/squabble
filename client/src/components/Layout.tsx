@@ -242,7 +242,7 @@ function Layout() {
         <main ref={pageScrollRef} className={inSettings
           ? 'app-content app-settings-content flex min-h-0 flex-1 flex-col overflow-hidden'
           : location.pathname === '/council'
-          ? 'app-content app-council-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden safe-bottom'
+          ? 'app-content app-council-content app-channel-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden safe-bottom'
           : 'app-content flex-1 overflow-y-auto safe-bottom'}>
           <Outlet />
         </main>
