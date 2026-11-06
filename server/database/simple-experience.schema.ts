@@ -13,6 +13,7 @@ export const researchCurrentViews=pgTable('research_current_views',{
   state:text('state').notNull().default('empty'),taskId:uuid('task_id'),taskKind:text('task_kind'),automaticTaskId:uuid('automatic_task_id'),error:text('error'),changeSummary:text('change_summary'),
   dispatchSnapshot:jsonb('dispatch_snapshot').$type<import('../../shared/portfolio-report.interface').PortfolioReportSnapshot>(),
   dispatchRoute:jsonb('dispatch_route').$type<import('../../shared/model-route.interface').ModelRoute>(),
+  dispatchConnectionId:text('dispatch_connection_id'),
   updatedAt:timestamp('updated_at',{withTimezone:true}).notNull().defaultNow(),
 },t=>[uniqueIndex('research_current_view_identity').on(t.owner,t.topicKey,t.dateKey)]);
 export const researchFollowupJobs=pgTable('research_followup_jobs',{

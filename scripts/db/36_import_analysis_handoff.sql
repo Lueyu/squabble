@@ -6,3 +6,4 @@ CREATE TABLE IF NOT EXISTS research_analysis_requests (
 CREATE UNIQUE INDEX IF NOT EXISTS research_analysis_request_receipt ON research_analysis_requests(owner,receipt_id);
 ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_snapshot jsonb;
 ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_route jsonb;
+ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_connection_id text;

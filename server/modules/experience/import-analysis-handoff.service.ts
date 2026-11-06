@@ -34,7 +34,7 @@ export class ImportAnalysisHandoffService {
       .onConflictDoNothing().returning();
     if(row){
       await tx.insert(researchCurrentViews).values({owner,topicKey:'portfolio',dateKey:row.dateKey,state:'generating',taskKind:'import_pending',generationKey:`import:${row.id}`,dispatchSnapshot:snapshot,generationSequence:1})
-        .onConflictDoUpdate({target:[researchCurrentViews.owner,researchCurrentViews.topicKey,researchCurrentViews.dateKey],set:{state:'generating',taskKind:'import_pending',taskId:null,automaticTaskId:null,dispatchRoute:null,error:null,generationKey:`import:${row.id}`,dispatchSnapshot:snapshot,generationSequence:sql`${researchCurrentViews.generationSequence}+1`,updatedAt:new Date()}});
+        .onConflictDoUpdate({target:[researchCurrentViews.owner,researchCurrentViews.topicKey,researchCurrentViews.dateKey],set:{state:'generating',taskKind:'import_pending',taskId:null,automaticTaskId:null,dispatchRoute:null,dispatchConnectionId:null,error:null,generationKey:`import:${row.id}`,dispatchSnapshot:snapshot,generationSequence:sql`${researchCurrentViews.generationSequence}+1`,updatedAt:new Date()}});
       return {id:row.id,state:row.state};
     }
     const [prior]=await tx.select().from(researchAnalysisRequests).where(and(eq(researchAnalysisRequests.owner,owner),eq(researchAnalysisRequests.receiptId,receiptId)));
@@ -62,7 +62,7 @@ export class ImportAnalysisHandoffService {
       const [active]=await this.db.select({id:portfolioAnalysisRuns.id}).from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,row.owner),inArray(portfolioAnalysisRuns.status,['pending','running','cancelling']))).limit(1);if(active)continue;
       const [claimed]=await this.db.update(researchAnalysisRequests).set({state:'dispatching',updatedAt:new Date()}).where(and(eq(researchAnalysisRequests.id,row.id),eq(researchAnalysisRequests.state,'queued'))).returning();if(!claimed)continue;
       try{
-        const result=await this.research.refresh(row.owner,{topicKey:'portfolio',date:row.dateKey,requestKey:`import:${row.id}`},{snapshot:row.snapshot},prefs?.timezone??'Asia/Shanghai',{snapshot:row.snapshot,expectedGenerationKey:`import:${row.id}`,...(route?{route:route.route}:{})});
+        const result=await this.research.refresh(row.owner,{topicKey:'portfolio',date:row.dateKey,requestKey:`import:${row.id}`},{snapshot:row.snapshot},prefs?.timezone??'Asia/Shanghai',{snapshot:row.snapshot,expectedGenerationKey:`import:${row.id}`,...(route?{route:route.route,connectionId:route.connectionId}:{})});
         await this.db.update(researchAnalysisRequests).set({state:result.state==='failed'?'failed':'dispatched',taskId:result.taskId,error:result.error??null,updatedAt:new Date()}).where(eq(researchAnalysisRequests.id,row.id));
       }catch(error){const superseded=error instanceof Error&&error.message==='RESEARCH_REQUEST_SUPERSEDED';await this.db.update(researchAnalysisRequests).set({state:superseded?'superseded':'failed',error:superseded?null:'分析尚未开始，请在今日页面重试。',updatedAt:new Date()}).where(eq(researchAnalysisRequests.id,row.id));}
     }

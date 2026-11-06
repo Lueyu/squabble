@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { experiencePreferences } from '../../database/simple-experience.schema';
+import { modelConnections } from '../../database/model-connections.schema';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
 import { LlmService } from '../multi-agent/llm.service';
 import { SettingsService } from '../settings/settings.service';
@@ -11,7 +12,7 @@ import type { ModelRoute } from '../../../shared/model-route.interface';
 export class PortfolioResearchRouteService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db:PostgresJsDatabase,private readonly agents:LocalAgentsService,
     private readonly settings:SettingsService,private readonly llm:LlmService){}
-  async resolve(owner:string):Promise<{route:ModelRoute;label:string;busy:boolean;fingerprint:unknown}|null>{
+  async resolve(owner:string):Promise<{route:ModelRoute;connectionId?:string;label:string;busy:boolean;fingerprint:unknown}|null>{
     const [prefs]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
     const allowed=(id:string)=>!prefs?.defaultMembers.length||prefs.defaultMembers.includes(id);
     const selected=await this.settings.getDefaultModelRoute(owner);
@@ -24,6 +25,18 @@ export class PortfolioResearchRouteService {
     if(allowed('default')&&selected.mode==='api'&&await this.llm.isConfigured(owner,undefined,selected)){
       const info=await this.llm.getExecutionInfo(owner,selected);
       return {route:selected,label:info?.modelSlow??'AI',busy:false,fingerprint:info};
+    }
+    const connections=await this.db.select({id:modelConnections.id,name:modelConnections.name}).from(modelConnections)
+      .where(eq(modelConnections.owner,owner)).orderBy(modelConnections.createdAt);
+    for(const connection of connections){
+      if(!allowed(connection.id))continue;
+      try{
+        const config=await this.settings.getLlmConfig(owner,connection.id);
+        if(!config)continue;
+        const route:ModelRoute={mode:'api'};
+        return {route,connectionId:connection.id,label:connection.name,busy:false,
+          fingerprint:{route,connectionId:connection.id,provider:new URL(config.baseUrl).origin,model:config.slowModel}};
+      }catch{/* A foreign or unavailable named connection never becomes an execution route. */}
     }
     return null;
   }

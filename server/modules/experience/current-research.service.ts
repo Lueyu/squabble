@@ -90,19 +90,20 @@ export class CurrentResearchService {
     });return this.get(owner,value.topicKey,dateKey);
   }
 
-  async refresh(owner:string,input:unknown,facts:unknown,timezone:string,options?:{automaticTaskId?:string;route?:ModelRoute;snapshot?:PortfolioReportSnapshot;expectedGenerationKey?:string}):Promise<CurrentResearchView> {
+  async refresh(owner:string,input:unknown,facts:unknown,timezone:string,options?:{automaticTaskId?:string;route?:ModelRoute;connectionId?:string;snapshot?:PortfolioReportSnapshot;expectedGenerationKey?:string}):Promise<CurrentResearchView> {
     const value=parseRefresh(input), dateKey=value.topicKey==='portfolio'?(value.date??businessDate(new Date(),timezone)):'current';
     if(value.topicKey==='portfolio'&&dateKey!==businessDate(new Date(),timezone)) throw new BadRequestException('PAST_RESEARCH_IS_READ_ONLY');
     const selected=value.topicKey==='portfolio'&&this.routes?await this.routes.resolve(owner):undefined;
     const route=options?.route??selected?.route;
+    const connectionId=route?.mode==='api'?(options?.connectionId??selected?.connectionId):undefined;
     if(value.topicKey==='portfolio'&&this.routes&&!route)throw new BadRequestException('请先连接一位可用的 AI 股友。 / Connect an available AI friend first.');
-    const generationKey=generationIdentity(value.topicKey,dateKey,{facts,...(route?{route,executor:selected?.fingerprint}:{} )});
+    const generationKey=generationIdentity(value.topicKey,dateKey,{facts,...(route?{route,executor:selected?.fingerprint,...(connectionId?{connectionId}:{})}:{} )});
     const receipt=await this.documents.withSubmission(owner,`simple-refresh:${value.requestKey}`,value,async tx=>{
       const [current]=await tx.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey)));
       if(options?.expectedGenerationKey&&current?.generationKey!==options.expectedGenerationKey)throw new ConflictException('RESEARCH_REQUEST_SUPERSEDED');
       if(current?.generationKey===generationKey&&(current.state==='generating'||current.state==='ready'&&value.trigger!=='manual')) return {sequence:current.generationSequence,dispatch:false};
       const sequence=(current?.generationSequence??0)+1;
-      const dispatch={dispatchSnapshot:options?.snapshot??null,dispatchRoute:route??null};
+      const dispatch={dispatchSnapshot:options?.snapshot??null,dispatchRoute:route??null,dispatchConnectionId:connectionId??null};
       await tx.insert(researchCurrentViews).values({owner,topicKey:value.topicKey,dateKey,generationKey,generationSequence:sequence,state:'generating',automaticTaskId:options?.automaticTaskId??null,...dispatch})
         .onConflictDoUpdate({target:[researchCurrentViews.owner,researchCurrentViews.topicKey,researchCurrentViews.dateKey],set:{generationKey,generationSequence:sequence,state:'generating',taskId:null,taskKind:null,error:null,automaticTaskId:options?.automaticTaskId??null,...dispatch}});
       return {sequence,dispatch:true};
@@ -120,7 +121,7 @@ export class CurrentResearchService {
           if(selected?.busy){await this.db.update(researchCurrentViews).set({taskKind:'waiting_executor',updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence))));return this.get(owner,value.topicKey,dateKey);}
           const [active]=await this.db.select({id:portfolioAnalysisRuns.id}).from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),inArray(portfolioAnalysisRuns.status,['pending','running','cancelling']))).limit(1);
           if(active){await this.db.update(researchCurrentViews).set({taskKind:'waiting_portfolio',updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence))));return this.get(owner,value.topicKey,dateKey);}
-          if(options?.automaticTaskId)await new AutomaticResearchBudgetService(this.db).reserveCall(owner,options.automaticTaskId);const run=await this.portfolio.create(owner, 'zh-CN',route,options?.snapshot);id=run.id;kind='portfolio';}
+          if(options?.automaticTaskId)await new AutomaticResearchBudgetService(this.db).reserveCall(owner,options.automaticTaskId);const run=await this.portfolio.create(owner, 'zh-CN',route,options?.snapshot,connectionId);id=run.id;kind='portfolio';}
         else {const result=await this.conversations.create(owner,{message:'请研究当前情况，给出支持理由、主要疑点、当前判断和下一步需要关注的证据。',context:{kind:'stock',ticker:value.topicKey.slice(7)},requestKey:`refresh:${value.requestKey}`},options);
           if(!('id' in result)) throw new BadRequestException('STOCK_IDENTITY_REQUIRED');id=result.id;kind='council';}
         await this.db.update(researchCurrentViews).set({taskId:id,taskKind:kind,updatedAt:new Date()}).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,value.topicKey),eq(researchCurrentViews.dateKey,dateKey),eq(researchCurrentViews.generationSequence,Number(receipt.sequence))));
@@ -145,7 +146,7 @@ export class CurrentResearchService {
         const [active]=await this.db.select({id:portfolioAnalysisRuns.id}).from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,row.owner),inArray(portfolioAnalysisRuns.status,['pending','running','cancelling']))).limit(1);
         if(!active){
           const [claimed]=await this.db.update(researchCurrentViews).set({taskKind:'dispatching',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence),eq(researchCurrentViews.taskKind,row.taskKind))).returning();
-          if(claimed)try{if(row.automaticTaskId)await new AutomaticResearchBudgetService(this.db).reserveCall(row.owner,row.automaticTaskId);const run=await this.portfolio.create(row.owner,'zh-CN',row.dispatchRoute??undefined,row.dispatchSnapshot??undefined);await this.db.update(researchCurrentViews).set({taskId:run.id,taskKind:'portfolio',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));}catch(error){await this.db.update(researchCurrentViews).set({state:'failed',error:error instanceof Error?error.message:'Research unavailable'}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));}
+          if(claimed)try{if(row.automaticTaskId)await new AutomaticResearchBudgetService(this.db).reserveCall(row.owner,row.automaticTaskId);const run=await this.portfolio.create(row.owner,'zh-CN',row.dispatchRoute??undefined,row.dispatchSnapshot??undefined,row.dispatchConnectionId??undefined);await this.db.update(researchCurrentViews).set({taskId:run.id,taskKind:'portfolio',updatedAt:new Date()}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));}catch(error){await this.db.update(researchCurrentViews).set({state:'failed',error:error instanceof Error?error.message:'Research unavailable'}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));}
         }continue;
       }
       if(!row.taskId) {if(Date.now()-row.updatedAt.getTime()>300_000) await this.db.update(researchCurrentViews).set({state:'failed',error:'Research delivery was interrupted; update again to retry.'}).where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.generationSequence,row.generationSequence)));continue;}
