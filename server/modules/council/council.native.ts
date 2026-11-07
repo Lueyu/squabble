@@ -87,7 +87,7 @@ export function agentErrorMessage(code: string, language: string): string {
     LOCAL_CANCELLED: ['Agent 任务已取消。点击继续可重新下发当前任务。', 'The agent task was canceled. Resume to dispatch this assignment again.'],
     LOCAL_PAUSED: ['讨论已暂停，远端取消尚未确认。继续时会检查原任务。', 'Paused; remote cancellation is unconfirmed. Resume checks the original task.'],
     LOCAL_TASK_FAILED: ['本地 Agent 任务失败，请检查设置中的 Agent 状态，确认后新建讨论重试。', 'The local agent task failed. Check the agent status in Settings before starting a new discussion.'],
-    LOCAL_INVALID_RESULT: ['Agent 返回的结果格式不符合要求。请检查 Agent 的报告输出配置，修正后新建讨论。', 'The agent result has an invalid format. Check its report output configuration and start a new discussion.'],
+    LOCAL_INVALID_RESULT: ['结果已返回，但结构校验未通过；原资料已保留，可在原研究中重新整理。', 'The result was returned but did not pass structural validation. The original material is retained; reformat it within the saved research.'],
     LOCAL_PROTOCOL_INCOMPLETE: ['本轮研究结果未完整返回，未能确认完成。已完成的研究已保留，可重试当前步骤。', 'The research result was not fully returned and completion could not be confirmed. Completed research is retained; retry the current step.'],
   };
   const pair = messages[code] ?? ['本地 Agent 暂时不可用，请检查设置中的连接后继续。', 'The local agent is unavailable. Check its connection in Settings, then resume.'];

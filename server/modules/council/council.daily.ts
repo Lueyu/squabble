@@ -3,12 +3,14 @@ import type { DialogueTurn } from './council.types';
 import type { CouncilMember } from '../../../shared/council.interface';
 import type { CouncilEvidence } from './council.rules';
 
+const DAILY_REPORT_EVIDENCE_LIMIT = 60;
+
 /** Keep strategy and reverse-check citations inside the existing bounded report evidence inventory. */
 export function reportExecutionEvidence(evidence:CouncilEvidence[],requiredIds:readonly string[]=[]):CouncilEvidence[]{
   const required=new Set([...requiredIds,...evidence.filter(item=>item.sourceName==='Frozen owner context').map(item=>item.id)]);
-  if(!required.size)return evidence.slice(-60);
-  if(evidence.filter(item=>required.has(item.id)).length>60)throw new Error('RESEARCH_CONTEXT_LIMIT');
-  return [...evidence.filter(item=>!required.has(item.id)),...evidence.filter(item=>required.has(item.id))].slice(-60);
+  if(!required.size)return evidence.slice(-DAILY_REPORT_EVIDENCE_LIMIT);
+  if(evidence.filter(item=>required.has(item.id)).length>DAILY_REPORT_EVIDENCE_LIMIT)throw new Error('RESEARCH_CONTEXT_LIMIT');
+  return [...evidence.filter(item=>!required.has(item.id)),...evidence.filter(item=>required.has(item.id))].slice(-DAILY_REPORT_EVIDENCE_LIMIT);
 }
 
 export function dailyResearchMembers(members:CouncilMember[]):CouncilMember[]{
@@ -30,7 +32,7 @@ export function parseDailyReverseCheck(raw:unknown, validIds:Set<string>):DailyR
     if(!Array.isArray(input)||input.length>max||input.some(v=>typeof v!=='string'||!v.trim()||v.length>2000))throw new Error('DAILY_REVERSE_CHECK_INVALID');
     return input.map(v=>(v as string).trim());
   };
-  const checked=list('checked'),findings=list('findings'),gaps=list('gaps'),affectedPremises=list('affectedPremises'),evidenceIds=list('evidenceIds',20);
+  const checked=list('checked'),findings=list('findings'),gaps=list('gaps'),affectedPremises=list('affectedPremises'),evidenceIds=list('evidenceIds',DAILY_REPORT_EVIDENCE_LIMIT);
   if(!checked.length||!affectedPremises.length||evidenceIds.some(id=>!validIds.has(id)))throw new Error('DAILY_REVERSE_CHECK_INVALID');
   if(value.outcome==='unable_to_verify'&&!gaps.length)throw new Error('DAILY_REVERSE_CHECK_GAP_REQUIRED');
   if(['critical_counterevidence','partially_weakened'].includes(String(value.outcome))&&(!findings.length||!evidenceIds.length))throw new Error('DAILY_REVERSE_CHECK_EVIDENCE_REQUIRED');
@@ -46,11 +48,15 @@ export function renderDailyReverseCheck(check:DailyReverseCheck,language:string)
 export function dailyResearchPrompt(phase:string):string {
   return [
     'This is a private daily research job, never a public conversation. Independent submissions are sealed before inspection. Do not perform a staged debate or address personalities.',
+    ...(phase === 'challenge' ? [`reverseCheck.evidenceIds may contain at most ${DAILY_REPORT_EVIDENCE_LIMIT} exact IDs from the supplied evidence or your declared sources; preserve all valid citations within this bound. Each of checked, findings, gaps and affectedPremises may contain at most 12 nonempty strings, with at most 2000 characters per string.`] : []),
     ...(phase === 'challenge' || phase === 'summary' ? ['Account for every frozen holding, recorded cash by currency and confirmed investor limits at the original snapshot capture time. Evaluate whole-portfolio concentration and shared risk drivers. For each holding give a concise judgment, supporting basis and next verification point; list cash separately. State how each specific data gap limits the judgment and what would resolve it. Do not describe supplied holdings or cash as missing, infer fresh prices from stored marks, or invent news to fill coverage.'] : []),
     phase==='opening'?'Investigate one complementary information domain deeply. State sourced facts, periods, arithmetic, assumptions and material omissions. Do not invent a question to provoke discussion.':
     phase==='challenge'?'Act as the independent devils-advocate gate. Try to overturn the material premises using source checks and new evidence where available. Return reverseCheck:{outcome:"critical_counterevidence|partially_weakened|no_counterevidence_found|unable_to_verify",checked:string[],findings:string[],gaps:string[],affectedPremises:string[],evidenceIds:string[]}. Do not treat unanimity or absence of counterevidence as correctness. Record real checks, never fabricate three paths.':
     'Produce the complete readable daily portfolio report and a separately marked DAILY STRATEGY DRAFT. Cover evidence, counterevidence, actual portfolio concentration, current uncertainties, per-stock horizon and what would change the judgment. Unknown prices/quantities remain unknown. No automatic trading authority. Preserve the reverse-check result and original disagreements. Return thesisCandidates only when exact sourced assumptions and invalidation conditions are available. Each thesisCandidate is {claim,supportingEvidence:[{evidenceId}],opposingEvidence:string[],assumptions:string[],indicators:string[],invalidationConditions:string[],horizon?:{startAt?,endAt?,reviewAt?},boundaryOrigin:"stated|proposed|unknown",monitorConditions?:[{conditionIndex,metric:"price|sma20|rsi14|volumeRatio",unit:"USD|HKD|CNY|points|ratio",operator:"lt|lte|gt|gte",threshold:number,validFrom:ISO,validUntil:ISO,evidenceIds:string[],rationale:string}]}. conditionIndex refers to invalidationConditions. Only include measurable conditions whose threshold is explicitly supported by cited evidence; never invent default levels. Omit unsupported optional fields.',
-    ...(phase==='summary'?[reportExecutionPlanPrompt()]:[]),
+    ...(phase==='summary'?[
+      'Synthesize retained independent findings and the supplied reverse-check; do not restart completed independent or source-collection work merely to reconstruct input; only seek new public evidence for a material unresolved gap. Verify arithmetic and comparisons against confirmed investor limits: exceeding a confirmed maximum is a breach, not merely approaching it. Preserve agent-source verification limits, and do not infer an exchange-close timestamp from a stored mark updatedAt.',
+      reportExecutionPlanPrompt(),
+    ]:[]),
   ].join('\n');
 }
 

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilMessages, councilSessions } from '../../database/council.schema';
@@ -13,11 +14,36 @@ import type { AgentTask } from '../local-agents/local-agents.store';
 import type { ResumeDailyReportInput } from '../../../shared/simple-conversation.interface';
 import type { CouncilCheckpoint, DialogueTurn } from './council.types';
 import type { CouncilEvidence } from './council.rules';
+import { agentAssignment } from './council.native';
+import { threadPromptContext } from './council.thread';
+import { normalizeCouncil } from '../paper-trading/agent-builder.rules';
 
 type StoredSession = typeof councilSessions.$inferSelect;
-function contextHash(evidence: CouncilEvidence[], row: StoredSession): string {
+export function dailyReportContextHash(evidence: CouncilEvidence[], row: StoredSession): string {
   return createHash('sha256').update(JSON.stringify({ evidence: evidence.map(({ id, content }) => ({ id, content })),
     references: row.references, resolvedReferences: row.resolvedReferences })).digest('hex');
+}
+export function savedResultHash(value: string): string { return createHash('sha256').update(value).digest('hex'); }
+
+/** Accept only a completed task for this exact frozen member/turn/evidence assignment. */
+export function assertSavedDailyResult(task: AgentTask, row: StoredSession, history: Array<typeof councilMessages.$inferSelect>): void {
+  const checkpoint = row.checkpoint, remote = checkpoint?.remote, turn = checkpoint?.turns[checkpoint.nextTurn];
+  const council = row.profileSnapshot.council;
+  const members = council && council.members.length < 2 ? council.members : normalizeCouncil(council).members;
+  const member = members.find(item => item.id === turn?.memberId);
+  if (!checkpoint || !remote || !turn || !member || !task.text?.trim() || task.state !== 'completed' || task.error
+    || task.owner !== row.owner || task.id !== remote.taskId || task.agentId !== remote.agentId || task.agentId !== member.agentId
+    || task.messageId !== remote.messageId || task.activityContext?.sessionId !== row.id || task.activityContext.cycleId !== checkpoint.cycleId
+    || task.activityContext.turn !== checkpoint.nextTurn || task.activityContext.revision !== remote.revision
+    || task.activityContext.memberId !== member.id || task.activityContext.language !== row.language) throw new ConflictException('SAVED_TASK_CONTEXT_MISMATCH');
+  let assignment: Record<string, unknown>;
+  try { assignment = JSON.parse(task.prompt.split('\n').at(-1)!); } catch { throw new BadRequestException('SAVED_TASK_CONTEXT_UNAVAILABLE'); }
+  const expected: Record<string, unknown> = JSON.parse(agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
+    thread: threadPromptContext(row), candidate: row.candidate, messages: history.filter(message => message.role !== 'system').map(message => ({ ...message,
+      ...(row.checkpoint?.simple && message.metadata?.claims ? { content: `${message.content}\nPublic claims: ${JSON.stringify(message.metadata.claims)}` } : {}) })),
+    evidence: row.evidenceSnapshot }).split('\n').at(-1)!);
+  if (!assignment || typeof assignment !== 'object' || ['ticker', 'language', 'member', 'turn', 'thread', 'candidate', 'evidence', 'messages']
+    .some(key => !isDeepStrictEqual(assignment[key], expected[key]))) throw new ConflictException('SAVED_TASK_CONTEXT_MISMATCH');
 }
 
 /** Compare the actual retained wire assignment, never the intended input snapshot alone. */
@@ -56,7 +82,7 @@ export class CouncilReportResumeService {
       if (preferences?.enabled === false) throw new BadRequestException('RESEARCH_PAUSED');
       if (checkpoint.inflight || remote.turn !== checkpoint.nextTurn || !this.agents) throw new ConflictException('ORIGINAL_TASK_NOT_TERMINATED');
       const terminal = await this.agents.store.task(owner, remote.taskId);
-      if (!terminal || !['failed', 'cancelled'].includes(terminal.state)
+      if (!terminal || !['failed', 'cancelled', 'completed'].includes(terminal.state)
         || ['LOCAL_INTERRUPTED', 'LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_PAUSED'].includes(terminal.error ?? '')
         || terminal.messageId !== remote.messageId || terminal.agentId !== remote.agentId
         || terminal.activityContext?.sessionId !== id || terminal.activityContext?.cycleId !== checkpoint.cycleId
@@ -67,7 +93,40 @@ export class CouncilReportResumeService {
       const frozen = (simple.commonEvidence ?? row.evidenceSnapshot).filter(fact => fact.sourceName === 'Frozen owner context');
       if (!frozen.length) throw new BadRequestException('SAVED_OWNER_CONTEXT_UNAVAILABLE');
       await this.refreshReferences?.(row);
-      const digest = contextHash(frozen, row);
+      const digest = dailyReportContextHash(frozen, row);
+      const activate = async (next: CouncilCheckpoint) => {
+        const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint: next, error: null, updatedAt: new Date() })
+          .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+        await tx.update(researchCurrentViews).set({ state: 'generating', error: null, updatedAt: new Date() }).where(and(
+          eq(researchCurrentViews.owner, owner), eq(researchCurrentViews.taskId, id), eq(researchCurrentViews.taskKind, 'daily_research')));
+        await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });
+        return { created: true, row: active };
+      };
+      const budgetFor = async (additionalCalls: number) => {
+        if ((simple.calls ?? 0) + additionalCalls > 12) throw new BadRequestException('AUTOMATIC_TASK_CALL_LIMIT');
+        const automaticTaskId = checkpoint.automaticTaskId ?? simple.automaticTaskId;
+        if (!automaticTaskId || additionalCalls === 0) return;
+        const [automatic] = await tx.select().from(automaticResearchTasks).where(and(eq(automaticResearchTasks.owner, owner), eq(automaticResearchTasks.id, automaticTaskId))).for('update');
+        const [budget] = await tx.select().from(llmBudgetSettings).where(eq(llmBudgetSettings.owner, owner));
+        if (!automatic || automatic.state !== 'claimed' || automatic.calls + additionalCalls > Math.min(12, budget?.enabled ? budget.maxCallsPerTask : 12)) {
+          throw new BadRequestException('AUTOMATIC_TASK_CALL_LIMIT');
+        }
+      };
+      if (terminal.state === 'completed') {
+        const history = await tx.select().from(councilMessages).where(and(eq(councilMessages.owner, owner), eq(councilMessages.sessionId, id))).orderBy(councilMessages.createdAt);
+        assertSavedDailyResult(terminal, row, history);
+        if (history.some(message => message.metadata?.taskId === terminal.id)) throw new ConflictException('SAVED_RESULT_ALREADY_ACCEPTED');
+        const correction = simple.inputCorrection;
+        if (correction && (correction.contextHash !== digest || pending.phase === 'challenge' && correction.challengeTurn !== checkpoint.nextTurn)) {
+          throw new ConflictException('SAVED_TASK_CONTEXT_MISMATCH');
+        }
+        await budgetFor(pending.phase === 'challenge' ? 1 : 0);
+        return activate({ ...checkpoint, inflight: undefined, remote: { ...remote, reparseExisting: {
+          promptHash: savedResultHash(terminal.prompt), resultHash: savedResultHash(terminal.text!), contextHash: digest } },
+          simple: { ...simple, ...(correction && pending.phase === 'challenge' ? {
+            inputCorrection: { ...correction, revision: row.revision + 1, revalidated: false },
+          } : {}) } });
+      }
       const submissions = await tx.select().from(councilIndependentSubmissions).where(and(eq(councilIndependentSubmissions.owner, owner),
         eq(councilIndependentSubmissions.sessionId, id), eq(councilIndependentSubmissions.cycleId, checkpoint.cycleId)));
       const incomplete: string[] = [];
@@ -89,15 +148,7 @@ export class CouncilReportResumeService {
       const manager = members.find(member => member.role === 'manager') ?? members.at(-1);
       if (!checker || !manager) throw new BadRequestException('MEMBER_NOT_IN_CONVERSATION');
       const additions: DialogueTurn[] = [...(needsCheck ? [{ memberId: checker.id, phase: 'challenge' as const }] : []), { memberId: manager.id, phase: 'summary' }];
-      if ((simple.calls ?? 0) + additions.length > 12) throw new BadRequestException('AUTOMATIC_TASK_CALL_LIMIT');
-      const automaticTaskId = checkpoint.automaticTaskId ?? simple.automaticTaskId;
-      if (automaticTaskId) {
-        const [automatic] = await tx.select().from(automaticResearchTasks).where(and(eq(automaticResearchTasks.owner, owner), eq(automaticResearchTasks.id, automaticTaskId))).for('update');
-        const [budget] = await tx.select().from(llmBudgetSettings).where(eq(llmBudgetSettings.owner, owner));
-        if (!automatic || automatic.state !== 'claimed' || automatic.calls + additions.length > Math.min(12, budget?.enabled ? budget.maxCallsPerTask : 12)) {
-          throw new BadRequestException('AUTOMATIC_TASK_CALL_LIMIT');
-        }
-      }
+      await budgetFor(additions.length);
       const revision = row.revision + 1;
       const correction = incomplete.length ? revalidated ? { ...previous!, revalidated: true } : {
         originalIndependentContextComplete: false as const, contextHash: digest, sourceTaskIds: incomplete,
@@ -105,14 +156,7 @@ export class CouncilReportResumeService {
       } : previous;
       const next: CouncilCheckpoint = { ...checkpoint, turns: [...checkpoint.turns, ...additions], nextTurn: checkpoint.turns.length,
         remote: undefined, inflight: undefined, pendingResearch: [], simple: { ...simple, stage: 'discussion', inputCorrection: correction } };
-      const [active] = await tx.update(councilSessions).set({ status: 'running', revision, checkpoint: next, error: null, updatedAt: new Date() })
-        .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
-      // Only the receipt still pointing at this exact daily session may follow its recovery.
-      // Keep prior readable material and the current generation identity intact.
-      await tx.update(researchCurrentViews).set({ state: 'generating', error: null, updatedAt: new Date() }).where(and(
-        eq(researchCurrentViews.owner, owner), eq(researchCurrentViews.taskId, id), eq(researchCurrentViews.taskKind, 'daily_research')));
-      await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });
-      return { created: true, row: active };
+      return activate(next);
     });
   }
 }

@@ -39,7 +39,9 @@ export interface CouncilCheckpoint {
   evidenceArchive?: CouncilEvidence[];
   inflight?: { id: string; turn: number; revision: number };
   remote?: { agentId: string; taskId?: string; contextId?: string; messageId: string;
-    turn: number; revision: number; dispatchStarted: boolean; awaitingInput?: boolean; lastUserMessageId?: string };
+    turn: number; revision: number; dispatchStarted: boolean; awaitingInput?: boolean; lastUserMessageId?: string;
+    /** Explicit local acceptance of a terminal result; never permission to dispatch the task again. */
+    reparseExisting?: { promptHash: string; resultHash: string; contextHash: string } };
 }
 export interface CouncilMessageMetadata extends Pick<CouncilMessage,
   'reverseCheck' | 'actualExecutor' | 'claims' | 'respondsToClaims' | 'stanceChange' | 'evidenceCheckStatus' | 'references' | 'memory' | 'taskId' | 'memberId' | 'phase' | 'replyToMessageId' | 'evidenceIds' | 'reasoningSummary' | 'questions' | 'acquisition' | 'externalAgent' | 'externalUsageUnknown' | 'response'> {

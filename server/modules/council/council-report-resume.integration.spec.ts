@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -74,7 +74,8 @@ test('saved daily report explicitly resumes only the necessary full-context gate
       checkpoint.remote = { agentId: 'native-opencode', messageId: failed.messageId, taskId: failedId, turn: 3, revision: 2, dispatchStarted: true };
       await db.update(councilSessions).set({ checkpoint }).where(eq(councilSessions.id, session.id));
       const calls: LocalAgentExecution[] = [];
-      const local = { store: { task: async (who: string, id: string) => { const saved = tasks.get(id); assert.equal(saved?.owner, who); return saved!; },
+      const hooks: { taskRead?: (saved: AgentTask) => void } = {};
+      const local = { store: { task: async (who: string, id: string) => { const saved = tasks.get(id); assert.equal(saved?.owner, who); hooks.taskRead?.(saved!); return saved!; },
         eventsForSession: async () => ({ events: [], cursor: 0, truncated: false }) },
         execute: async (_owner: string, options: LocalAgentExecution) => {
           calls.push(options);
@@ -96,7 +97,37 @@ test('saved daily report explicitly resumes only the necessary full-context gate
           return { text: JSON.stringify(result), usageTokens: null, taskId: newId };
         } };
       const service = new CouncilService(db, {} as never, {} as never, {} as never, {} as never, local as never, undefined, undefined, undefined, new ResearchDocumentsService(db));
-      return { owner, session, calls, service, failed, tasks };
+      return { owner, session, calls, service, failed, tasks, hooks };
+    }
+    async function completedResult(phase: 'challenge' | 'summary' = 'challenge') {
+      const f = await fixture();
+      const [row] = await db.select().from(councilSessions).where(eq(councilSessions.id, f.session.id));
+      const known = [evidence, ...Array.from({ length: 9 }, (_, i) => ({ ...evidence, id: `known-${i}`, sourceName: 'Fictional source', content: `Fact ${i}` }))];
+      const sourceIds = Array.from({ length: 11 }, (_, i) => `declared-${i}`);
+      const check = { outcome: 'partially_weakened', checked: ['Full fictional portfolio checked'], findings: ['A premise needs narrower scope'], gaps: [],
+        affectedPremises: ['Concentration'], evidenceIds: [...known.map(fact => fact.id), ...sourceIds] };
+      const checkpoint = { ...row.checkpoint!, nextTurn: phase === 'challenge' ? 4 : 5,
+        turns: [...row.checkpoint!.turns, { memberId: 'last', phase: 'challenge' as const }, { memberId: 'last', phase: 'summary' as const }],
+        simple: { ...row.checkpoint!.simple!, calls: phase === 'challenge' ? 5 : 6,
+          inputCorrection: { originalIndependentContextComplete: false as const,
+            contextHash: createHash('sha256').update(JSON.stringify({ evidence: [{ id: evidence.id, content: evidence.content }], references: [], resolvedReferences: [] })).digest('hex'),
+            sourceTaskIds: [...f.tasks.values()].filter(task => task.activityContext!.turn < 2).map(task => task.id),
+            revision: 3, challengeTurn: 4, revalidated: phase === 'summary' } } };
+      row.checkpoint = checkpoint; row.revision = 3; row.evidenceSnapshot = known;
+      const saved = f.failed; saved.state = 'completed'; delete saved.error;
+      saved.activityContext = { ...saved.activityContext!, turn: checkpoint.nextTurn, revision: 3 };
+      checkpoint.remote = { ...checkpoint.remote!, turn: checkpoint.nextTurn, revision: 3 };
+      if (phase === 'summary') await db.insert(councilMessages).values({ owner: f.owner, sessionId: row.id, role: 'manager', memberName: 'Last', revision: 3,
+        content: 'Accepted full-context check', tokensUsed: 1, metadata: { phase: 'challenge', memberId: 'last', cycleId: checkpoint.cycleId, turn: 4,
+          reverseCheck: { ...check, evidenceIds: known.map(fact => fact.id) } } });
+      const history = await db.select().from(councilMessages).where(eq(councilMessages.sessionId, row.id)).orderBy(councilMessages.createdAt);
+      saved.prompt = agentAssignment({ ticker: row.ticker, language: row.language, member: members[1], turn: { memberId: 'last', phase },
+        thread: threadPromptContext(row), candidate: row.candidate, messages: history, evidence: known });
+      saved.text = JSON.stringify({ content: phase === 'challenge' ? 'Saved complete check with all 21 citations' : 'Saved complete daily report', evidenceIds: known.map(fact => fact.id),
+        ...(phase === 'challenge' ? { reverseCheck: check, sources: sourceIds.map(id => ({ id, title: id, url: `https://issuer.example/${id}`, content: `Original fictional excerpt ${id}` })) } : {}) });
+      saved.usageTokens = 7;
+      await db.update(councilSessions).set({ revision: 3, checkpoint, evidenceSnapshot: known, error: 'LOCAL_INVALID_RESULT' }).where(eq(councilSessions.id, row.id));
+      return { ...f, saved, startingCalls: checkpoint.simple.calls, row };
     }
     await t.test('the first legacy resume retains research, runs two turns once and publishes the latest bound reverse check', async () => {
       const f = await fixture(); const input = { expectedRevision: 2, requestKey: 'explicit-report-resume' };
@@ -225,6 +256,86 @@ test('saved daily report explicitly resumes only the necessary full-context gate
       assert.equal(result.status, 'completed', result.error ?? ''); assert.equal(f.calls.length, 4);
       assert.equal(result.messages.filter(message => message.phase === 'challenge').length, 3);
       assert.equal(result.reports.at(-1)?.coverage?.inputCorrection?.revision, 4);
+    });
+    await t.test('a completed saved challenge is reparsed locally with 21 citations and only the following summary calls the provider', async () => {
+      const f = await completedResult();
+      const original = { text: f.saved.text, prompt: f.saved.prompt, state: f.saved.state };
+      const [view] = await db.insert(researchCurrentViews).values({ owner: f.owner, topicKey: 'portfolio', dateKey: '2026-11-07', state: 'failed',
+        taskKind: 'daily_research', taskId: f.session.id, generationSequence: 9 }).returning();
+      const input = { expectedRevision: 3, requestKey: 'parse-saved-complete-check' };
+      await f.service.resumeDailyReport(f.owner, f.session.id, input); await f.service.resumeDailyReport(f.owner, f.session.id, input);
+      let result = await f.service.getSession(f.owner, f.session.id);
+      for (let i = 0; i < 250 && result.status === 'running'; i++) { await new Promise(resolve => setTimeout(resolve, 10)); result = await f.service.getSession(f.owner, f.session.id); }
+      assert.equal(result.status, 'completed', result.error ?? ''); assert.equal(f.calls.length, 1);
+      assert.equal(JSON.parse(f.calls[0].prompt.split('\n').at(-1)!).turn.phase, 'summary');
+      const recovered = result.messages.find(message => message.taskId === f.saved.id)!;
+      assert.equal(recovered.turn, 4); assert.equal(recovered.reverseCheck?.evidenceIds.length, 21);
+      assert.equal(recovered.revision, 4);
+      assert.equal(result.reports.at(-1)?.coverage?.inputCorrection?.revision, 4);
+      assert.equal(result.reports.at(-1)?.coverage?.inputCorrection?.challengeTurn, 4);
+      assert.equal(result.reports.at(-1)?.coverage?.inputCorrection?.revalidated, true);
+      assert.equal(result.reports.at(-1)?.coverage?.reverseCheck?.evidenceIds.length, 21);
+      assert.equal(result.reports.at(-1)?.evidence.filter(fact => fact.sourceUrl?.startsWith('https://issuer.example/')).length, 11);
+      assert.deepEqual({ text: f.saved.text, prompt: f.saved.prompt, state: f.saved.state }, original);
+      const [stored] = await db.select().from(councilSessions).where(eq(councilSessions.id, f.session.id));
+      assert.equal(stored.checkpoint?.simple?.calls, f.startingCalls + 1);
+      assert.equal(stored.checkpoint?.turns.length, 6, 'local reparse accepts the original turn without appending another gate');
+      await new CurrentResearchService(db, new ResearchDocumentsService(db), {} as never, {} as never).reconcile();
+      const [ready] = await db.select().from(researchCurrentViews).where(eq(researchCurrentViews.id, view.id));
+      assert.equal(ready.state, 'ready'); assert.equal(ready.currentDocumentId, result.reports.at(-1)?.researchVersionId);
+    });
+    await t.test('a completed saved summary costs zero provider calls and preserves the original call budget', async () => {
+      const f = await completedResult('summary');
+      const [automatic] = await db.insert(automaticResearchTasks).values({ owner: f.owner, key: 'exhausted-local-acceptance', purpose: 'fictional',
+        dateKey: '2026-11-07', calls: 12, state: 'failed' }).returning();
+      await db.update(councilSessions).set({ checkpoint: { ...f.row.checkpoint!, simple: { ...f.row.checkpoint!.simple!, calls: 12,
+        automaticTaskId: automatic.id } } }).where(eq(councilSessions.id, f.session.id));
+      await f.service.resumeDailyReport(f.owner, f.session.id, { expectedRevision: 3, requestKey: 'parse-saved-summary' });
+      let result = await f.service.getSession(f.owner, f.session.id);
+      for (let i = 0; i < 200 && result.status === 'running'; i++) { await new Promise(resolve => setTimeout(resolve, 10)); result = await f.service.getSession(f.owner, f.session.id); }
+      assert.equal(result.status, 'completed', result.error ?? ''); assert.equal(f.calls.length, 0);
+      const [stored] = await db.select().from(councilSessions).where(eq(councilSessions.id, f.session.id));
+      assert.equal(stored.checkpoint?.simple?.calls, 12);
+      assert.equal((await db.select().from(automaticResearchTasks).where(eq(automaticResearchTasks.id, automatic.id)))[0].calls, 12);
+      assert.equal(result.messages.filter(message => message.taskId === f.saved.id).length, 1);
+    });
+    await t.test('completed-result recovery rejects mismatched frozen input and changed result or prompt hashes without dispatch', async () => {
+      const mismatch = await completedResult();
+      const assignment = JSON.parse(mismatch.saved.prompt.split('\n').at(-1)!); assignment.evidence[0].content = 'Wrong owner context';
+      mismatch.saved.prompt = JSON.stringify(assignment);
+      await assert.rejects(mismatch.service.resumeDailyReport(mismatch.owner, mismatch.session.id, { expectedRevision: 3, requestKey: 'wrong-completed-context' }), /SAVED_TASK_CONTEXT_MISMATCH/);
+      assert.equal(mismatch.calls.length, 0);
+      for (const field of ['text', 'prompt'] as const) {
+        const f = await completedResult(); let reads = 0;
+        f.hooks.taskRead = task => { if (task.id === f.saved.id && ++reads > 1) task[field] += ' '; };
+        await f.service.resumeDailyReport(f.owner, f.session.id, { expectedRevision: 3, requestKey: `changed-${field}` });
+        let result = await f.service.getSession(f.owner, f.session.id);
+        for (let i = 0; i < 200 && result.status === 'running'; i++) { await new Promise(resolve => setTimeout(resolve, 10)); result = await f.service.getSession(f.owner, f.session.id); }
+        assert.equal(result.status, 'paused'); assert.equal(f.calls.length, 0);
+        assert.equal(result.messages.some(message => message.taskId === f.saved.id), false);
+        const [stored] = await db.select().from(councilSessions).where(eq(councilSessions.id, f.session.id));
+        assert.equal(stored.checkpoint?.simple?.calls, f.startingCalls);
+      }
+    });
+    await t.test('new owner steering prevents accepting a completed summary from the previous message context', async () => {
+      const f = await completedResult('summary');
+      const steered = await f.service.addMessage(f.owner, f.session.id, 'Reconsider the new cash requirement before publishing.');
+      await assert.rejects(f.service.resumeDailyReport(f.owner, f.session.id, { expectedRevision: steered.revision, requestKey: 'reject-stale-summary' }), /SAVED_TASK_CONTEXT_MISMATCH/);
+      assert.equal(f.calls.length, 0);
+      const retained = await f.service.getSession(f.owner, f.session.id);
+      assert.equal(retained.reports.length, 0); assert.equal(retained.status, 'paused');
+    });
+    await t.test('saved assignment validation uses the same normalized member customization as native dispatch', async () => {
+      const f = await completedResult();
+      const profileSnapshot = { ...f.row.profileSnapshot, council: { ...f.row.profileSnapshot.council!, members: f.row.profileSnapshot.council!.members.map(member =>
+        member.id === 'last' ? { ...member, instructions: '\n  Retained research scope  ' } : member) } };
+      const assignment = JSON.parse(f.saved.prompt.split('\n').at(-1)!); assignment.member.instructions = 'Retained research scope';
+      f.saved.prompt = JSON.stringify(assignment);
+      await db.update(councilSessions).set({ profileSnapshot }).where(eq(councilSessions.id, f.session.id));
+      await f.service.resumeDailyReport(f.owner, f.session.id, { expectedRevision: 3, requestKey: 'normalized-member' });
+      let result = await f.service.getSession(f.owner, f.session.id);
+      for (let i = 0; i < 200 && result.status === 'running'; i++) { await new Promise(resolve => setTimeout(resolve, 10)); result = await f.service.getSession(f.owner, f.session.id); }
+      assert.equal(result.status, 'completed', result.error ?? ''); assert.equal(f.calls.length, 1);
     });
   } finally { await client.end(); await admin`DROP SCHEMA IF EXISTS ${admin(namespace)} CASCADE`; await admin.end(); }
 });

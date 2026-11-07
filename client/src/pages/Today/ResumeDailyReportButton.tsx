@@ -29,7 +29,7 @@ export default function ResumeDailyReportButton({ sessionId }: { sessionId: stri
     <Button size="sm" variant="outline" disabled={resume.isPending} onClick={() => resume.mutate()}>
       {resume.isPending ? (zh ? '正在续接…' : 'Resuming…') : (zh ? '继续完成已有日报' : 'Complete saved daily report')}
     </Button>
-    <p className="text-xs text-muted-foreground">{zh ? '保留已有研究，必要时补充完整资料核验后继续汇总。会调用 AI。' : 'Keeps saved research and completes the summary, checking full context when needed. Uses AI.'}</p>
+    <p className="text-xs text-muted-foreground">{zh ? '优先在本地整理已返回结果；需要补核验或汇总时会调用 AI。已有研究继续保留。' : 'Locally reformats returned results first; uses AI when a new check or summary is needed. Saved research is retained.'}</p>
     {resume.isError && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{zh ? '尚未续接成功。请确认原任务已结束、资料仍可用后重试；已有研究继续保留。' : 'Could not resume. Confirm the original task has ended and saved context is available, then retry. Saved research is retained.'}</p>}
   </div>;
 }

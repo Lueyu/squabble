@@ -35,3 +35,36 @@ test('retaining later research sources never evicts the mandatory owner snapshot
   const retained = reportExecutionEvidence([owner, ...Array.from({ length: 65 }, (_, i) => fact(`source-${i}`, 'Native agent'))]);
   assert.equal(retained.length, 60); assert.ok(retained.some(item => item.id === owner.id));
 });
+test('summary reuses retained research and checks arithmetic against limits without inventing market timestamps', () => {
+  const prompt = dailyResearchPrompt('summary');
+  assert.match(prompt, /Synthesize retained independent findings and the supplied reverse-check/iu);
+  assert.match(prompt, /only seek new public evidence for a material unresolved gap/iu);
+  assert.match(prompt, /exceeding a confirmed maximum is a breach/iu);
+  assert.match(prompt, /do not infer an exchange-close timestamp from a stored mark/iu);
+});
+
+test('reverse checks preserve all valid citations through the complete report evidence capacity', () => {
+  for (const count of [21, 60]) {
+    const evidenceIds: string[] = Array.from({ length: count }, (_, i) => `fictional-evidence-${i}`);
+    const check = parseDailyReverseCheck({ outcome: 'partially_weakened', checked: ['Compare fictional source periods'],
+      findings: ['A fictional premise weakens'], gaps: [], affectedPremises: ['Fictional cash conversion'], evidenceIds }, new Set(evidenceIds));
+    assert.deepEqual(check.evidenceIds, evidenceIds, 'valid citations must survive without truncation or reordering');
+  }
+});
+
+test('reverse-check citation capacity remains bounded and unknown references remain invalid', () => {
+  const evidenceIds: string[] = Array.from({ length: 61 }, (_, i) => `fictional-evidence-${i}`);
+  const base = { outcome: 'partially_weakened', checked: ['Check fictional evidence'], findings: ['A fictional premise weakens'],
+    gaps: [], affectedPremises: ['Fictional premise'] };
+  assert.throws(() => parseDailyReverseCheck({ ...base, evidenceIds }, new Set(evidenceIds)), /DAILY_REVERSE_CHECK_INVALID/);
+  assert.throws(() => parseDailyReverseCheck({ ...base, evidenceIds: [...evidenceIds.slice(0, 20), 'unknown-evidence'] },
+    new Set(evidenceIds)), /DAILY_REVERSE_CHECK_INVALID/);
+  assert.throws(() => parseDailyReverseCheck({ ...base, checked: Array.from({ length: 13 }, (_, i) => `Check ${i}`),
+    evidenceIds: evidenceIds.slice(0, 21) }, new Set(evidenceIds)), /DAILY_REVERSE_CHECK_INVALID/);
+});
+
+test('reverse-check prompt declares the citation inventory and explanatory-list bounds', () => {
+  const prompt: string = dailyResearchPrompt('challenge');
+  assert.match(prompt, /reverseCheck\.evidenceIds[^.]*at most 60/iu);
+  assert.match(prompt, /checked, findings, gaps and affectedPremises[^.]*at most 12/iu);
+});
