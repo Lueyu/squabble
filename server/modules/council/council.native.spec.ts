@@ -26,3 +26,10 @@ test('incomplete native research explains retained work and step retry without b
     assert.doesNotMatch(message, /连接|connection|限流|rate limit|暂时不可用|unavailable/iu);
   }
 });
+test('returned invalid results direct users to local formatting within the saved research', () => {
+  for (const language of ['en', 'zh']) {
+    const text = agentErrorMessage('LOCAL_INVALID_RESULT', language);
+    assert.match(text, /已返回|returned/iu); assert.match(text, /保留|retained/iu);
+    assert.match(text, /原研究|saved research/iu); assert.doesNotMatch(text, /新建讨论|new discussion/iu);
+  }
+});

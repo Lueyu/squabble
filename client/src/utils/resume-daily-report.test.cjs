@@ -29,6 +29,7 @@ test('resuming saved daily research retains the exact intent after a lost respon
   };
   const html = render(load('pages/Today/ResumeDailyReportButton.tsx').default, { sessionId: 'saved-daily' });
   assert.match(html, /Complete saved daily report/);
+  assert.match(html, /Locally reformats returned results first/);
   assert.equal(mutation.retry, false);
   await assert.rejects(mutation.mutationFn(), /response lost/);
   await mutation.mutationFn();

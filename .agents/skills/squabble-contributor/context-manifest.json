@@ -4,13 +4,12 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "65c388eef6cd3526cda209f5d4b9c38fda7cbea8",
+    "commit": "f0137167c2fa37d9f5d032d7e2da4cdaa6e6bee8",
     "workingTreeChanges": true,
     "reviewedAt": "2026-11-07",
     "scope": [
-      "Atomic frozen owner input in native/API/workflow packing",
-      "Explicit saved daily report continuation and original input coverage",
-      "Simulation timestamp coverage, immutable historical reading and report categories"
+      "Completed-but-unaccepted native results: local validation and original-turn acceptance without provider replay",
+      "Reverse-check citations bounded to the existing sixty-record report evidence inventory"
     ]
   },
   "areas": [
@@ -88,6 +87,8 @@
         "server/modules/council/council.context.ts",
         "server/modules/council/council.workflow-executor.ts",
         "server/modules/council/council-report-resume.service.ts",
+        "server/modules/council/council.service.ts",
+        "server/modules/council/council.types.ts",
         "server/modules/council/council-report-resume.integration.spec.ts",
         "server/modules/council/council.owner-context.spec.ts",
         "server/modules/research-documents/research-documents.service.ts",
@@ -275,13 +276,14 @@
     }
   ],
   "reviewNotes": {
-    "architecture": "All five diagrams reviewed against the recorded baselines plus the complete-portfolio working-tree changes. Research/report now shows atomic input limits and explicit terminated-task continuation; strategy/simulation now shows timestamped observation coverage. System boundaries, channel seal/outbox publication and real-ledger transaction/import semantics are unchanged.",
-    "behavior": "Complete frozen holdings/cash/limits/IDs/times survive native/API/workflow work and review packing or fail before dispatch. Explicit resume-report compares actual saved opening wire input, retains old findings/tasks, appends the necessary full-context check/summary and preserves original incomplete coverage. Simulation review counts distinct observation times, separates model notes from actual gaps and visibly distinguishes ledger reviews from research. Documentation does not certify a live deployment or research result.",
+    "architecture": "Saved-result acceptance reviewed against f0137167 plus working-tree changes. Only the research/report diagram changes: a completed native result can require local validation/reparse and acceptance of its original turn before advancing. The other four diagrams retain their existing service/owner, simulation, channel publication and real-ledger structure.",
+    "behavior": "Completed provider output and accepted research are distinct. Saved-result validation must bind task identity, frozen input and result hash, accept the original turn once and avoid a provider replay or duplicate charge; only a needed subsequent summary is a new model call. Reverse-check evidenceIds allow up to sixty valid supplied IDs, with unknown IDs and sixty-one entries still rejected. No new trading, source or publication authority is introduced; documentation does not certify a live deployment or research result.",
     "tooling": "Complete-portfolio changes do not modify the context helpers or CI integration; their prior verification remains separate from the new application behavior review.",
     "testFixtures": "CI crossed Shanghai midnight: three integration suites now align scenario clocks and dates; stale-report and ledger guards remain unchanged. These test-only changes do not alter any of the five architecture flows.",
     "concurrentMain": "PR #80 (f0fb2a0) inspected during final integration: added saved daily-report recovery, returnedDocumentId and readable simulation review projections. Repository/research references and report diagram updated; other architecture flows unchanged. Date fixture fixes preserve both calendar derivation and deterministic clocks.",
     "completePortfolioResearch": "Reviewed against 65c388e plus working-tree changes on 2026-11-07, not an uncreated release commit. Checked council input packers, resume reservation and correction-bound reverse-check selection, report coverage/body publication, simulation review timestamps and archived/category readers. Retained independent openings are never retroactively labelled complete after supplementation; formatting recovery remains separate from explicit AI continuation.",
-    "unchangedFlows": "Diagram 1: route/module/auth/provider and database boundaries remain the same. Diagram 4: report/category/coverage changes do not alter finding seals, template checks, semantic deduplication or transactional outbox. Diagram 5: no holdings/cash/transaction import or reconstruction mutation is introduced. Diagram 3 changes only the review branch; explicit strategy confirmation, source fences and final order checks are unchanged.",
-    "documentationVerification": "Context helper tests: 15 passed, zero skips, after rerunning outside the sandbox restriction on disposable Git metadata. Context checker: valid with no structural errors; its drift warning remains expected for the working tree. Document/reference changes passed whitespace checks and a retrieval check for resume-report, inputCorrection and valuationCoverage. These checks do not certify runtime research or deployment."
+    "unchangedFlows": "For saved-result acceptance, diagrams 1, 3, 4 and 5 need no structural changes: route/module/auth/provider boundaries remain the same; strategy confirmation, source/order fences and timestamped simulation observation coverage are unchanged; channel seals/template/deduplication/outbox remain unchanged; no real-ledger/import/reconstruction mutation is introduced.",
+    "documentationVerification": "Saved-result acceptance update: context helper tests passed 15 cases with zero skips outside the sandbox restriction on disposable Git metadata. Context checker and whitespace/retrieval checks validate documentation structure only; the working-tree drift warning remains expected. These checks do not certify runtime research or deployment.",
+    "savedResultAcceptance": "Reviewed f0137167 plus working-tree changes: assertSavedDailyResult and checkpoint.remote.reparseExisting bind original task identity and SHA-256 promptHash/resultHash/contextHash at reservation and reparseDailyTurn. Normal recordTurn accepts the same turn; old provider calls and budgets are not repeated. A saved challenge needs only a subsequent summary call, while a saved summary can publish with zero new calls. parseDailyReverseCheck now shares the sixty-record inventory bound; unknown/sixty-one references remain invalid. User documentation only corrects the prior unconditional AI-call wording."
   }
 }

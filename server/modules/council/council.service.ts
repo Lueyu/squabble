@@ -11,7 +11,7 @@ import { councilIndependentSubmissions, councilMemberAttempts } from '../../data
 import { CouncilMemberAttemptsService, type MemberAttempt } from './council-member-attempts.service';
 import { safeExecutionFailure } from '../../local-agents/failures';
 import { CouncilRecoveryService } from './council-recovery.service';
-import { CouncilReportResumeService } from './council-report-resume.service';
+import { CouncilReportResumeService, assertSavedDailyResult, dailyReportContextHash, savedResultHash } from './council-report-resume.service';
 import type { ResumeDailyReportInput } from '../../../shared/simple-conversation.interface';
 import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
 import { experiencePreferences } from '../../database/simple-experience.schema';
@@ -813,14 +813,15 @@ export class CouncilService implements OnModuleInit {
           if (latest.status !== 'running' || latest.checkpoint?.inflight) return;
           continue;
         }
+        const reparseExisting = Boolean(row.checkpoint.remote?.reparseExisting);
         const automaticTaskId = row.checkpoint.automaticTaskId ?? row.checkpoint.simple?.automaticTaskId;
-        if (automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(userId, automaticTaskId);
-        if (row.checkpoint.simple) {
+        if (!reparseExisting && automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(userId, automaticTaskId);
+        if (!reparseExisting && row.checkpoint.simple) {
           if ((row.checkpoint.simple.calls ?? 0) >= 12) throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
           await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint}, '{simple,calls}', ${JSON.stringify((row.checkpoint.simple.calls ?? 0) + 1)}::jsonb)` })
             .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
         }
-        const output = await this.runMember(userId, row, member, turn);
+        const output = reparseExisting ? await this.reparseDailyTurn(userId, row, member, turn) : await this.runMember(userId, row, member, turn);
         const recorded = await this.recordTurn(userId, row, turn, claimId, output);
         claimId = null;
         if (!recorded) continue;
@@ -1328,6 +1329,24 @@ export class CouncilService implements OnModuleInit {
         tokens: result.usageTokens ?? 0, externalUsageUnknown: result.usageTokens === null,
         replyToMessageId: messages.filter((item) => item.role !== 'system').at(-1)?.id ?? null };
     } catch(error) { if(row.memberAttempt)throw error; throw new LocalAgentError('LOCAL_INVALID_RESULT'); }
+  }
+
+  private async reparseDailyTurn(owner: string, row: SessionRow, member: CouncilMember, turn: DialogueTurn): Promise<MemberOutput> {
+    const remote = row.checkpoint?.remote, receipt = remote?.reparseExisting;
+    if (!this.localAgents || !remote?.taskId || !receipt || !row.checkpoint?.simple?.researchOnly) throw new LocalAgentError('LOCAL_INVALID_RESULT');
+    await this.validatePinnedReferences(row);
+    const task = await this.localAgents.store.task(owner, remote.taskId);
+    const frozen = (row.checkpoint.simple.commonEvidence ?? row.evidenceSnapshot).filter(fact => fact.sourceName === 'Frozen owner context');
+    if (savedResultHash(task.prompt) !== receipt.promptHash || !task.text || savedResultHash(task.text) !== receipt.resultHash
+      || dailyReportContextHash(frozen, row) !== receipt.contextHash) throw new LocalAgentError('LOCAL_SAVED_RESULT_CHANGED');
+    const history = await this.db.select().from(councilMessages).where(and(eq(councilMessages.owner, owner), eq(councilMessages.sessionId, row.id))).orderBy(councilMessages.createdAt);
+    try { assertSavedDailyResult(task, row, history); }
+    catch { throw new LocalAgentError('LOCAL_SAVED_RESULT_CHANGED'); }
+    try {
+      const parsed = agentContribution({ text: task.text }, row.evidenceSnapshot, turn, row.candidate, row.language);
+      return { member, ...parsed, taskId: task.id, tokens: task.usageTokens ?? 0, externalUsageUnknown: task.usageTokens == null,
+        actualExecutor: row.checkpoint.simple.executors.find(executor => executor.memberId === member.id), replyToMessageId: null };
+    } catch { throw new LocalAgentError('LOCAL_INVALID_RESULT'); }
   }
 
   private async runResearch(userId: string, row: SessionRow): Promise<void> {
