@@ -81,6 +81,21 @@ test('source additions are immutable, deduplicated, and leave manual text unchan
   assert.deepEqual(sourceAddition(draft, [source], source).entries, []);
 });
 
+test('long research imports preserve every character across bounded observation entries', () => {
+  const readableContent = 'Fictional research paragraph.\n\n'.repeat(510);
+  const source: StrategySourceSnapshot = { key: 'report:long-research', kind: 'report', versionId: 'long-research',
+    title: 'Long report', content: readableContent, readableContent, contentHash: 'exact-raw-hash',
+    createdAt: now.toISOString(), capturedAt: now.toISOString(), ticker: null };
+  const original = JSON.stringify(source);
+  const addition = sourceAddition(input(), [], source);
+  assert.equal(addition.entries.length, 2);
+  assert.equal(addition.entries.map(entry => entry.text).join(''), readableContent);
+  assert.ok(addition.entries.every(entry => entry.text.length <= 12000 && !entry.directive && !entry.mandateRule));
+  assert.ok(addition.entries.every(entry => entry.sourceKeys[0] === source.key));
+  assert.equal(new Set(addition.entries.map(entry => entry.id)).size, 2);
+  assert.equal(JSON.stringify(source), original);
+});
+
 test('report plan additions copy reviewed entries and their exact validity instead of the report prose', () => {
   const strategy = input();
   const source = { key: 'report:owned:execution-strategy', kind: 'report' as const, versionId: 'owned', sectionId: 'execution-strategy',

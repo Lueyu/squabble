@@ -4,6 +4,7 @@ import { resolveTradingTicker } from '../../../shared/trading-market.interface';
 import type { StrategyDraftInput, StrategySourceSnapshot, StrategyExecutionPreview, StrategyValidationIssue,
   StrategyDirective, StrategySourceAddition, StrategyEntry } from '../../../shared/user-investment-strategy.interface';
 import { validateStrategyRules } from './strategy.rules';
+import { splitStrategySourceText } from '../../../shared/strategy-source-reading';
 
 const positive = z.number().finite().positive();
 const timestamp = z.string().datetime({ offset: true });
@@ -149,6 +150,8 @@ export function sourceAddition(content: StrategyDraftInput, sources: StrategySou
       mandateRule: source.executionPlan!.readiness === 'ready' ? structuredClone(entry.mandateRule) : undefined,
     })) };
   }
-  return { source, alreadyAdded: false, entries: [{ id: `source_${createHash('sha256').update(source.key).digest('hex').slice(0, 20)}`,
-    text: source.readableContent ?? source.content, ...(source.ticker ? { ticker: source.ticker } : {}), sourceKeys: [source.key] }] };
+  const parts = splitStrategySourceText(source.readableContent ?? source.content);
+  const identity = `source_${createHash('sha256').update(source.key).digest('hex').slice(0, 20)}`;
+  return { source, alreadyAdded: false, entries: parts.map((text, index) => ({ id: parts.length === 1 ? identity : `${identity}_${index}`,
+    text, ...(source.ticker ? { ticker: source.ticker } : {}), sourceKeys: [source.key] })) };
 }

@@ -4,12 +4,13 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "f0137167c2fa37d9f5d032d7e2da4cdaa6e6bee8",
+    "commit": "f032f7e8724e1798113b30146e7143d2d7e5d002",
     "workingTreeChanges": true,
     "reviewedAt": "2026-11-07",
     "scope": [
-      "Completed-but-unaccepted native results: local validation and original-turn acceptance without provider replay",
-      "Reverse-check citations bounded to the existing sixty-record report evidence inventory"
+      "Report source selection excludes missing/invalid plan placeholders and internal metadata",
+      "Long readable research imports losslessly as bounded observations with unchanged source identity",
+      "Preview/save share source and entry limits while typed-plan validation and execution authority remain unchanged"
     ]
   },
   "areas": [
@@ -118,6 +119,7 @@
         "server/database/user-investment-strategies.schema.ts",
         "server/database/user-strategy-runtime.schema.ts",
         "shared/user-investment-strategy.interface.ts",
+        "shared/strategy-source-reading.ts",
         "client/src/pages/Paper/",
         "client/src/pages/Today/InvestmentStrategy"
       ],
@@ -125,6 +127,9 @@
         "server/modules/paper-trading/report-execution-plan.ts",
         "server/modules/paper-trading/user-investment-strategy.service.ts",
         "server/modules/paper-trading/user-investment-strategy.rules.ts",
+        "shared/strategy-source-reading.ts",
+        "server/modules/paper-trading/strategy-source-reading.spec.ts",
+        "server/modules/paper-trading/report-source-import.integration.spec.ts",
         "server/modules/paper-trading/investment-policy.service.ts",
         "server/modules/paper-trading/user-strategy-runtime.ts",
         "server/modules/paper-trading/strategy-route.rules.ts",
@@ -133,6 +138,7 @@
         "server/modules/paper-trading/simulation-review.integration.spec.ts",
         "shared/simulation-experiment.interface.ts",
         "server/modules/paper-trading/report-execution-runtime.integration.spec.ts",
+        "client/src/pages/Today/InvestmentStrategySourceDialog.tsx",
         "client/src/pages/Today/InvestmentStrategyEditor.tsx"
       ],
       "references": [
@@ -252,6 +258,7 @@
         "shared/investment-policy.interface.ts",
         "shared/channel.interface.ts",
         "shared/user-investment-strategy.interface.ts",
+        "shared/strategy-source-reading.ts",
         "client/src/api/ai-investment.ts",
         "client/src/api/investment-strategies.ts",
         "shared/simple-experience.interface.ts",
@@ -276,14 +283,15 @@
     }
   ],
   "reviewNotes": {
-    "architecture": "Saved-result acceptance reviewed against f0137167 plus working-tree changes. Only the research/report diagram changes: a completed native result can require local validation/reparse and acceptance of its original turn before advancing. The other four diagrams retain their existing service/owner, simulation, channel publication and real-ledger structure.",
-    "behavior": "Completed provider output and accepted research are distinct. Saved-result validation must bind task identity, frozen input and result hash, accept the original turn once and avoid a provider replay or duplicate charge; only a needed subsequent summary is a new model call. Reverse-check evidenceIds allow up to sixty valid supplied IDs, with unknown IDs and sixty-one entries still rejected. No new trading, source or publication authority is introduced; documentation does not certify a live deployment or research result.",
+    "architecture": "Report strategy import reviewed against f032f7e plus working-tree changes. Only the strategy diagram changes: readable source selection branches into validated typed plans or lossless observation splitting before freezing an exact source snapshot. The other four diagrams retain their service/owner, research/recovery, channel publication and real-ledger structure.",
+    "behavior": "Missing/invalid execution-plan placeholders and internal metadata are excluded from selectable/readable report import content. Raw source identity remains intact. Long readable research is split into observation entries without AI calls, inferred directives or mandate rules; source keys/content hashes and typed-plan validation remain unchanged. Preview and save preserve existing source/entry capacity and owner/revision/source fences. Documentation does not certify a live deployment or research result.",
     "tooling": "Complete-portfolio changes do not modify the context helpers or CI integration; their prior verification remains separate from the new application behavior review.",
     "testFixtures": "CI crossed Shanghai midnight: three integration suites now align scenario clocks and dates; stale-report and ledger guards remain unchanged. These test-only changes do not alter any of the five architecture flows.",
     "concurrentMain": "PR #80 (f0fb2a0) inspected during final integration: added saved daily-report recovery, returnedDocumentId and readable simulation review projections. Repository/research references and report diagram updated; other architecture flows unchanged. Date fixture fixes preserve both calendar derivation and deterministic clocks.",
     "completePortfolioResearch": "Reviewed against 65c388e plus working-tree changes on 2026-11-07, not an uncreated release commit. Checked council input packers, resume reservation and correction-bound reverse-check selection, report coverage/body publication, simulation review timestamps and archived/category readers. Retained independent openings are never retroactively labelled complete after supplementation; formatting recovery remains separate from explicit AI continuation.",
-    "unchangedFlows": "For saved-result acceptance, diagrams 1, 3, 4 and 5 need no structural changes: route/module/auth/provider boundaries remain the same; strategy confirmation, source/order fences and timestamped simulation observation coverage are unchanged; channel seals/template/deduplication/outbox remain unchanged; no real-ledger/import/reconstruction mutation is introduced.",
-    "documentationVerification": "Saved-result acceptance update: context helper tests passed 15 cases with zero skips outside the sandbox restriction on disposable Git metadata. Context checker and whitespace/retrieval checks validate documentation structure only; the working-tree drift warning remains expected. These checks do not certify runtime research or deployment.",
-    "savedResultAcceptance": "Reviewed f0137167 plus working-tree changes: assertSavedDailyResult and checkpoint.remote.reparseExisting bind original task identity and SHA-256 promptHash/resultHash/contextHash at reservation and reparseDailyTurn. Normal recordTurn accepts the same turn; old provider calls and budgets are not repeated. A saved challenge needs only a subsequent summary call, while a saved summary can publish with zero new calls. parseDailyReverseCheck now shares the sixty-record inventory bound; unknown/sixty-one references remain invalid. User documentation only corrects the prior unconditional AI-call wording."
+    "unchangedFlows": "For report strategy import, diagrams 1, 2, 4 and 5 need no structural changes: route/module/auth/provider boundaries remain the same; research execution, saved-result acceptance and immutable publication are unchanged; channel seals/template/deduplication/outbox remain unchanged; no real-ledger/import/reconstruction mutation is introduced. Diagram 3 changes only draft-source selection/packing; strategy application and final order fences are unchanged.",
+    "documentationVerification": "Report-import documentation review: context helper tests passed 15 cases with zero skips; structural checker is valid with no errors, retaining the expected working-tree drift warning. Whitespace and retrieval checks cover the shared reading helper, 200000 source bound and lossless splitting contract. These checks do not certify runtime research or deployment.",
+    "savedResultAcceptance": "Reviewed f0137167 plus working-tree changes: assertSavedDailyResult and checkpoint.remote.reparseExisting bind original task identity and SHA-256 promptHash/resultHash/contextHash at reservation and reparseDailyTurn. Normal recordTurn accepts the same turn; old provider calls and budgets are not repeated. A saved challenge needs only a subsequent summary call, while a saved summary can publish with zero new calls. parseDailyReverseCheck now shares the sixty-record inventory bound; unknown/sixty-one references remain invalid. User documentation only corrects the prior unconditional AI-call wording.",
+    "reportStrategyImport": "Reviewed f032f7e plus working-tree changes: shared strategyImportSections/strategyImportReadableContent/splitStrategySourceText align dialog and backend readable selection, retain public links and filter placeholder/metadata text. Raw/readable sources are each capped at 200000; observation parts at 12000 preserve exact readable text, separators, surrogate pairs and one source key/raw-content hash. Preview/save retain twenty sources/entries and typed-plan validation. No AI call, inferred execution rule, policy activation or live-ledger mutation is introduced."
   }
 }

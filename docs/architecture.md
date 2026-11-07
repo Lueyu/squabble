@@ -6,6 +6,8 @@ Squabble is a React client, a NestJS backend and PostgreSQL for personal portfol
 
 **Saved-result acceptance review — 2026-11-07, baseline `f0137167` plus working-tree changes:** diagram 2 distinguishes completed native output from locally accepted research and shows validation/reparse of a saved result before a new summary. The other four diagrams retain their structure: service/owner boundaries, simulation execution/observation semantics, channel publication gates and real-ledger writes are unchanged. The citation correction retains the existing sixty-record research evidence bound and does not grant new source or execution authority.
 
+**Report-import review — 2026-11-07, baseline `f032f7e` plus working-tree changes:** diagram 3 adds the readable-source gate and separates validated typed plans from losslessly split research observations. Diagrams 1, 2, 4 and 5 retain their structure: service/owner boundaries, immutable research/recovery, channel publication gates and real-ledger writes are unchanged. Draft import still grants no execution authority; explicit confirmation and final paper-order fences remain the same.
+
 For setup see [self-hosting](self-hosting.md), for commands/tests see [development](development.md), and for focused code navigation see the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
 <a id="system-overview"></a>
@@ -104,8 +106,13 @@ The older `server/modules/multi-agent/pipeline.service.ts` bull/bear/critic/risk
 
 ```mermaid
 flowchart TD
-    source["Exact report version and execution-strategy section"] --> import["Import source snapshot"]
-    opinion["Exact released discussion opinion"] --> import
+    source["Exact report version and selected section"] --> readable["Readable selection excludes placeholders and metadata"]
+    opinion["Exact released discussion opinion"] --> readable
+    readable -->|"Validated execution-strategy"| typed["Preserve typed proposed entries and limits"]
+    readable -->|"Ordinary research"| observation["Split long prose into bounded observation entries"]
+    typed --> import["Freeze source key, exact content and hash"]
+    observation --> import
+    readable -->|"Unavailable or capacity exceeded"| reselect["Explain cause and choose another section or draft"]
     import --> draft["Editable investment strategy draft"]
     draft --> preview["Validated preview and content hash"]
     preview --> userApply["User explicitly applies strategy"]
@@ -122,6 +129,8 @@ flowchart TD
 ```
 
 Current UI entrypoints are `client/src/components/ReportExecutionPlan.tsx` and `client/src/pages/Today/InvestmentStrategySourceDialog.tsx`, `InvestmentStrategyEditor.tsx`, `InvestmentStrategySection.tsx`. `POST /api/investment-strategies/import-source` resolves the exact source via `UserInvestmentStrategyService`; importing a typed report section preserves proposed entries/periods/limits, while other prose is observation material. The daily publication handoff can create/reuse a draft. Neither path activates a policy.
+
+`shared/strategy-source-reading.ts` provides the same readable-source gate to the dialog and backend: missing/invalid execution-plan placeholders and internal metadata are excluded from readable choices, while public source links remain. Raw source and derived readable text each retain a 200000-character bound. Ordinary research is split losslessly at paragraph/line boundaries where possible, preserving separators and Unicode surrogate pairs, into observation entries of at most 12000 characters. Each part pins the same exact source key and raw-content hash and adds no directive, mandate rule or AI request. Preview and save enforce the existing twenty-source/twenty-entry capacity, including prior draft content and every new part; failures explain the cause and permit reselection. The typed `execution-strategy` branch still revalidates its structured plan, periods and source evidence with no relaxation of execution authority.
 
 Application is **`POST /api/ai-investment/apply-strategy`**, handled by `server/modules/paper-trading/investment-policy.controller.ts` and `InvestmentPolicyService.applyStrategy`. It calls `UserInvestmentStrategyService.confirmInTransaction` with `strategyId`, `expectedRevision`, `previewHash`, `expectedCurrentId` and `requestKey`. Within the owner-fenced transaction it validates current pointer, exact draft/preview, source availability/revocation and unresolved conflicts, cancels prior candidates, confirms the immutable strategy, activates policy and installs its runtime. Preparation has its own durable single-model-request receipt; polling its status does not retry it.
 
