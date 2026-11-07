@@ -23,6 +23,7 @@ import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import type { CouncilMember } from '../../../shared/council.interface';
 import type { ActualExecutor, CreateResearchConversationInput, ResearchContext, ResearchConversationMessageInput,
   ResearchConversationResult, ResearchConversationView } from '../../../shared/simple-conversation.interface';
+import type { ResumeDailyReportInput } from '../../../shared/simple-conversation.interface';
 import type { ReportReference, ResolvedReportReference } from '../../../shared/research-document.interface';
 import { CouncilMemberAttemptsService } from './council-member-attempts.service';
 import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from '../local-agents/local-agents.requests';
@@ -297,6 +298,12 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
     parse(z.uuid(),id);
     const value=parse(z.object({memberId:z.string().min(1).max(100),action:z.enum(['check_existing','reparse_existing','retry_member','fix_configuration']),requestKey:key,expectedRevision:z.number().int().min(1)}).strict(),input);
     await this.council.recoverMember(owner,id,value);return this.get(owner,id);
+  }
+  async resumeReport(owner: string, id: string, input: ResumeDailyReportInput): Promise<ResearchConversationView> {
+    parse(z.uuid(), id);
+    const value = parse(z.object({ requestKey: key, expectedRevision: z.number().int().min(1) }).strict(), input);
+    await this.council.resumeDailyReport(owner, id, value);
+    return this.get(owner, id);
   }
   async memberResult(owner:string,id:string,memberId:string){
     await this.council.getSession(owner,id);const attempts=await new CouncilMemberAttemptsService(this.db).list(owner,id);

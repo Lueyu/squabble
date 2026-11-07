@@ -13,6 +13,7 @@ import CouncilMemberAvatar from '../Council/CouncilMemberAvatar';
 import type { StrategySourceInput } from '@shared/user-investment-strategy.interface';
 import InvestmentStrategySourceDialog from './InvestmentStrategySourceDialog';
 import ReportExecutionPlan from '@/components/ReportExecutionPlan';
+import ResumeDailyReportButton from './ResumeDailyReportButton';
 
 export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable = true, primary = false, summary,activityView,onAddToStrategy }: {
   view: CurrentResearchView; topicKey: string; date?: string; aiAvailable?: boolean; primary?: boolean; summary?: string | null;
@@ -46,7 +47,7 @@ export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable
   // The live query remains authoritative after the initial dispatch receipt.
   const current = view;
   const activity=activityView??current;
-  const formattingPending=activity.state==='failed'&&activity.readingState==='pending';
+  const formattingPending=activity.state==='failed'&&activity.readingState==='pending'&&(!activity.sessionId||Boolean(activity.returnedDocumentId));
   const updating = activity.state === 'generating' || activity.cancelling === true || refresh.isPending;
   useEffect(() => {
     if (!updating || !activity.startedAt) return;
@@ -74,6 +75,7 @@ export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable
     {(!formattingPending || readableSummary) && <TodaySummary summary={readableSummary} aiAvailable={aiAvailable} factsOnly={factsOnly} />}
     {formattingPending&&<div role="status" className="space-y-2 text-sm"><p>{zh?'研究已返回，内容整理待核对。原始材料已保留。':'Research returned; formatting needs review. The original material is preserved.'}</p><Button size="sm" variant="outline" disabled={reformat.isPending} onClick={()=>reformat.mutate()}>{zh?'重新整理已有结果':'Reformat saved result'}</Button></div>}
     {formattingPending && reformat.isError && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{zh ? '暂时无法整理已有结果。可以先阅读已保存报告，稍后再试。' : 'Could not reformat the saved result. Read the saved report and retry later.'}</p>}
+    {topicKey === 'portfolio' && activity.state === 'failed' && activity.sessionId && !formattingPending && <ResumeDailyReportButton sessionId={activity.sessionId} />}
     {savedDocumentId && <Button size="sm" variant="outline" asChild><Link to={`/analysis/reports/${encodeURIComponent(savedDocumentId)}`}>{zh ? '阅读已保存报告' : 'Read saved report'}</Link></Button>}
     {points.length > 0 && <ol className="grid min-w-0 gap-3 sm:grid-cols-3" aria-label={zh ? '最多三条重点' : 'Up to three key points'}>{points.map((point, index) => <li key={point} className="min-w-0 rounded-xl bg-primary/5 p-3 text-sm leading-6 [overflow-wrap:anywhere]"><span className="mb-2 flex size-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">{index + 1}</span>{point}</li>)}</ol>}
     {(current.risks?.length || current.nextChecks?.length) ? <div className="grid gap-4 text-sm sm:grid-cols-2">{[[zh ? '主要风险' : 'Main risks', current.risks], [zh ? '接下来关注' : 'Next checks', current.nextChecks]].map(([label, items]) => Array.isArray(items) && items.length > 0 && <div key={String(label)} className="min-w-0"><h3 className="mb-1 font-medium">{String(label)}</h3><ul className="list-disc space-y-1 pl-4 text-muted-foreground">{items.slice(0, 2).map(item => <li key={item} className="[overflow-wrap:anywhere]">{readableResearchText(item)}</li>)}</ul></div>)}</div> : null}

@@ -93,7 +93,18 @@ export function byteExcerpt(value: string, maxBytes: number): string {
   return result + '…';
 }
 
+/** Frozen account records are atomic facts, never a prose excerpt or a ranked source. */
+export function frozenOwnerEvidence(evidence: CouncilEvidence[]): CouncilEvidence[] {
+  const frozen = evidence.filter(item => item.sourceName === 'Frozen owner context');
+  // Bound the mandatory record count without choosing which owner records to discard.
+  // Existing full-request byte/token gates still enforce the configured transport limit.
+  if (frozen.length > 20) throw new Error('RESEARCH_CONTEXT_LIMIT');
+  return frozen;
+}
+
 export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
+  const frozen = frozenOwnerEvidence(evidence);
+  const frozenIds = new Set(frozen.map(item => item.id));
   const priority = (item: CouncilEvidence): number => item.sourceName === 'Investor configuration' ? 0
     : item.evidenceType === 'financial' && /statement|财报/iu.test(item.title) ? 1
       : item.researchKind ? 2 : item.evidenceType === 'price' ? 3 : item.evidenceType === 'financial' ? 4
@@ -101,7 +112,8 @@ export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
   let remaining = budget;
   let financialIncluded = false;
   let priceIncluded = false;
-  return evidence.filter((item) => item.sourceName !== 'Data Unavailable' && item.relevanceScore > 0)
+  const excerpts = evidence.filter((item) => !frozenIds.has(item.id)
+    && item.sourceName !== 'Data Unavailable' && item.relevanceScore > 0)
     .sort((left, right) => priority(left) - priority(right)).flatMap((item) => {
       const compact = budget <= 1300;
       const excerpt = { id: item.id, title: byteExcerpt(item.title, compact ? 60 : 90),
@@ -119,6 +131,9 @@ export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
       remaining -= bytes;
       return [excerpt];
     });
+  return [...frozen.map(item => ({ id: item.id, title: item.title, content: item.content,
+    source: item.sourceName ?? '', fetchedAt: item.fetchedAt,
+    ...(item.metadata ? { metadata: evidencePromptMetadata(item.metadata) } : {}) })), ...excerpts];
 }
 
 export function eligibleApproval(input: {

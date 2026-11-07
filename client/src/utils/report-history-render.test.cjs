@@ -4,6 +4,18 @@ const fixture=require('./simple-test-loader.cjs');
 const {load,render,state}=fixture();
 const at='2026-11-06T01:00:00Z';
 const report=(id,summary,time)=>({id,summary,createdAt:time,revision:1,version:1,publicationOutcome:'succeeded',researchVersionId:`version-${id}`,dissent:[],evidence:[],nextReviewCondition:'Review the next filing.'});
+
+test('a corrected daily report stays readable without claiming complete independent inputs',()=>{
+  const saved={...report('corrected','All holdings reviewed after input correction.',at),coverage:{complete:false,independentDeliveriesComplete:true,inputCorrection:{originalIndependentContextComplete:false,revalidated:true}}};
+  const html=render(load('pages/Council/CouncilRoundReport.tsx').default,{report:saved});
+  assert.match(html,/Full context checked after input correction/);
+  assert.match(html,/Original independent research used partial inputs/);
+  assert.match(html,/href="\/analysis\/reports\/version-corrected"/);
+  assert.doesNotMatch(html,/Saved research · Round incomplete/);
+  const partial=render(load('pages/Council/CouncilRoundReport.tsx').default,{report:{...saved,coverage:{...saved.coverage,independentDeliveriesComplete:false}}});
+  assert.match(partial,/Saved research · Round incomplete/);
+  assert.doesNotMatch(partial,/Full context checked after input correction/);
+});
 test('each completed round stays in the conversation after the next round starts or fails',()=>{
   const session={id:'room',title:'Research',revision:3,status:'failed',stage:'waiting',mode:'single',messages:[],reports:[report('first','First saved finding.',at),report('second','Second saved finding.','2026-11-06T02:00:00Z')],members:[],actualExecutors:[],memberStates:[]};
   state.queries.set('research-conversation',{data:session});

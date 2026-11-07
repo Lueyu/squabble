@@ -14,11 +14,17 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 
 今日并列展示初版分析与最新完整讨论结论。历史入口按日期、主题和来源打开完整报告；继续讨论会引用当时的具体报告。每轮完整讨论也在原会话留下一张报告卡，下一轮失败不会删除上一轮结果。
 
+持仓研究使用当时封存的全部持仓、各币种现金、已确认风险上限和记录时间，零现金与未知余额分别保留。资料过大而无法完整发送时会明确停止，不会把截断的组合当作完整输入。日报应逐项说明持仓判断、依据和下一步核验点，并单列现金、组合集中度及真实资料缺口；账面价格不等于最新行情。
+
 会话展示 AI 实际回传的公开研究步骤、工具活动和来源。研究中展开当前步骤，完成后收为摘要，用户手动展开的部分保持展开。没有回传的内部思考不会被编造为进度。
 
 已知的围栏 JSON、嵌套 `response` 等旧输出会转换为自然语言阅读内容，原始材料保留。无法辨认的输出显示内容整理待核对；本地重整不会重跑付费研究。历史档案与首页选取互相独立，讨论不能覆盖初版档案。
 
 内容待整理时，首页仍提供已保存报告的阅读入口，不再显示“研究尚未完成”。每日团队研究与旧组合分析都可本地重新整理；可识别的旧失败记录会自动恢复。模拟复盘将历史快照中的收益、费用、执行限制和资料缺口显示为正文，缺失数字保持未知；原始快照仍可展开核对。
+
+研究步骤失败且原任务已确定结束时，可选择“继续完成已有日报”。这会调用 AI，保留已有独立研究，必要时用完整冻结持仓与现金补核验，再完成汇总；它与不调用 AI 的“重新整理已有结果”不同。原任务仍在运行或结束状态不确定时不能续发。若早期研究实际只收到部分持仓，报告会保留“输入补充与覆盖说明”，说明后续核验收到全量资料，早期研究仍不改称完整独立研究。
+
+报告历史默认查看“每日研究”，也可切换“单股研究”“模拟盘账本复盘”或全部类型。模拟盘复盘说明账户估值和执行情况；持仓判断、事件与后续关注请看每日研究。零成交或净值未变不表示投资判断已被验证。
 
 ## 策略：一份当前总策略，草稿随时改
 
@@ -33,6 +39,8 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 一键复制真实盘全部持仓与已记录现金，按币种核对一次；可以另加虚拟现金，只影响模拟盘。复制后两份账本独立，真实交易不会自动改动模拟盘。再次复制会保留旧账户与成交记录。
 
 缺少可信行情也能建立观察账本，但不能交易或显示完整模拟收益率。首次可信估值形成独立的不可变起点；原始复制快照与历史买入成本作为参考保留。模拟收益从该起点计算，复制前的浮盈不算模拟业绩。
+
+初始化估值与同一时刻的快照只算一次观测，此时期间收益与回撤保持未知。之后出现真实的估值时点，即使净值相同，也可计算已观测区间的零变化；这不能证明覆盖完整自然日。缺少估值时点、期初期末数据或策略切换时的估值，相关收益仍未知。旧复盘保留原始数值，并提示无法确认的时间覆盖范围。“模型与数据说明”集中展示一般限制，具体缺行情、汇率或监控区间另列为资料缺口。
 
 确认策略后，明确条件直接检查执行；不确定条件交 AI 补判；大仓位或高风险交研讨室。新证券仍需两个不同的、已核验的实际执行来源，配置别名不能充当两个来源。全部路径经过行情、市场日历、现金、持仓、风险与当前策略授权校验。策略外机会只形成讨论或草稿，确认纳入前不能交易。
 
@@ -52,5 +60,11 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 Today combines marked positions and confirmed cash, separating daily investment P&L from external funding. Review imported trades and cash flows before posting; holdings snapshots alone never imply cash movements. Initial analysis, each discussion report and their pinned sources remain readable in history.
 
 Saved reports keep a reading link while formatting is pending. Daily team reports and legacy portfolio analyses can be reformatted locally without another model request; recognizable formatting failures recover automatically. Simulation reviews display archived returns, fees, execution constraints and data gaps as readable text, keeping missing figures unknown and preserving the original snapshot. This reading fix requires no database migration.
+
+Research receives the complete frozen holdings, every recorded cash currency, confirmed investor limits and capture times; zero and unknown balances stay distinct. Oversized context stops explicitly instead of sending a partial portfolio. Daily research accounts for each holding, cash, concentration, supporting evidence, next checks and the effect of real information gaps. Stored marks do not establish fresh market prices.
+
+After a failed daily step is confirmed terminated, **Complete saved daily report** explicitly uses AI to retain the independent work, check the complete frozen context when needed and finish the summary. Running or uncertain upstream tasks cannot be replayed. Earlier partial-input findings remain labelled as such in the report's input-supplementation and coverage explanation. **Reformat saved result** remains a separate local operation without a model call.
+
+Report history defaults to daily research and distinguishes stock research from simulation ledger reviews. A ledger review records valuations and execution, while daily research provides holdings findings and next checks. An opening baseline and its same-instant snapshot are one observation, so initialization alone leaves period returns and drawdown unknown. Equal NAV at a later observed timestamp can establish a zero change for that interval; it does not establish full-day coverage or validate an investment judgment. Missing timestamps or strategy-boundary valuations remain explicit unknowns. General model/data notes appear once, separately from actual period gaps, and older archives retain their original figures with a coverage warning.
 
 Write or import findings into one strategy workspace. Save drafts freely, then review the execution explanation and explicitly apply it to switch simulation authority. A paper account copies real positions and recorded cash once, optionally adding virtual cash. It observes until a trustworthy valuation exists and trades only within the confirmed strategy. Deterministic, AI and council paths share the same final execution guards. Strategy changes invalidate old work; expired entries stop without forcing a sale.

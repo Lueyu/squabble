@@ -67,7 +67,7 @@ export default function CouncilReportCard({ report, session, profileVersion }: {
         </> : <Button size="sm" variant="outline" disabled={archive.isPending} onClick={() => archive.mutate()}>{thread.archive}</Button>}
       </div>}
       {report.coverage && <p className={`rounded-lg border p-3 text-sm ${report.coverage.complete ? 'border-border' : 'border-destructive/30 text-destructive'}`}>
-        {report.coverage.complete ? copy.complete : copy.incomplete}</p>}
+        {report.coverage.inputCorrection?.revalidated && report.coverage.independentDeliveriesComplete === true ? (i18n.language.startsWith('zh') ? '原独立研究使用过部分输入。已补充完整持仓、现金和限额核验后完成汇总；保留原始交付，独立输入覆盖仍标记为不完整。' : 'Original independent research used partial inputs. The summary now includes a full holdings, cash and limits check. Original deliveries are retained; independent input coverage remains marked incomplete.') : report.coverage.complete ? copy.complete : copy.incomplete}</p>}
       {!current && <p className="rounded-lg bg-muted p-3 text-xs leading-5 text-muted-foreground">{t('council.report.obsoleteHint')}</p>}
       <p className="whitespace-pre-wrap break-words text-sm leading-7">{report.summary}</p>
       {report.candidate && <div className="rounded-lg border border-border p-3 text-sm">

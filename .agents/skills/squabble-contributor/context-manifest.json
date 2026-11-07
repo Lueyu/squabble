@@ -3,6 +3,16 @@
   "repository": "Lueyu/squabble",
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
+  "reviewedAgainst": {
+    "commit": "65c388eef6cd3526cda209f5d4b9c38fda7cbea8",
+    "workingTreeChanges": true,
+    "reviewedAt": "2026-11-07",
+    "scope": [
+      "Atomic frozen owner input in native/API/workflow packing",
+      "Explicit saved daily report continuation and original input coverage",
+      "Simulation timestamp coverage, immutable historical reading and report categories"
+    ]
+  },
   "areas": [
     {
       "id": "application",
@@ -74,11 +84,19 @@
         "server/modules/experience/daily-channel-research.service.ts",
         "server/modules/council/council.daily.ts",
         "server/modules/council/council.native.ts",
+        "server/modules/council/council.rules.ts",
+        "server/modules/council/council.context.ts",
+        "server/modules/council/council.workflow-executor.ts",
+        "server/modules/council/council-report-resume.service.ts",
+        "server/modules/council/council-report-resume.integration.spec.ts",
+        "server/modules/council/council.owner-context.spec.ts",
         "server/modules/research-documents/research-documents.service.ts",
         "shared/report-execution-plan.interface.ts",
         "client/src/pages/Today/CurrentAnalysisPanel.tsx",
+        "client/src/pages/Today/ResumeDailyReportButton.tsx",
         "client/src/components/ReportExecutionPlan.tsx",
         "client/src/pages/Analysis/SimpleReportReader.tsx",
+        "client/src/pages/Analysis/ReportHistory.tsx",
         "shared/simulation-review-reading.ts",
         "server/modules/experience/report-recovery.integration.spec.ts"
       ],
@@ -110,6 +128,9 @@
         "server/modules/paper-trading/user-strategy-runtime.ts",
         "server/modules/paper-trading/strategy-route.rules.ts",
         "server/modules/paper-trading/strategy.scheduler.ts",
+        "server/modules/paper-trading/simulation-experiments.service.ts",
+        "server/modules/paper-trading/simulation-review.integration.spec.ts",
+        "shared/simulation-experiment.interface.ts",
         "server/modules/paper-trading/report-execution-runtime.integration.spec.ts",
         "client/src/pages/Today/InvestmentStrategyEditor.tsx"
       ],
@@ -233,6 +254,9 @@
         "client/src/api/ai-investment.ts",
         "client/src/api/investment-strategies.ts",
         "shared/simple-experience.interface.ts",
+        "shared/simple-conversation.interface.ts",
+        "shared/research-workflow.interface.ts",
+        "shared/simulation-experiment.interface.ts",
         "shared/simulation-review-reading.ts"
       ],
       "references": [
@@ -251,10 +275,13 @@
     }
   ],
   "reviewNotes": {
-    "architecture": "All five current flows checked; diagrams updated against the recorded application baseline.",
-    "behavior": "This change updates development knowledge and tooling only; running application and ledgers are outside its mutation scope.",
-    "tooling": "Helper and CI integration source is verified separately from the unchanged application baseline.",
+    "architecture": "All five diagrams reviewed against the recorded baselines plus the complete-portfolio working-tree changes. Research/report now shows atomic input limits and explicit terminated-task continuation; strategy/simulation now shows timestamped observation coverage. System boundaries, channel seal/outbox publication and real-ledger transaction/import semantics are unchanged.",
+    "behavior": "Complete frozen holdings/cash/limits/IDs/times survive native/API/workflow work and review packing or fail before dispatch. Explicit resume-report compares actual saved opening wire input, retains old findings/tasks, appends the necessary full-context check/summary and preserves original incomplete coverage. Simulation review counts distinct observation times, separates model notes from actual gaps and visibly distinguishes ledger reviews from research. Documentation does not certify a live deployment or research result.",
+    "tooling": "Complete-portfolio changes do not modify the context helpers or CI integration; their prior verification remains separate from the new application behavior review.",
     "testFixtures": "CI crossed Shanghai midnight: three integration suites now align scenario clocks and dates; stale-report and ledger guards remain unchanged. These test-only changes do not alter any of the five architecture flows.",
-    "concurrentMain": "PR #80 (f0fb2a0) inspected during final integration: added saved daily-report recovery, returnedDocumentId and readable simulation review projections. Repository/research references and report diagram updated; other architecture flows unchanged. Date fixture fixes preserve both calendar derivation and deterministic clocks."
+    "concurrentMain": "PR #80 (f0fb2a0) inspected during final integration: added saved daily-report recovery, returnedDocumentId and readable simulation review projections. Repository/research references and report diagram updated; other architecture flows unchanged. Date fixture fixes preserve both calendar derivation and deterministic clocks.",
+    "completePortfolioResearch": "Reviewed against 65c388e plus working-tree changes on 2026-11-07, not an uncreated release commit. Checked council input packers, resume reservation and correction-bound reverse-check selection, report coverage/body publication, simulation review timestamps and archived/category readers. Retained independent openings are never retroactively labelled complete after supplementation; formatting recovery remains separate from explicit AI continuation.",
+    "unchangedFlows": "Diagram 1: route/module/auth/provider and database boundaries remain the same. Diagram 4: report/category/coverage changes do not alter finding seals, template checks, semantic deduplication or transactional outbox. Diagram 5: no holdings/cash/transaction import or reconstruction mutation is introduced. Diagram 3 changes only the review branch; explicit strategy confirmation, source fences and final order checks are unchanged.",
+    "documentationVerification": "Context helper tests: 15 passed, zero skips, after rerunning outside the sandbox restriction on disposable Git metadata. Context checker: valid with no structural errors; its drift warning remains expected for the working tree. Document/reference changes passed whitespace checks and a retrieval check for resume-report, inputCorrection and valuationCoverage. These checks do not certify runtime research or deployment."
   }
 }

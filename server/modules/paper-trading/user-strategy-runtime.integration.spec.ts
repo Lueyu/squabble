@@ -228,7 +228,10 @@ test('a waiting clone starts performance only at its first credible complete val
     assert.equal(baseline.positions[0].initialPrice, '110');
     assert.equal((await db.select().from(paperPositions))[0].avgCost, '110', 'a waiting ledger establishes simulation cost only with its first credible mark');
     assert.equal(seed.seed.positions[0].historicalCost, '80');
-    assert.equal((await simulations.review(owner, start.accountId)).returnPct, '0.0000');
+    const initialReview = await simulations.review(owner, start.accountId);
+    assert.equal(initialReview.returnPct, null, 'initialization alone does not establish a period return');
+    assert.equal(initialReview.valuationCoverage, 'initial_only');
+    assert.equal(initialReview.drawdownSampleCount, 1, 'the opening baseline and its same-instant snapshot are one observation');
     assert.equal(await simulations.establishBaseline(owner, start.accountId), true);
     await assert.rejects(_client`UPDATE simulation_valuation_baselines SET seed='{}'::jsonb WHERE account_id=${start.accountId}`, /immutable/);
   });

@@ -1,5 +1,5 @@
 import http from './http';
-import type { CreateResearchConversationInput, ResearchConversationMessageInput, ResearchConversationView, ResearchConversationResult } from '@shared/simple-conversation.interface';
+import type { CreateResearchConversationInput, ResearchConversationMessageInput, ResearchConversationView, ResearchConversationResult, ResumeDailyReportInput } from '@shared/simple-conversation.interface';
 import type { ResearchExecutionReadiness, ResearchRecoveryInput } from '@shared/research-execution.interface';
 import type { NativeAgentConfiguration } from '@shared/local-agents.interface';
 
@@ -17,6 +17,8 @@ export const renameResearchConversation = async (id: string, input: { title: str
   (await http.patch(`/api/research-conversations/${encodeURIComponent(id)}`, input)).data;
 export const recoverResearchConversation = async (id: string, input: ResearchRecoveryInput): Promise<ResearchConversationView> =>
   (await http.post(`/api/research-conversations/${encodeURIComponent(id)}/recovery`, input)).data;
+export const resumeDailyReport = async (id: string, input: ResumeDailyReportInput): Promise<ResearchConversationView> =>
+  (await http.post(`/api/research-conversations/${encodeURIComponent(id)}/resume-report`, input)).data;
 export const fetchOriginalResearchResult = async (id: string, memberId: string): Promise<{ text: string; verified: false; resultAcceptance: string }> =>
   (await http.get(`/api/research-conversations/${encodeURIComponent(id)}/members/${encodeURIComponent(memberId)}/result`)).data;
 export const stopResearchConversation = async (id: string): Promise<ResearchConversationView> =>
