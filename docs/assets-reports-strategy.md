@@ -30,6 +30,8 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 
 今日的“投资策略”可直接手写，也可从报告或投研室选择内容加入草稿。按股票填写条目和各自期限，保留对应来源。保存草稿不改变正在运行的策略；查看已确认策略时，先“复制为草稿”再修改。
 
+加入报告时，只能选择真实可读正文或已通过校验的执行策略；“缺少执行策略”等占位说明和内部元数据不会成为可选策略。较长的研究正文会优先按段落拆成多条观察事项，保留原文及同一来源，不额外调用 AI，也不自动生成买卖指令。预览与保存使用相同的容量限制；如果来源或条目已满，界面会说明原因，可改选较小章节或另一份草稿。已验证的执行策略继续保留其提议期限、风险边界和待核对事项。
+
 应用前整理并审阅执行说明：证券、触发条件、买卖动作、数量或交易后目标总仓位、期限、时区与资金上限。没有明确数量或额度的“适量加仓”等意见仍为观察事项；语义条件需要明确授权。目标仓位表示交易后的总持仓占比，不是每次追加该百分比。
 
 点击“应用到模拟盘”后，正文和执行说明作为一个确认快照整体切换。旧候选和预留资金失效，迟到的 AI 结果不能使用旧授权成交。单条到期只停止该条，不自动清仓。草稿、确认历史和原始报告来源均可回看。
@@ -68,3 +70,5 @@ After a daily step has ended, **Complete saved daily report** first validates a 
 Report history defaults to daily research and distinguishes stock research from simulation ledger reviews. A ledger review records valuations and execution, while daily research provides holdings findings and next checks. An opening baseline and its same-instant snapshot are one observation, so initialization alone leaves period returns and drawdown unknown. Equal NAV at a later observed timestamp can establish a zero change for that interval; it does not establish full-day coverage or validate an investment judgment. Missing timestamps or strategy-boundary valuations remain explicit unknowns. General model/data notes appear once, separately from actual period gaps, and older archives retain their original figures with a coverage warning.
 
 Write or import findings into one strategy workspace. Save drafts freely, then review the execution explanation and explicitly apply it to switch simulation authority. A paper account copies real positions and recorded cash once, optionally adding virtual cash. It observes until a trustworthy valuation exists and trades only within the confirmed strategy. Deterministic, AI and council paths share the same final execution guards. Strategy changes invalidate old work; expired entries stop without forcing a sale.
+
+Report import offers readable research and validated execution plans, excluding missing-plan placeholders and internal metadata. Long research is split into observation entries, preferring paragraph boundaries while preserving its text and source. Import makes no additional AI call and does not infer trading instructions. Preview and save share the same source/entry capacity limits; an explanation lets you choose a smaller section or another draft when needed. Validated plans retain their proposed periods, risk limits and review requirements.
