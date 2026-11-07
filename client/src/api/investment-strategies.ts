@@ -1,5 +1,6 @@
 import http from './http';
 import type { StrategyDraftInput, StrategySourceInput, StrategySourceAddition, UserInvestmentStrategy, UserInvestmentStrategyWorkspace, UserInvestmentStrategyPage, UserInvestmentStrategyRevisionPage, StrategyPreparationStatus } from '@shared/user-investment-strategy.interface';
+import type { InvestmentRemoveStrategyRequest } from '@shared/investment-policy.interface';
 export type { StrategySourceInput } from '@shared/user-investment-strategy.interface';
 const base = '/api/investment-strategies';
 const path = (id: string) => `${base}/${encodeURIComponent(id)}`;
@@ -10,6 +11,8 @@ export const investmentStrategiesApi = {
   get: async (id: string) => (await http.get<UserInvestmentStrategy>(path(id))).data,
   create: async (content: StrategyDraftInput, parentId?: string) => (await http.post<UserInvestmentStrategy>(base, { content, parentId })).data,
   update: async (id: string, expectedRevision: number, content: StrategyDraftInput) => (await http.patch<UserInvestmentStrategy>(path(id), { expectedRevision, content })).data,
+  deleteDraft: async (id: string, expectedRevision: number) => (await http.delete<{ deleted: true }>(path(id), { data: { expectedRevision } })).data,
+  removeCurrent: async (input: InvestmentRemoveStrategyRequest) => (await http.post('/api/ai-investment/remove-strategy', input)).data,
   revisions: async (id: string, before?: number) => (await http.get<UserInvestmentStrategyRevisionPage>(`${path(id)}/revisions`, { params: { before } })).data,
   sourcePreview: async (draftId: string | undefined, source: StrategySourceInput) => (await http.post<StrategySourceAddition>(`${base}/source-preview`, { draftId, source })).data,
   importSource: async (source: StrategySourceInput) => (await http.post<UserInvestmentStrategy>(`${base}/import-source`, { source })).data,

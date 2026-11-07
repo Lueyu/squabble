@@ -49,6 +49,15 @@ For archived simulation reviews, `SimpleReportReader` uses `shared/simulation-re
 
 ## Exact source → draft → explicit application
 
+Daily simulation journey reviewed against `5dc6bdd` plus this change:
+
+- `ReportExecutionPlan` imports the exact `execution-strategy` section directly and navigates to `/paper?investmentStrategyId=…#investment-strategy`. Generic source additions also link to the returned draft. First account setup preserves this ID; the simulation mounts the existing editor/section after policy creation. Old Today strategy links redirect to the same destination.
+- New daily publications with a missing/invalid proposal preserve `executionPlanError` and get a `system_observation` fallback from `createReportObservationPlan`. The parser forbids directives, mandates, risk limits and evidence claims in that fallback, and provider output cannot claim this origin. It is explicitly labelled system-authored, can be copied as an observation, and never creates automatic trade instructions. Existing archives are not rewritten. Background handoff continues skipping no-trade plans.
+- Editing confirmed typed instructions without changing their reviewed text uses deterministic preview; changing instructions invalidates the old interpretation. Applying requires both an initialized account and policy, plus the existing revision/hash/source transaction checks.
+- `DELETE /api/investment-strategies/:id` checks owner and `expectedRevision` and soft-deletes only drafts via migration 44's `deleted_at`. Revisions/preparation receipts remain, late preparations cannot restore the draft, and automatic report import respects the tombstone. An explicit user import may copy that report again.
+- `POST /api/ai-investment/remove-strategy` checks `strategyId`, `expectedRevision`, `expectedPolicyRevision` and `requestKey`. In one owner-fenced transaction it pauses the account/policy/mandates/builders, clears current strategy authority and cancels signals, orders, reservations and cycles. All automatic actions, including protective exits, stop. Confirmed snapshots and trades remain in history.
+- The channel hides deleted draft proposals. Actual partial and complete fills publish visible factual `nudge` receipts with `/paper?orderId=…` links; a repeated ledger observation does not publish again. Briefs renew for a new strategy context, preserve the previous threshold observation and require a new crossing before repeating a reminder. Expired/revoked evidence remains blocked. Observation-only confirmed strategies are labelled as observations, not active trading rules.
+
 | User intent | Concrete entrypoint | Effect |
 |---|---|---|
 | Read the report's proposed plan | `client/src/components/ReportExecutionPlan.tsx`; `server/modules/research-documents/research-documents.controller.ts` | Read exact version and validated execution plan |
@@ -59,7 +68,7 @@ For archived simulation reviews, `SimpleReportReader` uses `shared/simulation-re
 | Prepare an explanation | `POST /api/investment-strategies/:id/prepare`; `GET /:id/preparation` | Explicit, durable single-request claim; status read does not rerun the model |
 | Apply after review | `POST /api/ai-investment/apply-strategy` | Atomic confirmation, policy activation, old-candidate cancellation and runtime installation |
 
-The draft controller is `server/modules/paper-trading/user-investment-strategy.controller.ts`. The apply endpoint is in **`server/modules/paper-trading/investment-policy.controller.ts`**, calling `InvestmentPolicyService.applyStrategy` and then `UserInvestmentStrategyService.confirmInTransaction`. There is no substitute standalone strategy-confirm endpoint to guess. The client uses `client/src/api/investment-strategies.ts` and `client/src/api/ai-investment.ts`; Today source dialog/editor/section own the current review flow.
+The draft controller is `server/modules/paper-trading/user-investment-strategy.controller.ts`. The apply endpoint is in **`server/modules/paper-trading/investment-policy.controller.ts`**, calling `InvestmentPolicyService.applyStrategy` and then `UserInvestmentStrategyService.confirmInTransaction`. There is no substitute standalone strategy-confirm endpoint to guess. The client uses `client/src/api/investment-strategies.ts` and `client/src/api/ai-investment.ts`; the source dialog and the editor/section mounted in AI simulation own the current review flow (their source files remain under Today).
 
 Source rules:
 

@@ -2,7 +2,7 @@ export function simpleNavigation(language: string) {
   const zh = language.startsWith('zh');
   return [{ path: '/', label: zh ? '今日' : 'Today', end: true },
     { path: '/council', label: zh ? '频道' : 'Channel' },
-    { path: '/paper', label: zh ? 'AI 投资' : 'AI investing' }];
+    { path: '/paper', label: zh ? 'AI 模拟盘' : 'AI simulation' }];
 }
 
 // Historical context takes priority over any live security included in an old link.

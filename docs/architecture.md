@@ -10,6 +10,8 @@ Squabble is a React client, a NestJS backend and PostgreSQL for personal portfol
 
 For setup see [self-hosting](self-hosting.md), for commands/tests see [development](development.md), and for focused code navigation see the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
+**Daily simulation journey review — 2026-11-07, baseline `5dc6bdd` plus this change:** diagrams 2–4 now cover system-authored observation fallback, direct draft navigation to the simulation, draft deletion/current-strategy removal and visible fill receipts. Diagram 1 retains its service/owner boundaries; migration 44 adds only a draft tombstone. Diagram 5 is unchanged: these actions never mutate recorded real assets. Immutable report/confirmation history, final order fences and explicit strategy application remain authoritative.
+
 <a id="system-overview"></a>
 ## 1. System overview
 
@@ -39,7 +41,7 @@ flowchart LR
 
 - `client/src/app.tsx` routes `/` to `TodayPage`, `/analysis` to `SimpleAnalysisPage`, `/council` to `SimpleCouncilPage` (the channel), and `/paper` to `AiInvestmentPage` when the current experience is enabled. `ExperienceRoute` retains older pages when disabled. `/analysis/reports/:versionId` always identifies a specific report version. `/agent-builder` redirects to `/settings/agents` in the current experience.
 - `server/app.module.ts` composes Nest modules; `ViewModule` stays last for the SPA fallback. Development runs Vite/Nest separately. The production web build serves the client through Nest. Clean Docker uses a separate PostgreSQL container; optional demo Compose uses fictional seed data.
-- `server/common/platform/database.provider.ts` owns the direct postgres.js/Drizzle connection and registered startup migrations. This is a local compatibility layer, not a hosted aPaaS dependency. Fresh installations need `scripts/db/01_schema.sql`; startup additions do not initialize the base schema. Read the actual registration list, currently through `43_channel_workbench.sql` with noncontiguous numbering, rather than assuming every number exists.
+- `server/common/platform/database.provider.ts` owns the direct postgres.js/Drizzle connection and registered startup migrations. This is a local compatibility layer, not a hosted aPaaS dependency. Fresh installations need `scripts/db/01_schema.sql`; startup additions do not initialize the base schema. Read the actual registration list, currently through `44_strategy_draft_deletion.sql` with noncontiguous numbering, rather than assuming every number exists.
 - `server/modules/local-agents/` owns connections, pairing, research receipts and durable task identity. `server/local-agents/native.ts` executes supported provider CLIs with bounded output. Native execution can still contact external inference/research providers. Restart recovery does not replay unfinished native calls; completed artifacts remain available. Docker's retained companion path polls outbound from the host helper.
 - `server/modules/quote/` and `server/modules/fx/` obtain external data; freshness/coverage remain explicit. Model API budgets and native provider billing are distinct. `agent/` is an optional Python CLI scaffold; it does not orchestrate built-in Nest research. `/mcp` is a separate scoped agent-session integration. The legacy agent gateway is disabled by default.
 
@@ -59,6 +61,8 @@ flowchart TD
     sealed --> reverse["Separate reverse check"]
     reverse --> summary["Summary, original input coverage and executionPlan"]
     summary --> validate["Evidence and plan validation"]
+    validate -->|"Missing or invalid daily proposal"| observationPlan["System observation plan; preserve error, no trade authority"]
+    observationPlan --> archive
     validate --> archive["Immutable report version and sections"]
     archive --> reading["Latest readable report and exact-version history"]
     archive --> saved["Saved report formatting recovery"]
@@ -91,7 +95,7 @@ Independent submissions are persisted before subsequent shared inspection. `coun
 
 Provider completion and local acceptance are separate states. When a native task has completed but its challenge/summary was rejected locally, the same explicit recovery request validates/reparses the saved result before requesting new work. Task/message/owner/session/cycle/member/turn/revision identity, frozen input, result hash, citations and pinned references must still match. Acceptance records the original turn once, retaining its output, usage and original coverage; it neither replays the provider nor counts the old call again. An accepted challenge proceeds to a needed summary; an accepted summary proceeds to publication. Invalid or mismatched saved results remain paused. Reverse-check citations share the existing sixty-record evidence bound: valid references within it are retained, while unknown references or sixty-one entries fail. The current-report projection follows only the exact owner/session receipt, preserving generation and prior readable material until the new archive is ready.
 
-`server/modules/paper-trading/report-execution-plan.ts` validates `schemaVersion: 1`, `parameterOrigin: 'ai_proposed'`, evidence IDs, entries, validity and risk limits. It derives `ready`, `needs_info` or `no_trade`, and renders the exact `execution-strategy` section. AI parameter proposals are distinct from market observations and investor authority. Invalid/missing plans remain explicit; prose-only archives do not acquire invented actions.
+`server/modules/paper-trading/report-execution-plan.ts` validates `schemaVersion: 1`, `parameterOrigin: 'ai_proposed'` (or the constrained `system_observation` fallback), evidence IDs, entries, validity and risk limits. It derives `ready`, `needs_info` or `no_trade`, and renders the exact `execution-strategy` section. AI parameter proposals are distinct from market observations and investor authority. Missing/invalid daily proposals keep their error and receive a system-authored observation plan, with no directives, mandate rules or risk limits. Provider output cannot claim this origin. Existing archives remain immutable; they may be copied as research observations without inventing actions.
 
 `server/modules/research-documents/research-documents.service.ts` publishes immutable content/sections/snapshots and maintains mutable document pointers and revocation state separately. `research-documents.rules.ts` hashes recursively canonicalized payloads; exact versions and section references survive later revisions. `CurrentResearchService.getDailyReports` separates the initial daily report from later discussion reports. A newer discussion does not overwrite what the initial report said. Availability time, data-as-of time and provenance are retained.
 
@@ -114,12 +118,19 @@ flowchart TD
     observation --> import
     readable -->|"Unavailable or capacity exceeded"| reselect["Explain cause and choose another section or draft"]
     import --> draft["Editable investment strategy draft"]
+    draft --> destination["Open exact draft in AI simulation; account setup preserves ID"]
+    destination --> preview
+    draft --> removeDraft["Owner and revision checked soft deletion"]
+    removeDraft --> tombstone["Hidden draft; retain receipts and prevent background resurrection"]
     draft --> preview["Validated preview and content hash"]
     preview --> userApply["User explicitly applies strategy"]
     userApply --> fence["Owner, revision, current ID and source fences"]
     fence --> atomic["Confirm strategy and activate policy transaction"]
     atomic --> cancel["Invalidate prior candidates"]
     atomic --> runtime["Install investor mandate and runtime"]
+    atomic --> removeCurrent["User stops and removes current strategy"]
+    removeCurrent --> stopped["Atomic pause, clear current pointer, cancel candidates and reservations"]
+    stopped --> history["Retain confirmed strategies and paper trade history"]
     runtime --> evaluate["Trigger, market, quote, review and risk checks"]
     evaluate --> order["Paper order boundary"]
     order --> paper["Paper account, positions, orders and fills"]
@@ -128,7 +139,7 @@ flowchart TD
     paper --> projection["Channel execution projection"]
 ```
 
-Current UI entrypoints are `client/src/components/ReportExecutionPlan.tsx` and `client/src/pages/Today/InvestmentStrategySourceDialog.tsx`, `InvestmentStrategyEditor.tsx`, `InvestmentStrategySection.tsx`. `POST /api/investment-strategies/import-source` resolves the exact source via `UserInvestmentStrategyService`; importing a typed report section preserves proposed entries/periods/limits, while other prose is observation material. The daily publication handoff can create/reuse a draft. Neither path activates a policy.
+Current UI entrypoints are `client/src/components/ReportExecutionPlan.tsx` and `client/src/pages/Today/InvestmentStrategySourceDialog.tsx`, `InvestmentStrategyEditor.tsx`, `InvestmentStrategySection.tsx`. `POST /api/investment-strategies/import-source` resolves the exact source via `UserInvestmentStrategyService`; importing a typed report section preserves proposed entries/periods/limits, while other prose is observation material. The daily publication handoff can create/reuse a draft. Neither path activates a policy. Report copy navigates directly to the returned draft in `/paper`; account setup preserves its ID. The simulation owns editing, deletion and application. Draft deletion uses migration 44’s `deleted_at` tombstone; explicit re-import may create a new draft, while background import respects the tombstone. Current-strategy removal checks strategy/policy revisions, atomically pauses automatic actions and mandates, clears current authority and cancels pending work/reservations. Confirmed strategy and trade history remain readable.
 
 `shared/strategy-source-reading.ts` provides the same readable-source gate to the dialog and backend: missing/invalid execution-plan placeholders and internal metadata are excluded from readable choices, while public source links remain. Raw source and derived readable text each retain a 200000-character bound. Ordinary research is split losslessly at paragraph/line boundaries where possible, preserving separators and Unicode surrogate pairs, into observation entries of at most 12000 characters. Each part pins the same exact source key and raw-content hash and adds no directive, mandate rule or AI request. Preview and save enforce the existing twenty-source/twenty-entry capacity, including prior draft content and every new part; failures explain the cause and permit reselection. The typed `execution-strategy` branch still revalidates its structured plan, periods and source evidence with no relaxation of execution authority.
 
@@ -148,6 +159,8 @@ Configured, effective, monitoring, review-pending and filled are different state
 ```mermaid
 flowchart TD
     report["Published report version and typed conditions"] --> brief["Compile current report briefs"]
+    strategyChange["Applied or removed strategy context"] --> brief
+    brief --> crossings["Retain previous observation; only a new threshold crossing republishes"]
     brief --> event["Deterministic event or price-cross dispatch"]
     change["Background research finding"] --> seal["Validate and seal payload plus dependencies"]
     facts["Owner facts, evidence cards and exact anchors"] --> event
@@ -155,6 +168,8 @@ flowchart TD
     event --> gate["Registered template, slots and publication checks"]
     seal --> gate
     runtime["Authoritative strategy and simulation revisions"] --> gate
+    fills["Actual partial or complete paper fills"] --> receipt["Visible factual stock-friend receipt; exact order identity"]
+    receipt --> gate
     gate --> transaction["Bubble, episode, memory and outbox transaction"]
     transaction --> stream["Channel stream projection"]
     transaction --> notification["Eligible notification delivery"]
@@ -162,7 +177,7 @@ flowchart TD
     action --> history["Decision snapshots and explicit user reflections"]
 ```
 
-`client/src/pages/Council/SimpleCouncilPage.tsx` reads `server/modules/channel/channel.controller.ts` at `/api/channel`. The channel is not the research transcript. `ChannelBriefsService` compiles published report artifacts once and dispatches templates without a model call; report freshness/revocation, current strategy, expiry and sourced condition/ticker checks can invalidate a brief.
+`client/src/pages/Council/SimpleCouncilPage.tsx` reads `server/modules/channel/channel.controller.ts` at `/api/channel`. The channel is not the research transcript. `ChannelBriefsService` compiles published report artifacts per report and strategy context and dispatches templates without a model call. A strategy switch recompiles eligible monitors while preserving prior observation state; only a new clear-to-met crossing can alert again. Report freshness/revocation, expiry and sourced condition/ticker checks can invalidate a brief, and previously invalidated briefs stay invalid.
 
 Background findings use `ChannelService.ingestFinding` and `channel-contract.ts`: valid owner/episode/anchor, material semantic delta and evidence card are required. The server seal binds finding payload, compiler version, exact template hash/revision, slots, fact/report revisions and runtime dependencies. A boolean approval in generated text cannot replace it. No counterevidence is not a finding; inability to verify publishes only as a new material gap. Corrected/stale evidence or changed dependencies invalidate the seal.
 

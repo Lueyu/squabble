@@ -18,7 +18,7 @@ async function scenario(status,run,{item=draft,setup=()=>{}}={}){
   f.state.responses=new Map([['/api/investment-strategies/watch-draft/preparation',status],['/api/investment-strategies/watch-draft',draft],['/api/investment-strategies/watch-draft/preview',ready],['/api/investment-strategies/watch-draft/prepare',ready]]);
   setup(f);
   const Editor=f.load('pages/Today/InvestmentStrategyEditor.tsx').default;
-  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:structuredClone(item),currentId:null,timezone:content.timezone,investment:{account:{id:'paper'}},onChanged(){},onClose(){}}))));
+  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:structuredClone(item),currentId:null,timezone:content.timezone,investment:{account:{id:'paper'},policy:{id:'policy'}},onChanged(){},onClose(){}}))));
   const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
   await run({f,button,dom});
  }finally{await React.act(async()=>root.unmount());dom.window.close();Object.assign(global,{window:previous.window,document:previous.document,IS_REACT_ACT_ENVIRONMENT:previous.act});}
@@ -102,7 +102,7 @@ test('reading preparation status preserves an unsaved period edit',async()=>{
  }});
 });
 
-test('a new draft preparation clears status checking when its result arrives before the status read',async()=>{
+test('a new draft recheck clears status checking when its result arrives before the status read',async()=>{
  let finishStatus,finishPreparation;
  const confirmed={...ready,status:'confirmed',confirmedAt:'2026-11-06T00:00:00Z'};
  await scenario({status:'none'},async({button})=>{
@@ -118,7 +118,7 @@ test('a new draft preparation clears status checking when its result arrives bef
   const api=f.load('api/investment-strategies.ts').investmentStrategiesApi;
   api.create=async()=>structuredClone(draft);
   api.preparation=()=>new Promise(resolve=>{finishStatus=resolve;});
-  api.prepare=()=>new Promise(resolve=>{finishPreparation=resolve;});
+  api.preview=()=>new Promise(resolve=>{finishPreparation=resolve;});
  }});
 });
 

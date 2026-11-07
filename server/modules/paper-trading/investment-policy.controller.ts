@@ -10,6 +10,7 @@ export class InvestmentPolicyController {
   @NeedLogin() @Get() overview(@Req() req: Request) { return this.policies.overview(req.userContext.userId); }
   @NeedLogin() @Post('preview') preview(@Req() req: Request, @Body() input: unknown) { return this.write(req, () => this.policies.preview(req.userContext.userId, input)); }
   @NeedLogin() @Post('apply-strategy') apply(@Req() req: Request, @Body() input: unknown) { return this.write(req, () => this.policies.applyStrategy(req.userContext.userId, input)); }
+  @NeedLogin() @Post('remove-strategy') removeStrategy(@Req() req: Request, @Body() input: unknown) { return this.policies.removeStrategy(req.userContext.userId, input); }
   @NeedLogin() @Post('start') start(@Req() req: Request, @Body() input: unknown) { return this.write(req, () => this.policies.start(req.userContext.userId, input)); }
   @NeedLogin() @Post('restart') restart(@Req() req: Request, @Body() input: unknown) { return this.write(req, () => this.policies.restart(req.userContext.userId, input)); }
   @NeedLogin() @Post('pause') pause(@Req() req: Request, @Body() input: unknown) { return this.policies.pause(req.userContext.userId, input); }

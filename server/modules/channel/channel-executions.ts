@@ -17,14 +17,14 @@ export async function syncChannelExecutions(db: PostgresJsDatabase, channel: Cha
       { id: `${delta}:remaining`, revision: 1, ownerId: owner, key: 'execution.remainingQuantity', value: execution.remainingQuantity, observedAt: execution.updatedAt, subject: 'runtime_status' },
     ];
     const card: ChannelEvidenceCard = { id: `card:${delta}`, kind: 'evidence', summary: `${execution.symbol} 模拟盘已成交 ${execution.filledQuantity} 股，未成交 ${execution.remainingQuantity} 股`,
-      sources: [{ id: execution.id, kind: 'ledger', title: `${execution.symbol} 模拟订单与成交回执`, uri: `/ai-investment?orderId=${encodeURIComponent(execution.id)}`, publishedAt: execution.updatedAt, observedAt: runtime.confirmedAt, verification: 'checked' }],
+      sources: [{ id: execution.id, kind: 'ledger', title: `${execution.symbol} 模拟订单与成交回执`, uri: `/paper?orderId=${encodeURIComponent(execution.id)}`, publishedAt: execution.updatedAt, observedAt: runtime.confirmedAt, verification: 'checked' }],
       asOf: execution.updatedAt, gaps: execution.strategyRevision === 0 ? ['历史订单的策略来源未确认；没有借用当前策略版本。'] : [], supports: facts.map(f => ({ factId: f.id, scope: '该模拟订单的实际累计成交与剩余数量' })) };
-    if (execution.status === 'partially_filled') {
+    if (execution.status === 'partially_filled' || execution.status === 'filled') {
       await channel.publishTemplate(owner, { episodeId, entityId: execution.id, title: `${execution.symbol} · 模拟成交`, eventKind: 'paper.execution_changed', semanticDeltaId: delta,
-        facts: facts.map(fact => ({ fact, card })), templateId: 'channel.paper.partial', stance: 'plain_fact', weight: 'nudge', layer: 3, posture: 'standalone', evidence: card });
+        facts: facts.map(fact => ({ fact, card })), templateId: execution.status === 'filled' ? 'channel.paper.completed' : 'channel.paper.partial', stance: 'plain_fact', weight: 'nudge', layer: 3, posture: 'standalone', evidence: card });
       continue;
     }
-    // quiet_win is silent by default: a completed fill updates the board and audit log without an unsolicited bubble.
+    // Other terminal states retain their audit record without claiming a completed fill.
     await db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
       const [priorEvent] = await tx.select().from(channelEvents).where(and(eq(channelEvents.owner, owner), eq(channelEvents.id, `execution:${delta}`)));

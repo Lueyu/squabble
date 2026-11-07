@@ -41,7 +41,7 @@ test('daily research executes a sealed independent barrier and mandatory reverse
       { id: 'summary', name: 'Summary', role: 'manager', model: 'fast', instructions: '', connectionId: randomUUID() },
     ]);
 
-    async function execute(options: { missingReverse?: boolean; lostMember?: boolean; outcome?: DailyReverseCheck['outcome'] } = {}) {
+    async function execute(options: { missingReverse?: boolean; lostMember?: boolean; invalidPlan?: boolean; outcome?: DailyReverseCheck['outcome'] } = {}) {
       const owner = randomUUID();
       await client`INSERT INTO users (id,username,password_hash) VALUES (${owner},${`daily-${owner.slice(0, 12)}`},'fixture-only')`;
       const prompts: Array<{ system: string; input: Record<string, unknown> }> = [];
@@ -58,7 +58,7 @@ test('daily research executes a sealed independent barrier and mandatory reverse
             findings: outcome === 'no_counterevidence_found' ? ['No contradiction established in the supplied material.'] : [],
             gaps: ['Customer-level cash conversion is unavailable.'], affectedPremises: ['Cash conversion supports earnings quality'], evidenceIds: [] };
           return { data: { response: { thesis: marker, evidencePoints: [], risks: ['Missing original customer-level data'], nextChecks: ['Review the next filing'] },
-            evidenceIds: [], researchStance: 'balanced', ...(input.phase === 'challenge' && !options.missingReverse ? { reverseCheck: check } : {}) }, tokens: 1 };
+            evidenceIds: [], researchStance: 'balanced', ...(input.phase === 'summary' && options.invalidPlan ? { executionPlan: { schemaVersion: 99 } } : {}), ...(input.phase === 'challenge' && !options.missingReverse ? { reverseCheck: check } : {}) }, tokens: 1 };
         } };
       const council = new CouncilService(db, llm as never, { collectEvidence: async () => [] } as never,
         { getPortfolioContext: async () => ({ totalValue: 1000, cash: 100, holdings: [] }) } as never,
@@ -91,6 +91,8 @@ test('daily research executes a sealed independent barrier and mandatory reverse
       assert.equal(submissions.length, 3); assert.ok(submissions.every(s => s.released_at));
       await assert.rejects(client`UPDATE council_independent_submissions SET contribution='{}' WHERE owner=${owner}`, /immutable/u);
       const report = session.reports.at(-1)!;
+      assert.equal(report.coverage?.executionPlanError, 'missing');
+      assert.equal(report.coverage?.executionPlan?.parameterOrigin, 'system_observation');
       assert.equal(report.coverage?.reverseCheck?.outcome, 'no_counterevidence_found');
       assert.match(report.summary, /does not establish correctness/i);
       const selection = await today.getDailyReports(owner, day);
@@ -112,6 +114,23 @@ test('daily research executes a sealed independent barrier and mandatory reverse
       await remembering.create(owner,day,'remember-explicit-preference');
       assert.ok(inputMessage.includes(preference),'recent shared history must not evict explicit user preferences before the SQL limit');
       assert.equal(inputMessage.includes('Fictional completed history event'),false);
+    });
+
+    await t.test('missing and invalid daily proposals publish honest copyable observations without another AI call', async () => {
+      for (const invalidPlan of [false, true]) {
+        const { owner, session, prompts } = await execute({ invalidPlan });
+        assert.equal(session.status, 'completed'); assert.equal(prompts.length, 5);
+        const report = session.reports.at(-1)!;
+        const version = await documents.getVersion(owner, report.researchVersionId!);
+        assert.equal(version.snapshot?.executionPlanError, invalidPlan ? 'invalid' : 'missing');
+        assert.equal(version.snapshot?.executionPlan?.parameterOrigin, 'system_observation');
+        assert.match(version.sections.find(section => section.id === 'execution-strategy')!.content, /System observation plan/);
+        const draft = await strategies.importSource(owner, { kind: 'report', versionId: version.id, sectionId: 'execution-strategy' });
+        assert.equal(draft.status, 'draft'); assert.equal(draft.preview?.canConfirm, true);
+        assert.equal(draft.preview?.directives.length, 0); assert.equal(draft.preview?.mandateRules.length, 0);
+        assert.equal((await strategies.importSource(owner, { kind: 'report', versionId: version.id, sectionId: 'execution-strategy' })).id, draft.id);
+        assert.equal((await strategies.workspace(owner)).current, null);
+      }
     });
 
     await t.test('a missing reverse-check artifact prevents successful daily publication', async () => {

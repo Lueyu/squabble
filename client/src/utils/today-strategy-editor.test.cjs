@@ -26,6 +26,66 @@ test('confirmed strategy shows immutable authority and an explicit copy action',
  assert.doesNotMatch(html,/Your text changed/);
 });
 
+test('a legacy account without an investment policy cannot apply a prepared strategy',()=>{
+ const f=editorFixture(),Editor=f.load('pages/Today/InvestmentStrategyEditor.tsx').default;
+ const html=f.render(Editor,{item:{...confirmed,status:'draft'},currentId:null,timezone:'Asia/Shanghai',investment:{account:{id:'legacy'}},onChanged(){},onClose(){}});
+ assert.match(html,/Set up your simulation before applying/);
+ assert.match(html,/<button[^>]*disabled=""[^>]*>Review and apply to simulation<\/button>/);
+ assert.match(html,/\/paper\?investmentStrategyId=confirmed/);
+});
+
+test('an imported ready draft opens in review mode with visible limits and a persistent action footer',async()=>{
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'}),previous={window:global.window,document:global.document,act:global.IS_REACT_ACT_ENVIRONMENT};
+ Object.assign(global,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true});
+ const root=createRoot(document.getElementById('root'));
+ try{
+  const f=editorFixture(),Editor=f.load('pages/Today/InvestmentStrategyEditor.tsx').default;
+  const item={...structuredClone(confirmed),status:'draft',content:{...content,limits:{maxPositionPct:10,maxOrderPct:5,minCashPct:20,maxGrossExposurePct:80}}};
+  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item,currentId:null,timezone:'Asia/Shanghai',investment:{account:{id:'paper'},policy:{id:'policy'}},onChanged(){},onClose(){}}))));
+  const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
+  assert.match(document.body.textContent,/Review and enable strategy/);
+  assert.equal(document.querySelectorAll('textarea').length,0,'ready report plans should not open with an editing form');
+  const limits=document.querySelector('[aria-label="Risk limits for review"]');
+  assert.ok(limits);assert.match(limits.textContent,/Single-position cap.*10%/);
+  const explanation=document.querySelector('section[aria-label="Execution details"]');assert.ok(explanation);
+  const scroller=document.querySelector('[data-strategy-scroll]'),footer=document.querySelector('footer');
+  assert.ok(scroller);assert.equal(scroller.contains(footer),false,'the apply button must remain outside the scrolling content');
+  assert.equal(footer.contains(button('Review and apply to simulation')),true);
+  await React.act(async()=>button('Edit strategy content').click());
+  assert.equal(document.querySelectorAll('textarea').length,2);
+  assert.equal(button('Collapse editing').getAttribute('aria-expanded'),'true');
+  assert.equal(writes(f).length,0,'opening editing does not save, re-extract or apply anything');
+ }finally{await React.act(async()=>root.unmount());dom.window.close();Object.assign(global,{window:previous.window,document:previous.document,IS_REACT_ACT_ENVIRONMENT:previous.act});}
+});
+
+test('editing only a confirmed strategy period rechecks without a model request',async()=>{
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'}),previous={window:global.window,document:global.document,act:global.IS_REACT_ACT_ENVIRONMENT};
+ Object.assign(global,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true});
+ const root=createRoot(document.getElementById('root'));
+ try{
+  const f=editorFixture(),Editor=f.load('pages/Today/InvestmentStrategyEditor.tsx').default;
+  const draft={...structuredClone(confirmed),id:'new-draft',parentId:confirmed.id,status:'draft',revision:1,preview:null};
+  f.state.responses=new Map([['/api/investment-strategies',draft],['/api/investment-strategies/new-draft/preview',{...draft,preview:confirmed.preview}],['/api/investment-strategies/new-draft/prepare',{...draft,preview:confirmed.preview}]]);
+  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:confirmed,currentId:confirmed.id,timezone:'Asia/Shanghai',investment:{account:{id:'paper'},policy:{id:'policy'}},onChanged(){},onClose(){}}))));
+  const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
+  await React.act(async()=>button('Next week').click());
+  await React.act(async()=>button('Review execution details').click());
+  assert.deepEqual(writes(f).map(r=>r.args[0]),['/api/investment-strategies','/api/investment-strategies/new-draft/preview']);
+ }finally{await React.act(async()=>root.unmount());dom.window.close();Object.assign(global,{window:previous.window,document:previous.document,IS_REACT_ACT_ENVIRONMENT:previous.act});}
+});
+
+test('changed strategy text cannot reuse its previous executable interpretation',()=>{
+ const {load}=fixture(),{canReuseStrategyInterpretation,editStrategyEntry}=load('utils/user-strategy-editor.ts');
+ const text='Buy 1 FICT below 100';
+ const entry={id:'typed',text,sourceKeys:[],directive:{ticker:'FICT',side:'buy',trigger:{kind:'price_lte',price:100},quantity:1,reviewedText:text,numericEvidence:[]}};
+ const original={...confirmed,content:{...content,entries:[entry]}};
+ assert.equal(canReuseStrategyInterpretation({...original.content,endsAt:'2026-11-14T00:00:00Z'},original),true);
+ const changed=editStrategyEntry(entry,'Buy 10 FICT below 100');
+ assert.equal(changed.directive,undefined);
+ assert.equal(canReuseStrategyInterpretation({...original.content,entries:[changed]},original),false);
+ assert.equal(canReuseStrategyInterpretation({...original.content,body:'Completely different investment intent'},original),false);
+});
+
 test('entry date and effective-period help use its own timezone',()=>{
  const f=editorFixture();const Editor=f.load('pages/Today/InvestmentStrategyEditor.tsx').default;
  const html=f.render(Editor,{item:confirmed,currentId:confirmed.id,timezone:'Asia/Shanghai',onChanged(){},onClose(){}});
@@ -121,7 +181,7 @@ test('a new draft has an actionable review step and applies only after its prepa
   const prepared={...draft,revision:2,preview:{...structuredClone(confirmed.preview),revision:2,contentHash:'reviewed-hash'}};
   f.state.responses=new Map([['/api/investment-strategies/ready-draft/prepare',prepared]]);
   let closed=0;
-  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:draft,currentId:null,timezone:'Asia/Shanghai',investment:{account:{id:'paper'}},onChanged(){},onClose(){closed++;}}))));
+  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:draft,currentId:null,timezone:'Asia/Shanghai',investment:{account:{id:'paper'},policy:{id:'policy'}},onChanged(){},onClose(){closed++;}}))));
   const button=text=>[...document.querySelectorAll('button')].find(item=>item.textContent===text);
   const review=button('Review execution details');assert.ok(review,'unprepared drafts expose the next step instead of a disabled apply button');assert.equal(review.disabled,false);
   await React.act(async()=>review.click());

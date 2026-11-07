@@ -25,7 +25,7 @@ export function RuntimeBoard({snapshot,language}:{snapshot:ChannelRuntimeSnapsho
  const proposal=snapshot.proposals.find(item=>item.status==='applying')??snapshot.proposals.find(item=>item.status==='proposed')??snapshot.proposals[0];
  const execution=snapshot.executions[0],rule=snapshot.current.rules.find(item=>item.effective);
  const allExpired=snapshot.current.rules.length>0&&snapshot.current.rules.every(item=>item.effectiveReason==='expired');
- const current=!snapshot.current.strategyId?c.observing:snapshot.monitoringStatus==='paused'?c.paused:snapshot.monitoringStatus==='stopped'?(allExpired?c.expiredStrategy:c.stopped):snapshot.monitoringStatus==='observing'?c.monitorObserving:snapshot.monitoringStatus==='running'?(rule?`${rule.label} · ${rule.value}`:c.noEffectiveRules):c.monitorUnconfirmed;
+ const current=!snapshot.current.strategyId?c.observing:snapshot.monitoringStatus==='paused'?c.paused:snapshot.monitoringStatus==='stopped'?(allExpired?c.expiredStrategy:c.stopped):snapshot.monitoringStatus==='observing'?(snapshot.monitoringReason==='OBSERVATION_ONLY'?c.observation_only:c.monitorObserving):snapshot.monitoringStatus==='running'?(rule?`${rule.label} · ${rule.value}`:c.noEffectiveRules):c.monitorUnconfirmed;
  const executionLabel=execution?((execution.symbol?execution.symbol+' · ':'')+c[execution.status]):c.noExecution;
  return <><section className="channel-runtime-board" aria-label={c.boardDescription}>
   <button className="channel-runtime-cell" data-runtime-cell="current" onClick={()=>setOpen(true)}>

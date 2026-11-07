@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { Client } from 'pg';
 
 const url = process.env.EXPERIENCE_TEST_DATABASE_URL ?? process.env.RESEARCH_TEST_DATABASE_URL;
-const files = ['37_asset_ledger_integrity.sql', '39_user_investment_strategies.sql', '40_transaction_imports.sql', '41_portfolio_value_points.sql', '42_user_strategy_runtime.sql', '43_channel_workbench.sql'];
+const files = ['37_asset_ledger_integrity.sql', '39_user_investment_strategies.sql', '40_transaction_imports.sql', '41_portfolio_value_points.sql', '42_user_strategy_runtime.sql', '43_channel_workbench.sql', '44_strategy_draft_deletion.sql'];
 const identifier = (name: string) => '"' + name.replaceAll('"', '""') + '"';
 
 test('fresh install and repeated asset/report/strategy upgrades have identical catalogs and preserve existing ledgers', { skip: !url }, async () => {
@@ -13,7 +13,7 @@ test('fresh install and repeated asset/report/strategy upgrades have identical c
   const prefix = 'assets_upgrade_' + randomUUID().replaceAll('-', '');
   const fresh = prefix + '_fresh', upgrade = prefix + '_upgrade';
   const current = readFileSync('scripts/db/01_schema.sql', 'utf8');
-  const marker = '-- Assets reports and strategy migrations';
+  const marker = '-- 37_asset_ledger_integrity.sql';
   assert.ok(current.includes(marker));
   const old = current.slice(0, current.indexOf(marker));
   const normal = (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll(fresh + '.', '').replaceAll(upgrade + '.', ''));

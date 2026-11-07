@@ -1410,7 +1410,7 @@ DROP TRIGGER IF EXISTS council_independent_immutable ON council_independent_subm
 CREATE TRIGGER council_independent_immutable BEFORE UPDATE ON council_independent_submissions
   FOR EACH ROW EXECUTE FUNCTION preserve_council_independent_submission();
 
--- Research experience recovery migrations
+-- 34_research_execution_recovery.sql
 -- Additive execution metadata. Existing running work is never replayed by migration.
 ALTER TABLE experience_preferences ADD COLUMN IF NOT EXISTS member_settings jsonb NOT NULL DEFAULT '{}'::jsonb;
 CREATE TABLE IF NOT EXISTS council_member_attempts (
@@ -1434,6 +1434,7 @@ CREATE TABLE IF NOT EXISTS council_recovery_requests (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS council_recovery_owner_request ON council_recovery_requests(owner,request_key);
 
+-- 35_import_batches.sql
 -- Durable owner-scoped screenshot review; original image bytes remain local for at most 24h.
 CREATE TABLE IF NOT EXISTS import_batches (
   id uuid PRIMARY KEY, owner text NOT NULL, revision integer NOT NULL DEFAULT 0,
@@ -1446,6 +1447,7 @@ CREATE TABLE IF NOT EXISTS import_commit_receipts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS import_commit_receipt_identity ON import_commit_receipts(owner,request_key);
 
+-- 36_import_analysis_handoff.sql
 CREATE TABLE IF NOT EXISTS research_analysis_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, receipt_id text NOT NULL,
   snapshot jsonb NOT NULL, date_key text NOT NULL, state text NOT NULL DEFAULT 'queued', error text, task_id uuid,
@@ -1456,7 +1458,6 @@ ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_snapshot js
 ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_route jsonb;
 ALTER TABLE research_current_views ADD COLUMN IF NOT EXISTS dispatch_connection_id text;
 
--- Assets reports and strategy migrations
 -- 37_asset_ledger_integrity.sql
 -- Preserve original duplicate evidence before enforcing one current cash row.
 ALTER TABLE cash_accounts ADD COLUMN IF NOT EXISTS reconciliation_status varchar(20) NOT NULL DEFAULT 'unconfirmed';
@@ -1606,6 +1607,8 @@ FOR EACH ROW EXECUTE FUNCTION reject_simulation_valuation_baseline_mutation();
 UPDATE paper_orders o SET status = 'cancelled', reason = 'Confirm an investor strategy before execution'
 FROM investment_policies p WHERE p.account_id = o.account_id AND p.owner = o.owner
 AND p.base_config -> 'userStrategy' IS NULL AND o.status = 'pending_approval';
+
+-- 43_channel_workbench.sql
 -- Additive channel state. Existing accounts, reports and execution ledgers are untouched.
 CREATE TABLE IF NOT EXISTS channel_preferences (
  owner text PRIMARY KEY, vibe text NOT NULL DEFAULT 'deskmate' CHECK(vibe IN ('quiet','deskmate','chatty')),
@@ -1689,3 +1692,7 @@ DROP TRIGGER IF EXISTS channel_memory_append_only ON channel_memories;
 CREATE TRIGGER channel_memory_append_only BEFORE UPDATE OR DELETE ON channel_memories FOR EACH ROW EXECUTE FUNCTION channel_assert_append_only();
 DROP TRIGGER IF EXISTS channel_reflection_append_only ON channel_decision_reflections;
 CREATE TRIGGER channel_reflection_append_only BEFORE UPDATE OR DELETE ON channel_decision_reflections FOR EACH ROW EXECUTE FUNCTION channel_assert_append_only();
+
+-- 44_strategy_draft_deletion.sql
+-- Keep deleted draft revisions and model-dispatch receipts for audit and deduplication.
+ALTER TABLE user_investment_strategies ADD COLUMN IF NOT EXISTS deleted_at timestamptz;

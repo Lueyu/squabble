@@ -92,7 +92,7 @@ export class InvestmentPolicyService {
     return { currentStrategy: policy?.baseConfig.userStrategy ?? null, netAssetUsd: snapshots[0]?.equity ?? performance?.endingEquityUsd ?? null, todayChangeUsd: snapshots[0]?.dailyPl ?? null, waitingReasons: [...new Set([...runtime.map(item => item.data.reason), ...(performance?.gaps ?? [])])], lastCheckAt: runtime.map(item => item.data.lastCheckAt).filter(Boolean).sort().at(-1) ?? null, status: policy ? policy.status === 'paused' ? 'paused' : waiting ? 'attention_required' : 'running' : account ? 'needs_confirmation' : 'not_started',
       account, policy: policy ? policyView(policy) : null, needsInput: !policy && account ? ['CONFIRM_LEGACY_ADOPTION'] : [],
       limits: policy?.effectiveConfig.limits ?? DEFAULT_INVESTMENT_CONFIG.limits, constraints: policy?.constraintRecords ?? [],
-      currentThinking: mandates[0]?.config.objective ?? (waiting ? String(waiting.result.reason ?? 'Waiting for verified independent research') : null),
+      currentThinking: policy && !policy.baseConfig.userStrategy ? null : mandates[0]?.config.objective ?? (waiting ? String(waiting.result.reason ?? 'Waiting for verified independent research') : null),
       actions: actions.map(action => ({ ...action, strategyId: signals.find(signal => signal.orderId === action.id)?.candidate.userStrategyId ?? null, strategyEntryId: signals.find(signal => signal.orderId === action.id)?.ruleId ?? null, fee: trades.find(trade => trade.orderId === action.id)?.fee ?? null, discussionId: decisions.find(d => d.signalId && d.councilSessionId && action.sessionId === d.councilSessionId)?.councilSessionId ?? action.sessionId })), holdings: positions.map(position => ({ ...position, originalCost: openingSeed?.seed.positions.find(item => item.ticker === position.ticker)?.historicalCost })), performance, lastHeartbeatAt: heartbeats[0]?.lastHeartbeat.toISOString() ?? null,
       legacyAccounts: accounts.filter(a => !policies.some(p => p.accountId === a.id)).map(a => ({ id: a.id, name: a.name, active: a.isActive, botEnabled: a.botEnabled })),
       cycles: cycles.map(c => ({ id: c.id, state: c.state, market: c.market, reason: c.result.reason ?? null })),
@@ -256,6 +256,28 @@ export class InvestmentPolicyService {
       marketDate: paperRiskDay(new Date(), market === 'US' ? 'America/New_York' : market === 'HK' ? 'Asia/Hong_Kong' : 'Asia/Shanghai'), trigger, eventKey: `${trigger}:${policy.revision}` }).onConflictDoNothing();
   }
   async pause(owner: string, input: unknown) { return this.switchStatus(owner, this.parse('pause', input), false); }
+  async removeStrategy(owner: string, input: unknown) {
+    const request = this.parse('removeStrategy', input);
+    if (!this.userStrategies) throw new BadRequestException('USER_STRATEGY_SERVICE_UNAVAILABLE');
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      return this.idempotent(tx, owner, 'remove-strategy', request, async () => {
+        const { account, policy } = await this.current(tx, owner);
+        if (policy.revision !== request.expectedPolicyRevision) throw new ConflictException('POLICY_REVISION_CHANGED');
+        if (policy.baseConfig.userStrategy?.id !== request.strategyId || policy.baseConfig.userStrategy.revision !== request.expectedRevision) throw new ConflictException('Current strategy changed; reload before removing');
+        await this.userStrategies!.removeCurrentInTransaction(tx, owner, request.strategyId, request.expectedRevision, async () => {
+          await cancelInvestmentCandidates(tx, owner, account.id, 'User stopped and removed the current strategy');
+          await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, account.id), eq(strategyMandates.status, 'published')));
+          await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active')));
+          await tx.update(paperAccounts).set({ botEnabled: false, updatedAt: new Date() }).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, account.id)));
+          const baseConfig = { ...policy.baseConfig }; delete baseConfig.userStrategy;
+          await tx.update(investmentPolicies).set({ status: 'paused', revision: policy.revision + 1, baseConfig,
+            effectiveConfig: effectiveInvestmentConfig(baseConfig, policy.constraintRecords), updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id));
+        });
+        return { removed: true, strategyId: request.strategyId, status: 'paused' as const };
+      });
+    });
+  }
   async resume(owner: string, input: unknown) { return this.switchStatus(owner, this.parse('resume', input), true); }
   private async switchStatus(owner: string, request: { expectedRevision: number; requestKey: string }, running: boolean) {
     return this.db.transaction(async tx => {

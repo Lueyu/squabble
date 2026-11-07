@@ -120,7 +120,7 @@ npm run test:memory-eval
 
 Read the provider before using this extraction if its format changes. Its
 explicit list is the startup upgrade authority, currently ending with
-`43_channel_workbench.sql`; numbering is not contiguous. Do not invent a
+`44_strategy_draft_deletion.sql`; numbering is not contiguous. Do not invent a
 numeric migration range or glob in demo seed `02_demo_seed.sql`.
 `01_schema.sql` is the consolidated fresh-install schema, not an upgrade
 script. Startup does not create it and does not maintain a migration-version
@@ -132,3 +132,5 @@ bootstrap list is a test fixture setup, not the runtime upgrade registry.
 `test:memory-eval` requires both memory and council URLs and fails on missing
 prerequisites or skipped required coverage; inspect its JSON result as well as
 the exit code. Never start the full app merely to initialize a test database.
+
+For the daily simulation journey, also run `client/src/utils/simulation-journey.test.cjs`, `strategy-management.test.cjs`, the report/source/editor tests, and `server/modules/paper-trading/user-strategy-removal.integration.spec.ts`. The latter covers additive migration 44, owner/revision fences, deletion/preparation races, cancellation and retained history. Channel durable/brief suites cover visible full fills, replay, removed drafts, strategy-context recompilation and observation-only status. Use a separate fictional UI database for browser setup/import/apply/edit/remove flows while integration suites run.

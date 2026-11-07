@@ -54,6 +54,11 @@ function load(filename) {
 }
 const Panel = load(path.resolve(__dirname, '../pages/Council/CouncilMemoryPanel.tsx')).CouncilMemoryPanel;
 const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+async function waitFor(predicate, message) {
+  const deadline = Date.now() + 3000;
+  while (!predicate() && Date.now() < deadline) await flush();
+  assert.ok(predicate(), message);
+}
 const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text);
 const number = () => document.querySelector('input[type="number"]');
 const rationale = () => document.querySelector('textarea');
@@ -87,7 +92,9 @@ async function openWorkspace() {
     else { const summary = [...document.querySelectorAll('summary')].find(node => node.textContent === 'Condition monitoring');
       assert.ok(summary); summary.parentElement.open = true; summary.parentElement.dispatchEvent(new window.Event('toggle')); }
   });
-  await flush();
+  // Opening mounts nested React Query observers. One 20 ms timer can complete before
+  // their notifications reach React under suite load; wait for the actual workspace.
+  await waitFor(() => button('Configure condition') || button('Edit condition'), 'monitor workspace finishes loading');
 }
 async function openDraft() {
   await openWorkspace();

@@ -32,6 +32,7 @@ export const investmentRequests = {
   preview: z.object({ origin: z.enum(['holdings', 'cash']), cash: z.object({ amount: z.number().finite().positive(), currency: z.enum(['USD', 'HKD', 'CNY']) }).strict().optional(), requestKey }).strict()
     .refine(value => value.origin === 'cash' ? Boolean(value.cash) : !value.cash, 'Cash start requires an explicit amount and currency'),
   apply: z.object({ strategyId: z.string().uuid(), expectedRevision: z.number().int().positive(), previewHash: z.string().min(1).max(128), expectedCurrentId: z.string().uuid().nullable(), requestKey }).strict(),
+  removeStrategy: z.object({ strategyId: z.string().uuid(), expectedRevision: z.number().int().positive(), expectedPolicyRevision: z.number().int().positive(), requestKey }).strict(),
   start, restart: start.extend({ expectedAccountId: z.string().uuid() }).strict(),
   pause: z.object({ expectedRevision: z.number().int().positive(), requestKey }).strict(),
   resume: z.object({ expectedRevision: z.number().int().positive(), requestKey }).strict(),
