@@ -36,7 +36,7 @@ export default function StartInvestmentCard({ preview, onStarted, onRefresh, res
     finally { lock.current = false; setPending(false); }
   };
   return <section aria-label={zh ? '确认复制模拟盘' : 'Confirm paper portfolio copy'} className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
-    <h2 className="text-lg font-semibold">{zh ? '复制当前持仓' : 'Copy current holdings'}</h2>
+    <h2 className="text-lg font-semibold">{zh ? '确认模拟账户起点' : 'Confirm the simulation starting point'}</h2>
     <p className="text-sm text-muted-foreground">{preview.seed.positions.length} {zh ? '项持仓' : 'positions'} · {new Date(preview.seed.capturedAt).toLocaleString(i18n.language)}</p>
     <div className="grid gap-3 sm:grid-cols-3">{(['USD', 'HKD', 'CNY'] as const).map(currency => {
       const cash = preview.seed.cash.find(item => item.currency === currency);
@@ -45,7 +45,7 @@ export default function StartInvestmentCard({ preview, onStarted, onRefresh, res
     })}</div>
     {unknownCash && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={confirmCash} onChange={event => setConfirmCash(event.target.checked)} /><span>{zh ? '以上记录现金已核对，可用于此模拟盘。未确认时保留待核对状态。' : 'I checked the recorded cash amounts for this simulation. Otherwise they remain unconfirmed.'}</span></label>}
     {preview.seed.gaps.includes('CASH_UNKNOWN') && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={zeroCash} onChange={event => setZeroCash(event.target.checked)} /><span>{zh ? '以零记录现金假设开始（不影响额外模拟现金）。' : 'Assume zero recorded cash, in addition to any virtual cash.'}</span></label>}
-    <p className="text-sm leading-6 text-muted-foreground">{zh ? '创建后先观察，再到今日选择并应用投资策略。额外资金只进入模拟账本，之后真实交易不会自动同步。' : 'The account starts in observation. Choose and apply your strategy from Today to run it. Virtual cash stays in the simulation; later real trades do not sync.'}</p>
+    <p className="text-sm leading-6 text-muted-foreground">{zh ? '创建后先观察，在本页核对并启用策略。额外资金只进入模拟账本，之后真实交易不会自动同步。' : 'The account starts in observation. Review and apply your strategy on this page to run it. Virtual cash stays in the simulation; later real trades do not sync.'}</p>
     {preview.seed.initialEquityUsd === null && <p role="status" className="text-sm text-muted-foreground">{zh ? '可以先建立账本。行情、汇率或现金未齐时等待，收益从首次可信完整估值开始。' : 'You can create the ledger now. Missing quotes, FX or confirmed cash keep it waiting; returns start at the first reliable complete valuation.'}</p>}
     {restartAccountId && <p className="text-sm leading-6">{zh ? '当前模拟盘将归档，历史成交保留；本次建立新的独立起点。' : 'The current simulation will be archived with its trades preserved; this creates a separate starting point.'}</p>}
     {invalid && <p role="alert" className="text-sm text-destructive">{zh ? '请先补全证券币种或修正无效余额。' : 'Complete the security currency or correct invalid balances first.'}</p>}

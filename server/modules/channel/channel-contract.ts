@@ -153,7 +153,7 @@ export function canPublish(bubble: ChannelBubble, ctx: ChannelPublicationContext
     'channel.monitor.near': ['monitor.near'], 'channel.monitor.persisted': ['monitor.persisted'],
     'channel.monitor.breached': ['monitor.breached'], 'channel.monitor.recovered': ['monitor.recovered'],
     'channel.monitor.recovered_after_user': ['monitor.recovered'], 'channel.paper.filled': ['paper.execution_changed'],
-    'channel.paper.partial': ['paper.execution_changed'], 'channel.research.closed': ['research.day_closed'],
+    'channel.paper.partial': ['paper.execution_changed'], 'channel.paper.completed': ['paper.execution_changed'], 'channel.research.closed': ['research.day_closed'],
     'channel.opportunity.ready': ['thesis.changed', 'strategy.changed'], 'channel.process.countdown': ['catalyst.countdown'],
     'channel.supplement.scope': ['user.question'], 'channel.supplement.scope_needed': ['user.question'],
     'channel.supplement.unverified': ['user.question'], 'channel.supplement.price': ['user.question'],
@@ -176,6 +176,8 @@ export function canPublish(bubble: ChannelBubble, ctx: ChannelPublicationContext
         || !Number.isSafeInteger(count) || count < 1 || count >= Number(frozenCount)) return deny('INVALID_FROZEN_QUESTION_SCOPE');
     }
     if (template.id === 'channel.paper.filled' && !(Number(slots.quantity) > 0)) return deny('NO_NONZERO_FILL');
+    if (template.id === 'channel.paper.completed' && (!(Number(slots.quantity) > 0)
+      || !ctx.completedActions?.some(action => action.eventId === ctx.event.id && action.kind === 'paper_order_filled' && action.status === 'completed'))) return deny('NO_CONFIRMED_COMPLETE_FILL');
     if (template.id === 'channel.paper.partial' && !(Number(slots.filled) > 0 && Number(slots.remaining) > 0)) return deny('NOT_A_PARTIAL_FILL');
   } catch { return deny('INVALID_SLOT_BINDING'); }
   const relationship = validateRelationshipLinks(bubble, ctx);

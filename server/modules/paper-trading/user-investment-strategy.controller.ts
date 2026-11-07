@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { NeedLogin } from '../../common/platform/need-login.decorator';
 import { UserInvestmentStrategyService } from './user-investment-strategy.service';
@@ -26,6 +26,10 @@ export class UserInvestmentStrategyController {
   @NeedLogin() @Patch(':id')
   update(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number; content: StrategyDraftInput }) {
     return this.service.update(req.userContext.userId, id, body.expectedRevision, body.content);
+  }
+  @NeedLogin() @Delete(':id')
+  deleteDraft(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number }) {
+    return this.service.deleteDraft(req.userContext.userId, id, body.expectedRevision);
   }
   @NeedLogin() @Post(':id/add-source')
   addSource(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number; source: StrategySourceInput }) {

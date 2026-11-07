@@ -57,7 +57,7 @@ function savedReview(value: unknown): SavedSimulationReview | null {
       ? data.drawdownCoverage : null, strategyContributions: contributions };
 }
 
-function gapText(gap: string, zh: boolean): string {
+export function simulationReviewGapText(gap: string, zh: boolean): string {
   const [code, ...details] = gap.split(':');
   const labels: Record<string, [string, string]> = {
     PERIOD_START_SNAPSHOT_MISSING: ['缺少期初估值，期间收益未知', 'Opening valuation is missing; period returns are unknown'],
@@ -109,7 +109,7 @@ function observationCoverage(review: SavedSimulationReview, zh: boolean): string
 
 function modelNotesText(notes: string[], zh: boolean): string[] {
   return notes.length ? [`\n### ${zh ? '模型与数据说明' : 'Model and data notes'}\n`,
-    ...notes.map((note: string): string => `- ${gapText(note, zh)}`)] : [];
+    ...notes.map((note: string): string => `- ${simulationReviewGapText(note, zh)}`)] : [];
 }
 
 function performance(review: SavedSimulationReview, zh: boolean, notes: ReviewReadingNotes): string {
@@ -144,13 +144,13 @@ function performance(review: SavedSimulationReview, zh: boolean, notes: ReviewRe
     ? '本期没有成交。此处是模拟账本记录，零成交或净值未变不能验证投资判断是否正确。'
     : 'No fills were recorded. This is a simulation bookkeeping summary; zero fills or unchanged equity do not validate an investment judgment.');
   if (notes.gaps.length) lines.push(`\n### ${zh ? '数据缺口' : 'Data gaps'}\n`,
-    ...notes.gaps.map((gap: string): string => `- ${gapText(gap, zh)}`));
+    ...notes.gaps.map((gap: string): string => `- ${simulationReviewGapText(gap, zh)}`));
   lines.push(...modelNotesText(notes.modelNotes, zh));
   for (const row of review.strategyContributions) lines.push(`\n### ${row.title} · v${row.version}\n`,
     `${readableResearch(row.from)} — ${readableResearch(row.to)}`,
     line('区间账本变化', 'Interval NAV change', money(row.profitUsd)), line('区间收益率', 'Interval return', percent(row.returnPct)),
     line('归属成交', 'Attributed fills', row.orders), line('费用', 'Fees', money(row.feesUsd)),
-    ...row.gaps.map((gap: string): string => `- ${gapText(gap, zh)}`));
+    ...row.gaps.map((gap: string): string => `- ${simulationReviewGapText(gap, zh)}`));
   return lines.join('\n');
 }
 
@@ -165,7 +165,7 @@ function reviewSection(section: ResearchDocumentSection, review: SavedSimulation
     || (zh ? '本期未记录执行受限的决策。' : 'No execution constraints were recorded for this period.');
   const row = record(data);
   if (section.id === 'information-gaps' && row) {
-    const lines: string[] = notes.gaps.map((gap: string): string => `- ${gapText(gap, zh)}`);
+    const lines: string[] = notes.gaps.map((gap: string): string => `- ${simulationReviewGapText(gap, zh)}`);
     if (Array.isArray(row.monitorGaps)) for (const raw of row.monitorGaps.slice(0, 200)) {
       const interval = record(raw), from = readableResearch(interval?.from), to = readableResearch(interval?.to);
       if (from && to) lines.push(`- ${zh ? '监控离线区间' : 'Monitoring offline'}: ${from} — ${to}`);

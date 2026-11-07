@@ -2,7 +2,7 @@
 
 This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIENCE=true`). Existing advanced pages remain available outside that mode.
 
-## 今日：先看资产，再看研究
+## 今日：先看报告，再核对资产
 
 总资产由持仓市值与已确认现金组成。卖出股票会减少股数、增加对应币种现金；入金与出金单独计入外部资金流。今日盈亏按市场上一交易日收盘价以及已记录的当日买卖、费用计算，与相对历史买入成本的浮盈分开。
 
@@ -12,7 +12,7 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 
 ## 报告：初版与讨论都留着
 
-今日并列展示初版分析与最新完整讨论结论。历史入口按日期、主题和来源打开完整报告；继续讨论会引用当时的具体报告。每轮完整讨论也在原会话留下一张报告卡，下一轮失败不会删除上一轮结果。
+今日展示最新完整报告，初版分析与较早讨论结论保留在历史入口，按日期、主题和来源打开；继续讨论会引用当时的具体报告。每轮完整讨论也在原会话留下一张报告卡，下一轮失败不会删除上一轮结果。
 
 持仓研究使用当时封存的全部持仓、各币种现金、已确认风险上限和记录时间，零现金与未知余额分别保留。资料过大而无法完整发送时会明确停止，不会把截断的组合当作完整输入。日报应逐项说明持仓判断、依据和下一步核验点，并单列现金、组合集中度及真实资料缺口；账面价格不等于最新行情。
 
@@ -28,7 +28,7 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 
 ## 策略：一份当前总策略，草稿随时改
 
-今日的“投资策略”可直接手写，也可从报告或投研室选择内容加入草稿。按股票填写条目和各自期限，保留对应来源。保存草稿不改变正在运行的策略；查看已确认策略时，先“复制为草稿”再修改。
+AI 模拟盘的“我的投资策略”可直接手写，也可从报告或频道选择内容加入草稿。按股票填写条目和各自期限，保留对应来源。保存草稿不改变正在运行的策略；查看已确认策略时，修改后保存为新草稿，再核对并应用。
 
 加入报告时，只能选择真实可读正文或已通过校验的执行策略；“缺少执行策略”等占位说明和内部元数据不会成为可选策略。较长的研究正文会优先按段落拆成多条观察事项，保留原文及同一来源，不额外调用 AI，也不自动生成买卖指令。预览与保存使用相同的容量限制；如果来源或条目已满，界面会说明原因，可改选较小章节或另一份草稿。已验证的执行策略继续保留其提议期限、风险边界和待核对事项。
 
@@ -50,7 +50,7 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 
 ## Upgrade and data behavior
 
-- Back up the current database before upgrading. Startup applies additive migrations 37, 39–42; fresh installations include the same schema. The Docker runtime ships the entire migration directory.
+- Back up the current database before upgrading. Startup applies the additive migrations registered in `server/common/platform/database.provider.ts`, currently through `44_strategy_draft_deletion.sql`; fresh installations include the same schema. The Docker runtime ships the entire migration directory.
 - Duplicate cash rows are archived before enforcing one owner/currency row. Conflicting nonzero duplicates require reconciliation and are never summed blindly. Opening positions are checkpointed once; restarting does not checkpoint new trades or promote new unconfirmed cash.
 - Existing holdings, transactions, completed trades, raw research and report archives remain available. Known legacy report sources are linked to their original discussion without replacing valid references.
 - Legacy managed automatic accounts without an explicitly confirmed investor strategy pause on upgrade. In-flight candidates and reservations are cancelled; completed records remain. Review and apply a strategy before resuming.
@@ -58,6 +58,12 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 - Free market data can be delayed or unavailable. Missing trustworthy inputs cause an explanation and waiting, rather than fabricated returns or an unsafe simulated fill. Local-agent and provider availability still depend on the user's configured connection.
 
 ## English usage summary
+
+The daily path is **Today report → Copy to AI simulation → Review and apply → Channel updates**. The report copy opens its exact draft. If this is your first simulation, choose your starting holdings or simulated cash on the same page; after setup, that draft opens automatically. Strategy editing, draft deletion and **Stop and remove** live in AI simulation. Removing the current strategy stops automatic trading while preserving confirmed strategies and trade history. Changes only to periods or limits reuse reviewed instructions without an extra AI call. Complete and partial fills appear in the channel; new evidence-backed suggestions remain separate from confirmed orders.
+
+日常流程是“今日报告 → 一键复制到 AI 模拟盘 → 核对并应用 → 频道看动态”。首次使用时在同页选择持仓或模拟现金起点，建盘后自动打开刚复制的草稿。策略编辑、删除草稿、停止并移除当前策略都在模拟盘完成；移除会停止自动买卖，但保留已确认策略与成交记录。仅修改期限或限额时复用已核对条件，不额外调用 AI。完整成交和部分成交均会出现在频道，新建议需与已确认订单区分。
+
+新日报若未能产生有效 AI 策略，会明确保留失败原因和系统观察计划，不编造买卖条件。已有历史报告保持原样。草稿删除使用增量迁移 `44_strategy_draft_deletion.sql`；已有安装启动时应用，真实持仓、现金和报告不因此修改。
 
 Today combines marked positions and confirmed cash, separating daily investment P&L from external funding. Review imported trades and cash flows before posting; holdings snapshots alone never imply cash movements. Initial analysis, each discussion report and their pinned sources remain readable in history.
 

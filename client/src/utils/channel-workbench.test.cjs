@@ -97,6 +97,16 @@ test('running board selects an effective entry and preserves the null-strategy o
  snapshot.current.strategyId=null;snapshot.monitoringStatus='paused';
  assert.match(render(Board,{snapshot,language:'zh-CN'}),/尚未应用策略 · 模拟盘仅观察/);
 });
+test('an applied observation plan clearly says it will not trade',()=>{
+ const Board=load('pages/Channel/ChannelWorkbench.tsx').RuntimeBoard;
+ const snapshot=worstLegalFixture().runtime;snapshot.monitoringStatus='observing';snapshot.monitoringReason='OBSERVATION_ONLY';
+ snapshot.current.rules[0].effective=false;snapshot.current.rules[0].effectiveReason='observation_only';
+ for(const language of ['zh-CN','en']){
+  const current=render(Board,{snapshot,language}).match(/data-runtime-cell="current"[\s\S]*?<\/button>/)[0];
+  assert.match(current,language==='en'?/Observation only · No automatic trades/:/仅观察 · 不自动买卖/);
+  assert.doesNotMatch(current,/Current protection line|规则已生效/);
+ }
+});
 test('historical bubbles label superseded or corrected sources without removing the original finding',()=>{
  const Card=load('pages/Channel/ChannelWorkbench.tsx').ChannelBubbleCard;
  const bubble=worstLegalFixture().episodes[0].bubbles[0];bubble.evidence.gaps=['UNRESOLVED_GAP'];

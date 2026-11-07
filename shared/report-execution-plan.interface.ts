@@ -3,7 +3,8 @@ import type { StrategyDraftInput, StrategyExecutionPreview } from './user-invest
 /** Proposed investor parameters, never an execution authorization or a statement of observed market facts. */
 export interface ReportExecutionPlanInput {
   schemaVersion: 1;
-  parameterOrigin: 'ai_proposed';
+  /** System observations preserve failed/missing proposals, with no executable parameters. */
+  parameterOrigin: 'ai_proposed' | 'system_observation';
   strategy: StrategyDraftInput;
   evidenceIds: string[];
   gaps: string[];

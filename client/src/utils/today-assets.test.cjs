@@ -70,7 +70,7 @@ test('pending formatting retains the exact latest complete publication from hist
   assert.ok(!html.includes('Newer incomplete council result'),'unrelated partial council history remains excluded');
   assert.match(html,/referenceVersionId=Latest\+complete\+standalone/);
   assert.match(html,/Reformat saved result/);
-  assert.match(html,/Add to investment strategy/,'the retained ready publication can still be added to a strategy');
+  assert.match(html,/Choose other report content/,'the retained ready publication can still be added to a strategy');
 });
 
 test('update failure details belong to the active task rather than the displayed publication',()=>{
@@ -96,18 +96,16 @@ test('empty workspace retains cash confirmation and report-derived strategy acce
   const html=f.render(f.load('pages/Today/TodayPage.tsx').default);
   assert.match(html,/Bring in your holdings/,'the onboarding guide stays visible');
   assert.match(html,/Confirm cash/,'cash can be reconciled before holdings exist');
-  assert.match(html,/Your investment strategy/);
-  assert.match(html,/Write a strategy/);
-  assert.match(html,/Draft from a research report/);
-  assert.match(html,/Continue editing/,'a draft saved from a report remains editable on Today');
+  assert.match(html,/href="\/paper"[^>]*>Manage simulation strategy/,'strategy management is reachable in the simulation');
 });
 
-test('Today exposes one strategy workspace with manual and discussion entries',()=>{
+test('Today leads to the single strategy workspace in the simulation',()=>{
   const f=fixture();f.state.queries.set('today',{data:base});
   f.state.queries.set('investment-strategies',{data:{current:null,drafts:[],history:[]}});
   const html=f.render(f.load('pages/Today/TodayPage.tsx').default);
-  assert.ok(html.includes('Your investment strategy'),'one strategy workspace must be directly reachable from Today');
-  assert.ok(html.includes('Write a strategy'));
+  assert.match(html,/href="\/paper#investment-strategy"/,'one strategy workspace must be directly reachable from Today');
+  assert.match(html,/Manage simulation strategy/);
+  assert.doesNotMatch(html,/id="investment-strategy"/,'Today does not duplicate the editor');
 });
 
 test('editing a strategy entry preserves sources and clears stale execution interpretation',()=>{

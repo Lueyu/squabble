@@ -104,6 +104,7 @@ export class ChannelBriefsService {
           stance: 'mood', weight: 'tap', layer: 2, posture: 'standalone' });
       }
       const ownedSymbols = await this.db.select({ ticker: holdings.ticker }).from(holdings).where(eq(holdings.owner, report.owner));
+      const priorBriefs = await this.db.select().from(channelBriefs).where(and(eq(channelBriefs.owner, report.owner), sql`${channelBriefs.data}->>'reportId'=${report.id}`));
       for (const [thesisIndex, thesis] of (source.report.thesisCandidates ?? []).entries()) {
         for (const rawCondition of thesis.monitorConditions ?? []) {
           const parsed = monitorConditionSchema.safeParse(rawCondition);
@@ -118,13 +119,22 @@ export class ChannelBriefsService {
           if (!ticker) continue; // No ticker inference from prose, and no forced default threshold.
           const expiresAt = new Date(Math.min(Date.parse(condition.validUntil), Date.parse(validUntil))).toISOString();
           if (Date.parse(expiresAt) <= Date.now()) continue;
-          await save({ ...base, id: `cross:${report.id}:${thesisIndex}:${condition.conditionIndex}`, expiresAt,
+          const conditionId = `cross:${report.id}:${thesisIndex}:${condition.conditionIndex}`;
+          // Keep retired contexts immutable. A new context carries the same report condition's
+          // latest observation so merely changing strategy never repeats an unchanged alert.
+          const conditionBriefs = priorBriefs.filter(row => row.id === conditionId || row.id.startsWith(`${conditionId}:strategy:`)).map(row => row.data as CompiledBrief);
+          const observation = conditionBriefs.map(brief => brief.compilation?.observation).filter((item): item is NonNullable<CompiledBrief['compilation']['observation']> => Boolean(item))
+            .sort((left, right) => Date.parse(right.quoteAt) - Date.parse(left.quoteAt))[0];
+          const contextId = channelHash([runtime.current.strategyId, runtime.current.strategyRevision]);
+          const sameContext = conditionBriefs.filter(brief => brief.compilation?.strategyId === runtime.current.strategyId && brief.compilation?.strategyRevision === runtime.current.strategyRevision);
+          const currentBrief = sameContext.find(brief => brief.status === 'ready');
+          await save({ ...base, id: currentBrief?.id ?? `${conditionId}:strategy:${contextId}:${sameContext.length + 1}`, expiresAt,
             validFrom: new Date(Math.max(Date.parse(condition.validFrom), report.createdAt.getTime())).toISOString(),
             when: { kind: 'cross', factKey: `quote:${ticker}:price`, operator: condition.operator.startsWith('g') ? 'above' : 'below',
               threshold: { kind: 'report_value', assertionId: `thesis:${thesisIndex}:condition:${condition.conditionIndex}`, value: String(condition.threshold) }, hysteresis: '0' },
             agent: 'xiaoqi', text: { templateId: 'channel.report.condition', templateRevision: 1, slots: [] },
             stance: 'plain_fact', weight: 'nudge', layer: 3, posture: 'standalone',
-            compilation: { ...base.compilation, ticker, condition } });
+            compilation: { ...base.compilation, ticker, condition, ...(observation ? { observation } : {}) } });
         }
       }
     }

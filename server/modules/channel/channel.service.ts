@@ -563,7 +563,7 @@ export class ChannelService implements OnModuleInit {
       if (!row || !action || action.expectedRevision !== input.expectedRevision || action.expiresAt && Date.parse(action.expiresAt) <= Date.now()) throw new ConflictException('ACTION_STALE_OR_UNAVAILABLE');
       const [episode] = await tx.select().from(tables.channelEpisodes).where(and(eq(tables.channelEpisodes.owner, owner), eq(tables.channelEpisodes.id, row.episodeId)));
       if (['review_proposal', 'apply_proposal', 'dismiss_proposal'].includes(action.kind)) {
-        const [target] = await tx.select().from(userInvestmentStrategies).where(and(eq(userInvestmentStrategies.owner, owner), eq(userInvestmentStrategies.id, action.targetId)));
+        const [target] = await tx.select().from(userInvestmentStrategies).where(and(eq(userInvestmentStrategies.owner, owner), eq(userInvestmentStrategies.id, action.targetId), isNull(userInvestmentStrategies.deletedAt)));
         if (!target || target.revision !== input.expectedRevision || target.status !== 'draft' || row.resolvedAt) throw new ConflictException('ACTION_TARGET_CHANGED');
       }
       if (action.kind === 'snooze_episode' && (action.targetId !== episode.id || action.expectedRevision !== episode.data.revision || episode.data.phase === 'closed' || row.resolvedAt)) throw new ConflictException('ACTION_TARGET_CHANGED');
@@ -573,7 +573,7 @@ export class ChannelService implements OnModuleInit {
       }
       const decisionId = randomUUID();
       // Navigation never applies a strategy; the existing explicit review/apply path remains authoritative.
-      const result: Record<string, unknown> = action.kind === 'review_proposal' || action.kind === 'apply_proposal' ? { navigation: `/?investmentStrategyId=${encodeURIComponent(action.targetId)}#investment-strategy` }
+      const result: Record<string, unknown> = action.kind === 'review_proposal' || action.kind === 'apply_proposal' ? { navigation: `/paper?investmentStrategyId=${encodeURIComponent(action.targetId)}#investment-strategy` }
         : action.kind === 'view_evidence' ? { evidence: row.data.evidence } : { recorded: true };
       if (action.kind === 'ask_one_fact') result.questionId = action.targetId;
       await tx.insert(tables.channelUserActions).values({ id: decisionId, owner, requestKey: input.requestKey, inputHash: hash, data: { action, bubbleId: row.id }, result });

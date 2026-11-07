@@ -109,7 +109,7 @@ export interface ChannelRuntimeSnapshot {
   monitoringReason: string | null;
   current: { strategyId: string | null; strategyRevision: number | null;
     rules: Array<{ id: string; label: string; status: Exclude<RuleStatus, 'partially_filled'>; value: string;
-      effective: boolean; effectiveReason: 'paused' | 'expired' | 'not_started' | 'stopped' | null }>;
+      effective: boolean; effectiveReason: 'paused' | 'expired' | 'not_started' | 'stopped' | 'observation_only' | null }>;
     positions: Array<{ symbol: string; quantity: string }>; cash: Array<{ currency: string; amount: string }>;
     valuationAsOf: string | null };
   proposals: Array<{ id: string; revision: number; status: Exclude<RuleStatus, 'partially_filled'>; before: string; after: string; reasonCardId: string }>;

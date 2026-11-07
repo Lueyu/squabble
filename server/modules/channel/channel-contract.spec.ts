@@ -134,6 +134,24 @@ test('quiet-win requires a confirmed complete action, not a partial fill or hope
   assert.equal(canPublish(bubbleFor(ctx, 'channel.paper.filled'), ctx).allowed, false);
 });
 
+test('completed paper fills use a visible factual receipt and still require a complete ledger action', () => {
+  const { ctx, registry } = fixture();
+  const template = registry.all().find(item => item.id === 'channel.paper.completed');
+  assert.ok(template, 'completed fills need a registered visible receipt');
+  assert.deepEqual(template.allowedStances, ['plain_fact']);
+  assert.deepEqual(template.allowedWeights, ['nudge']);
+  ctx.event.kind = 'paper.execution_changed';
+  ctx.facts[0].key = 'execution.filledQuantity'; ctx.facts[0].value = '2';
+  assert.equal(canPublish(bubbleFor(ctx, template.id), ctx).allowed, false, 'a positive partial fill is not completion');
+  ctx.completedActions = [{ eventId: ctx.event.id, kind: 'paper_order_filled', status: 'completed' }];
+  ctx.vibe = 'quiet'; ctx.lastOrdinaryTapAt = at;
+  assert.equal(canPublish(bubbleFor(ctx, template.id), ctx).allowed, true, 'actual fills are visible even in quiet mode');
+  ctx.facts[0].value = '0';
+  assert.equal(canPublish(bubbleFor(ctx, template.id), ctx).allowed, false, 'zero fills cannot produce a receipt');
+  ctx.facts[0].value = '2'; ctx.event.kind = 'monitor.breached';
+  assert.equal(canPublish(bubbleFor(ctx, template.id), ctx).allowed, false, 'a trigger is not a fill');
+});
+
 test('a user decision forces the factual close branch and forbids claiming a quiet win', () => {
   const { ctx } = fixture(); ctx.event.kind = 'monitor.recovered'; ctx.episode.phase = 'accompany'; ctx.episode.userDecisionIds = ['decision'];
   ctx.completedActions = [{ eventId: 'event', kind: 'monitor_episode_closed', status: 'completed' }];

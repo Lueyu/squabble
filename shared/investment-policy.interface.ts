@@ -34,6 +34,9 @@ export interface InvestmentStartRequest {
   confirmNoCash?: boolean; cashAvailable?: Record<string, number>; sellableShares?: Record<string, number>;
   adoptAccountId?: string;
 }
+export interface InvestmentRemoveStrategyRequest {
+  strategyId: string; expectedRevision: number; expectedPolicyRevision: number; requestKey: string;
+}
 export interface AiInvestmentView {
   status: InvestmentStatus;
   account: { id: string; name: string; isActive: boolean; botEnabled: boolean; initialCash: string; cashBalance: string } | null;

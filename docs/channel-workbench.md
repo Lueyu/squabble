@@ -8,6 +8,10 @@ Squabble 不养辩论社。严肃研究沉在报告里，频道里住着的是�
 
 频道上方显示模拟盘的当前规则、尚未应用的建议和实际执行记录。规则生效不等于订单成交，部分成交只显示实际数量。没有确认策略时显示“尚未应用策略 · 模拟盘仅观察”。
 
+实际完整成交和部分成交都会由股友发出可见回执，点击可到模拟盘查看对应订单；重复检查同一笔成交不会重复发言。只含观察事项的策略明确显示“仅观察”。策略更换后，仍有效的报告提醒会跟随新策略重新核对；同一条件只有再次由未满足变为满足时才重复提醒。删除的草稿不再作为待应用建议展示。
+
+Complete and partial paper fills produce visible stock-friend receipts linked to the exact order. Repeated polling does not duplicate a receipt. Observation-only strategies remain labelled as observations. Report reminders are rechecked for a changed strategy context, retaining the last threshold observation so only a new crossing produces another reminder. Deleted drafts leave the proposal list.
+
 频道按事件聚合关键变化，待处理事项只置顶一条。随口区不通知、不抢滚动；quiet/deskmate/chatty 仅调整普通 tap 的密度。只有 poke 会产生频道提醒，普通 nudge 和 tap 不生成通知。资料、核查和实际公开工具记录在折叠抽屉中查看，不展示模型私密推理。
 
 每句台词来自有版本的审核模板，绑定报告段落或事实记录。后台发现先由发布契约编译器自动授予资格，再核对当前来源和模板；不等待逐条人工审稿。只有可由用户补授予的权限才进入待授权队列。模板退役和来源更正会阻止旧候选发布。

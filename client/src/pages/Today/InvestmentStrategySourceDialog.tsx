@@ -18,7 +18,7 @@ export default function InvestmentStrategySourceDialog({ source, onClose }: { so
 }
 function SourceDialog({ source, onClose }: { source: StrategySourceInput; onClose: () => void }) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh'); const client = useQueryClient();
-  const [draftId, setDraftId] = useState(''); const [saved, setSaved] = useState(false);
+  const [draftId, setDraftId] = useState(''); const [savedId, setSavedId] = useState<string | null>(null);
   const [olderDrafts, setOlderDrafts] = useState<UserInvestmentStrategy[]>([]);
   const [nextDraftCursor, setNextDraftCursor] = useState<string | null | undefined>();
   const [sectionId, setSectionId] = useState(source.kind === 'report' ? source.sectionId ?? '' : '');
@@ -51,7 +51,7 @@ function SourceDialog({ source, onClose }: { source: StrategySourceInput; onClos
   const save = useMutation({ mutationFn: async () => {
     if (!selectionAllowed || !addition.data || addition.isFetching || addition.isError || addition.data.alreadyAdded) throw new Error('Review the source addition first');
     return draft ? investmentStrategiesApi.addSource(draft.id, { expectedRevision: draft.revision, source: selectedSource }) : investmentStrategiesApi.importSource(selectedSource);
-  }, retry: false, onSuccess: () => { setSaved(true); void client.invalidateQueries({ queryKey: ['investment-strategies'] }); } });
+  }, retry: false, onSuccess: saved => { setSavedId(saved.id); void client.invalidateQueries({ queryKey: ['investment-strategies'] }); } });
   const sourceError = ((save.isError ? save.error : addition.isError ? addition.error : null) as {
     response?: { data?: { message?: string; error?: { message?: string } } };
   } | null)?.response?.data;
@@ -71,10 +71,10 @@ function SourceDialog({ source, onClose }: { source: StrategySourceInput; onClos
     : (zh ? '来源或草稿暂时不可用，请关闭后重新核对。内容尚未覆盖。' : 'The source or draft is unavailable. Close and review again. Your text has not been overwritten.');
   return <Dialog open onOpenChange={open => { if (!open && !save.isPending) onClose(); }}><DialogContent className="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-2xl">
     <DialogHeader><DialogTitle>{zh ? '加入投资策略' : 'Add to investment strategy'}</DialogTitle><DialogDescription>
-      {zh ? '先核对增补内容，保存后可在今日页编辑。当前执行中的策略继续运行。' : 'Review the addition, then edit it on Today. The currently applied strategy keeps running.'}
+      {zh ? '核对后保存到模拟盘草稿，可继续编辑，再确认执行。当前执行中的策略继续运行。' : 'Save the reviewed addition to a simulation draft, then edit and confirm execution. The currently applied strategy keeps running.'}
     </DialogDescription></DialogHeader>
-    {saved ? <div role="status" className="space-y-4"><p>{zh ? '已保存到策略草稿。应用前仍可修改或删除。' : 'Saved to your strategy draft. You can edit or remove it before applying.'}</p>
-      <div className="flex flex-wrap gap-2"><Button asChild><Link to="/" onClick={onClose}>{zh ? '去今日编辑' : 'Edit on Today'}</Link></Button><Button variant="outline" onClick={onClose}>{zh ? '继续阅读' : 'Continue reading'}</Button></div></div>
+    {savedId ? <div role="status" className="space-y-4"><p>{zh ? '已保存到策略草稿。应用前仍可修改或删除。' : 'Saved to your strategy draft. You can edit or remove it before applying.'}</p>
+      <div className="flex flex-wrap gap-2"><Button asChild><Link to={`/paper?investmentStrategyId=${encodeURIComponent(savedId)}#investment-strategy`} onClick={onClose}>{zh ? '去 AI 模拟盘核对' : 'Review in AI simulation'}</Link></Button><Button variant="outline" onClick={onClose}>{zh ? '继续阅读' : 'Continue reading'}</Button></div></div>
       : <div className="min-w-0 space-y-4">
         {source.kind === 'report' && version && <label className="block space-y-2 text-sm"><span>{zh ? '加入的报告内容' : 'Report content to add'}</span>
           <select aria-label={zh ? '加入的报告内容' : 'Report content to add'} className="w-full rounded-lg border bg-background p-2" disabled={save.isPending}
@@ -101,8 +101,8 @@ function SourceDialog({ source, onClose }: { source: StrategySourceInput; onClos
           {executionPlan && <div className="space-y-2 rounded-lg bg-primary/5 p-3 text-xs leading-6"><p className="font-medium">{executionPlan.readiness === 'ready' ? (zh ? '执行说明待你核对' : 'Execution details await your review') : executionPlan.readiness === 'no_trade' ? (zh ? '暂不交易' : 'No trade proposed') : (zh ? '待补信息，尚不可执行' : 'Needs information before execution')}</p>
             {executionPlan.noTradeReason && <p className="[overflow-wrap:anywhere]">{executionPlan.noTradeReason}</p>}
             {executionPlan.preview.entries.map(entry => <p key={entry.id} className="[overflow-wrap:anywhere]">{entry.explanation[zh ? 'zh-CN' : 'en']}</p>)}
-            <p className="font-medium">{zh ? 'AI 提议的风险边界' : 'AI-proposed risk limits'}</p>
-            {executionPlan.strategy.limits ? <ul>{Object.entries(executionPlan.strategy.limits).map(([key, value]) => <li key={key}>{limitLabels[key]}: {value}%</li>)}</ul> : <p>{zh ? '应用前需补充并核对风险边界。' : 'Complete and review risk limits before applying.'}</p>}
+            {executionPlan.parameterOrigin !== 'system_observation' && (executionPlan.strategy.limits || executionPlan.readiness !== 'no_trade') && <><p className="font-medium">{zh ? 'AI 提议的风险边界' : 'AI-proposed risk limits'}</p>
+            {executionPlan.strategy.limits ? <ul>{Object.entries(executionPlan.strategy.limits).map(([key, value]) => <li key={key}>{limitLabels[key]}: {value}%</li>)}</ul> : <p>{zh ? '应用前需补充并核对风险边界。' : 'Complete and review risk limits before applying.'}</p>}</>}
             {[...new Set([...executionPlan.gaps, ...executionPlan.preview.issues.map(issue => issue.message[zh ? 'zh-CN' : 'en'])])].map(item => <p key={item} className="text-amber-700 [overflow-wrap:anywhere] dark:text-amber-300">{item}</p>)}
             {draft && <p className="text-muted-foreground">{zh ? '已有草稿的期限和风险边界保留，应用前请再次核对。' : 'The existing draft keeps its period and risk limits. Review them again before applying.'}</p>}
           </div>}
