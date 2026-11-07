@@ -162,6 +162,19 @@ start research, publish channel content, confirm a strategy, submit an order or
 reconnect paid agents as an upgrade smoke test. Observe durable interrupted-task
 handling without replay. Record the release and read-only verification result.
 
+Saved daily research has two distinct recovery operations. Current-report
+reformat/reconcile reuses completed source material without a model call, but can
+write projection receipts. `POST /api/research-conversations/:id/resume-report`
+explicitly uses AI to append the necessary full-context reverse check and summary;
+it is never a deployment smoke test or automatic restart action. Within separately
+authorized research, verify the original journal task is definitively terminated,
+use the current expected revision and retain the same request key after a lost
+response. An interrupted/dispatch-uncertain task remains blocked from replay.
+Compare actual saved wire input with full frozen owner facts, retain original
+findings and incomplete-input coverage, and inspect the resulting exact immutable
+report version. See [research-and-execution.md](research-and-execution.md) for the
+correction identity and summary-only retry contract.
+
 If cutover fails, stop the new supervisor and preserve its logs and database
 state. Restart the old release against the migrated DB only after checking
 backward compatibility. If migration changes make that unsafe, restore the

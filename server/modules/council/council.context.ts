@@ -1,7 +1,7 @@
 import type { BuilderConfig } from '@shared/api.interface';
 import type { CouncilCandidate, CouncilMember, CouncilMessage } from '@shared/council.interface';
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
-import { byteExcerpt, criticalEvidenceGaps, evidenceExcerpts, isRuleCandidate, type CouncilEvidence } from './council.rules';
+import { byteExcerpt, criticalEvidenceGaps, evidenceExcerpts, frozenOwnerEvidence, isRuleCandidate, type CouncilEvidence } from './council.rules';
 import { conversationExcerpt } from './council.dialogue';
 import type { DialogueTurn } from './council.types';
 import type { threadPromptContext } from './council.thread';
@@ -19,6 +19,7 @@ interface ContextInput {
 
 /** Latest user text is never silently truncated; older context is explicitly excerpted. */
 export function packDiscussionContext(input: ContextInput) {
+  const frozenIds = new Set(frozenOwnerEvidence(input.evidence).map(item => item.id));
   const profiles = [
     { evidence: 2100, dialogue: 1100, history: 3, custom: 360, personality: 120, gaps: 160 },
     { evidence: 1700, dialogue: 950, history: 2, custom: 220, personality: 90, gaps: 140 },
@@ -29,7 +30,8 @@ export function packDiscussionContext(input: ContextInput) {
   ];
   const make = (limits: typeof profiles[number]) => {
     const evidence = evidenceExcerpts(input.evidence, limits.evidence).map(item => ({ ...item,
-      content: limits.evidenceText && item.metadata ? byteExcerpt(item.content, limits.evidenceText) : item.content }));
+      content: limits.evidenceText && item.metadata && !frozenIds.has(item.id)
+        ? byteExcerpt(item.content, limits.evidenceText) : item.content }));
     const included = new Set(evidence.map(item => item.id));
     return {
     ...(input.thread ? { thread: input.thread } : {}),

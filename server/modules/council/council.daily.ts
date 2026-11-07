@@ -5,8 +5,9 @@ import type { CouncilEvidence } from './council.rules';
 
 /** Keep strategy and reverse-check citations inside the existing bounded report evidence inventory. */
 export function reportExecutionEvidence(evidence:CouncilEvidence[],requiredIds:readonly string[]=[]):CouncilEvidence[]{
-  if(!requiredIds.length)return evidence.slice(-60);
-  const required=new Set(requiredIds);
+  const required=new Set([...requiredIds,...evidence.filter(item=>item.sourceName==='Frozen owner context').map(item=>item.id)]);
+  if(!required.size)return evidence.slice(-60);
+  if(evidence.filter(item=>required.has(item.id)).length>60)throw new Error('RESEARCH_CONTEXT_LIMIT');
   return [...evidence.filter(item=>!required.has(item.id)),...evidence.filter(item=>required.has(item.id))].slice(-60);
 }
 
@@ -45,6 +46,7 @@ export function renderDailyReverseCheck(check:DailyReverseCheck,language:string)
 export function dailyResearchPrompt(phase:string):string {
   return [
     'This is a private daily research job, never a public conversation. Independent submissions are sealed before inspection. Do not perform a staged debate or address personalities.',
+    ...(phase === 'challenge' || phase === 'summary' ? ['Account for every frozen holding, recorded cash by currency and confirmed investor limits at the original snapshot capture time. Evaluate whole-portfolio concentration and shared risk drivers. For each holding give a concise judgment, supporting basis and next verification point; list cash separately. State how each specific data gap limits the judgment and what would resolve it. Do not describe supplied holdings or cash as missing, infer fresh prices from stored marks, or invent news to fill coverage.'] : []),
     phase==='opening'?'Investigate one complementary information domain deeply. State sourced facts, periods, arithmetic, assumptions and material omissions. Do not invent a question to provoke discussion.':
     phase==='challenge'?'Act as the independent devils-advocate gate. Try to overturn the material premises using source checks and new evidence where available. Return reverseCheck:{outcome:"critical_counterevidence|partially_weakened|no_counterevidence_found|unable_to_verify",checked:string[],findings:string[],gaps:string[],affectedPremises:string[],evidenceIds:string[]}. Do not treat unanimity or absence of counterevidence as correctness. Record real checks, never fabricate three paths.':
     'Produce the complete readable daily portfolio report and a separately marked DAILY STRATEGY DRAFT. Cover evidence, counterevidence, actual portfolio concentration, current uncertainties, per-stock horizon and what would change the judgment. Unknown prices/quantities remain unknown. No automatic trading authority. Preserve the reverse-check result and original disagreements. Return thesisCandidates only when exact sourced assumptions and invalidation conditions are available. Each thesisCandidate is {claim,supportingEvidence:[{evidenceId}],opposingEvidence:string[],assumptions:string[],indicators:string[],invalidationConditions:string[],horizon?:{startAt?,endAt?,reviewAt?},boundaryOrigin:"stated|proposed|unknown",monitorConditions?:[{conditionIndex,metric:"price|sma20|rsi14|volumeRatio",unit:"USD|HKD|CNY|points|ratio",operator:"lt|lte|gt|gte",threshold:number,validFrom:ISO,validUntil:ISO,evidenceIds:string[],rationale:string}]}. conditionIndex refers to invalidationConditions. Only include measurable conditions whose threshold is explicitly supported by cited evidence; never invent default levels. Omit unsupported optional fields.',

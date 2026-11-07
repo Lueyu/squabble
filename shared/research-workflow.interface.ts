@@ -35,6 +35,9 @@ export interface ResearchTask {
   reworks: number; acceptedAttemptId: string | null; updatedAt: string;
 }
 export interface ResearchCoverage {
+  /** Separate delivered-member coverage from the completeness of their original wire input. */
+  independentDeliveriesComplete?: boolean;
+  inputCorrection?: import('./simple-conversation.interface').DailyReportInputCorrection;
   executionPlan?: import('./report-execution-plan.interface').ReportExecutionPlan;
   executionPlanError?: 'missing' | 'invalid';
   reverseCheck?: import('./council.interface').DailyReverseCheck;

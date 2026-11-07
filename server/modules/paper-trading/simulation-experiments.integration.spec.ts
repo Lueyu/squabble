@@ -124,7 +124,8 @@ test('real snapshot creates an immutable independent opening ledger with idempot
     await assert.rejects(experiments.get(stranger, first.id), /not found/);
     await experiments.select(owner, first.id);
     const review = await experiments.review(owner, first.id);
-    assert.equal(review.profitUsd, '0.00');
+    assert.equal(review.profitUsd, null, 'same-instant initialization and snapshot do not establish period performance');
+    assert.equal(review.valuationCoverage, 'initial_only');
     assert.equal(review.buyAndHoldEquityUsd, '2000.00');
 
     const raceOwner = randomUUID();
@@ -231,6 +232,7 @@ test('real snapshot creates an immutable independent opening ledger with idempot
     const feeCash = (await experiments.get(feeOwner, feeAccount.id)).cash[0];
     assert.ok(Math.abs(Number(feeCash.available) - 899.84995) < 1e-8, 'buy fee is debited in native currency');
     assert.ok(Math.abs(Number(feeCash.unsettled) - 99.85005) < 1e-8, 'sell fee reduces unsettled proceeds');
+    t.mock.timers.setTime(Date.now() + 60_000);
     await paper.getOverview(feeOwner);
     const feeReview = await experiments.review(feeOwner, feeAccount.id, '2026-11-01', '2026-11-09');
     assert.equal(feeReview.profitUsd, '-0.30');

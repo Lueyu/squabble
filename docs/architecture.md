@@ -2,7 +2,7 @@
 
 Squabble is a React client, a NestJS backend and PostgreSQL for personal portfolio records, research and simulated investing. The current experience starts in **Today**, produces a sealed independent daily research report and a proposed strategy, then requires explicit application before simulated execution. The channel presents sourced changes and user decisions alongside this workflow.
 
-**Verification note — 2026-11-07, baseline `7de30fb`:** the five diagrams and entrypoints below were checked against the current route table, services and schema registration. This is a record of the reviewed baseline; later changes must review the affected flow and its contracts. The development phase is web-only, established at `fe9df6c`. Desktop code and manual recovery workflow are retained, with development/testing/packaging paused until explicitly resumed.
+**Verification note — 2026-11-07:** the original five-flow review used baseline `7de30fb`. The complete-portfolio changes were reviewed against `65c388e` plus the current working-tree changes: diagrams 2 and 3 now include atomic owner input, explicit saved-research continuation and timestamp-based simulation coverage. Diagram 1's service/owner boundaries, diagram 4's publication/seal/outbox gates and diagram 5's real-ledger/import transactions remain unchanged; this change does not add a provider, publication authority or ledger write. These are reviewed source baselines, not a claim that uncommitted work has a release revision. The development phase is web-only, established at `fe9df6c`. Desktop code and manual recovery workflow are retained, with development/testing/packaging paused until explicitly resumed.
 
 For setup see [self-hosting](self-hosting.md), for commands/tests see [development](development.md), and for focused code navigation see the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
@@ -47,11 +47,13 @@ Protected controllers derive owner from `req.userContext.userId`; services scope
 ```mermaid
 flowchart TD
     today["Today: facts and current report"] --> request["Owner, business date and request receipt"]
-    request --> frozen["Frozen context and executor selection"]
-    frozen --> independent["Independent source checks"]
+    request --> frozen["Complete frozen holdings, cash, limits and source times"]
+    frozen --> fit["Atomic owner input and full-request limit"]
+    fit -->|"Fits"| independent["Independent source checks"]
+    fit -->|"Oversized"| refuse["Explicit refusal before provider dispatch"]
     independent --> sealed["Durable sealed submissions"]
     sealed --> reverse["Separate reverse check"]
-    reverse --> summary["Summary, coverage and executionPlan"]
+    reverse --> summary["Summary, original input coverage and executionPlan"]
     summary --> validate["Evidence and plan validation"]
     validate --> archive["Immutable report version and sections"]
     archive --> reading["Latest readable report and exact-version history"]
@@ -62,11 +64,20 @@ flowchart TD
     archive --> channelSource["Channel report and findings"]
     independent --> interrupted["Interrupted or incomplete state retained"]
     reverse --> interrupted
+    summary --> interrupted
+    interrupted -->|"Explicit resume-report request"| resume["Owner, revision, receipt and terminated-task checks"]
+    resume -->|"Earlier wire input incomplete"| correction["Full-context supplemental reverse check"]
+    correction --> summary
+    resume -->|"Complete input or matching completed correction"| summary
 ```
 
 The route is `ExperienceController` → `CurrentResearchService` → `DailyChannelResearchService` → `SimpleCouncilService`/`CouncilService`. Source files are in `server/modules/experience/` and `server/modules/council/`. `ExperienceScheduler` reconciles persisted results, synchronizes publications and starts eligible automatic daily work under preferences/budget controls. A source inspection or status read does not authorize that work.
 
 Independent submissions are persisted before subsequent shared inspection. `council.daily.ts` adds the daily `researchOnly` contract: a separate challenge records `reverseCheck`, then summary produces readable research and a separately marked strategy proposal. `no_counterevidence_found` is not proof; `unable_to_verify` remains a gap. Publication preserves disagreement, source identifiers, dates and coverage. Incomplete coverage or missing critical evidence cannot quietly become executable certainty.
+
+`Frozen owner context` evidence is an atomic record: all holdings, every recorded cash currency including zero/unknown balances, confirmed investor limits, evidence IDs and capture/as-of times reach the model intact. `council.native.ts`, `council.context.ts` and `council.workflow-executor.ts` preserve it across native/API work and review packing while keeping other evidence excerpted. Full-request byte/token limits reject a request that cannot fit before provider dispatch; native oversized assignments are rejected before staging. Stored marks do not establish fresh market prices. Challenge and summary prompts require whole-portfolio concentration, a concise judgment/basis/next check for each holding, separate cash coverage and the consequences of actual data gaps.
+
+`POST /api/research-conversations/:id/resume-report` is an explicit AI continuation, separate from local formatting recovery. `CouncilReportResumeService` checks owner, expected revision, request receipt, pinned references and the original native journal's confirmed terminal failure/cancellation. Running or ambiguous upstream work cannot be replayed. It compares the actual retained opening assignment with the complete frozen owner record, appends a supplemental reverse check when the earlier wire input was incomplete, then appends the summary. An unchanged successful correction can be reused for a later summary retry. Sealed openings, old checks and failed tasks retain their identity; call/budget accounting continues. `coverage.inputCorrection` records the original incomplete input and the correction's context/task/revision/turn identity. The published report keeps `coverage.complete: false` for those original openings; `independentDeliveriesComplete` separately records whether every member delivered. A successfully corrected summary has an input-supplementation explanation and a distinct UI label, preserving both facts. Summary preparation and publication select that same correction-bound reverse check.
 
 `server/modules/paper-trading/report-execution-plan.ts` validates `schemaVersion: 1`, `parameterOrigin: 'ai_proposed'`, evidence IDs, entries, validity and risk limits. It derives `ready`, `needs_info` or `no_trade`, and renders the exact `execution-strategy` section. AI parameter proposals are distinct from market observations and investor authority. Invalid/missing plans remain explicit; prose-only archives do not acquire invented actions.
 
@@ -74,7 +85,7 @@ Independent submissions are persisted before subsequent shared inspection. `coun
 
 **Report-reading update checked against `f0fb2a0` (PR #80):** `CurrentResearchService.reformat` and `reconcile` recover saved daily-research and legacy portfolio results, including older formatting receipts that stored a session ID. This reuses saved source material without another model call, and preserves owner, visibility, revocation and generation fences. `returnedDocumentId` exposes the exact returned archive while the last complete current report remains visible. Recovery writes current-view/task receipts; it is not a read-only diagnostic.
 
-`client/src/pages/Analysis/SimpleReportReader.tsx` uses `shared/simulation-review-reading.ts` to project valid saved simulation-review envelopes into readable historical sections. It does not rewrite archived reports, fill unknown values with zero or present a missing execution plan as a review failure. The research/report diagram includes these reading and recovery paths; the other four flows are unchanged by PR #80.
+`client/src/pages/Analysis/SimpleReportReader.tsx` uses `shared/simulation-review-reading.ts` to project valid saved simulation-review envelopes into readable historical sections. It does not rewrite archived reports, fill unknown values with zero or present a missing execution plan as a review failure. Report history filters/labels daily research, stock research and simulation ledger reviews; a ledger review points back to holdings research. Archived reviews without observation timestamps retain an explicit unknown-coverage warning. The research/report diagram includes these reading and recovery paths; the other four flows were unchanged by PR #80.
 
 The older `server/modules/multi-agent/pipeline.service.ts` bull/bear/critic/risk pipeline and `portfolio-analysis.service.ts` remain for retained runs, APIs and fallback paths. Their reports stay readable; they are not the current default Today research sequence. Likewise, retained Council discussion and revision workflows coexist with the channel UI. Do not remove legacy readers simply because the current navigation changed.
 
@@ -95,7 +106,8 @@ flowchart TD
     runtime --> evaluate["Trigger, market, quote, review and risk checks"]
     evaluate --> order["Paper order boundary"]
     order --> paper["Paper account, positions, orders and fills"]
-    paper --> review["Simulation history and review reports"]
+    paper --> observations["Timestamped valuations and distinct observations"]
+    observations --> review["Simulation ledger review and time coverage"]
     paper --> projection["Channel execution projection"]
 ```
 
@@ -108,6 +120,8 @@ Three hashes must not be confused: report payload hash uses canonical JSON; a st
 `user-strategy-runtime.ts` maps confirmed directives to investor mandate rules. `strategy.service.ts` and `strategy.scheduler.ts` evaluate them; `paper-trading.service.ts` owns the final paper-order boundary. Before fills, exact strategy/policy revisions, mandate, source dependencies, validity, quote, market session, sizing and risk/review gates still apply. `ResearchDocumentsService.assertExecutionSourcesInTransaction` recursively checks frozen report dependencies, availability and future-data fences. A stale candidate cannot execute just because its earlier research succeeded.
 
 Configured, effective, monitoring, review-pending and filled are different states. Pausing stops all automated actions, including protective exits. `strategy-monitor.service.ts` records monitoring gaps instead of reconstructing fictional downtime fills. Simulation updates paper tables, not recorded real holdings or brokerage orders.
+
+`SimulationExperimentsService.review` counts distinct valuation timestamps, not baseline/snapshot rows: the opening baseline and its same-instant snapshot are one observation. `valuationCoverage` distinguishes `initial_only`, `observed_period`, `unknown_timestamp` and `incomplete_period`, with `openingValuedAt`/`endingValuedAt` exposing the observed interval. Initialization alone cannot supply period returns or drawdown; equal NAV at a genuinely later time can supply a zero change. Missing strategy-boundary valuations still leave attributed returns unknown. General `modelNotes` appear once, separately from period-specific `gaps`. A zero-fill or unchanged ledger does not validate an investment judgment, and an observed interval does not prove full-calendar-day coverage. These review changes leave the strategy confirmation and final order boundaries unchanged.
 
 <a id="channel-publication"></a>
 ## 4. Channel publication and delivery

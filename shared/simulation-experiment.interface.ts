@@ -31,6 +31,13 @@ export interface SimulationExperiment {
   sourceChanged: boolean | null;
   executionModel: SimulationSeed['model'];
 }
+/** General modelling/data caveats, rather than evidence of a gap in the reviewed period. */
+export const SIMULATION_REVIEW_MODEL_NOTES = [
+  'CORPORATE_ACTIONS_UNSUPPORTED', 'PUBLIC_QUOTES_MAY_BE_DELAYED', 'OPENING_ZERO_CASH_CONFIRMED_BY_USER',
+] as const;
+export const isSimulationReviewModelNote = (value: string): boolean =>
+  (SIMULATION_REVIEW_MODEL_NOTES as readonly string[]).includes(value.split(':')[0]);
+
 export interface SimulationReview {
   timezone: string;
   accountId: string; from: string; to: string; initialEquityUsd: string | null; endingEquityUsd: string | null;
@@ -38,8 +45,12 @@ export interface SimulationReview {
   excessReturnPct: string | null; orders: number; feesUsd: string; gaps: string[]; valuationAsOf: string | null;
   indexBenchmarkTicker: string | null; indexBenchmarkEquityUsd: string | null;
   indexBenchmarkReturnPct: string | null; indexExcessReturnPct: string | null;
+  /** Optional for archived reviews that predate timestamp-based observation coverage. */
+  valuationCoverage?: 'initial_only' | 'observed_period' | 'unknown_timestamp' | 'incomplete_period';
+  openingValuedAt?: string | null; endingValuedAt?: string | null;
+  modelNotes?: string[];
   observedMaxDrawdownPct: string | null; drawdownSampleCount: number;
-  drawdownCoverage: 'observed_snapshots_only' | 'insufficient_samples' | 'corporate_action_gap';
+  drawdownCoverage: 'observed_snapshots_only' | 'insufficient_samples' | 'corporate_action_gap' | 'unknown_timestamps';
   strategyContributions: Array<{ mandateId: string; title: string; version: number; from: string; to: string;
     profitUsd: string | null; returnPct: string | null; orders: number; feesUsd: string; gaps: string[] }>;
 }

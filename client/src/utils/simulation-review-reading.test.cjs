@@ -106,3 +106,69 @@ test('older overview sections keep unavailable optional measurements unknown and
   assert.match(content, /No execution constraints were recorded/); assert.match(content, /No additional information gaps were recorded/);
   assert.match(content, /Direct decisions: 0/); assert.match(content, /Source strategies: 0/);
 });
+
+test('initial-only review explains unknown performance and zero activity as bookkeeping', () => {
+  const value = review({ profitUsd: null, returnPct: null, excessReturnPct: null, indexBenchmarkReturnPct: null,
+    indexExcessReturnPct: null, initialEquityUsd: '1000.00', endingEquityUsd: '1000.00',
+    valuationCoverage: 'initial_only', openingValuedAt: '2026-11-06T02:00:00Z', endingValuedAt: '2026-11-06T02:00:00Z',
+    observedMaxDrawdownPct: null, drawdownSampleCount: 1, drawdownCoverage: 'insufficient_samples',
+    orders: 0, feesUsd: '0.00', gaps: ['SUBSEQUENT_VALUATION_MISSING'], strategyContributions: [] });
+  const version = archived(value);
+  version.sections.push({ id: 'route-attribution', title: 'AI & Council decisions',
+    content: '{"direct":0,"ai":0,"council":0,"vetoes":[],"sourcePlans":[]}' });
+  const { content } = renderVersion(version);
+  assert.match(content, /Only the initial valuation is recorded/);
+  assert.match(content, /Period profit: Unknown/); assert.match(content, /Drawdown samples: 1/);
+  assert.match(content, /bookkeeping/); assert.match(content, /No AI or Council decision was recorded/);
+  assert.doesNotMatch(content, /SUBSEQUENT_VALUATION_MISSING/);
+  const chinese = renderVersion(version, 'zh-CN').content;
+  assert.match(chinese, /仅记录了初始化估值/); assert.match(chinese, /账本/); assert.match(chinese, /未记录 AI 或研讨决策/);
+});
+
+test('generic model notes are translated once while real coverage and execution gaps stay visible once', () => {
+  const gaps = ['CORPORATE_ACTIONS_UNSUPPORTED', 'PUBLIC_QUOTES_MAY_BE_DELAYED', 'PUBLIC_QUOTES_MAY_BE_DELAYED',
+    'CASH_AVAILABILITY_UNKNOWN:USD', 'SELLABILITY_UNKNOWN:AAPL', 'PERIOD_END_SNAPSHOT_MISSING'];
+  const version = archived(review({ gaps }));
+  version.sections.push({ id: 'information-gaps', title: 'Insufficient information',
+    content: JSON.stringify({ gaps, monitorGaps: [], decisions: [] }) });
+  const before = JSON.stringify(version);
+  const { content } = renderVersion(version);
+  assert.match(content, /Model and data notes/);
+  assert.equal(content.match(/Corporate actions are not automatically processed/g)?.length, 1);
+  assert.equal(content.match(/Public quotes may be delayed/g)?.length, 1);
+  assert.equal(content.match(/Available cash is unconfirmed/g)?.length, 1);
+  assert.equal(content.match(/Sellable shares are unconfirmed/g)?.length, 1);
+  assert.equal(content.match(/Closing valuation is missing/g)?.length, 1);
+  assert.doesNotMatch(content, /CORPORATE_ACTIONS_UNSUPPORTED|PUBLIC_QUOTES_MAY_BE_DELAYED|CASH_AVAILABILITY_UNKNOWN|SELLABILITY_UNKNOWN/);
+  assert.equal(JSON.stringify(version), before);
+});
+
+test('legacy saved zero returns retain their figures but cannot imply a full day of observed performance', () => {
+  const value = review({ initialEquityUsd: '1000.00', endingEquityUsd: '1000.00', profitUsd: '0.00', returnPct: '0.0000',
+    observedMaxDrawdownPct: '0.0000', drawdownSampleCount: 2 });
+  const version = archived(value); const before = JSON.stringify(version);
+  const { content } = renderVersion(version);
+  assert.match(content, /Period profit: 0\.00 USD/);
+  assert.match(content, /Time coverage is unknown in this archived review/);
+  assert.match(content, /do not establish full-day performance/);
+  assert.doesNotMatch(content, /Only the initial valuation is recorded/);
+  assert.equal(JSON.stringify(version), before);
+});
+
+test('known later equal valuations show their real observation span and legacy drawdown timestamps stay unknown', () => {
+  const value = review({ valuationCoverage: 'observed_period', openingValuedAt: '2026-11-06T02:00:00Z',
+    endingValuedAt: '2026-11-06T07:00:00Z', profitUsd: '0.00', returnPct: '0.0000',
+    drawdownCoverage: 'unknown_timestamps', observedMaxDrawdownPct: null });
+  const { content } = renderVersion(archived(value));
+  assert.match(content, /Observed valuation interval/); assert.match(content, /2026-11-06T02:00:00Z/);
+  assert.match(content, /2026-11-06T07:00:00Z/); assert.match(content, /full calendar day/);
+  assert.match(content, /Some recorded valuations have unknown timestamps/);
+  assert.match(content, /Period profit: 0\.00 USD/);
+});
+
+test('date-only saved endpoints do not become known valuation timestamps', () => {
+  const value = review({ valuationCoverage: 'observed_period', openingValuedAt: '2026-11-06', endingValuedAt: '2026-11-07' });
+  const { content } = renderVersion(archived(value));
+  assert.match(content, /Time coverage is unknown in this archived review/);
+  assert.doesNotMatch(content, /Observed valuation interval:/);
+});

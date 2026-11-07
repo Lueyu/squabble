@@ -16,3 +16,13 @@ test('native provider limits explain the cause and manual recovery in both langu
     }
   }
 });
+
+test('incomplete native research explains retained work and step retry without blaming connection or limits', () => {
+  for (const language of ['en', 'zh']) {
+    const message = agentErrorMessage('LOCAL_PROTOCOL_INCOMPLETE', language);
+    assert.match(message, /未完整返回|not fully returned|not confirmed complete/iu);
+    assert.match(message, /保留|retained/iu);
+    assert.match(message, /当前步骤|current step/iu);
+    assert.doesNotMatch(message, /连接|connection|限流|rate limit|暂时不可用|unavailable/iu);
+  }
+});

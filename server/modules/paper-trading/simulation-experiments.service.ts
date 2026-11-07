@@ -21,6 +21,7 @@ import { usableValuationQuote } from './strategy-portfolio-risk';
 import { buildOpeningSeed, executionEconomics, seedRevision, sourceLedgerRevision, validateCashTransfer } from './simulation-experiments.rules';
 import type { CreateSimulationExperiment, SimulationCash, SimulationExperiment, SimulationPreview,
   SimulationReview, SimulationSeed } from '../../../shared/simulation-experiment.interface';
+import { isSimulationReviewModelNote } from '../../../shared/simulation-experiment.interface';
 
 type Tx = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 @Injectable()
@@ -319,7 +320,9 @@ export class SimulationExperimentsService {
     const latestObserved = snapshots.find(snapshot => snapshot.snapshotDate >= start);
     const trades = await this.db.select().from(paperTrades).where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, accountId),
       gte(paperTrades.createdAt, periodStart), lt(paperTrades.createdAt, periodEnd), lte(paperTrades.createdAt, now)));
-    const gaps = [...(experiment.seed?.gaps ?? ['LEGACY_SEED_UNKNOWN'])];
+    const seedNotes = [...new Set(experiment.seed?.gaps ?? ['LEGACY_SEED_UNKNOWN'])];
+    const modelNotes = seedNotes.filter(isSimulationReviewModelNote);
+    const gaps = seedNotes.filter(gap => !isSimulationReviewModelNote(gap));
     const actionGaps = (await readCorporateActionGaps(this.db, owner, accountId))
       .filter(gap => Date.parse(gap.occurredAt) <= now.getTime() && paperRiskDay(new Date(gap.occurredAt), timezone) <= end);
     gaps.push(...actionGaps.map(gap => `CORPORATE_ACTION_RECONCILIATION_REQUIRED:${gap.ticker}:${gap.kind}:${gap.occurredAt}`));
@@ -332,10 +335,27 @@ export class SimulationExperimentsService {
     if (buyAndHold === null || !benchmarkStart) gaps.push('BENCHMARK_VALUATION_UNAVAILABLE');
     const equity = actionGaps.length ? null : amount(ending?.equity);
     if (!ending || amount(ending.equity) === null) gaps.push('PERIOD_END_SNAPSHOT_MISSING');
-    const profit = equity === null || baseline === null ? null : equity - baseline;
-    const samples = [...(baseline === null ? [] : [baseline]), ...snapshots.filter(snapshot => snapshot.snapshotDate >= start)
-      .slice().reverse().map(snapshot => amount(snapshot.equity)).filter((value): value is number => value !== null)];
-    const drawdown = actionGaps.length ? null : observedDrawdown(samples);
+    const baselineAt = baseline === null ? null : fromOpening ? openingAt : prior?.valuedAt ?? null;
+    const endingAt = equity === null ? null : ending?.valuedAt ?? null;
+    const valuationCoverage: NonNullable<SimulationReview['valuationCoverage']> = baseline === null || equity === null
+      ? 'incomplete_period' : !baselineAt || !endingAt ? 'unknown_timestamp'
+        : endingAt.getTime() > baselineAt.getTime() ? 'observed_period' : 'initial_only';
+    const hasObservedPeriod = valuationCoverage === 'observed_period';
+    if (valuationCoverage === 'initial_only') gaps.push('SUBSEQUENT_VALUATION_MISSING');
+    if (valuationCoverage === 'unknown_timestamp') gaps.push('VALUATION_TIMESTAMP_UNKNOWN');
+    const profit = hasObservedPeriod && equity !== null && baseline !== null ? equity - baseline : null;
+    const periodSnapshots = snapshots.filter(snapshot => snapshot.snapshotDate >= start);
+    const unknownTimestamps = baseline !== null && !baselineAt
+      || periodSnapshots.some(snapshot => amount(snapshot.equity) !== null && !snapshot.valuedAt);
+    // An opening seed and its same-instant snapshot are a single observation. Equal NAV at a later time still counts.
+    const observations = new Map<number, number>();
+    if (baseline !== null && baselineAt) observations.set(baselineAt.getTime(), baseline);
+    for (const snapshot of periodSnapshots) {
+      const value = amount(snapshot.equity);
+      if (value !== null && snapshot.valuedAt) observations.set(snapshot.valuedAt.getTime(), value);
+    }
+    const samples = [...observations].sort(([left], [right]) => left - right).map(([, value]) => value);
+    const drawdown = actionGaps.length || unknownTimestamps ? null : observedDrawdown(samples);
     const signals = trades.length ? await this.db.select({ orderId: strategySignals.orderId, candidate: strategySignals.candidate })
       .from(strategySignals).where(and(eq(strategySignals.owner, owner), inArray(strategySignals.orderId, trades.map(trade => trade.orderId)))) : [];
     const authorizedVersionByOrder = new Map(signals.filter(signal => !signal.candidate.accountId || signal.candidate.accountId === accountId)
@@ -373,16 +393,18 @@ export class SimulationExperimentsService {
     return { accountId, timezone, from: start, to: end, initialEquityUsd: baseline?.toFixed(2) ?? null, endingEquityUsd: equity?.toFixed(2) ?? null,
       profitUsd: profit?.toFixed(2) ?? null, returnPct: profit !== null && baseline !== null && baseline > 0 ? (profit / baseline * 100).toFixed(4) : null,
       buyAndHoldEquityUsd: buyAndHold?.toFixed(2) ?? null,
-      excessReturnPct: equity !== null && buyAndHold !== null && benchmarkStart !== null && benchmarkStart > 0 && baseline !== null && baseline > 0 ? ((equity / baseline - buyAndHold / benchmarkStart) * 100).toFixed(4) : null,
-      orders: trades.length, feesUsd: trades.reduce((sum, t) => sum + Number(t.fee), 0).toFixed(2), gaps,
+      excessReturnPct: hasObservedPeriod && equity !== null && buyAndHold !== null && benchmarkStart !== null && benchmarkStart > 0 && baseline !== null && baseline > 0 ? ((equity / baseline - buyAndHold / benchmarkStart) * 100).toFixed(4) : null,
+      orders: trades.length, feesUsd: trades.reduce((sum, t) => sum + Number(t.fee), 0).toFixed(2), gaps: [...new Set(gaps)], modelNotes,
       valuationAsOf: latestObserved?.snapshotDate ?? null,
       indexBenchmarkTicker: experiment.seed?.benchmark?.ticker ?? null,
       indexBenchmarkEquityUsd: indexBenchmark?.toFixed(2) ?? null,
-      indexBenchmarkReturnPct: baseline !== null && indexBenchmark !== null && indexStart !== null && indexStart > 0 ? ((indexBenchmark / indexStart - 1) * 100).toFixed(4) : null,
-      indexExcessReturnPct: baseline !== null && baseline > 0 && equity !== null && indexBenchmark !== null && indexStart !== null && indexStart > 0
+      indexBenchmarkReturnPct: hasObservedPeriod && baseline !== null && indexBenchmark !== null && indexStart !== null && indexStart > 0 ? ((indexBenchmark / indexStart - 1) * 100).toFixed(4) : null,
+      indexExcessReturnPct: hasObservedPeriod && baseline !== null && baseline > 0 && equity !== null && indexBenchmark !== null && indexStart !== null && indexStart > 0
         ? ((equity / baseline - indexBenchmark / indexStart) * 100).toFixed(4) : null,
+      valuationCoverage, openingValuedAt: baselineAt?.toISOString() ?? null, endingValuedAt: endingAt?.toISOString() ?? null,
       observedMaxDrawdownPct: drawdown, drawdownSampleCount: samples.length,
-      drawdownCoverage: actionGaps.length ? 'corporate_action_gap' : drawdown === null ? 'insufficient_samples' : 'observed_snapshots_only',
+      drawdownCoverage: actionGaps.length ? 'corporate_action_gap' : unknownTimestamps ? 'unknown_timestamps'
+        : drawdown === null ? 'insufficient_samples' : 'observed_snapshots_only',
       strategyContributions };
   }
 

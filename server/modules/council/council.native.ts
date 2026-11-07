@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { localAgentLimitMessage } from '../../../shared/local-agent-errors';
 import type { CouncilCandidate, CouncilMember } from '@shared/council.interface';
 import { parseContribution, responseGuidance } from './council.dialogue';
-import type { CouncilEvidence } from './council.rules';
+import { frozenOwnerEvidence, type CouncilEvidence } from './council.rules';
 import type { DialogueTurn } from './council.types';
 import type { threadPromptContext } from './council.thread';
 import { extractResearchObject, unwrapResearchEnvelope } from '../../../shared/research-reading';
@@ -12,6 +12,7 @@ export function agentAssignment(input: { ticker: string; language: string; membe
   thread?: ReturnType<typeof threadPromptContext>;
   candidate: CouncilCandidate | null; messages: Array<{ memberName: string; role: string; content: string }>;
   evidence: CouncilEvidence[] }): string {
+  const frozenIds = new Set(frozenOwnerEvidence(input.evidence).map(item => item.id));
   return [
     'You are an autonomous research agent assigned one contribution in an investment research room.',
     'Use your own available research tools to find and cross-check public sources. Do not wait for the coordinator to fetch missing data.',
@@ -23,7 +24,8 @@ export function agentAssignment(input: { ticker: string; language: string; membe
     'Also return sources:[{id,title,url,content}], researchStance:"positive|balanced|cautious", decision:"wait|reject|approve", dissent:[], nextReviewCondition. Each source needs a unique nonempty text id, a public http(s) url and an excerpt up to 2000 characters; up to 12 sources. Claims may cite supplied evidence IDs or your declared source IDs exactly. Do not claim source verification you did not perform.',
     'No trading candidate means research only. A candidate is immutable; its approval is subject to separate application risk controls.',
     JSON.stringify({ ...input, messages: input.messages.slice(-18).map((item) => ({ ...item, content: item.content.slice(0, 4000) })),
-      evidence: input.evidence.slice(0, 20).map((item) => ({ ...item, content: item.content.slice(0, 1500) })) }),
+      evidence: input.evidence.filter((item, index) => index < 20 || frozenIds.has(item.id))
+        .map((item) => ({ ...item, content: frozenIds.has(item.id) ? item.content : item.content.slice(0, 1500) })) }),
   ].join('\n');
 }
 
@@ -86,6 +88,7 @@ export function agentErrorMessage(code: string, language: string): string {
     LOCAL_PAUSED: ['讨论已暂停，远端取消尚未确认。继续时会检查原任务。', 'Paused; remote cancellation is unconfirmed. Resume checks the original task.'],
     LOCAL_TASK_FAILED: ['本地 Agent 任务失败，请检查设置中的 Agent 状态，确认后新建讨论重试。', 'The local agent task failed. Check the agent status in Settings before starting a new discussion.'],
     LOCAL_INVALID_RESULT: ['Agent 返回的结果格式不符合要求。请检查 Agent 的报告输出配置，修正后新建讨论。', 'The agent result has an invalid format. Check its report output configuration and start a new discussion.'],
+    LOCAL_PROTOCOL_INCOMPLETE: ['本轮研究结果未完整返回，未能确认完成。已完成的研究已保留，可重试当前步骤。', 'The research result was not fully returned and completion could not be confirmed. Completed research is retained; retry the current step.'],
   };
   const pair = messages[code] ?? ['本地 Agent 暂时不可用，请检查设置中的连接后继续。', 'The local agent is unavailable. Check its connection in Settings, then resume.'];
   return pair[language === 'en' ? 1 : 0];
