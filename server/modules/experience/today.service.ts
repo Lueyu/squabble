@@ -2,7 +2,7 @@ import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/commo
 import { PortfolioResearchRouteService } from './portfolio-research-route.service';
 import { currencyBreakdown } from './research-presentation';
 import { and, desc, eq } from 'drizzle-orm';
-import { DRIZZLE_DATABASE,type PostgresJsDatabase } from '../../common/platform';
+import { DRIZZLE_DATABASE,type PostgresJsDatabase,simpleExperienceEnabled } from '../../common/platform';
 import { holdings,cashAccounts,fxRates,paperOrders,paperAccounts,transactions } from '../../database/schema';
 import { councilReports,councilSessions } from '../../database/council.schema';
 import { experiencePreferences } from '../../database/simple-experience.schema';
@@ -24,7 +24,7 @@ export class TodayService {
     @Optional()private readonly metrics?:PortfolioMetricsService) {}
   async preferences(owner:string):Promise<ExperiencePreferences> {
     const [p]=await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
-    return {enabled:process.env.SQUABBLE_SIMPLE_EXPERIENCE==='true'&&(p?.enabled??true),timezone:p?.timezone??'Asia/Shanghai',defaultMembers:p?.defaultMembers??[],defaultAccountId:p?.defaultAccountId??null,migrationState:(p?.migrationState??'new') as ExperiencePreferences['migrationState']};
+    return {enabled:simpleExperienceEnabled(p?.enabled),timezone:p?.timezone??'Asia/Shanghai',defaultMembers:p?.defaultMembers??[],defaultAccountId:p?.defaultAccountId??null,migrationState:(p?.migrationState??'new') as ExperiencePreferences['migrationState']};
   }
   async savePreferences(owner:string,input:unknown):Promise<ExperiencePreferences> {
     const parsed=preferencesSchema.safeParse(input);if(!parsed.success)throw new BadRequestException('INVALID_PREFERENCES');

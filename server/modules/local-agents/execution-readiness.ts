@@ -4,7 +4,15 @@ import { validateNativeAgentConfiguration } from './local-agents.requests';
 
 /** No probes or paid requests: project local metadata and app overrides. */
 export function executionReadiness(item: LocalAgentConnection, settings?: NativeAgentConfiguration): ResearchExecutionReadiness {
-  const model = settings?.model ?? item.defaultModel;
+  const requestedModel = settings?.model ?? item.defaultModel;
+  let model = requestedModel;
+  // Tolerate a bare OpenCode default by resolving it against the advertised
+  // provider/model ids when the match is unambiguous, so a default config works
+  // without forcing users to learn the provider/model naming.
+  if (item.provider === 'opencode' && model && !/^[^/\s]+\/[^\s]+$/u.test(model)) {
+    const matches = (item.models ?? []).map(entry => entry.id).filter(id => id === model || id.endsWith(`/${model}`));
+    if (new Set(matches).size === 1) model = matches[0];
+  }
   const effectiveModel: ResearchExecutionReadiness['effectiveModel'] = { ...(model ? { id: model } : {}),
     source: settings?.model ? 'override' : model ? 'default' : 'unknown', verified: Boolean(model),
     ...(item.provider === 'opencode' && model?.includes('/') ? { provider: model.split('/')[0] } : {}) };

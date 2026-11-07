@@ -5,7 +5,7 @@ import { nativeChildEnv } from './environment';
 import { NativeEventCollector } from './events';
 import { launchNativeLogin } from './login';
 import { executeNativeProcess, NativeProcessFailure, type NativeProcessResult } from './process';
-import { readOpenCodeDiagnostic } from './failures';
+import { readOpenCodeDiagnostic, detectNetworkFailure } from './failures';
 import { resolveNativeCommand, type NativeLaunch, type NativeResolverOptions } from './resolver';
 import { createNativeWorkspace } from './workspace';
 import { authenticationState, configuredModels, configuredDefaultModel, defaultCapabilities, geminiMetadata, kimiCredentialEnv, kimiMetadata, parseModels, supportsAntigravity } from './metadata';
@@ -134,7 +134,10 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
         const collector: NativeEventCollector = new NativeEventCollector(provider, run.onProgress, run.onEvent);
         const result = await executeNativeProcess(launch, invocation.args, { ...processOptions, onLine: (line: string) => collector.read(line),
           ...(provider === 'opencode' ? { onStderrLine: readOpenCodeDiagnostic } : {}) });
-        if (result.code !== 0) throw new NativeProcessFailure('NATIVE_AGENT_FAILED', result);
+        if (result.code !== 0) {
+          const networkCode = detectNetworkFailure(result);
+          throw new NativeProcessFailure(networkCode ?? 'NATIVE_AGENT_FAILED', result);
+        }
         collector.completeProcess();
         return collector.result();
       } finally { try { await bridge?.close(); } finally { await workspace.dispose(); } }

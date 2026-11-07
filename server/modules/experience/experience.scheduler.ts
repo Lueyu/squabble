@@ -1,5 +1,5 @@
 import { Inject,Injectable,Logger,OnApplicationBootstrap,OnApplicationShutdown } from '@nestjs/common';
-import { DRIZZLE_DATABASE,type PostgresJsDatabase } from '../../common/platform';
+import { DRIZZLE_DATABASE,type PostgresJsDatabase,simpleExperienceEnvironmentEnabled } from '../../common/platform';
 import { users } from '../../database/schema';
 import { TodayService } from './today.service';
 import { CurrentResearchService } from './current-research.service';
@@ -17,7 +17,7 @@ export class ExperienceScheduler implements OnApplicationBootstrap,OnApplication
   onApplicationBootstrap(){this.timer=setInterval(()=>void this.tick(),15_000);this.timer.unref();}
   onApplicationShutdown(){if(this.timer)clearInterval(this.timer);}
   async tick(){
-    if(this.busy||process.env.SQUABBLE_SIMPLE_EXPERIENCE!=='true')return;this.busy=true;
+    if(this.busy||!simpleExperienceEnvironmentEnabled())return;this.busy=true;
     try {
       await this.handoff.dispatch();await this.research.reconcile();await this.daily.syncPublished();await this.briefs.tick();if(Date.now()-this.lastScan<60_000)return;this.lastScan=Date.now();
       const owners=await this.db.select({id:users.id}).from(users);await this.followup.enqueue();

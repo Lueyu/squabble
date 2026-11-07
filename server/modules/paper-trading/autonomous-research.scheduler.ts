@@ -1,5 +1,6 @@
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { AutonomousResearchService } from './autonomous-research.service';
+import { simpleExperienceEnvironmentEnabled } from '../../common/platform';
 
 @Injectable()
 export class AutonomousResearchScheduler implements OnModuleInit, OnModuleDestroy {
@@ -9,12 +10,12 @@ export class AutonomousResearchScheduler implements OnModuleInit, OnModuleDestro
   private readonly logger = new Logger(AutonomousResearchScheduler.name);
   constructor(private readonly research: AutonomousResearchService) {}
   onModuleInit() {
-    if (process.env.PAPER_TRADING_ENABLED === 'false' || process.env.SQUABBLE_SIMPLE_EXPERIENCE !== 'true') return;
+    if (process.env.PAPER_TRADING_ENABLED === 'false' || !simpleExperienceEnvironmentEnabled()) return;
     this.timer = setInterval(() => { void this.tick().catch(() => this.logger.warn('Autonomous investment scheduler waiting')); }, 30000); this.timer.unref();
   }
   onModuleDestroy() { if (this.timer) clearInterval(this.timer); }
   async tick() {
-    if (this.scanning || process.env.SQUABBLE_SIMPLE_EXPERIENCE !== 'true') return;
+    if (this.scanning || !simpleExperienceEnvironmentEnabled()) return;
     this.scanning = true;
     try {
       await this.research.queueCurrentMarkets();

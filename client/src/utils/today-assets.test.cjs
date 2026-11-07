@@ -70,7 +70,7 @@ test('pending formatting retains the exact latest complete publication from hist
   assert.ok(!html.includes('Newer incomplete council result'),'unrelated partial council history remains excluded');
   assert.match(html,/referenceVersionId=Latest\+complete\+standalone/);
   assert.match(html,/Reformat saved result/);
-  assert.match(html,/Add to investment strategy/,'the retained ready publication can still be added to a strategy');
+  assert.doesNotMatch(html,/Add to investment strategy/,'the multi-step dialog is replaced by the one-click execution plan');
 });
 
 test('update failure details belong to the active task rather than the displayed publication',()=>{
@@ -94,7 +94,8 @@ test('empty workspace retains cash confirmation and report-derived strategy acce
   const f=fixture();f.state.queries.set('today',{data:{...base,overview:{...base.overview,holdingCount:0},assetMetrics:{...base.assetMetrics,knownValueUsd:0,holdingsValueUsd:0}}});
   f.state.queries.set('investment-strategies',{data:{current:null,drafts:[{id:'report-draft',sources:[{key:'report:fixed'}],updatedAt:'2026-11-06T04:00:00Z',content:{title:'Draft from a research report'}}],history:[]}});
   const html=f.render(f.load('pages/Today/TodayPage.tsx').default);
-  assert.match(html,/Bring in your holdings/,'the onboarding guide stays visible');
+  assert.match(html,/pick a way to start/,'the onboarding guide stays visible');
+  assert.match(html,/Try with simulated cash/,'a no-holding user can start instantly with simulated cash');
   assert.match(html,/Confirm cash/,'cash can be reconciled before holdings exist');
   assert.match(html,/Your investment strategy/);
   assert.match(html,/Write a strategy/);

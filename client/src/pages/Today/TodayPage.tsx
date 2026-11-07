@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useEffect, useRef,useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { fetchToday, refreshCurrentResearch } from '@/api/simple-experience';
@@ -11,13 +11,10 @@ import { latestTodayReport } from '@/utils/today-report';
 import AttentionCard from './AttentionCard';
 import CurrentAnalysisPanel from './CurrentAnalysisPanel';
 import AssetOverview from './AssetOverview';
-import InvestmentStrategySourceDialog from './InvestmentStrategySourceDialog';
-import type { StrategySourceInput } from '@shared/user-investment-strategy.interface';
 import InvestmentStrategySection from './InvestmentStrategySection';
 
 export default function TodayPage() {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
-  const [strategySource,setStrategySource]=useState<StrategySourceInput|null>(null);
   const query = useQuery({ queryKey: ['today'], queryFn: fetchToday, refetchInterval: current => current.state.data?.analysis.state === 'generating' ? 2000 : current.state.data?.assetMetrics?.refreshing?5000:30_000 });
   const todayData = query.data; const refetch = query.refetch;
   const attempted = useRef(new Set<string>());
@@ -38,13 +35,13 @@ export default function TodayPage() {
   const report = latestTodayReport(data);
   if (data.overview.holdingCount === 0 && !(data.assetMetrics?.knownValueUsd || data.overview.cashUsd)) return <div className="mx-auto w-full max-w-4xl space-y-6 p-3 sm:p-6">
     <header><h1 className="text-2xl font-semibold">{zh ? '今日' : 'Today'}</h1><p className="mt-1 text-sm text-muted-foreground">{data.date} · {data.timezone}</p></header>
-    <section className="space-y-5 rounded-2xl border bg-card px-5 py-8 sm:p-10"><h2 className="text-xl font-semibold">{zh ? '先把持仓带进来，一起看懂每天的变化' : 'Bring in your holdings to understand what changes each day'}</h2>
-      <p className="max-w-xl text-sm leading-7 text-muted-foreground">{zh ? '导入后，今日会显示持仓概况、值得关注的变化和 AI 股友的研究。也可以先在频道核对一个具体事实。' : 'After import, Today shows your portfolio, changes that deserve attention and your AI team’s research. You can also check one specific fact in the channel.'}</p>
-      <div className="flex flex-wrap gap-3"><Button asChild><Link to="/import">{zh ? '导入持仓' : 'Import holdings'}</Link></Button><Button asChild variant="outline" className="h-auto whitespace-normal"><Link to="/council">{zh ? '先到频道问一句' : 'Check one fact in the channel'}</Link></Button></div>
+    <section className="space-y-5 rounded-2xl border bg-card px-5 py-8 sm:p-10"><h2 className="text-xl font-semibold">{zh ? '欢迎，先选一个开始方式' : 'Welcome — pick a way to start'}</h2>
+      <p className="max-w-xl text-sm leading-7 text-muted-foreground">{zh ? '有真实持仓就导入，没有也可以直接用模拟资金体验整套流程。全程不需要看说明书。' : 'Import your real holdings if you have them, or start instantly with simulated cash. No manual needed.'}</p>
+      <div className="flex flex-wrap gap-3"><Button asChild><Link to="/import">{zh ? '导入我的持仓' : 'Import my holdings'}</Link></Button><Button asChild variant="outline"><Link to="/paper">{zh ? '先用模拟资金体验' : 'Try with simulated cash'}</Link></Button></div>
     </section>
     <AssetOverview data={data}/>
     <InvestmentStrategySection timezone={data.timezone}/>
-    <nav className="flex flex-wrap gap-5 text-sm"><Link className="text-primary underline" to="/holdings">{zh ? '手动添加持仓' : 'Add holdings manually'}</Link><Link className="text-primary underline" to="/paper">{zh ? '了解 AI 模拟投资' : 'Explore AI simulated investing'}</Link></nav>
+    <nav className="flex flex-wrap gap-5 text-sm"><Link className="text-primary underline" to="/holdings">{zh ? '手动添加持仓' : 'Add holdings manually'}</Link><Link className="text-primary underline" to="/council">{zh ? '先到频道问一句' : 'Ask in the channel'}</Link></nav>
   </div>;
   return <div className="mx-auto w-full max-w-6xl space-y-6 px-3 py-5 pb-12 sm:px-6">
     <header className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold">{zh ? '今日' : 'Today'}</h1><p className="mt-1 text-sm text-muted-foreground">{data.date} · {data.timezone}</p></div>
@@ -53,8 +50,7 @@ export default function TodayPage() {
     {data.currencyTotals && (data.currencyTotals.length > 1 || data.overview.totalValueUsd === null) && <section className="flex min-w-0 flex-wrap gap-3" aria-label={zh ? '已知的分币种持仓市值' : 'Known holdings value by currency'}>{data.currencyTotals.map(item => <div key={item.currency} className="min-w-0 rounded-xl border bg-card px-4 py-3"><p className="text-xs text-muted-foreground">{item.currency} · {zh ? '已知持仓市值' : 'Known holdings value'}</p><p className="mt-1 font-semibold tabular-nums">{item.holdingsValue === null ? '—' : new Intl.NumberFormat(i18n.language, { style: 'currency', currency: item.currency, maximumFractionDigits: 2 }).format(item.holdingsValue)}</p></div>)}</section>}
     <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground"><span>{zh ? '资料读取于：' : 'Captured: '}{new Date(data.asOf).toLocaleString(i18n.language)}</span>{data.marketTimes.map(item => <span key={item.market}>{item.market} · {item.dataAsOf || (zh ? '行情时间未知' : 'Quote time unknown')}</span>)}</div>
     {data.dailyBaselineMissing && <p className="text-xs text-muted-foreground">{zh ? '首次导入，暂无可比历史。' : 'First import: no comparable history yet.'}</p>}
-    <CurrentAnalysisPanel primary view={report} activityView={data.analysis} topicKey="portfolio" date={data.date} aiAvailable={data.aiAvailable} summary={report.summary} onAddToStrategy={setStrategySource}/>
-    <InvestmentStrategySourceDialog source={strategySource} onClose={()=>setStrategySource(null)}/>
+    <CurrentAnalysisPanel primary view={report} activityView={data.analysis} topicKey="portfolio" date={data.date} aiAvailable={data.aiAvailable} summary={report.summary}/>
     <InvestmentStrategySection timezone={data.timezone}/>
     {!!data.gaps.length && <details className="min-w-0 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-sm"><summary className="cursor-pointer font-medium">{zh ? `部分数字暂时无法计算 · ${data.gaps.length} 处资料缺口` : `Some values are unavailable · ${data.gaps.length} data gaps`}</summary><ul className="mt-3 list-inside list-disc space-y-1 text-muted-foreground">{data.gaps.map(gap => <li className="[overflow-wrap:anywhere]" key={gap}>{gap}</li>)}</ul></details>}
     <section className="space-y-3"><div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">{zh ? '值得关注' : 'Worth your attention'}</h2>{data.attention.length > 3 && <Link className="text-sm text-primary underline" to="/analysis">{zh ? '查看全部' : 'View all'}</Link>}</div>

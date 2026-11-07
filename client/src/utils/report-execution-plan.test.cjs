@@ -17,62 +17,39 @@ function plan(overrides = {}) {
 }
 function report(value) { return { version: { id: 'exact-version', status: 'valid', sourceStatus: 'available', snapshot: value ? { executionPlan: value } : {} } }; }
 
-test('report execution plan presents proposed conditions, quantity, period and limits as human text', () => {
+test('the execution plan shows readable strategy text, readiness and one-click actions', () => {
   const { load, render, state } = fixture();
   state.queries.set('research-document', { data: report(plan()) });
   const html = render(load('components/ReportExecutionPlan.tsx').default, { versionId: 'exact-version' });
-  assert.match(html, /Execution strategy draft/); assert.match(html, /Ready for review/);
-  assert.match(html, /Buy 2 AAPL when price is at most 100/); assert.match(html, /Buy AAPL: 2 shares/);
-  assert.match(html, /AI-proposed risk limits/); assert.match(html, /Single-position cap/); assert.match(html, /10%/);
-  assert.match(html, /Asia\/Shanghai/); assert.match(html, /2026/);
+  assert.match(html, /Monitoring execution strategy/);
+  assert.match(html, /\bReady\b/);
+  assert.match(html, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(html, /BUY AAPL/);
+  assert.match(html, /Apply to simulation/);
+  assert.match(html, />\s*Copy\s*</);
   assert.doesNotMatch(html, /schemaVersion|numericEvidence|plan-hash/);
   state.language = 'zh-CN';
   const chinese = render(load('components/ReportExecutionPlan.tsx').default, { versionId: 'exact-version' });
-  assert.match(chinese, /执行策略草案/); assert.match(chinese, /AI 提议的风险边界/); assert.match(chinese, /买入 2 股/);
+  assert.match(chinese, /监控执行策略/);
+  assert.match(chinese, /可执行/);
+  assert.match(chinese, /一键应用到模拟盘/);
 });
 
-test('missing information and no-trade reports are never labeled ready', () => {
+test('needs-review and observation-only reports get honest readiness labels', () => {
   const { load, render, state } = fixture(); const Component = load('components/ReportExecutionPlan.tsx').default;
   state.queries.set('research-document', { data: report(plan({ readiness: 'needs_info', gaps: ['Confirm the intended quantity.'] })) });
   let html = render(Component, { versionId: 'exact-version' });
-  assert.match(html, /Needs information/); assert.match(html, /Confirm the intended quantity/); assert.doesNotMatch(html, /Ready for review/);
-  state.queries.set('research-document', { data: report(plan({ readiness: 'no_trade', noTradeReason: 'Wait for the next filing.' })) });
+  assert.match(html, /Needs review/); assert.doesNotMatch(html, /\bReady\b/);
+  state.queries.set('research-document', { data: report(plan({ readiness: 'no_trade' })) });
   html = render(Component, { versionId: 'exact-version' });
-  assert.match(html, /No trade proposed/); assert.match(html, /Wait for the next filing/); assert.doesNotMatch(html, /Ready for review/);
+  assert.match(html, /Observation only/); assert.doesNotMatch(html, /\bReady\b/);
 });
 
-test('legacy reports show a compact update hint without invented strategy actions', () => {
-  const { load, render, state } = fixture(); state.queries.set('research-document', { data: report() });
-  const html = render(load('components/ReportExecutionPlan.tsx').default, { versionId: 'exact-version' });
-  assert.match(html, /This report has no execution strategy draft/);
-  assert.doesNotMatch(html, /Copy strategy text|Add to investment draft|Buy AAPL/);
-});
-
-test('invalid or missing generated proposals explain why no executable plan is available', () => {
-  const { load, render, state } = fixture(); const Component = load('components/ReportExecutionPlan.tsx').default;
-  for (const [error, english, chinese] of [
-    ['invalid', /The strategy parameters did not pass validation/, /本次策略参数未通过校验，暂无可执行方案/],
-    ['missing', /This report did not return a structured strategy proposal/, /本次报告未返回结构化策略草案，暂无可执行方案/],
-  ]) {
-    state.queries.set('research-document', { data: { version: { ...report().version, snapshot: { executionPlanError: error } } } });
-    state.language = 'en'; let html = render(Component, { versionId: 'exact-version' });
-    assert.match(html, english); assert.doesNotMatch(html, /Copy strategy text|Add to investment draft|Update the analysis/);
-    state.language = 'zh-CN'; html = render(Component, { versionId: 'exact-version' }); assert.match(html, chinese);
-  }
-  assert.equal(state.requests.length, 0);
-});
-
-test('Today and the historical reader place the saved plan after research without duplicating its archived section', () => {
+test('a report without an execution plan renders nothing', () => {
   const { load, render, state } = fixture();
-  const version = { ...report(plan()).version, title: 'Saved research', createdAt: '2026-11-06T00:00:00Z', content: 'Saved research text', sections: [
-    { id: 'summary', title: 'Summary', content: 'Saved research text' }, { id: 'execution-strategy', title: 'Execution strategy', content: 'ARCHIVED_PLAN_DUPLICATE' },
-  ] };
-  state.queries.set('research-document', { data: { version } });
-  const today = render(load('pages/Today/CurrentAnalysisPanel.tsx').default, { view: { documentId: 'exact-version', state: 'ready', researchLevel: 'ai', content: 'Saved research text' }, topicKey: 'portfolio' });
-  assert.match(today, /Execution strategy draft/); assert.ok(today.indexOf('Execution strategy draft') > today.indexOf('Saved research text'));
-  const historical = render(load('pages/Analysis/SimpleReportReader.tsx').default, { versionId: 'exact-version' });
-  assert.match(historical, /Execution strategy draft/); assert.ok(historical.indexOf('Execution strategy draft') > historical.indexOf('Saved research text'));
-  assert.doesNotMatch(historical, /ARCHIVED_PLAN_DUPLICATE/);
+  state.queries.set('research-document', { data: report() });
+  const html = render(load('components/ReportExecutionPlan.tsx').default, { versionId: 'exact-version' });
+  assert.equal(html, '');
 });
 
 async function withDom(run) {
@@ -82,27 +59,30 @@ async function withDom(run) {
   const root = createRoot(document.getElementById('root'));
   try { await run({ dom, root }); } finally { await React.act(async () => root.unmount()); dom.window.close(); global.window = previous.window; global.document = previous.document; global.IS_REACT_ACT_ENVIRONMENT = previous.act; }
 }
-test('copying preserves readable plan text and importing selects only the exact strategy section', async () => withDom(async ({ dom, root }) => {
+
+test('copying preserves the readable plan text without internal fields', async () => withDom(async ({ dom, root }) => {
   const { load, state } = fixture(); state.queries.set('research-document', { data: report(plan()) });
-  let copied = '', selected;
+  let copied = '';
   Object.defineProperty(dom.window.navigator, 'clipboard', { value: { async writeText(value) { copied = value; } } });
   const Component = load('components/ReportExecutionPlan.tsx').default;
-  await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Component, { versionId: 'exact-version', onAddToStrategy(value) { selected = value; } }))));
-  const button = label => [...document.querySelectorAll('button')].find(item => item.textContent === label);
-  await React.act(async () => button('Copy strategy text').click());
-  assert.match(copied, /Buy 2 AAPL/); assert.match(copied, /Single-position cap: 10%/); assert.match(copied, /Asia\/Shanghai/);
-  assert.doesNotMatch(copied, /schemaVersion|numericEvidence/); assert.match(document.body.textContent, /Strategy text copied/);
-  await React.act(async () => button('Add to investment draft').click());
-  assert.deepEqual(JSON.parse(JSON.stringify(selected)), { kind: 'report', versionId: 'exact-version', sectionId: 'execution-strategy' });
-  assert.equal(state.requests.length, 0, 'copy and selecting a source never save or apply a strategy');
+  await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Component, { versionId: 'exact-version' }))));
+  const button = label => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === label);
+  await React.act(async () => button('Copy').click());
+  assert.match(copied, /Measured buying plan/);
+  assert.match(copied, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(copied, /schemaVersion|numericEvidence/);
+  // Let the copied-state reset timer fire while the component is still mounted.
+  await React.act(async () => new Promise(resolve => setTimeout(resolve, 1600)));
 }));
 
-test('clipboard failure leaves readable strategy text available for manual copying', async () => withDom(async ({ dom, root }) => {
+test('one-click apply posts the quick-apply request and confirms success', async () => withDom(async ({ root }) => {
   const { load, state } = fixture(); state.queries.set('research-document', { data: report(plan()) });
-  Object.defineProperty(dom.window.navigator, 'clipboard', { value: { async writeText() { throw new Error('denied'); } } });
   const Component = load('components/ReportExecutionPlan.tsx').default;
-  await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Component, { versionId: 'exact-version', onAddToStrategy() {} }))));
-  await React.act(async () => [...document.querySelectorAll('button')].find(item => item.textContent === 'Copy strategy text').click());
-  assert.match(document.body.textContent, /Select the strategy text below to copy it/);
-  assert.match(document.querySelector('textarea[readonly]').value, /Buy 2 AAPL/);
+  await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Component, { versionId: 'exact-version' }))));
+  const button = label => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === label);
+  await React.act(async () => button('Apply to simulation').click());
+  const applyCalls = state.requests.filter(r => r.method === 'post' && String(r.args[0]).includes('/quick-apply'));
+  assert.equal(applyCalls.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(applyCalls[0].args[1])), { versionId: 'exact-version', requestKey: 'request-key' });
+  assert.match(document.body.textContent, /Applied — view simulation/);
 }));

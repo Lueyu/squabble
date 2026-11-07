@@ -1,6 +1,8 @@
 import { useEffect,useRef,useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import type { AiInvestmentView } from '@shared/investment-policy.interface';
 import type { StrategyDraftInput,StrategyEntry,UserInvestmentStrategy,StrategyPreparationStatus } from '@shared/user-investment-strategy.interface';
 import { investmentStrategiesApi } from '@/api/investment-strategies';
@@ -11,6 +13,7 @@ import { Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle } from 
 import { editStrategyEntry,strategyEditorContent } from '@/utils/user-strategy-editor';
 import { businessTime,resolveZonedInput,strategyPeriodDates,zonedInput } from '@/utils/strategy-dates';
 import { normalizeApiPreparationError } from '@/utils/strategy-preparation';
+import { friendlyError } from '@/utils/error-message';
 
 const draftLimits:NonNullable<StrategyDraftInput['limits']>={maxPositionPct:10,maxDailyIncreasePct:5,maxDailyTurnoverPct:20,minCashPct:10,maxGrossExposurePct:90,maxOrderPct:5};
 function simulationLimits(limits:AiInvestmentView['limits']):NonNullable<StrategyDraftInput['limits']> {
@@ -109,6 +112,18 @@ export default function InvestmentStrategyEditor({item,currentId,timezone,invest
         :kind==='apply'?(zh?'尚未确认切换。请核对模拟盘、执行说明和风险限制后再试。':'The switch is unconfirmed. Review the account, execution details and limits before retrying.'):(zh?'尚未确认保存，请核对内容后重试。':'Save is unconfirmed. Review the content and retry.'));
     }finally{lock.current=false;setBusy('');}
   };
+  const canDelete = !!saved && saved.status === 'draft' && saved.id !== currentId;
+  const deleteDraft = async () => {
+    if (!saved) return;
+    if (!window.confirm(zh ? `确定删除草稿“${saved.content.title}”吗？此操作不可撤销。` : `Delete draft "${saved.content.title}"? This cannot be undone.`)) return;
+    try {
+      await investmentStrategiesApi.remove(saved.id);
+      toast.success(zh ? '草稿已删除' : 'Draft deleted');
+      onChanged(); onClose();
+    } catch (cause) {
+      setError(friendlyError(cause, zh, { zh: '删除失败，请稍后重试。', en: 'Delete failed. Please try again.' }));
+    }
+  };
   const valid=content.title.trim()&&strategyEditorContent(content).entries.length>0;
   return <Dialog open onOpenChange={v=>{if(!v)onClose();}}><DialogContent className="max-h-[90dvh] min-w-0 overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>{zh?'写下你的投资策略':'Write your investment strategy'}</DialogTitle><DialogDescription>{currentId?(zh?'编辑期间旧策略继续运行。点击应用才会整体切换。':'The applied strategy keeps running while you edit. Apply explicitly to switch it.'):(zh?'先保存想法，再核对执行说明，最后交给模拟盘。':'Save your intent, review execution details, then apply it to your simulation.')}</DialogDescription></DialogHeader>
     <div className="min-w-0 space-y-4">{confirmedPreview&&<section aria-label={zh?'已确认执行说明':'Confirmed execution details'} className="space-y-3 rounded-2xl border bg-muted/20 p-4"><h3 className="font-semibold">{zh?'已确认执行说明（固定保留）':'Confirmed execution details'}</h3><p className="text-xs leading-6 text-muted-foreground">{zh?'以下是当时确认的执行依据，修改正文不会改变它。另存草稿并重新核对后，才能应用新的说明。':'This is the confirmed execution authority. Editing the text does not change it. Copy to a draft and review new details before applying.'}</p>{item?.confirmedAt&&<p className="text-xs text-muted-foreground">{zh?'确认于：':'Confirmed: '}{businessTime(item.confirmedAt,item.content.timezone)}</p>}{confirmedPreview.entries.map(entry=><div key={entry.id} className="space-y-1 rounded-xl bg-background/60 p-3 text-sm leading-7 [overflow-wrap:anywhere]"><p>{entry.explanation[zh?'zh-CN':'en']}</p><p className="text-xs text-muted-foreground">{businessTime(entry.startsAt,entry.timezone)} — {businessTime(entry.endsAt,entry.timezone)} · {entry.timezone}</p></div>)}</section>}
@@ -133,7 +148,7 @@ export default function InvestmentStrategyEditor({item,currentId,timezone,invest
       {!investment?.account&&<p className="text-sm text-muted-foreground">{zh?'应用前先建立模拟盘。':'Create a simulation before applying.'} <Link className="text-primary underline" to="/paper" onClick={onClose}>{zh?'复制当前持仓':'Copy current holdings'}</Link></p>}
       <p role="status" className="text-xs leading-6 text-muted-foreground">{readyToApply?(zh?'执行说明已就绪。核对无误后，点击确认才会应用到模拟盘。':'Execution details are ready. Review them, then confirm to apply to your simulation.'):prepared&&!dirty?(zh?'请先处理上方执行说明中的问题，再重新核对；当前尚未应用到模拟盘。':'Resolve the issues above, then review again. This strategy has not been applied to your simulation.'):(zh?'下一步先整理执行说明供你核对，这一步只保存和整理，不会应用到模拟盘。':'Next, prepare the execution details for review. This step saves and prepares only; it does not apply to your simulation.')}</p>
       {!readyToApply&&preparation.status!=='pending'&&<div className="space-y-2 rounded-xl bg-muted/30 p-3 text-sm"><p className="leading-6 text-muted-foreground">{zh?'只是想先记下关注事项？可仅作观察策略核对，不调用 AI，也不生成自动买卖条件。':'Want to keep an idea to watch? Review it as observation only, without AI calls or automatic trade conditions.'}</p><Button variant="outline" size="sm" disabled={!!busy||!valid||checking||statusUnknown} onClick={()=>void work('observe')}>{zh?'仅作观察策略核对':'Review as observation only'}</Button></div>}
-      <footer className="flex flex-wrap justify-end gap-2 border-t pt-4"><Button variant="ghost" onClick={onClose}>{zh?'关闭':'Close'}</Button><Button variant="outline" disabled={!!busy||!valid} onClick={()=>void work('save')}>{item?.status==='confirmed'&&!saved?(zh?'另存为草稿':'Copy as draft'):(zh?'仅保存草稿':'Save draft only')}</Button><Button disabled={!!busy||!valid||checking||statusUnknown||preparation.status==='pending'||(readyToApply&&!investment?.account)} onClick={()=>void work(readyToApply?'apply':preparation.status==='succeeded'?'read':'prepare')}>{busy==='prepare'?(zh?'正在整理说明…':'Preparing details…'):busy==='apply'?(zh?'正在应用…':'Applying…'):checking?(zh?'正在读取状态…':'Checking status…'):preparation.status==='pending'?(zh?'正在整理说明…':'Preparing details…'):readyToApply?(zh?'确认说明并应用':'Review and apply to simulation'):preparation.status==='succeeded'?(zh?'读取已整理说明':'Read prepared details'):preparation.status==='failed'?(zh?'重试整理说明':'Retry preparation'):(zh?'核对执行说明':'Review execution details')}</Button></footer>
+      <footer className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">{canDelete&&<Button variant="ghost" className="mr-auto text-destructive hover:text-destructive" disabled={!!busy} onClick={()=>void deleteDraft()}><Trash2 className="h-4 w-4"/>{zh?'删除草稿':'Delete draft'}</Button>}<Button variant="ghost" onClick={onClose}>{zh?'关闭':'Close'}</Button><Button variant="outline" disabled={!!busy||!valid} onClick={()=>void work('save')}>{item?.status==='confirmed'&&!saved?(zh?'另存为草稿':'Copy as draft'):(zh?'仅保存草稿':'Save draft only')}</Button><Button disabled={!!busy||!valid||checking||statusUnknown||preparation.status==='pending'||(readyToApply&&!investment?.account)} onClick={()=>void work(readyToApply?'apply':preparation.status==='succeeded'?'read':'prepare')}>{busy==='prepare'?(zh?'正在整理说明…':'Preparing details…'):busy==='apply'?(zh?'正在应用…':'Applying…'):checking?(zh?'正在读取状态…':'Checking status…'):preparation.status==='pending'?(zh?'正在整理说明…':'Preparing details…'):readyToApply?(zh?'确认说明并应用':'Review and apply to simulation'):preparation.status==='succeeded'?(zh?'读取已整理说明':'Read prepared details'):preparation.status==='failed'?(zh?'重试整理说明':'Retry preparation'):(zh?'核对执行说明':'Review execution details')}</Button></footer>
     </div>
   </DialogContent></Dialog>;
 }
