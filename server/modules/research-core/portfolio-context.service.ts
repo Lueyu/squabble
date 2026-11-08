@@ -1,6 +1,6 @@
 /**
  * PortfolioContextService — assembles the per-user portfolio snapshot used by
- * the pipeline, and evaluates hard/soft strategy rules against it.
+ * research callers, and evaluates hard/soft strategy rules against it.
  *
  * Responsibilities:
  *  1. getPortfolioContext: read holdings + cash accounts, compute market
@@ -8,14 +8,14 @@
  *     Xiaomi's dual-listed 1810.HK / XIACF / XIACY count as one entity).
  *  2. checkRiskRules: given a ticker + portfolio + the user's enabled rules,
  *     evaluate each known ruleKey and return pass/fail + suggested action.
- *     Hard-rule failures cap the final rating (see PipelineService.runRatingPhase).
- *  3. applyRatingToHoldings: when a human approves a run, optionally write the
- *     resulting rating/action/targetPrice back onto the holdings row.
+ *     Callers decide how those results constrain their own research workflow.
+ * This service never writes ratings back to the real holdings ledger; retained
+ * human-approval commands keep that mutation in MultiAgentService.
  */
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import { eq, and } from 'drizzle-orm';
-import { holdings, cashAccounts, agentRuns, agentRatings } from '@server/database/schema';
+import { eq } from 'drizzle-orm';
+import { holdings, cashAccounts } from '@server/database/schema';
 import type { PortfolioContext, StrategyRule } from '@shared/api.interface';
 import { FxService } from '@server/modules/fx/fx.service';
 
@@ -440,39 +440,4 @@ export class PortfolioContextService {
     return results;
   }
 
-  /**
-   * After a human approves/modifies a run, optionally write the resulting
-   * rating/action/targetPrice back onto the caller's holdings row for that
-   * ticker. No-op if the ticker is not currently held.
-   * @returns true if a holdings row was updated.
-   */
-  async applyRatingToHoldings(userId: string, runId: string): Promise<boolean> {
-    const [runRow, ratingRow] = await Promise.all([
-      this.db
-        .select()
-        .from(agentRuns)
-        .where(and(eq(agentRuns.id, runId), eq(agentRuns.owner, userId))),
-      this.db
-        .select()
-        .from(agentRatings)
-        .where(and(eq(agentRatings.runId, runId), eq(agentRatings.owner, userId))),
-    ]);
-
-    if (runRow.length === 0 || ratingRow.length === 0) return false;
-
-    const rating = ratingRow[0];
-    const ticker = runRow[0].ticker;
-
-    const updated = await this.db
-      .update(holdings)
-      .set({
-        rating: rating.rating,
-        action: rating.action,
-        targetPrice: rating.targetPrice !== null ? String(rating.targetPrice) : null,
-      })
-      .where(and(eq(holdings.ticker, ticker), eq(holdings.owner, userId)))
-      .returning({ id: holdings.id });
-
-    return updated.length > 0;
-  }
 }

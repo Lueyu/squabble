@@ -11,7 +11,7 @@ import { capturePortfolioDailyFacts } from '../research-documents/portfolio-dail
 import { buildPortfolioReportSnapshot } from '../multi-agent/portfolio-analysis.service';
 import { businessDate } from './simple-experience.rules';
 import { CurrentResearchService } from './current-research.service';
-import { PortfolioResearchRouteService } from './portfolio-research-route.service';
+import { PortfolioResearchRouteService } from '../research-routing/portfolio-research-route.service';
 
 @Injectable()
 export class ImportAnalysisHandoffService {

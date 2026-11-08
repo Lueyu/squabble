@@ -89,4 +89,63 @@ module.exports = tseslint.config(
       },
     },
   },
+  // Pages compose features. Features must stay reusable without pulling page
+  // routing, polling or lifecycle state back into their own implementation.
+  {
+    files: ['client/src/features/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['**/pages/**', '@/pages/**', '@client/src/pages/**'],
+          message: 'Features may use shared UI and APIs; pages compose features, not the reverse.',
+        }],
+      }],
+    },
+  },
+  {
+    files: ['shared/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          regex: '^(@/|@client/|@server/)|(^|/)(client|server)(/|$)',
+          message: 'Shared contracts must not depend on client or server implementations.',
+        }],
+      }],
+    },
+  },
+  // Keep shared research infrastructure below both current and retained
+  // orchestration. These are static import/re-export checks, not DI validation.
+  {
+    files: ['server/modules/research-core/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel|research-routing)(/|$)',
+          message: 'Research core provides infrastructure to workflows and must not import them.',
+        }],
+      }],
+    },
+  },
+  {
+    files: ['server/modules/research-routing/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel)(/|$)',
+          message: 'Research routing selects an executor independently of its feature consumers.',
+        }],
+      }],
+    },
+  },
+  {
+    files: ['server/modules/paper-trading/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          regex: '(^|/)experience(/|$)',
+          message: 'Use research-routing or research-core instead of the experience facade.',
+        }],
+      }],
+    },
+  },
 );

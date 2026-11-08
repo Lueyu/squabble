@@ -4,9 +4,9 @@ import { packDiscussionContext } from './council.context';
 import { discussionPrompt } from './council.dialogue';
 import { evidenceExcerpts, type CouncilEvidence } from './council.rules';
 import { normalizeBuilderConfig } from '../paper-trading/agent-builder.rules';
-import { parseSecFinancials } from '../multi-agent/sec-financials';
+import { parseSecFinancials } from '../research-core/sec-financials';
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
-import { jsonChatMessages } from '../multi-agent/llm.service';
+import { jsonChatMessages } from '../research-core/llm.service';
 import { CouncilWorkflowExecutor } from './council.workflow-executor';
 
 function secFinancialEvidence(): CouncilEvidence[] {

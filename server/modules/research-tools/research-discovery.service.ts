@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
-import { ResearchWebService } from '../multi-agent/research-web.service';
+import { ResearchWebService } from '../research-core/research-web.service';
 import { TradingMarketService } from '../paper-trading/trading-market.service';
 import { resolveTradingTicker } from '../../../shared/trading-market.interface';
 import type { InvestmentConfig, VerifiedInvestmentSecurity } from '../../../shared/investment-policy.interface';

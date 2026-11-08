@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
-import { PortfolioResearchRouteService } from './portfolio-research-route.service';
+import { PortfolioResearchRouteService } from '../research-routing/portfolio-research-route.service';
 import { currencyBreakdown } from './research-presentation';
 import { and, desc, eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE,type PostgresJsDatabase,simpleExperienceEnabled } from '../../common/platform';
@@ -8,7 +8,7 @@ import { councilReports,councilSessions } from '../../database/council.schema';
 import { experiencePreferences } from '../../database/simple-experience.schema';
 import { buildPortfolioReportSnapshot } from '../multi-agent/portfolio-analysis.service';
 import { capturePortfolioDailyFacts } from '../research-documents/portfolio-daily-facts';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import { CurrentResearchService } from './current-research.service';
 import { businessDate,preferencesSchema } from './simple-experience.rules';

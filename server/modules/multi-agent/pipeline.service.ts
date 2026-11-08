@@ -38,9 +38,9 @@ import { randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and } from 'drizzle-orm';
 import { agentRuns } from '@server/database/schema';
-import { LlmService } from './llm.service';
-import { EvidenceService } from './evidence.service';
-import { PortfolioContextService } from './portfolio-context.service';
+import { LlmService } from '../research-core/llm.service';
+import { EvidenceService } from '../research-core/evidence.service';
+import { PortfolioContextService } from '../research-core/portfolio-context.service';
 import type {
   AgentEvidence,
   BullBearArgument,
@@ -52,7 +52,8 @@ import type {
   AnalysisLanguage,
 } from '@shared/api.interface';
 import { MultiAgentService } from './multi-agent.service';
-import { languageInstruction, englishRuleName, safeAnalysisError, analysisErrorCode } from './analysis-report';
+import { languageInstruction, englishRuleName } from './analysis-report';
+import { safeAnalysisError, analysisErrorCode } from '../research-core/research-errors';
 import type { ModelRoute } from '../../../shared/model-route.interface';
 
 @Injectable()

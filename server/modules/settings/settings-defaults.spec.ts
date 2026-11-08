@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { PostgresJsDatabase } from '../../common/platform';
 import type { QuoteService } from '../quote/quote.service';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import { SettingsService } from './settings.service';
 import { encryptSecret } from './settings-security';
 import type { LlmBudgetService } from '../llm-budget/llm-budget.service';

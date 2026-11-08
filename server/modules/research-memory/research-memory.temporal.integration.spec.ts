@@ -12,12 +12,12 @@ import { ResearchMemoryService } from './research-memory.service';
 import { QuoteService } from '../quote/quote.service';
 import type { EvidenceMetadata } from '@shared/research-evidence.interface';
 import type { ThesisContent } from '@shared/research-memory.interface';
-import { parseFinnhubFinancials } from '../multi-agent/finnhub-financials';
+import { parseFinnhubFinancials } from '../research-core/finnhub-financials';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { CouncilService } from '../council/council.service';
 import { evidenceExcerpts, type CouncilEvidence } from '../council/council.rules';
 import { nativeWorkflowSources } from '../council/council.workflow-executor';
-import { FinnhubEvidenceService } from '../multi-agent/finnhub-evidence.service';
+import { FinnhubEvidenceService } from '../research-core/finnhub-evidence.service';
 import { renderEvidenceGraph } from './research-memory.render.fixture.cjs';
 
 const enabled = { skip: !process.env.MEMORY_TEST_DATABASE_URL };

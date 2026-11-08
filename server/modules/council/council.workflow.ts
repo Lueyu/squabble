@@ -5,7 +5,7 @@ import { councilSessions } from '../../database/council.schema';
 import type { CouncilMember } from '../../../shared/council.interface';
 import type { ThesisCandidateInput } from '../../../shared/research-memory.interface';
 import type { ResearchCoverage, ResearchSkillPin, ResearchTask, ResearchTaskKind } from '../../../shared/research-workflow.interface';
-import { analysisErrorCode, safeAnalysisError } from '../multi-agent/analysis-report';
+import { analysisErrorCode, safeAnalysisError } from '../research-core/research-errors';
 import { agentErrorMessage } from './council.native';
 import { planResearchTasks } from './council.tasks';
 import { CouncilScheduler } from './council.scheduler';

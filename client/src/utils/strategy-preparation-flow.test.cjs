@@ -17,7 +17,7 @@ async function scenario(status,run,{item=draft,setup=()=>{}}={}){
   for(const key of ['Dialog','DialogContent','DialogDescription','DialogHeader','DialogTitle'])dialog[key]=({children})=>React.createElement('div',null,children);
   f.state.responses=new Map([['/api/investment-strategies/watch-draft/preparation',status],['/api/investment-strategies/watch-draft',draft],['/api/investment-strategies/watch-draft/preview',ready],['/api/investment-strategies/watch-draft/prepare',ready]]);
   setup(f);
-  const Editor=f.load('pages/Today/InvestmentStrategyEditor.tsx').default;
+  const Editor=f.load('features/investment-strategies/InvestmentStrategyEditor.tsx').default;
   await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:structuredClone(item),currentId:null,timezone:content.timezone,investment:{account:{id:'paper'},policy:{id:'policy'}},onChanged(){},onClose(){}}))));
   const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
   await run({f,button,dom});

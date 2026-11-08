@@ -1,9 +1,9 @@
 import { Injectable, Optional } from '@nestjs/common';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
 import type { CouncilMember } from '../../../shared/council.interface';
 import { LlmBudgetService, type BudgetReservation } from '../llm-budget/llm-budget.service';
-import { PortfolioResearchRouteService } from '../experience/portfolio-research-route.service';
+import { PortfolioResearchRouteService } from '../research-routing/portfolio-research-route.service';
 import { extractResearchObject } from '../../../shared/research-reading';
 
 /** One durable caller claim is required before entering this adapter. Never retry a paid request. */

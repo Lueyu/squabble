@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EvidenceInput } from '../multi-agent/evidence.service';
+import type { EvidenceInput } from '../research-core/evidence.service';
 import { extractValuationInputs, valuationScenarios, frozenPeerTickers, canonicalResearchTicker } from './research-valuation';
 
 const annual: EvidenceInput = { role: 'fundamental', evidenceType: 'financial', title: 'AAPL SEC reported financial statements',

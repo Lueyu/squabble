@@ -34,7 +34,7 @@ module.exports = function fixture() {
     };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: {
       module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
-    } }).outputText, { module: mod, exports: mod.exports, require: requireModule, URL, URLSearchParams, Date, structuredClone, window: global.window, document: global.document, crypto: { randomUUID: () => 'request-key' }, setTimeout, clearTimeout });
+    } }).outputText, { module: mod, exports: mod.exports, require: requireModule, URL, URLSearchParams, Date, structuredClone, window: global.window, document: global.document, crypto: { randomUUID: () => state.randomUUID?.() ?? 'request-key' }, setTimeout, clearTimeout });
     return mod.exports;
   }
   return { state, load, render: (Component, props = {}) => renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(Component, props))) };

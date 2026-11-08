@@ -16,7 +16,7 @@ async function scenario(run){
   for(const key of ['Dialog','DialogContent','DialogDescription','DialogHeader','DialogTitle'])dialog[key]=({children})=>React.createElement('div',null,children);
   f.state.queries.set('investment-strategies',{data:{current,drafts:[draft],history:[],draftsCursor:null,historyCursor:null}});
   f.state.queries.set('ai-investment',{data:{account:{id:'paper'},policy:{id:'policy',revision:7,status:'running'},currentStrategy:current}});
-  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(f.load('pages/Today/InvestmentStrategySection.tsx').default))));
+  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(f.load('features/investment-strategies/InvestmentStrategySection.tsx').default))));
   const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
   await run({f,button});
  }finally{await React.act(async()=>root.unmount());dom.window.close();Object.assign(global,{window:previous.window,document:previous.document,IS_REACT_ACT_ENVIRONMENT:previous.act});}
@@ -51,8 +51,8 @@ test('a linked draft waits for the current-strategy workspace before opening its
  const root=createRoot(document.getElementById('root'));
  try{
   const f=fixture();
-  f.load('pages/Today/InvestmentStrategyEditor.tsx').default=({currentId})=>React.createElement('p',{'data-editor-current':currentId??'none'},'Opened linked draft');
-  const Section=f.load('pages/Today/InvestmentStrategySection.tsx').default;
+  f.load('features/investment-strategies/InvestmentStrategyEditor.tsx').default=({currentId})=>React.createElement('p',{'data-editor-current':currentId??'none'},'Opened linked draft');
+  const Section=f.load('features/investment-strategies/InvestmentStrategySection.tsx').default;
   f.state.queries.set('investment-strategies',{isPending:true});
   f.state.queries.set('investment-strategy',{data:draft});
   const render=()=>root.render(React.createElement(MemoryRouter,{initialEntries:['/paper?investmentStrategyId=draft-id']},React.createElement(Section)));

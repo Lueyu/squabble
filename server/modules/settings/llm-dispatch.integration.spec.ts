@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import axios from 'axios';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { LlmService, jsonChatMessages } from '../multi-agent/llm.service';
+import { LlmService, jsonChatMessages } from '../research-core/llm.service';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
 import type { SettingsService } from './settings.service';

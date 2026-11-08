@@ -5,8 +5,8 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const tables = Object.fromEntries(['agentRuns', 'agentEvidence', 'bullBearArguments', 'debateRecords',
-  'agentRatings', 'riskGateResults', 'strategyRules', 'agentAuditLog', 'analysis', 'deepReport']
-  .map(name => [name, { name, owner: `${name}.owner`, runId: `${name}.runId`, id: `${name}.id` }]));
+  'agentRatings', 'riskGateResults', 'strategyRules', 'agentAuditLog', 'analysis', 'deepReport', 'holdings']
+  .map(name => [name, { name, owner: `${name}.owner`, runId: `${name}.runId`, id: `${name}.id`, ticker: `${name}.ticker` }]));
 
 function load(name) {
   const source = fs.readFileSync(path.join(__dirname, name), 'utf8');
@@ -26,6 +26,7 @@ function load(name) {
     '../research-documents/research-documents.service': { ResearchDocumentsService: class { async importSourceInTransaction() {} } },
   };
   new Function('require', 'module', 'exports', compiled)(id => {
+    if (id === '../research-core/research-errors') return load('../research-core/research-errors.ts');
     if (id === './analysis-report') return load('analysis-report.ts');
     if (dependencies[id]) return dependencies[id];
     throw new Error(`Unexpected dependency: ${id}`);
@@ -105,4 +106,50 @@ test('public evidence cannot assert provider verification, while internal provid
   assert.equal(typeof service.addProviderEvidence, 'function');
   await service.addProviderEvidence('alice', 'run', [evidence]);
   assert.deepEqual(written[1].metadata, metadata);
+});
+
+test('approved legacy ratings only update the run owner’s matching holding', async () => {
+  // Keep a foreign holding first so a missing owner filter cannot accidentally pass.
+  const records = {
+    agentRuns: [
+      { id: 'foreign-run', owner: 'bob', ticker: 'ACME' },
+      { id: 'own-run', owner: 'alice', ticker: 'ACME' },
+      { id: 'rating-mismatch', owner: 'alice', ticker: 'ACME' },
+    ],
+    agentRatings: [
+      { runId: 'foreign-run', owner: 'bob', rating: 'Buy', action: 'Add', targetPrice: '99' },
+      { runId: 'own-run', owner: 'alice', rating: 'Watch', action: 'Observe', targetPrice: '12.50' },
+      { runId: 'rating-mismatch', owner: 'bob', rating: 'Buy', action: 'Add', targetPrice: '99' },
+    ],
+    holdings: [
+      { id: 'bob-holding', owner: 'bob', ticker: 'ACME', rating: 'Sell', action: 'Reduce', targetPrice: '4' },
+      { id: 'alice-holding', owner: 'alice', ticker: 'ACME', rating: null, action: null, targetPrice: null },
+      { id: 'other-ticker', owner: 'alice', ticker: 'OTHER', rating: null, action: null, targetPrice: null },
+    ],
+  };
+  const matches = (row, conditions) => conditions.every(([column, value]) => row[column.split('.')[1]] === value);
+  const db = {
+    select: () => ({ from: table => ({ where: async conditions => records[table.name].filter(row => matches(row, conditions)) }) }),
+    update: table => ({ set: patch => ({ where: conditions => ({ returning: async () => {
+      const selected = records[table.name].filter(row => matches(row, conditions));
+      selected.forEach(row => Object.assign(row, patch));
+      return selected.map(({ id }) => ({ id }));
+    } }) }) }),
+  };
+  const { MultiAgentService } = load('multi-agent.service.ts');
+  const service = new MultiAgentService(db);
+  assert.equal(typeof service.applyRatingToHoldings, 'function', 'legacy rating writes belong to the legacy command service');
+
+  assert.equal(await service.applyRatingToHoldings('alice', 'foreign-run'), false);
+  assert.equal(await service.applyRatingToHoldings('alice', 'rating-mismatch'), false);
+  assert.equal(await service.applyRatingToHoldings('alice', 'own-run'), true);
+  assert.deepEqual(records.holdings, [
+    { id: 'bob-holding', owner: 'bob', ticker: 'ACME', rating: 'Sell', action: 'Reduce', targetPrice: '4' },
+    { id: 'alice-holding', owner: 'alice', ticker: 'ACME', rating: 'Watch', action: 'Observe', targetPrice: '12.50' },
+    { id: 'other-ticker', owner: 'alice', ticker: 'OTHER', rating: null, action: null, targetPrice: null },
+  ]);
+
+  records.agentRatings[1].targetPrice = null;
+  assert.equal(await service.applyRatingToHoldings('alice', 'own-run'), true);
+  assert.equal(records.holdings[1].targetPrice, null, 'unknown price remains SQL NULL rather than a string');
 });

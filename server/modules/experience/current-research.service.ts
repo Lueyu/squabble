@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { ModelRoute } from '../../../shared/model-route.interface';
 import type { PortfolioReportSnapshot } from '../../../shared/portfolio-report.interface';
-import { PortfolioResearchRouteService } from './portfolio-research-route.service';
+import { PortfolioResearchRouteService } from '../research-routing/portfolio-research-route.service';
 import { researchPresentation } from './research-presentation';
 import { researchAnalysisRequests } from '../../database/research-analysis-requests.schema';
 import { and, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';

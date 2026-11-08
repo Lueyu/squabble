@@ -9,7 +9,7 @@ import {
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, builderProposals } from '../../database/schema';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import type {
   BuilderConfig,
   BuilderPreview,

@@ -16,10 +16,11 @@ function load(name) {
     'drizzle-orm': { eq: () => true, and: () => true },
     '@server/database/schema': { holdings: { name: 'holdings' }, watchlist: { name: 'watchlist' }, agentRuns: {} },
     '../settings/settings.service': { SettingsService: class {} },
-    './llm.service': { LlmService: class {} },
+    '../research-core/llm.service': { LlmService: class {} },
     './analysis-report': () => load('analysis-report.ts'),
   };
   new Function('require', 'module', 'exports', compiled)(id => {
+    if (id === '../research-core/research-errors') return load('../research-core/research-errors.ts');
     const dependency = dependencies[id];
     if (typeof dependency === 'function') return dependency();
     if (dependency) return dependency;

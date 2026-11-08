@@ -12,7 +12,7 @@ import { investmentStrategiesApi } from '@/api/investment-strategies';
 import { quickApplyReport } from '@/api/ai-investment';
 import { friendlyError } from '@/utils/error-message';
 import { Button } from '@/components/ui/button';
-import InvestmentStrategySourceDialog from '@/pages/Today/InvestmentStrategySourceDialog';
+import InvestmentStrategySourceDialog from '@/features/investment-strategies/InvestmentStrategySourceDialog';
 import { businessTime } from '@/utils/strategy-dates';
 
 type Limits = NonNullable<StrategyDraftInput['limits']>;

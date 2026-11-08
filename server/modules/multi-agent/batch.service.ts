@@ -24,11 +24,12 @@ import { eq, and, inArray, sql } from 'drizzle-orm';
 import { holdings, watchlist, agentRuns } from '@server/database/schema';
 import { MultiAgentService } from './multi-agent.service';
 import { PipelineService } from './pipeline.service';
-import { PortfolioContextService } from './portfolio-context.service';
+import { PortfolioContextService } from '../research-core/portfolio-context.service';
 import { SettingsService } from '../settings/settings.service';
-import { LlmService } from './llm.service';
+import { LlmService } from '../research-core/llm.service';
 import type { ModelRoute } from '../../../shared/model-route.interface';
-import { normalizeAnalysisLanguage, safeAnalysisError } from './analysis-report';
+import { normalizeAnalysisLanguage } from './analysis-report';
+import { safeAnalysisError } from '../research-core/research-errors';
 import type {
   BatchRunRequest,
   BatchRunResult,

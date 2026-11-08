@@ -11,7 +11,8 @@ const loadedServices = new Map();
 
 function loadService(name) {
   if (loadedServices.has(name)) return loadedServices.get(name);
-  const source = fs.readFileSync(path.join(directory, name), 'utf8');
+  const filename = path.join(directory, name === 'pipeline.service.ts' ? '../multi-agent/pipeline.service.ts' : name);
+  const source = fs.readFileSync(filename, 'utf8');
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
@@ -39,7 +40,9 @@ function loadService(name) {
   };
   const localRequire = (id) => {
     if (Object.hasOwn(dependencies, id)) return dependencies[id];
-    if (['./analysis-report', './evidence-language', './finnhub-evidence.service', './finnhub-financials',
+    if (id === './analysis-report') return loadService('../multi-agent/analysis-report.ts');
+    if (id === '../research-core/research-errors') return loadService('research-errors.ts');
+    if (['./research-errors', './evidence-language', './finnhub-evidence.service', './finnhub-financials',
       './sec-evidence.service', './sec-financials', './financial-evidence-metadata', './research-web.service'].includes(id)) {
       return loadService(`${id.slice(2)}.ts`);
     }
