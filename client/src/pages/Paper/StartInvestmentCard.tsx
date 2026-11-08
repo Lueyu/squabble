@@ -12,8 +12,8 @@ export const limitLabels = (zh: boolean): Record<keyof InvestmentConfig['limits'
   maxGrossExposurePct: zh ? '总仓位上限' : 'Gross exposure cap', minCashPct: zh ? '最低现金比例' : 'Minimum cash', dailyLossLimitPct: zh ? '当日亏损限制' : 'Daily loss threshold',
 });
 
-export default function StartInvestmentCard({ preview, onStarted, onRefresh, restartAccountId }: {
-  preview: AiInvestmentPreview; onStarted: () => void; onRefresh?: () => void; adoptAccountId?: string; restartAccountId?: string;
+export default function StartInvestmentCard({ preview, onStarted, onRefresh, onCancel, restartAccountId }: {
+  preview: AiInvestmentPreview; onStarted: () => void; onRefresh?: () => void; onCancel?: () => void; adoptAccountId?: string; restartAccountId?: string;
 }) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
   const [extra, setExtra] = useState<Record<string, string>>({}); const [confirmCash, setConfirmCash] = useState(false);
@@ -51,6 +51,6 @@ export default function StartInvestmentCard({ preview, onStarted, onRefresh, res
     {invalid && <p role="alert" className="text-sm text-destructive">{zh ? '请先补全证券币种或修正无效余额。' : 'Complete the security currency or correct invalid balances first.'}</p>}
     {expired && <p role="alert" className="text-sm">{zh ? '预览已过期，请重新预览。' : 'Preview expired. Refresh the starting point.'}</p>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    <div className="flex flex-wrap gap-2"><Button disabled={pending || expired || invalid || !amountsValid} onClick={() => void start()}>{pending ? (zh ? '正在创建…' : 'Creating…') : (zh ? '确认复制并观察' : 'Copy and observe')}</Button>{onRefresh && <Button variant="outline" disabled={pending} onClick={onRefresh}>{zh ? '重新预览' : 'Refresh preview'}</Button>}</div>
+    <div className="flex flex-wrap gap-2"><Button disabled={pending || expired || invalid || !amountsValid} onClick={() => void start()}>{pending ? (zh ? '正在创建…' : 'Creating…') : (zh ? '确认复制并观察' : 'Copy and observe')}</Button>{onRefresh && <Button variant="outline" disabled={pending} onClick={onRefresh}>{zh ? '重新预览' : 'Refresh preview'}</Button>}{onCancel && <Button variant="ghost" disabled={pending} onClick={onCancel}>{zh ? '取消复制' : 'Cancel copy'}</Button>}</div>
   </section>;
 }

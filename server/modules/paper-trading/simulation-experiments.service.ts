@@ -43,40 +43,47 @@ export class SimulationExperimentsService {
 
   async preview(owner: string): Promise<SimulationPreview> {
     const source = await this.source(owner);
-    const quotes: Array<{ ticker: string; price: string; at: string }> = [];
-    for (const holding of source.holdings) {
+    const quotes: Array<{ ticker: string; price: string; at: string } | undefined> = [];
+    const benchmarkOptions: SimulationSeed['benchmarkOptions'] = (['SPY', 'QQQ'] as const).map((ticker) =>
+      ({ ticker, currency: 'USD', initialPrice: null, quoteAt: null }));
+    const quoteJobs = source.holdings.map((holding, index) => async () => {
       try {
         const quote = await this.tradingMarket?.getSnapshot(holding.ticker);
         if (usableValuationQuote(quote, new Date())
           && quote.currency === holding.currency && quote.market === holding.market) {
-          quotes.push({ ticker: holding.ticker, price: String(quote.price), at: quote.quoteTimestamp! });
+          quotes[index] = { ticker: holding.ticker, price: String(quote.price), at: quote.quoteTimestamp! };
         }
       } catch { /* Missing data remains a blocking preview gap. */ }
-    }
-    const currencies = new Set([...source.holdings.map((h) => h.currency ?? ''), ...source.cash.map((c) => c.currency)]);
-    const fx: SimulationSeed['fx'] = [];
-    for (const currency of currencies) {
-      if (currency === 'USD') { fx.push({ currency, rate: '1', at: new Date().toISOString() }); continue; }
+    });
+    quoteJobs.push(...benchmarkOptions.map((benchmark) => async () => {
       try {
-        const rate = await this.fx.convert(1, currency, 'USD');
-        const [dated] = await this.db.select().from(fxRates).where(sql`(${fxRates.base} = ${currency} AND ${fxRates.quote} = 'USD') OR (${fxRates.base} = 'USD' AND ${fxRates.quote} = ${currency})`)
-          .orderBy(desc(fxRates.rateDate)).limit(1);
-        if (dated && Number.isFinite(rate) && rate > 0) fx.push({ currency, rate: String(rate), at: String(dated.rateDate) });
-      } catch { /* No static FX substitutions. */ }
-    }
-    const seed = buildOpeningSeed(source, quotes, fx, new Date().toISOString());
-    seed.benchmarkOptions = [];
-    for (const ticker of ['SPY', 'QQQ'] as const) {
-      let initialPrice: string | null = null;
-      let quoteAt: string | null = null;
-      try {
-        const quote = await this.tradingMarket?.getSnapshot(ticker);
+        const quote = await this.tradingMarket?.getSnapshot(benchmark.ticker);
         if (usableValuationQuote(quote, new Date()) && quote.currency === 'USD') {
-          initialPrice = String(quote.price); quoteAt = quote.quoteTimestamp;
+          benchmark.initialPrice = String(quote.price); benchmark.quoteAt = quote.quoteTimestamp;
         }
       } catch { /* An unavailable selected benchmark remains explicitly unknown. */ }
-      seed.benchmarkOptions.push({ ticker, currency: 'USD', initialPrice, quoteAt });
-    }
+    }));
+    // Keep provider deadlines and a bounded batch instead of serial network waits per holding.
+    let nextQuote = 0;
+    const quoteWork = Promise.all(Array.from({ length: Math.min(8, quoteJobs.length) }, async () => {
+      while (nextQuote < quoteJobs.length) await quoteJobs[nextQuote++]();
+    }));
+    const currencies = new Set([...source.holdings.map((h) => h.currency ?? ''), ...source.cash.map((c) => c.currency)]);
+    const fx: SimulationSeed['fx'] = [];
+    const fxWork = (async () => {
+      for (const currency of currencies) {
+        if (currency === 'USD') { fx.push({ currency, rate: '1', at: new Date().toISOString() }); continue; }
+        try {
+          const rate = await this.fx.convert(1, currency, 'USD');
+          const [dated] = await this.db.select().from(fxRates).where(sql`(${fxRates.base} = ${currency} AND ${fxRates.quote} = 'USD') OR (${fxRates.base} = 'USD' AND ${fxRates.quote} = ${currency})`)
+            .orderBy(desc(fxRates.rateDate)).limit(1);
+          if (dated && Number.isFinite(rate) && rate > 0) fx.push({ currency, rate: String(rate), at: String(dated.rateDate) });
+        } catch { /* No static FX substitutions. */ }
+      }
+    })();
+    await Promise.all([quoteWork, fxWork]);
+    const seed = buildOpeningSeed(source, quotes.filter((quote) => quote !== undefined), fx, new Date().toISOString());
+    seed.benchmarkOptions = benchmarkOptions;
     const expiresAt = new Date(Date.now() + 5 * 60_000);
     const [preview] = await this.db.insert(simulationPreviews).values({ owner, seed, expiresAt }).returning();
     return { id: preview.id, expiresAt: expiresAt.toISOString(), seed };

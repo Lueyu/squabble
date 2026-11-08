@@ -99,6 +99,8 @@ Do not consolidate these helpers based on similar names without reviewing stored
 
 ## Applied strategy → simulation
 
+Holdings copy navigation uses `/paper?seedReal=1`. In the current simplified experience, `AiInvestmentPage` must consume it and open the holdings preview through `/api/ai-investment/preview`; the retained legacy `PaperPage` handler alone is insufficient. A current managed account uses the existing confirmed restart path with its expected account identity and retained history. Navigation/preview never confirms a restart, applies a strategy or mutates real holdings. Quote/FX acquisition during seed preview may run concurrently while preserving currency, market and freshness gates; missing observations remain gaps rather than invented values.
+
 `server/modules/paper-trading/user-strategy-runtime.ts` converts confirmed preview directives to investor mandate rules and an internal builder profile. `strategy.scheduler.ts`/`strategy.service.ts` evaluate rules; `strategy-route.rules.ts`, portfolio-risk checks and `paper-trading.service.ts` control final order placement. Configured, currently effective, monitoring, awaiting review and filled are different states.
 
 Keep these fences at the final transactional boundary:

@@ -304,6 +304,12 @@
       "workingTreeChanges": true,
       "reviewedAt": "2026-11-08",
       "scope": "Resolved OpenCode provider/model passes readiness route, validation and new journal staging into CLI argv; ambiguity fails closed. Existing tasks retain their original configuration without redispatch. Architecture flow1 now shows configuration resolution; flows2-5 retain acceptance/publication, strategy, channel and real-ledger boundaries."
+    },
+    "holdingsSimulationCopy": {
+      "baseline": "fc08fea43d1995a8499e37486a6cba9b71b20f2d",
+      "workingTreeChanges": true,
+      "reviewedAt": "2026-11-08",
+      "scope": "Current simplified simulation consumes holdings seedReal link, displays preview progress/errors, and requires explicit creation/restart with the captured account fence. Seed preview quote/FX reads preserve gaps and valuation checks. Architecture flow3 updated; service/owner, research acceptance, channel publication and real-ledger write boundaries in flows1,2,4,5 unchanged."
     }
   }
 }

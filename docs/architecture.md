@@ -114,6 +114,11 @@ The older `server/modules/multi-agent/pipeline.service.ts` bull/bear/critic/risk
 
 ```mermaid
 flowchart TD
+    realHoldings["Recorded real holdings: copy to simulation"] --> seedRoute["Handle seedReal in the current simulation page"]
+    seedRoute --> seedPreview["Preview holdings and cash; explicit quote and FX gaps"]
+    seedPreview --> seedConfirm["User confirms the new simulated starting point"]
+    seedConfirm --> accountSetup["Create or account-fenced restart; retain prior ledger"]
+    accountSetup --> destination
     source["Exact report version and selected section"] --> readable["Readable selection excludes placeholders and metadata"]
     opinion["Exact released discussion opinion"] --> readable
     readable -->|"Validated execution-strategy"| typed["Preserve typed proposed entries and limits"]

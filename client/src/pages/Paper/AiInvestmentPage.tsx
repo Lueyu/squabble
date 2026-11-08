@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { simulationReviewGapText } from '@shared/simulation-review-reading';
@@ -38,6 +38,7 @@ export default function AiInvestmentPage() {
 function AiInvestmentAccount() {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh'); const client = useQueryClient();
   const [params] = useSearchParams();
+  const location = useLocation(); const navigate = useNavigate(); const seedReal = params.get('seedReal') === '1';
   const requestedStrategyId = params.get('investmentStrategyId');
   const requestedOrderId = params.get('orderId');
   const locatedOrder = useRef<string | null>(null);
@@ -46,6 +47,10 @@ function AiInvestmentAccount() {
   const review = useQuery({ queryKey: ['investment-performance', accountId], queryFn: () => reviewSimulationExperiment(accountId!), enabled: Boolean(accountId), refetchInterval: 30_000, retry: false });
   const decisions = useQuery({ queryKey: ['investment-decisions', accountId], queryFn: () => fetchStrategyMandates(accountId!), enabled: Boolean(accountId), refetchInterval: 15_000 });
   const [preview, setPreview] = useState<AiInvestmentPreview | null>(null); const [cashMode, setCashMode] = useState(false);
+  const [previewAccountId, setPreviewAccountId] = useState<string | undefined>();
+  const [previewPending, setPreviewPending] = useState(false); const [previewError, setPreviewError] = useState('');
+  const previewLock = useRef(false); const previewGeneration = useRef(0); const seedHandled = useRef(false);
+  const previewIntent = useRef(createRequestIntent(() => crypto.randomUUID()));
   const [amount, setAmount] = useState(''); const [currency, setCurrency] = useState<'USD' | 'HKD' | 'CNY'>('USD');
   const [pending, setPending] = useState(false); const [error, setError] = useState('');
   const [restart, setRestart] = useState(false); const [historyOpen, setHistoryOpen] = useState(false);
@@ -69,11 +74,41 @@ function AiInvestmentAccount() {
     catch { setError(zh ? '操作未能确认。请重试；重试沿用同一次请求，不会重复处理。' : 'The operation could not be confirmed. Retry reuses the same request and will not duplicate it.'); }
     finally { lock.current = false; setPending(false); }
   };
-  const prepare = (cash = cashMode) => {
-    if (cash && !validCashSeed(amount, currency)) return;
-    setCashMode(cash);
+  const hasPolicy = Boolean(data?.policy);
+  const prepare = useCallback(async (cash = cashMode) => {
+    if (previewLock.current || cash && !validCashSeed(amount, currency)) return;
+    previewLock.current = true;
+    const generation = ++previewGeneration.current;
+    // A polling update must never redirect this confirmation to a different account.
+    const expectedAccountId = hasPolicy ? accountId : undefined;
+    setCashMode(cash); setRestart(hasPolicy); setPreview(null); setPreviewPending(true); setPreviewError('');
     const payload = cash ? { origin: 'cash' as const, cash: { amount: Number(amount), currency } } : { origin: 'holdings' as const };
-    void mutate('preview', payload, async requestKey => { setPreview(await previewAiInvestment({ ...payload, requestKey })); });
+    try {
+      const result = await previewAiInvestment({ ...payload, requestKey: previewIntent.current.keyFor(payload) });
+      if (generation !== previewGeneration.current) return;
+      setPreviewAccountId(expectedAccountId); setPreview(result); previewIntent.current.complete();
+    } catch {
+      if (generation === previewGeneration.current) setPreviewError(cash
+        ? (zh ? '模拟现金预览未能完成，请重试。' : 'The simulated cash preview could not be prepared. Please retry.')
+        : (zh ? '持仓预览未能完成，请重试。持仓较多时可能需要更长时间。' : 'The holdings preview could not be prepared. Please retry; many positions can take longer.'));
+    } finally {
+      if (generation === previewGeneration.current) { previewLock.current = false; setPreviewPending(false); }
+    }
+  }, [cashMode, amount, currency, hasPolicy, accountId, zh]);
+  useEffect(() => {
+    if (!seedReal) { seedHandled.current = false; return; }
+    if (query.isPending || !data || seedHandled.current) return;
+    seedHandled.current = true;
+    void prepare(false);
+  }, [seedReal, query.isPending, data, prepare]);
+  const clearSeedReal = () => {
+    if (!params.has('seedReal')) return;
+    const next = new URLSearchParams(location.search); next.delete('seedReal');
+    navigate({ pathname: location.pathname, search: next.toString(), hash: location.hash }, { replace: true });
+  };
+  const cancelPreview = () => {
+    ++previewGeneration.current; previewLock.current = false; previewIntent.current.complete();
+    setPreview(null); setPreviewPending(false); setPreviewError(''); setRestart(false); clearSeedReal();
   };
   if (query.isPending) return <p role="status" className="p-6">{zh ? '正在读取 AI 账户…' : 'Loading AI account…'}</p>;
   if (!data) return <div role="alert" className="space-y-3 p-6"><p>{zh ? 'AI 账户暂时不可用。' : 'The AI account is unavailable.'}</p><Button onClick={() => void query.refetch()}>{zh ? '重试' : 'Retry'}</Button></div>;
@@ -97,13 +132,18 @@ function AiInvestmentAccount() {
     <InvestmentStatus status={status} lastHeartbeatAt={data.lastHeartbeatAt} />
     {!started && requestedStrategyId && <p role="status" className="rounded-xl bg-primary/5 p-4 text-sm leading-6">{zh ? '刚复制的策略已保存。先建立模拟账户，完成后会自动打开这份策略供你核对。' : 'Your copied strategy is saved. Create your simulated account below; then this strategy opens for your review.'}</p>}
     {error && <p role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
+    {(previewPending || previewError) && <section className="space-y-3 rounded-xl border bg-card p-4">
+      {previewPending && <p role="status" className="text-sm">{cashMode ? (zh ? '正在准备模拟现金预览…' : 'Preparing your simulated cash preview…') : (zh ? '正在准备持仓预览…持仓较多时请稍候，完成后由你确认复制。' : 'Preparing your holdings preview… Many positions can take a moment; you will confirm the copy next.')}</p>}
+      {previewError && <><p role="alert" className="text-sm text-destructive">{previewError}</p><Button onClick={() => void prepare()}>{zh ? '重试预览' : 'Retry preview'}</Button></>}
+      <Button variant="outline" onClick={cancelPreview}>{zh ? '取消复制' : 'Cancel copy'}</Button>
+    </section>}
     {!started && !!data.legacyAccounts.length && <section className="space-y-3 rounded-xl border border-amber-500/30 p-4"><h2 className="font-semibold">{zh ? '已有旧版账户' : 'Existing legacy account'}</h2><p className="text-sm leading-6">{zh ? '旧自动交易将暂停，核对新的投资范围后继续。仅查看页面不会接管账户。' : 'Legacy automatic trading will pause once you confirm the new scope. Viewing this page does not take over the account.'}</p>{data.legacyAccounts.map(account => <div key={account.id} className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{account.name} · {account.botEnabled && account.active ? (zh ? '旧自动交易已开启' : 'Legacy automatic trading enabled') : (zh ? '未自动交易' : 'Automatic trading disabled')}</span>{account.active && account.botEnabled && <Button size="sm" variant="outline" disabled={pending} onClick={() => void mutate('legacy-pause', { accountId: account.id }, key => pauseLegacyInvestment(account.id, key))}>{zh ? '暂停全部自动交易' : 'Pause all automatic trading'}</Button>}</div>)}</section>}
-    {(!started || restart) && !preview && <section id="simulation-setup" className="scroll-mt-6 space-y-4 rounded-xl border bg-card p-4 sm:p-6"><h2 className="text-lg font-semibold">{restart ? (zh ? '从新的起点重新开始' : 'Start again from a fresh seed') : (zh ? '建立你的模拟账户' : 'Create your simulated account')}</h2><p className="text-sm leading-6 text-muted-foreground">{zh ? '选择当前持仓或模拟现金作为起点。建立后再确认策略，之后独立运行。' : 'Start with your current holdings or simulated cash. Review a strategy after setup; the simulation then runs independently.'}</p>
+    {(!started || restart) && !preview && !previewPending && !previewError && <section id="simulation-setup" className="scroll-mt-6 space-y-4 rounded-xl border bg-card p-4 sm:p-6"><h2 className="text-lg font-semibold">{restart ? (zh ? '从新的起点重新开始' : 'Start again from a fresh seed') : (zh ? '建立你的模拟账户' : 'Create your simulated account')}</h2><p className="text-sm leading-6 text-muted-foreground">{zh ? '选择当前持仓或模拟现金作为起点。建立后再确认策略，之后独立运行。' : 'Start with your current holdings or simulated cash. Review a strategy after setup; the simulation then runs independently.'}</p>
       <div className="flex flex-wrap gap-2"><Button disabled={pending} onClick={() => prepare(false)}>{zh ? '复制当前持仓' : 'Copy current holdings'}</Button><Button variant="outline" asChild><Link to="/import">{zh ? '先导入持仓' : 'Import holdings first'}</Link></Button><Button variant="ghost" onClick={() => setCashMode(!cashMode)}>{zh ? '用模拟现金开始' : 'Start with simulated cash'}</Button></div>
       {cashMode && <form className="flex flex-wrap items-end gap-3" onSubmit={event => { event.preventDefault(); prepare(true); }}><label className="min-w-0 flex-1 space-y-2 text-sm"><span>{zh ? '模拟现金金额' : 'Simulated cash amount'}</span><Input type="number" min="0" step="any" value={amount} onChange={event => setAmount(event.target.value)} /></label><label className="space-y-2 text-sm"><span>{zh ? '币种' : 'Currency'}</span><select className="block h-9 rounded-md border bg-background px-2" value={currency} onChange={event => setCurrency(event.target.value as typeof currency)}>{['USD', 'HKD', 'CNY'].map(value => <option key={value}>{value}</option>)}</select></label><Button disabled={pending || !validCashSeed(amount, currency)} type="submit">{zh ? '预览起点' : 'Preview starting point'}</Button></form>}
     </section>}
-    {preview && <StartInvestmentCard key={preview.id} preview={preview} restartAccountId={restart ? accountId : undefined}
-      onRefresh={() => { setPreview(null); intent.current.complete(); prepare(); }} onStarted={() => { setPreview(null); setRestart(false); void query.refetch(); }} />}
+    {preview && <StartInvestmentCard key={preview.id} preview={preview} restartAccountId={previewAccountId} onCancel={cancelPreview}
+      onRefresh={() => { void prepare(); }} onStarted={() => { setPreview(null); setRestart(false); clearSeedReal(); void query.refetch(); }} />}
     {started && <InvestmentStrategySection timezone={data.policy?.baseConfig?.timezone ?? 'Asia/Shanghai'} />}
     {started && <>
       <section className="space-y-4 rounded-xl border bg-card p-4 sm:p-6"><div className="grid gap-3 sm:grid-cols-3">{[[zh ? '模拟净资产（美元）' : 'Net assets (USD)', data.netAssetUsd], [zh ? '今日变化（美元）' : 'Today’s change (USD)', data.todayChangeUsd], [zh ? '创建以来收益' : 'Return since baseline', returnLabel(percentage(reviewData?.returnPct))]].map(([label, value]) => <div key={label} className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums">{value ?? '—'}</p></div>)}</div><div className="space-y-2 border-t pt-3"><h2 className="font-semibold">{zh ? '当前策略' : 'Current strategy'}</h2><p className="text-sm">{data.currentStrategy?.content.title ?? (zh ? '先观察，等待选择策略' : 'Observing until you choose a strategy')}</p>{data.currentStrategy && <p className="text-xs text-muted-foreground">{zh ? '确认于' : 'Confirmed at'} {new Date(data.currentStrategy.confirmedAt).toLocaleString(i18n.language)}</p>}<Button asChild size="sm" variant="outline"><a href="#investment-strategy">{zh ? '查看和修改策略' : 'View and edit strategy'}</a></Button></div>{data.lastCheckAt && <p className="text-xs text-muted-foreground">{zh ? '最近检查' : 'Last check'} {new Date(data.lastCheckAt).toLocaleString(i18n.language)}</p>}{!!data.waitingReasons?.length && <details className="text-sm"><summary className="cursor-pointer">{zh ? '检查结果和等待原因' : 'Checks and reasons for waiting'}</summary><ul className="mt-2 list-inside list-disc space-y-1 break-words text-xs text-muted-foreground">{data.waitingReasons.map(reason => <li key={reason}>{reason}</li>)}</ul></details>}</section>

@@ -4,6 +4,10 @@ This guide covers the opt-in simplified web experience (`SQUABBLE_SIMPLE_EXPERIE
 
 ## 今日：先看报告，再核对资产
 
+在持仓页点击“复制到模拟盘”，当前模拟盘页面会自动打开实盘持仓与现金的复制预览，并显示正在读取、失败原因或重试入口。已有模拟盘时，先核对新起点，确认后才归档旧账本并建立独立副本；预览或取消不会切换账户。复制后的真实交易不自动同步，行情或汇率缺项保持未知，不会补造估值。
+
+Choose **Copy to simulation** from Holdings to open the starting-point preview in the current simulation page. Loading, errors and retry are visible. An existing simulation is replaced only after confirmation, with its ledger retained. Previewing or cancelling does not switch accounts; later real trades do not sync, and missing quotes or FX remain unknown.
+
 总资产由持仓市值与已确认现金组成。卖出股票会减少股数、增加对应币种现金；入金与出金单独计入外部资金流。今日盈亏按市场上一交易日收盘价以及已记录的当日买卖、费用计算，与相对历史买入成本的浮盈分开。
 
 首次使用时，在“核对现金”中确认各币种余额，确实没有现金可以明确填零。持仓截图只证明仓位，不会被猜成卖出成交或现金流水。缺少行情、昨收、汇率或现金确认时，首页显示已知资产与具体缺项，不将未知数填成零。展开“行情和汇率依据”可以分别看行情实际时间、读取时间、交易日和汇率日期。资产曲线从实际记录开始，不补造导入前的历史。
