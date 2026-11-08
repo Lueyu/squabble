@@ -200,7 +200,9 @@
         "server/modules/research-memory/research-memory.service.ts",
         "server/modules/research-tools/research-tools.service.ts",
         "server/modules/multi-agent/multi-agent.module.ts",
-        "agent/pyproject.toml"
+        "agent/pyproject.toml",
+        "server/modules/local-agents/execution-readiness.ts",
+        "server/modules/local-agents/local-agents.service.ts"
       ],
       "references": [
         "references/repository-map.md",
@@ -296,6 +298,12 @@
     "documentationVerification": "Report-import documentation review: context helper tests passed 15 cases with zero skips; structural checker is valid with no errors, retaining the expected working-tree drift warning. Whitespace and retrieval checks cover the shared reading helper, 200000 source bound and lossless splitting contract. These checks do not certify runtime research or deployment.",
     "savedResultAcceptance": "Reviewed f0137167 plus working-tree changes: assertSavedDailyResult and checkpoint.remote.reparseExisting bind original task identity and SHA-256 promptHash/resultHash/contextHash at reservation and reparseDailyTurn. Normal recordTurn accepts the same turn; old provider calls and budgets are not repeated. A saved challenge needs only a subsequent summary call, while a saved summary can publish with zero new calls. parseDailyReverseCheck now shares the sixty-record inventory bound; unknown/sixty-one references remain invalid. User documentation only corrects the prior unconditional AI-call wording.",
     "reportStrategyImport": "Reviewed f032f7e plus working-tree changes: shared strategyImportSections/strategyImportReadableContent/splitStrategySourceText align dialog and backend readable selection, retain public links and filter placeholder/metadata text. Raw/readable sources are each capped at 200000; observation parts at 12000 preserve exact readable text, separators, surrogate pairs and one source key/raw-content hash. Preview/save retain twenty sources/entries and typed-plan validation. No AI call, inferred execution rule, policy activation or live-ledger mutation is introduced.",
-    "dailySimulationLoop": "Reviewed source baseline 5dc6bdd plus this change: report exact-source navigation/system observation fallback, simulation-owned strategy editing/deletion, migration 44 tombstones and atomic stop/remove, visible actual fills and strategy-context brief renewal. Architecture flows 2–4 updated; system ownership and real ledger boundaries in flows 1/5 unchanged. Baseline hashes identify inspected source before these working-tree changes, not a released revision."
+    "dailySimulationLoop": "Reviewed source baseline 5dc6bdd plus this change: report exact-source navigation/system observation fallback, simulation-owned strategy editing/deletion, migration 44 tombstones and atomic stop/remove, visible actual fills and strategy-context brief renewal. Architecture flows 2–4 updated; system ownership and real ledger boundaries in flows 1/5 unchanged. Baseline hashes identify inspected source before these working-tree changes, not a released revision.",
+    "nativeModelDispatch": {
+      "baseline": "c2f15ca9abe0e57cd66b183a50c36d9d657b94e4",
+      "workingTreeChanges": true,
+      "reviewedAt": "2026-11-08",
+      "scope": "Resolved OpenCode provider/model passes readiness route, validation and new journal staging into CLI argv; ambiguity fails closed. Existing tasks retain their original configuration without redispatch. Architecture flow1 now shows configuration resolution; flows2-5 retain acceptance/publication, strategy, channel and real-ledger boundaries."
+    }
   }
 }

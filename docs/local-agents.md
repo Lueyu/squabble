@@ -2,6 +2,10 @@
 
 吵股支持 **Codex、Claude Code、Gemini CLI、Antigravity、OpenCode、Kimi** 和社区 **Doubao CLI**。设置页会显示安装、登录和连接状态。首次登录在对应 CLI 终端完成，之后点击连接即可。研究使用该 CLI 的账号，可能产生服务商用量或费用。
 
+OpenCode 默认模型若省略供应商前缀，吵股会在已公布的模型列表中查找唯一匹配项，将完整的 `provider/model` 固定到本次新任务并传给 CLI。存在多个匹配项时，需要在设置中明确选择。应用不会改写 CLI 配置或已保存任务；失败的日报仍由用户在原研究中继续。
+
+If an OpenCode default omits its provider prefix, Squabble resolves a unique match from the advertised model list and passes the full `provider/model` identity to the CLI for that new task. Ambiguous matches require an explicit selection in Settings. CLI preferences and saved tasks remain unchanged; continuing a failed daily report remains an explicit user action.
+
 ## 持仓截图导入 / Portfolio screenshot import
 
 持仓导入的截图页优先选择已连接、空闲且支持图片附件的 Agent，当前为 Codex 和 OpenCode。

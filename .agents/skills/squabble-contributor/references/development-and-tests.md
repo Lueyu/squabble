@@ -49,6 +49,7 @@ provider sessions, real portfolio writes or live strategy confirmations.
 | Auth/settings/owner isolation | Relevant `server/modules/auth/` and `server/modules/settings/` tests plus client auth/settings tests; run database cases |
 | Memory/research workflow | `npm run test:server` and `npm run test:memory-eval` with required database variables |
 | Native research and pairing | `npm run test:local-agents`; fixture executables and disposable task directories |
+| Native model readiness versus actual dispatch | `server/modules/local-agents/execution-readiness.spec.ts` and `local-agents.service.spec.ts`: assert a uniquely resolved OpenCode default survives route, validation, journal staging and real `researchInvocation` argv; preserve variants, reject ambiguous defaults before staging and retrieve old tasks without redispatch. Use fixture runtimes rather than paid model calls. |
 | Startup or process management | `npm run test:dev`; inspect Windows/POSIX ownership semantics |
 | Schema/migration/package changes | Fresh-schema and existing-schema upgrade checks; affected database suites and `server/modules/experience/migration-packaging.spec.ts`; `npm run build:web` or Docker build as relevant |
 | Skill or context helpers | `npm run test:context`, `npm run check:context`; frontmatter, links and scenario verification |

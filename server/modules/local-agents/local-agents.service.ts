@@ -7,7 +7,7 @@ import { LOCAL_AGENT_PROVIDERS, type LocalAgentConnection, type LocalAgentsStatu
 import { detectNativeAgents, openNativeLogin, runNativeAgent } from '../../local-agents/native';
 import { LocalAgentStore, type AgentTask } from './local-agents.store';
 import { LocalAgentError, nativeFailureCode, type LocalAgentExecution, type LocalAgentResult } from './local-agents.types';
-import { providerCatalog, providerFromId, parseNativeAgentConfiguration, validateNativeAgentConfiguration } from './local-agents.requests';
+import { providerCatalog, providerFromId, parseNativeAgentConfiguration } from './local-agents.requests';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import type { ResearchToolRequest, ResearchToolResult } from '../../../shared/research-tools.interface';
 import { researchFailure } from '../research-tools/research-tools.output';
@@ -100,13 +100,16 @@ export class LocalAgentsService implements OnModuleDestroy {
     return false;
   }
   async validate(owner: string, id: string, agentSettings?: NativeAgentConfiguration, requiresImage = false): Promise<void> {
+    await this.validatedConfiguration(owner, id, agentSettings, requiresImage);
+  }
+  private async validatedConfiguration(owner: string, id: string, agentSettings?: NativeAgentConfiguration, requiresImage = false): Promise<NativeAgentConfiguration | undefined> {
     const item = (await this.status(owner)).items.find((entry) => entry.id === id);
     if (!item?.connected) throw new LocalAgentError('LOCAL_AGENT_NOT_FOUND');
     if (!item.available) throw new LocalAgentError(item.state === 'login_required' ? 'LOCAL_LOGIN_REQUIRED' : 'LOCAL_UNAVAILABLE');
     if (requiresImage && item.imageInput !== true) throw new LocalAgentError('LOCAL_IMAGE_UNSUPPORTED');
-    validateNativeAgentConfiguration(agentSettings, item);
     const ready = executionReadiness(item, agentSettings);
     if (ready.state === 'configuration_required') throw new LocalAgentError(ready.failure?.code ?? 'LOCAL_INVALID_CONFIGURATION');
+    return ready.route?.mode === 'local' ? ready.route.agentSettings : agentSettings;
   }
   async connect(owner: string, id: string): Promise<void> {
     this.invalidateDetection();
@@ -245,9 +248,8 @@ export class LocalAgentsService implements OnModuleDestroy {
       // Cancellation changes the durable state before the OS has finished killing
       // the process tree. Its execution slot remains reserved until done settles.
       if ([...this.running.values()].some((run) => run.agentId === options.agentId)) throw new LocalAgentError('LOCAL_BUSY');
-      const agentSettings = parseNativeAgentConfiguration(options.agentSettings);
-      await this.validate(owner, options.agentId, agentSettings, !!image);
       if (!options.prompt.trim() || Buffer.byteLength(options.prompt) > 256_000) throw new LocalAgentError('LOCAL_INVALID_INPUT');
+      const agentSettings = await this.validatedConfiguration(owner, options.agentId, parseNativeAgentConfiguration(options.agentSettings), !!image);
       const research = options.researchScope && this.researchTools
         ? { scope: options.researchScope, bundle: await this.researchTools.bundle(owner, options.researchScope) } : undefined;
       task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research, image, options.signal, true, options.activityContext);
