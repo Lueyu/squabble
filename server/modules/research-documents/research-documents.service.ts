@@ -362,7 +362,7 @@ export class ResearchDocumentsService {
         ...(row.report.coverage?.executionPlanError?{executionPlanError:row.report.coverage.executionPlanError}:{}) };
     }
     const sections = sectionsFromRecord(fields);
-    if(snapshot?.executionPlan)sections.push({id:REPORT_EXECUTION_SECTION_ID,title:'执行策略草案 / Execution strategy proposal',content:renderReportExecutionPlan(snapshot.executionPlan,proposalLanguage)});
+    if(snapshot?.executionPlan)sections.push({id:REPORT_EXECUTION_SECTION_ID,title:snapshot.executionPlan.parameterOrigin==='system_observation'?'系统保留的观察计划 / System observation plan':'执行策略草案 / Execution strategy proposal',content:renderReportExecutionPlan(snapshot.executionPlan,proposalLanguage)});
     else if(snapshot?.executionPlanError)sections.push({id:REPORT_EXECUTION_SECTION_ID,title:'执行策略草案 / Execution strategy proposal',content:snapshot.executionPlanError==='invalid'?'本次策略参数未通过校验，尚无可执行方案。请补充条件后重新生成研究。 / Strategy parameters failed validation; no executable proposal is available.':'本次报告未返回结构化执行策略，尚无可执行方案。可更新分析补齐。 / This report did not return a structured execution proposal. Update the analysis to obtain one.'});
     if (!sections.length) throw new BadRequestException('REPORT_EMPTY_SOURCE');
     return { input: { title, kind: source.type, ticker, content: sections.map(s => `## ${s.title}\n\n${s.content}`).join('\n\n'), sections }, sourceKey, snapshot };

@@ -10,18 +10,21 @@ import { readableResearchText } from '@/utils/research-experience';
 import ResearchMarkdown from '@/components/ResearchMarkdown';
 import TodaySummary from './TodaySummary';
 import CouncilMemberAvatar from '../Council/CouncilMemberAvatar';
+import type { StrategySourceInput } from '@shared/user-investment-strategy.interface';
+import InvestmentStrategySourceDialog from './InvestmentStrategySourceDialog';
 import ReportExecutionPlan from '@/components/ReportExecutionPlan';
 import ResumeDailyReportButton from './ResumeDailyReportButton';
 
-export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable = true, primary = false, summary,activityView }: {
+export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable = true, primary = false, summary,activityView,onAddToStrategy }: {
   view: CurrentResearchView; topicKey: string; date?: string; aiAvailable?: boolean; primary?: boolean; summary?: string | null;
-  activityView?:CurrentResearchView;
+  activityView?:CurrentResearchView;onAddToStrategy?:(source:StrategySourceInput)=>void;
 }) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
   const client = useQueryClient();
   const intent = useRef(createRequestIntent(() => crypto.randomUUID()));
   const cancelIntent = useRef(createRequestIntent(() => crypto.randomUUID()));
   const [now, setNow] = useState(Date.now);
+  const [strategySource,setStrategySource]=useState<StrategySourceInput|null>(null);
   const reformatIntent=useRef(createRequestIntent(()=>crypto.randomUUID()));
   const applyResearch = (data: CurrentResearchView) => {
     client.setQueryData(['current-research', topicKey, date], data);
@@ -66,7 +69,7 @@ export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable
       {current.updatedAt && <p className="mt-1 text-xs text-muted-foreground">{zh ? '更新于 ' : 'Updated '}{new Date(current.updatedAt).toLocaleString(i18n.language)}</p>}
     </div></div><div className="flex min-w-0 flex-wrap gap-2">{!formattingPending&&<Button size="sm" disabled={updating || !aiAvailable} onClick={() => refresh.mutate()}>{updating ? (zh ? '更新中…' : 'Updating…') : activity.state === 'failed' || refresh.isError ? (zh ? '重试分析' : 'Retry analysis') : factsOnly ? (zh ? '开始分析' : 'Start analysis') : (zh ? '更新分析' : 'Update analysis')}</Button>}
       {updating && topicKey === 'portfolio' && <Button size="sm" variant="outline" disabled={cancel.isPending || activity.cancelling} onClick={() => cancel.mutate()}>{cancel.isPending || activity.cancelling ? (zh ? '正在停止…' : 'Stopping…') : (zh ? '停止分析' : 'Stop analysis')}</Button>}
-      <Button size="sm" variant="outline" asChild><Link to={askPath}>{zh ? '和股友聊聊' : 'Discuss with stock friends'}</Link></Button></div></header>
+      <Button size="sm" variant="outline" asChild><Link to={askPath}>{zh ? '和股友聊聊' : 'Discuss with stock friends'}</Link></Button>{current.documentId&&current.readingState!=='pending'&&<Button size="sm" variant="outline" onClick={()=>{const source:StrategySourceInput={kind:'report',versionId:current.documentId!};if(onAddToStrategy)onAddToStrategy(source);else setStrategySource(source);}}>{zh?'选择其他报告内容':'Choose other report content'}</Button>}</div></header>
     {updating && <div className="rounded-xl bg-primary/5 p-3 text-sm"><p role="status" className="font-medium">{activity.cancelling ? (zh ? '正在确认执行任务已停止，尚未重新发送。' : 'Confirming that the original task has stopped. No new request has been sent.') : readableResearchText(activity.progress?.message) || (zh ? '分析请求已收到，等待执行股友的最新进度。' : 'Analysis requested. Waiting for the latest status from your stock friends.')}</p>{activity.executorLabel && <p className="mt-1 text-xs text-muted-foreground">{activity.executorLabel}</p>}{elapsed !== null && Number.isFinite(elapsed) && <p aria-live="off" className="mt-1 text-xs tabular-nums text-muted-foreground">{zh ? '已用时 ' : 'Elapsed '}{elapsed < 60 ? `${elapsed}${zh ? '秒' : 's'}` : `${Math.floor(elapsed / 60)}${zh ? '分' : 'm'} ${elapsed % 60}${zh ? '秒' : 's'}`}</p>}</div>}
     {cancel.isError && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{zh ? '停止操作尚未确认，可以重试。原任务的资料继续保留。' : 'Stopping is not confirmed. Retry; the original research remains available.'}</p>}
     {(!formattingPending || readableSummary) && <TodaySummary summary={readableSummary} aiAvailable={aiAvailable} factsOnly={factsOnly} />}
@@ -78,8 +81,9 @@ export default function CurrentAnalysisPanel({ view, topicKey, date, aiAvailable
     {(current.risks?.length || current.nextChecks?.length) ? <div className="grid gap-4 text-sm sm:grid-cols-2">{[[zh ? '主要风险' : 'Main risks', current.risks], [zh ? '接下来关注' : 'Next checks', current.nextChecks]].map(([label, items]) => Array.isArray(items) && items.length > 0 && <div key={String(label)} className="min-w-0"><h3 className="mb-1 font-medium">{String(label)}</h3><ul className="list-disc space-y-1 pl-4 text-muted-foreground">{items.slice(0, 2).map(item => <li key={item} className="[overflow-wrap:anywhere]">{readableResearchText(item)}</li>)}</ul></div>)}</div> : null}
     {readableResearchText(current.changeSummary) && <p className="rounded-lg bg-primary/5 p-3 text-sm">{readableResearchText(current.changeSummary)}</p>}
     {content && (primary || readableSummary ? <details className="min-w-0 border-t pt-3 text-sm"><summary className="cursor-pointer font-medium">{zh ? '展开完整研究' : 'Read full research'}</summary><div className="mt-4 min-w-0"><ResearchMarkdown>{content}</ResearchMarkdown></div></details> : <ResearchMarkdown>{content}</ResearchMarkdown>)}
-    {current.documentId && current.readingState !== 'pending' && <ReportExecutionPlan key={current.documentId} versionId={current.documentId} />}
+    {current.documentId && current.readingState !== 'pending' && <ReportExecutionPlan key={current.documentId} versionId={current.documentId} onAddToStrategy={source => { if (onAddToStrategy) onAddToStrategy(source); else setStrategySource(source); }} />}
     {!formattingPending&&(activity.state === 'failed' || refresh.isError) && <div role="alert" className="space-y-1 rounded-xl bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300"><p>{zh ? '本次更新未完成，上次完整分析继续保留。可以重试本次分析。' : 'The update did not complete. The last complete analysis remains available. Retry this analysis when ready.'}</p>{readableResearchText(activity.error) && <p className="[overflow-wrap:anywhere]">{readableResearchText(activity.error).slice(0, 280)}</p>}</div>}
+    <InvestmentStrategySourceDialog source={strategySource} onClose={()=>setStrategySource(null)}/>
     {current.dataAsOf && <p className="text-xs text-muted-foreground">{zh ? '数据截至：' : 'Data as of: '}{current.dataAsOf}</p>}
     <div className="flex justify-end"><Link className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" to="/analysis#report-history">{zh?'报告历史':'Report history'}</Link></div>
   </section>;

@@ -35,6 +35,7 @@ const noPlanReport = { id: 'long-research', content: longResearch, snapshot: { e
 ] };
 
 function longResearchState(state) {
+  state.responses = new Map([['/api/investment-strategies/import-source', { id: 'saved-draft' }]]);
   state.queries.set('investment-strategy-source-report', { data: { version: noPlanReport } });
   state.queries.set('investment-strategy-source', { data: { source: { title: 'Full research', createdAt: '2026-11-07T00:00:00Z' },
     entries: [{ id: 'one', text: longResearch.slice(0, 12000) }, { id: 'two', text: longResearch.slice(12000) }], alreadyAdded: false } });
@@ -81,6 +82,23 @@ test('a rejected plan object never becomes the default execution section and kee
     assert.equal(picker.querySelector('option[value="execution-strategy"]'), null);
     assert.match(document.body.textContent, /no validated structured execution proposal/);
     assert.equal([...document.querySelectorAll('button')].find(button => button.textContent === 'Save to draft').disabled, false);
+  }));
+
+test('a system observation remains selectable with the original AI failure and avoids irrelevant trading limits', async () =>
+  withSourceDialog(state => {
+    const executionPlan = { parameterOrigin: 'system_observation', readiness: 'no_trade', noTradeReason: 'The AI proposal failed validation. This system observation does not authorize trading.',
+      strategy: { entries: [{ id: 'watch', text: 'Review the next filing.' }] }, preview: { entries: [], issues: [] }, gaps: [] };
+    state.queries.set('investment-strategy-source-report', { data: { version: { id: 'observation-report', content: 'Saved research', snapshot: { executionPlan, executionPlanError: 'invalid' },
+      sections: [{ id: 'summary', title: 'Research', content: 'Saved research' }, { id: 'execution-strategy', title: 'System observation plan', content: executionPlan.noTradeReason }] } } });
+    state.queries.set('investment-strategy-source', { data: { source: { title: 'System observation plan', createdAt: '2026-11-07T00:00:00Z', executionPlan }, entries: executionPlan.strategy.entries, alreadyAdded: false } });
+    state.responses = new Map([['/api/investment-strategies/import-source', { id: 'observation-draft' }]]);
+  }, { source: { kind: 'report', versionId: 'observation-report' } }, async ({ state }) => {
+    assert.equal(document.querySelector('select[aria-label="Report content to add"]').value, 'execution-strategy');
+    assert.match(document.body.textContent, /system observation/); assert.match(document.body.textContent, /failed validation/);
+    assert.doesNotMatch(document.body.textContent, /AI-proposed risk limits|Complete and review risk limits/);
+    await React.act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Save to draft').click());
+    assert.equal(state.requests[0].args[1].source.sectionId, 'execution-strategy');
+    assert.equal(document.querySelector('a').getAttribute('href'), '/paper?investmentStrategyId=observation-draft#investment-strategy');
   }));
 
 test('preview failures explain a draft period conflict and source capacity without suggesting a generic close-and-reopen', async () => {
@@ -142,7 +160,7 @@ test('adding a report first shows its immutable addition and only saves after th
     assert.equal(state.requests[0].args[0], '/api/investment-strategies/import-source');
     assert.equal(state.requests[0].args[1].source.versionId, 'exact-version');
     assert.match(document.body.textContent, /Saved to your strategy draft/);
-    assert.equal([...document.querySelectorAll('a')].find(link => link.textContent === 'Edit on Today').getAttribute('href'), '/');
+    assert.equal([...document.querySelectorAll('a')].find(link => link.textContent === 'Review in AI simulation').getAttribute('href'), '/paper?investmentStrategyId=new-draft#investment-strategy');
     assert.doesNotMatch(state.requests[0].args[0], /apply|publish/);
   } finally {
     await React.act(async () => root.unmount());

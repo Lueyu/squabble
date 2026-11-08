@@ -55,7 +55,7 @@ import type { CouncilMessageInput, CouncilMessage, CouncilReviewContext, ForkCou
 import { normalizeThread, freezeThreadContext, threadPromptContext, isPortfolioThread, hasThreadContext, hasDeliberation } from './council.thread';
 import { readableResearch } from '../../../shared/research-reading';
 import { dailyResearchPrompt, dailyResearchTurns, renderDailyReverseCheck, reportExecutionEvidence } from './council.daily';
-import { parseReportExecutionPlan } from '../paper-trading/report-execution-plan';
+import { createReportObservationPlan, parseReportExecutionPlan } from '../paper-trading/report-execution-plan';
 
 type SessionRow = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 type ReportRow = typeof councilReports.$inferSelect;
@@ -1443,6 +1443,10 @@ export class CouncilService implements OnModuleInit {
             ...(['unable_to_verify','critical_counterevidence'].includes(check.outcome)?check.gaps:[])];
           executionPlan=parseReportExecutionPlan({...executionPlan,gaps:[...new Set(gateGaps)].slice(0,40)},new Set(current.evidenceSnapshot.map(e=>e.id)));
         }catch{executionPlan=undefined;executionPlanError='invalid';}
+        if(!executionPlan){
+          const [preferences]=await tx.select({timezone:experiencePreferences.timezone}).from(experiencePreferences).where(eq(experiencePreferences.owner,userId));
+          executionPlan=createReportObservationPlan(executionPlanError??'missing',opinion.nextReviewCondition,row.language,preferences?.timezone??'Asia/Shanghai');
+        }
         coverage={goal:'comprehensive',cycleId:current.checkpoint.cycleId,revision:row.revision,complete,tasks:[],reverseCheck:check,
           independentDeliveriesComplete:deliveriesComplete,
           ...(inputCorrection?{inputCorrection}:{}),

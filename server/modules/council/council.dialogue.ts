@@ -109,7 +109,11 @@ export function parseContribution(value: unknown, validIds: Set<string>, turn: D
   let executionPlanError:DiscussionContribution['executionPlanError'];
   if(turn.phase==='summary'&&!candidate){
     if(data.executionPlan===undefined)executionPlanError='missing';
-    else try{executionPlan=parseReportExecutionPlan(data.executionPlan,validIds);}catch{executionPlanError='invalid';}
+    else try{
+      if(!data.executionPlan||typeof data.executionPlan!=='object'||!('parameterOrigin' in data.executionPlan)
+        ||data.executionPlan.parameterOrigin!=='ai_proposed')throw new Error('MODEL_PROPOSAL_ORIGIN_INVALID');
+      executionPlan=parseReportExecutionPlan(data.executionPlan,validIds);
+    }catch{executionPlanError='invalid';}
   }
   const opinion:CouncilOpinion|null = turn.phase === 'summary'
     ? candidate ? { ...parseOpinion({ ...data, summary: content }, validIds), summary: reportContent }

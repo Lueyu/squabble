@@ -56,9 +56,8 @@ test('an empty portfolio leads with import while retaining cash and strategy acc
   const html = render(Page);
   assert.match(html, /href="\/import"[^>]*>Import my holdings/);
   assert.match(html, /href="\/paper"[^>]*>Try with simulated cash/);
-  assert.match(html, /Ask in the channel/);
   assert.match(html, /Confirm cash/);
-  assert.match(html, /Write a strategy/);
+  assert.match(html, /href="\/paper"[^>]*>Manage simulation strategy/);
   assert.doesNotMatch(html, /Full portfolio analysis/);
 });
 test('settings names actual participants and stops selecting a fourth connection', () => {

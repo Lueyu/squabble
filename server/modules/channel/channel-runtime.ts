@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { paperAccounts, paperOrders, paperPositions, paperSnapshots, paperTrades } from '../../database/schema';
 import { investmentPolicies } from '../../database/investment-policy.schema';
@@ -32,17 +32,18 @@ export async function readRuntimeInSnapshot(db: Pick<PostgresJsDatabase, 'select
   const account = accounts[0];
   const [policies, drafts] = await Promise.all([
     account ? db.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, account.id), ne(investmentPolicies.status, 'archived'))).limit(1) : Promise.resolve([]),
-    db.select().from(userInvestmentStrategies).where(and(eq(userInvestmentStrategies.owner, owner), eq(userInvestmentStrategies.status, 'draft'))).orderBy(desc(userInvestmentStrategies.updatedAt)).limit(10),
+    db.select().from(userInvestmentStrategies).where(and(eq(userInvestmentStrategies.owner, owner), eq(userInvestmentStrategies.status, 'draft'), isNull(userInvestmentStrategies.deletedAt))).orderBy(desc(userInvestmentStrategies.updatedAt)).limit(10),
   ]);
   const policy = policies[0], strategy = policy?.baseConfig.userStrategy;
   const now = Date.now();
   const strategyExpired = Boolean(strategy && Date.parse(strategy.content.endsAt) <= now);
   const strategyNotStarted = Boolean(strategy && Date.parse(strategy.content.startsAt) > now);
   const allEntriesExpired = Boolean(strategy?.content.entries.length && strategy.content.entries.every(entry => Date.parse(entry.endsAt ?? strategy.content.endsAt) <= now));
+  const observationOnly = Boolean(strategy?.preview && !strategy.preview.directives?.length && !strategy.preview.mandateRules?.length);
   const monitoringStatus: ChannelRuntimeSnapshot['monitoringStatus'] = !strategy ? 'observing' : policy?.status === 'paused' ? 'paused'
-    : strategyExpired || allEntriesExpired || !account?.botEnabled || process.env.PAPER_TRADING_ENABLED === 'false' ? 'stopped' : strategyNotStarted ? 'observing' : 'running';
+    : strategyExpired || allEntriesExpired || !account?.botEnabled || process.env.PAPER_TRADING_ENABLED === 'false' ? 'stopped' : observationOnly || strategyNotStarted ? 'observing' : 'running';
   const monitoringReason = !strategy ? 'NO_APPLIED_STRATEGY' : policy?.status === 'paused' ? 'PAUSED_INCLUDING_PROTECTIVE_EXITS'
-    : strategyExpired ? 'STRATEGY_EXPIRED' : allEntriesExpired ? 'ALL_ENTRIES_EXPIRED' : !account?.botEnabled || process.env.PAPER_TRADING_ENABLED === 'false' ? 'EXECUTION_DISABLED' : strategyNotStarted ? 'STRATEGY_NOT_STARTED' : null;
+    : strategyExpired ? 'STRATEGY_EXPIRED' : allEntriesExpired ? 'ALL_ENTRIES_EXPIRED' : !account?.botEnabled || process.env.PAPER_TRADING_ENABLED === 'false' ? 'EXECUTION_DISABLED' : observationOnly ? 'OBSERVATION_ONLY' : strategyNotStarted ? 'STRATEGY_NOT_STARTED' : null;
   const [positions, cash, orders, trades, snapshots] = account ? await Promise.all([
     db.select().from(paperPositions).where(and(eq(paperPositions.owner, owner), eq(paperPositions.accountId, account.id))),
     db.select().from(simulationCash).where(and(eq(simulationCash.owner, owner), eq(simulationCash.accountId, account.id))),
@@ -59,7 +60,7 @@ export async function readRuntimeInSnapshot(db: Pick<PostgresJsDatabase, 'select
       rules: strategy ? strategy.content.entries.map(entry => {
         const expired = Date.parse(entry.endsAt ?? strategy.content.endsAt) <= now || strategyExpired;
         const notStarted = Date.parse(entry.startsAt ?? strategy.content.startsAt) > now || strategyNotStarted;
-        const reason = policy?.status === 'paused' ? 'paused' as const : expired ? 'expired' as const : notStarted ? 'not_started' as const : monitoringStatus !== 'running' ? 'stopped' as const : null;
+        const reason = policy?.status === 'paused' ? 'paused' as const : expired ? 'expired' as const : notStarted ? 'not_started' as const : observationOnly ? 'observation_only' as const : monitoringStatus !== 'running' ? 'stopped' as const : null;
         return { id: entry.id, label: entry.ticker ?? strategy.content.title,
           status: 'active' as const, effective: reason === null, effectiveReason: reason,
           value: entry.directive?.stopLossPrice !== undefined ? `保护线 ${entry.directive.stopLossPrice}` : entry.directive?.trigger.price !== undefined ? `触发价 ${entry.directive.trigger.price}` : entry.text };

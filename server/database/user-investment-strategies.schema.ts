@@ -7,6 +7,7 @@ export const userInvestmentStrategies = pgTable('user_investment_strategies', {
   status: text('status').$type<'draft' | 'confirmed'>().notNull().default('draft'), content: jsonb('content').$type<StrategyDraftInput>().notNull(),
   sources: jsonb('sources').$type<StrategySourceSnapshot[]>().notNull().default([]), preview: jsonb('preview').$type<StrategyExecutionPreview | null>(),
   confirmedAt: timestamp('confirmed_at', { withTimezone: true }), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, table => [index('user_investment_strategies_owner_updated').on(table.owner, table.updatedAt)]);
 export const userInvestmentStrategyRevisions = pgTable('user_investment_strategy_revisions', {

@@ -1,13 +1,14 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { simulationReviewGapText } from '@shared/simulation-review-reading';
 import type { AiInvestmentPreview, InvestmentConstraint } from '@shared/investment-policy.interface';
 import { fetchAiInvestment, previewAiInvestment, pauseAiInvestment, resumeAiInvestment, pauseLegacyInvestment, proposeInvestmentConstraint, revokeInvestmentConstraint, type ConstraintProposal } from '@/api/ai-investment';
 import { reviewSimulationExperiment, listSimulationExperiments } from '@/api/simulation-experiments';
 import { fetchStrategyMandates } from '@/api/strategy-mandates';
 import { createRequestIntent } from '@/utils/simple-experience';
-import { constraintDraft, returnLabel, validCashSeed } from '@/utils/ai-investment';
+import { constraintDraft, effectiveInvestmentStatus, returnLabel, validCashSeed } from '@/utils/ai-investment';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ConstraintProposalCard from '@/pages/Council/ConstraintProposalCard';
@@ -15,6 +16,7 @@ import InvestmentStatus from './InvestmentStatus';
 import StartInvestmentCard, { limitLabels } from './StartInvestmentCard';
 import DecisionCard from './DecisionCard';
 import LegacyDecisionPage from './LegacyDecisionPage';
+import InvestmentStrategySection from '../Today/InvestmentStrategySection';
 
 export function constraintLabel(constraint: InvestmentConstraint, zh: boolean) {
   switch (constraint.kind) {
@@ -35,6 +37,10 @@ export default function AiInvestmentPage() {
 
 function AiInvestmentAccount() {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh'); const client = useQueryClient();
+  const [params] = useSearchParams();
+  const requestedStrategyId = params.get('investmentStrategyId');
+  const requestedOrderId = params.get('orderId');
+  const locatedOrder = useRef<string | null>(null);
   const query = useQuery({ queryKey: ['ai-investment'], queryFn: fetchAiInvestment, refetchInterval: 10_000 });
   const data = query.data; const accountId = data?.account?.id;
   const review = useQuery({ queryKey: ['investment-performance', accountId], queryFn: () => reviewSimulationExperiment(accountId!), enabled: Boolean(accountId), refetchInterval: 30_000, retry: false });
@@ -49,6 +55,14 @@ function AiInvestmentAccount() {
   const [restrictionMarkets, setRestrictionMarkets] = useState<Array<'US' | 'HK' | 'CN'>>([]); const [restrictionExpiry, setRestrictionExpiry] = useState('');
   const intent = useRef(createRequestIntent(() => crypto.randomUUID())); const lock = useRef(false);
   const history = useQuery({ queryKey: ['investment-history'], queryFn: listSimulationExperiments, enabled: historyOpen || Boolean(data?.policy), retry: false });
+  useEffect(() => {
+    if (!requestedOrderId) { locatedOrder.current = null; return; }
+    if (locatedOrder.current === requestedOrderId) return;
+    const element = document.getElementById(`paper-order-${requestedOrderId}`);
+    if (!element) return;
+    element.scrollIntoView({ block: 'center' });
+    locatedOrder.current = requestedOrderId;
+  }, [requestedOrderId, data?.actions]);
   const mutate = async (kind: string, payload: object, work: (requestKey: string) => Promise<unknown>, after?: () => void) => {
     if (lock.current) return; lock.current = true; setPending(true); setError('');
     try { await work(intent.current.keyFor({ kind, ...payload })); intent.current.complete(); after?.(); await client.invalidateQueries({ queryKey: ['ai-investment'] }); }
@@ -67,35 +81,41 @@ function AiInvestmentAccount() {
   const percentage = (value: string | null | undefined) => value == null ? null : Number(value);
   const buyHoldReturn = reviewData?.buyAndHoldEquityUsd != null && Number(reviewData.initialEquityUsd) > 0
     ? (Number(reviewData.buyAndHoldEquityUsd) / Number(reviewData.initialEquityUsd) - 1) * 100 : null;
-  const busyCycle = data.cycles.some(cycle => ['queued', 'researching'].includes(cycle.state));
-  const status = data.policy?.status === 'running' && busyCycle ? 'reassessing' : data.status;
+  const status = effectiveInvestmentStatus(data);
   const structuredRestriction = restrictionKind === 'text' ? null : constraintDraft({ kind: restrictionKind, ticker: restrictionTicker, percent: restrictionPercent, markets: restrictionMarkets, expiresAt: restrictionExpiry });
   return <div className="mx-auto w-full max-w-5xl space-y-6 p-3 pb-12 sm:p-6">
-    <header className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold">{zh ? 'AI 投资' : 'AI investing'}</h1><p className="mt-1 text-sm text-muted-foreground">{zh ? '按你确认的策略运行的独立模拟账户' : 'An independent simulated account following your confirmed strategy'}</p></div>
+    <header className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold">{zh ? 'AI 模拟盘' : 'AI simulation'}</h1><p className="mt-1 text-sm text-muted-foreground">{zh ? '核对策略后开始监控，成交和新建议会出现在频道。' : 'Review a strategy to start monitoring. Trades and new suggestions appear in the channel.'}</p></div>
       {started && data.currentStrategy && <Button variant={data.policy.status === 'paused' ? 'default' : 'outline'} disabled={pending} onClick={() => {
         const payload = { expectedRevision: data.policy!.revision };
         void mutate(data.policy!.status === 'paused' ? 'resume' : 'pause', payload, key => data.policy!.status === 'paused' ? resumeAiInvestment({ ...payload, requestKey: key }) : pauseAiInvestment({ ...payload, requestKey: key }));
       }}>{pending ? (zh ? '正在处理…' : 'Working…') : data.policy.status === 'paused' ? (zh ? '恢复并重新评估' : 'Resume and reassess') : (zh ? '暂停自动交易' : 'Pause automatic trading')}</Button>}</header>
-    <InvestmentStatus status={started && !data.currentStrategy ? 'observing' : status} lastHeartbeatAt={data.lastHeartbeatAt} />
+    <nav className="flex flex-wrap gap-2 text-sm" aria-label={zh ? '每日投资流程' : 'Daily investing journey'}>
+      <Button asChild variant="outline" size="sm"><Link to="/">{zh ? '1 · 看今日报告' : '1 · Read today’s report'}</Link></Button>
+      <Button asChild variant="outline" size="sm"><a href={started ? '#investment-strategy' : '#simulation-setup'} aria-current="step">{zh ? '2 · 管理模拟策略' : '2 · Manage simulation strategy'}</a></Button>
+      <Button asChild variant="outline" size="sm"><Link to="/council">{zh ? '3 · 看频道动态' : '3 · Follow the channel'}</Link></Button>
+    </nav>
+    <InvestmentStatus status={status} lastHeartbeatAt={data.lastHeartbeatAt} />
+    {!started && requestedStrategyId && <p role="status" className="rounded-xl bg-primary/5 p-4 text-sm leading-6">{zh ? '刚复制的策略已保存。先建立模拟账户，完成后会自动打开这份策略供你核对。' : 'Your copied strategy is saved. Create your simulated account below; then this strategy opens for your review.'}</p>}
     {error && <p role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
     {!started && !!data.legacyAccounts.length && <section className="space-y-3 rounded-xl border border-amber-500/30 p-4"><h2 className="font-semibold">{zh ? '已有旧版账户' : 'Existing legacy account'}</h2><p className="text-sm leading-6">{zh ? '旧自动交易将暂停，核对新的投资范围后继续。仅查看页面不会接管账户。' : 'Legacy automatic trading will pause once you confirm the new scope. Viewing this page does not take over the account.'}</p>{data.legacyAccounts.map(account => <div key={account.id} className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{account.name} · {account.botEnabled && account.active ? (zh ? '旧自动交易已开启' : 'Legacy automatic trading enabled') : (zh ? '未自动交易' : 'Automatic trading disabled')}</span>{account.active && account.botEnabled && <Button size="sm" variant="outline" disabled={pending} onClick={() => void mutate('legacy-pause', { accountId: account.id }, key => pauseLegacyInvestment(account.id, key))}>{zh ? '暂停全部自动交易' : 'Pause all automatic trading'}</Button>}</div>)}</section>}
-    {(!started || restart) && !preview && <section className="space-y-4 rounded-xl border bg-card p-4 sm:p-6"><h2 className="text-lg font-semibold">{restart ? (zh ? '从新的起点重新开始' : 'Start again from a fresh seed') : (zh ? '复制当前持仓' : 'Copy current holdings')}</h2><p className="text-sm leading-6 text-muted-foreground">{zh ? '复制确认时的持仓和现金，之后独立运行，不自动跟随真实交易。没有持仓时先导入，或明确选择模拟现金。' : 'Copies the positions and cash you confirm, then runs independently from later real trades. Import holdings first or choose an explicit simulated cash amount.'}</p>
+    {(!started || restart) && !preview && <section id="simulation-setup" className="scroll-mt-6 space-y-4 rounded-xl border bg-card p-4 sm:p-6"><h2 className="text-lg font-semibold">{restart ? (zh ? '从新的起点重新开始' : 'Start again from a fresh seed') : (zh ? '建立你的模拟账户' : 'Create your simulated account')}</h2><p className="text-sm leading-6 text-muted-foreground">{zh ? '选择当前持仓或模拟现金作为起点。建立后再确认策略，之后独立运行。' : 'Start with your current holdings or simulated cash. Review a strategy after setup; the simulation then runs independently.'}</p>
       <div className="flex flex-wrap gap-2"><Button disabled={pending} onClick={() => prepare(false)}>{zh ? '复制当前持仓' : 'Copy current holdings'}</Button><Button variant="outline" asChild><Link to="/import">{zh ? '先导入持仓' : 'Import holdings first'}</Link></Button><Button variant="ghost" onClick={() => setCashMode(!cashMode)}>{zh ? '用模拟现金开始' : 'Start with simulated cash'}</Button></div>
       {cashMode && <form className="flex flex-wrap items-end gap-3" onSubmit={event => { event.preventDefault(); prepare(true); }}><label className="min-w-0 flex-1 space-y-2 text-sm"><span>{zh ? '模拟现金金额' : 'Simulated cash amount'}</span><Input type="number" min="0" step="any" value={amount} onChange={event => setAmount(event.target.value)} /></label><label className="space-y-2 text-sm"><span>{zh ? '币种' : 'Currency'}</span><select className="block h-9 rounded-md border bg-background px-2" value={currency} onChange={event => setCurrency(event.target.value as typeof currency)}>{['USD', 'HKD', 'CNY'].map(value => <option key={value}>{value}</option>)}</select></label><Button disabled={pending || !validCashSeed(amount, currency)} type="submit">{zh ? '预览起点' : 'Preview starting point'}</Button></form>}
     </section>}
     {preview && <StartInvestmentCard key={preview.id} preview={preview} restartAccountId={restart ? accountId : undefined}
       onRefresh={() => { setPreview(null); intent.current.complete(); prepare(); }} onStarted={() => { setPreview(null); setRestart(false); void query.refetch(); }} />}
+    {started && <InvestmentStrategySection timezone={data.policy?.baseConfig?.timezone ?? 'Asia/Shanghai'} />}
     {started && <>
-      <section className="space-y-4 rounded-xl border bg-card p-4 sm:p-6"><div className="grid gap-3 sm:grid-cols-3">{[[zh ? '模拟净资产（美元）' : 'Net assets (USD)', data.netAssetUsd], [zh ? '今日变化（美元）' : 'Today’s change (USD)', data.todayChangeUsd], [zh ? '创建以来收益' : 'Return since baseline', returnLabel(percentage(reviewData?.returnPct))]].map(([label, value]) => <div key={label} className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums">{value ?? '—'}</p></div>)}</div><div className="space-y-2 border-t pt-3"><h2 className="font-semibold">{zh ? '正在执行的策略' : 'Current strategy'}</h2><p className="text-sm">{data.currentStrategy?.content.title ?? (zh ? '先观察，等待选择策略' : 'Observing until you choose a strategy')}</p>{data.currentStrategy && <p className="text-xs text-muted-foreground">{zh ? '确认于' : 'Confirmed at'} {new Date(data.currentStrategy.confirmedAt).toLocaleString(i18n.language)}</p>}<Button asChild size="sm" variant="outline"><Link to="/#investment-strategy">{zh ? '到今日查看和应用策略' : 'View and apply strategy on Today'}</Link></Button></div>{data.lastCheckAt && <p className="text-xs text-muted-foreground">{zh ? '最近检查' : 'Last check'} {new Date(data.lastCheckAt).toLocaleString(i18n.language)}</p>}{!!data.waitingReasons?.length && <details className="text-sm"><summary className="cursor-pointer">{zh ? '检查结果和等待原因' : 'Checks and reasons for waiting'}</summary><ul className="mt-2 list-inside list-disc space-y-1 break-words text-xs text-muted-foreground">{data.waitingReasons.map(reason => <li key={reason}>{reason}</li>)}</ul></details>}</section>
+      <section className="space-y-4 rounded-xl border bg-card p-4 sm:p-6"><div className="grid gap-3 sm:grid-cols-3">{[[zh ? '模拟净资产（美元）' : 'Net assets (USD)', data.netAssetUsd], [zh ? '今日变化（美元）' : 'Today’s change (USD)', data.todayChangeUsd], [zh ? '创建以来收益' : 'Return since baseline', returnLabel(percentage(reviewData?.returnPct))]].map(([label, value]) => <div key={label} className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums">{value ?? '—'}</p></div>)}</div><div className="space-y-2 border-t pt-3"><h2 className="font-semibold">{zh ? '当前策略' : 'Current strategy'}</h2><p className="text-sm">{data.currentStrategy?.content.title ?? (zh ? '先观察，等待选择策略' : 'Observing until you choose a strategy')}</p>{data.currentStrategy && <p className="text-xs text-muted-foreground">{zh ? '确认于' : 'Confirmed at'} {new Date(data.currentStrategy.confirmedAt).toLocaleString(i18n.language)}</p>}<Button asChild size="sm" variant="outline"><a href="#investment-strategy">{zh ? '查看和修改策略' : 'View and edit strategy'}</a></Button></div>{data.lastCheckAt && <p className="text-xs text-muted-foreground">{zh ? '最近检查' : 'Last check'} {new Date(data.lastCheckAt).toLocaleString(i18n.language)}</p>}{!!data.waitingReasons?.length && <details className="text-sm"><summary className="cursor-pointer">{zh ? '检查结果和等待原因' : 'Checks and reasons for waiting'}</summary><ul className="mt-2 list-inside list-disc space-y-1 break-words text-xs text-muted-foreground">{data.waitingReasons.map(reason => <li key={reason}>{reason}</li>)}</ul></details>}</section>
       <section className="space-y-4 rounded-xl border bg-card p-4 sm:p-6"><h2 className="text-lg font-semibold">{zh ? '从同一起点以来' : 'Since the same starting point'}</h2><div className="grid gap-3 sm:grid-cols-3">{[[zh ? 'AI 账户' : 'AI account', returnLabel(percentage(reviewData?.returnPct))], [zh ? '起点持仓保持不动' : 'Keep starting holdings unchanged', returnLabel(buyHoldReturn)], [zh ? '相对起点持仓' : 'Versus starting holdings', returnLabel(percentage(reviewData?.excessReturnPct))]].map(([label, value]) => <div key={label} className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums">{value}</p></div>)}</div>
         {history.data?.find(account => account.id === accountId)?.sourceChanged && <p className="text-sm text-muted-foreground">{zh ? '真实盘已变化。此处继续比较同一起点，真实交易不会自动复制到 AI 账户。' : 'Your real portfolio has changed. This comparison keeps the original seed; real trades are not automatically copied to the AI account.'}</p>}
         <p className="text-xs leading-6 text-muted-foreground">{zh ? '使用相同起点、估值币种和可获得资料；真实持仓的后续交易不计入此对照。' : 'Uses the same seed, valuation currency and available data. Later real-account trades are outside this comparison.'}</p>
         {!reviewData && <p className="text-sm text-muted-foreground">{zh ? '缺少可信区间或估值，收益暂时未知。' : 'Returns are unknown without reliable boundaries and valuation.'}</p>}
-        {!!reviewData?.gaps.length && <ul className="list-inside list-disc space-y-1 text-xs text-muted-foreground">{reviewData.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
+        {!!reviewData?.gaps.length && <ul className="list-inside list-disc space-y-1 text-xs text-muted-foreground">{reviewData.gaps.map(gap => <li key={gap}>{simulationReviewGapText(gap, zh)}</li>)}</ul>}
         {reviewData && <p className="text-xs text-muted-foreground">{zh ? '累计费用（美元）' : 'Cumulative fees (USD)'} {reviewData.feesUsd} · {zh ? '估值截至' : 'Valuation as of'} {reviewData.valuationAsOf || (zh ? '未知' : 'Unknown')}</p>}
       </section>
       <section className="space-y-3 rounded-xl border bg-card p-4 sm:p-6"><h2 className="text-lg font-semibold">{zh ? '当前投资思路' : 'Current investment thinking'}</h2><p className="whitespace-pre-wrap break-words text-sm leading-7">{data.currentThinking || (zh ? '正在核对当前资料；没有足够依据时继续观察。' : 'Checking current information; observe while evidence is insufficient.')}</p>{data.cycles.filter(cycle => cycle.reason).map(cycle => <p key={cycle.id} className="break-words text-sm text-muted-foreground">{cycle.market} · {cycle.reason}</p>)}<Button asChild size="sm" variant="outline"><Link to="/council">{zh ? '和大家聊聊' : 'Discuss with the team'}</Link></Button></section>
-      <section className="space-y-3"><h2 className="text-lg font-semibold">{zh ? '最近行动' : 'Recent actions'}</h2>{data.actions.length ? <div className="grid gap-3 md:grid-cols-2">{data.actions.map(action => <DecisionCard key={action.id} action={action} decision={decisions.data?.decisions.find(decision => decision.orderId === action.id)} />)}</div> : <p className="rounded-xl border p-4 text-sm text-muted-foreground">{zh ? '尚无模拟成交。继续观察也是完整判断。' : 'No simulated trades yet. Continuing to observe is a complete decision.'}</p>}</section>
+      <section className="space-y-3"><h2 className="text-lg font-semibold">{zh ? '最近行动' : 'Recent actions'}</h2>{data.actions.length ? <div className="grid gap-3 md:grid-cols-2">{data.actions.map(action => <div key={action.id} id={`paper-order-${action.id}`} className={requestedOrderId === action.id ? 'scroll-mt-6 rounded-xl ring-2 ring-primary' : undefined}><DecisionCard action={action} decision={decisions.data?.decisions.find(decision => decision.orderId === action.id)} /></div>)}</div> : <p className="rounded-xl border p-4 text-sm text-muted-foreground">{zh ? '尚无模拟成交。继续观察也是完整判断。' : 'No simulated trades yet. Continuing to observe is a complete decision.'}</p>}</section>
       <section className="space-y-3 rounded-xl border p-4 sm:p-6"><h2 className="text-lg font-semibold">{zh ? '当前持仓' : 'Current positions'}</h2>{data.holdings.length ? data.holdings.map(holding => <div key={holding.id} className="flex flex-wrap justify-between gap-2 border-b py-2 text-sm last:border-0"><Link className="font-medium text-primary underline" to={`/analysis?ticker=${encodeURIComponent(holding.ticker)}`}>{holding.ticker}</Link><span>{holding.shares} · {holding.currency} · {zh ? '模拟成本' : 'Simulation cost'} {Number(holding.avgCost) > 0 ? holding.avgCost : (zh ? '等待起点估值' : 'Awaiting initial valuation')}{holding.originalCost !== undefined && <span className="ml-2 text-xs text-muted-foreground">{zh ? '原成本参考' : 'Original cost reference'} {holding.originalCost ?? (zh ? '未知' : 'Unknown')}</span>}</span></div>) : <p className="text-sm text-muted-foreground">{zh ? '当前为空仓。' : 'No current positions.'}</p>}</section>
       <details className="rounded-xl border p-4 sm:p-6"><summary className="cursor-pointer font-semibold">{zh ? '投资限制与账户设置' : 'Investment restrictions and account settings'}</summary><div className="mt-4 space-y-5">
         <dl className="grid gap-2 text-sm sm:grid-cols-2">{Object.entries(limitLabels(zh)).map(([key, label]) => <div key={key}><dt className="text-xs text-muted-foreground">{label}</dt><dd>{data.limits[key]}%</dd></div>)}</dl>

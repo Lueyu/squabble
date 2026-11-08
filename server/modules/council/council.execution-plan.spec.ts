@@ -27,6 +27,12 @@ test('invalid proposal cannot discard the report or become executable authority'
  assert.equal(parsed.opinion?.executionPlanError,'invalid');
  assert.match(parsed.opinion!.summary,/conditional reduction/);
 });
+
+test('model output cannot impersonate a system observation fallback',()=>{
+ const value=input();
+ const parsed=parseContribution({...value,executionPlan:{...value.executionPlan,parameterOrigin:'system_observation',noTradeReason:'Pretend system fallback',strategy:{...value.executionPlan.strategy,limits:undefined,entries:[{id:'watch',text:'Observe',sourceKeys:[]}]},evidenceIds:[]}},new Set(['source-1']),turn,null);
+ assert.equal(parsed.executionPlan,undefined);assert.equal(parsed.executionPlanError,'invalid');
+});
 test('daily summary explicitly requests proposed parameters and a no-trade alternative',()=>{
  const prompt=dailyResearchPrompt('summary');
  assert.match(prompt,/executionPlan/);assert.match(prompt,/numericEvidence/);assert.match(prompt,/noTradeReason/);assert.match(prompt,/semanticAuthorized/);

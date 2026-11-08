@@ -14,11 +14,11 @@ Report-source readability, long observation splitting and preview/save capacity 
 
 | Route | Current experience | Retained or shared surface |
 |---|---|---|
-| `/` | `client/src/pages/Today/TodayPage.tsx`: assets, daily research and investment strategy | `client/src/pages/Dashboard/DashboardPage.tsx` |
+| `/` | `client/src/pages/Today/TodayPage.tsx`: daily research first, assets and a link to simulation strategy management | `client/src/pages/Dashboard/DashboardPage.tsx` |
 | `/analysis` | `client/src/pages/Analysis/SimpleAnalysisPage.tsx` | `client/src/pages/Analysis/AnalysisPage.tsx` |
 | `/analysis/reports/:versionId` | `client/src/pages/Analysis/ResearchDocumentPage.tsx`, `SimpleReportReader.tsx`: exact immutable version and archived simulation-review reading | Shared; never replace requested ID with the latest report |
 | `/council` | `client/src/pages/Council/SimpleCouncilPage.tsx`, `client/src/pages/Channel/ChannelWorkbench.tsx`: channel projection, fact checks and actions | `client/src/pages/Council/CouncilPage.tsx`: retained research room |
-| `/paper` | `client/src/pages/Paper/AiInvestmentPage.tsx` | `client/src/pages/Paper/PaperPage.tsx` |
+| `/paper` | `client/src/pages/Paper/AiInvestmentPage.tsx`: setup, strategy editing/deletion and paper results | `client/src/pages/Paper/PaperPage.tsx` |
 | `/agent-builder` | Redirect to `/settings/agents` | `client/src/pages/AgentBuilder/AgentBuilderPage.tsx` |
 | `/holdings`, `/transactions`, `/import` | Recorded real assets and explicit imports | Shared pages in `client/src/pages/Holdings/`, `client/src/pages/Transactions/`, `client/src/pages/Import/` |
 | `/settings/*` | Connections, integrations, budgets, rules, appearance | `client/src/pages/Settings/SettingsPage.tsx` |
@@ -69,3 +69,5 @@ In the table, abbreviated filenames are siblings of the fully qualified director
 - Commands/tests: [development-and-tests.md](development-and-tests.md).
 - Installation discovery/operations: [deployment-and-recovery.md](deployment-and-recovery.md).
 - Documentation impact and synchronization: [maintenance.md](maintenance.md).
+
+Daily simulation loop reviewed against `5dc6bdd` plus this change: report copy opens `/paper?investmentStrategyId=…`; `InvestmentStrategySection` and `InvestmentStrategyEditor` remain in the Today source directory but mount in the simulation. `DELETE /api/investment-strategies/:id` removes a draft; `POST /api/ai-investment/remove-strategy` stops current execution while preserving history. Migration `44_strategy_draft_deletion.sql` adds draft tombstones. Actual fill publication is in `server/modules/channel/channel-executions.ts`; report briefs are compiled per strategy context.

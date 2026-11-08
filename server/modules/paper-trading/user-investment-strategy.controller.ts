@@ -29,6 +29,10 @@ export class UserInvestmentStrategyController {
   update(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number; content: StrategyDraftInput }) {
     return this.service.update(req.userContext.userId, id, body.expectedRevision, body.content);
   }
+  @NeedLogin() @Delete(':id')
+  deleteDraft(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number }) {
+    return this.service.deleteDraft(req.userContext.userId, id, body.expectedRevision);
+  }
   @NeedLogin() @Post(':id/add-source')
   addSource(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number; source: StrategySourceInput }) {
     return this.service.addSource(req.userContext.userId, id, body.expectedRevision, body.source);

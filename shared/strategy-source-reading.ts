@@ -7,8 +7,10 @@ type StrategyReportReading = { sections: ResearchDocumentSection[];
   snapshot?: { executionPlan?: unknown; executionPlanError?: unknown } | null };
 
 function sourceSections(version: StrategyReportReading): ResearchDocumentSection[] {
+  const plan = version.snapshot?.executionPlan;
+  const systemObservation = plan && typeof plan === 'object' && 'parameterOrigin' in plan && plan.parameterOrigin === 'system_observation';
   return version.sections.filter(section => section.id !== 'execution-strategy'
-    || Boolean(version.snapshot?.executionPlan) && !version.snapshot?.executionPlanError);
+    || Boolean(plan) && (!version.snapshot?.executionPlanError || systemObservation));
 }
 
 /** Missing/invalid proposal notices and raw metadata are not research to import. */

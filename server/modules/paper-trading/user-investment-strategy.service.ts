@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, lt, or } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -67,10 +67,10 @@ export class UserInvestmentStrategyService {
   private normalize(input: unknown) {
     try { return normalizeStrategyDraft(input); } catch { throw new BadRequestException('Invalid strategy text, entry, period or limits'); }
   }
-  private async row(tx: StrategyReadWrite, owner: string, id: string, lock = false): Promise<Row> {
+  private async row(tx: StrategyReadWrite, owner: string, id: string, lock = false, includeDeleted = false): Promise<Row> {
     if (!owner?.trim()) throw new BadRequestException('Strategy owner is required');
     if (!uuid.safeParse(id).success) throw new BadRequestException('Invalid strategy identifier');
-    const query = tx.select().from(strategies).where(and(eq(strategies.owner, owner), eq(strategies.id, id)));
+    const query = tx.select().from(strategies).where(and(eq(strategies.owner, owner), eq(strategies.id, id), includeDeleted ? undefined : isNull(strategies.deletedAt)));
     const [row] = await (lock ? query.for('update') : query);
     if (!row) throw new NotFoundException('Strategy not found'); return row;
   }
@@ -101,7 +101,7 @@ export class UserInvestmentStrategyService {
     const orderedAt = status === 'confirmed' ? strategies.confirmedAt : strategies.updatedAt;
     const anchorAt = status === 'confirmed' ? anchor?.confirmedAt : anchor?.updatedAt;
     if (anchor && !anchorAt) throw new BadRequestException('Strategy cursor has no saved timestamp');
-    const rows = await this.db.select().from(strategies).where(and(eq(strategies.owner, owner), eq(strategies.status, status),
+    const rows = await this.db.select().from(strategies).where(and(eq(strategies.owner, owner), eq(strategies.status, status), isNull(strategies.deletedAt),
       anchor && anchorAt ? or(lt(orderedAt, anchorAt), and(eq(orderedAt, anchorAt), lt(strategies.id, anchor.id))) : undefined))
       .orderBy(desc(orderedAt), desc(strategies.id)).limit(21);
     const items = rows.slice(0, 20).map(map);
@@ -146,6 +146,25 @@ export class UserInvestmentStrategyService {
   private assertDraft(row: Row, expectedRevision: number) {
     if (row.status !== 'draft' || row.revision !== expectedRevision) throw new ConflictException('Strategy changed or is immutable; reload the draft');
   }
+  async deleteDraft(owner: string, id: string, expectedRevision: number): Promise<{ deleted: true }> {
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      const row = await this.row(tx, owner, id, true, true);
+      this.assertDraft(row, expectedRevision);
+      if (!row.deletedAt) await tx.update(strategies).set({ deletedAt: new Date(), updatedAt: new Date() }).where(and(eq(strategies.owner, owner), eq(strategies.id, id)));
+      return { deleted: true };
+    });
+  }
+  /** Removing live authority keeps the immutable confirmation and its execution history. */
+  async removeCurrentInTransaction(tx: UserStrategyTransaction, owner: string, id: string, expectedRevision: number,
+    stop: () => Promise<void>): Promise<void> {
+    await lockMemoryOwner(tx, owner);
+    const row = await this.row(tx, owner, id, true);
+    const [pointer] = await tx.select().from(current).where(eq(current.owner, owner)).for('update');
+    if (row.status !== 'confirmed' || row.revision !== expectedRevision || pointer?.strategyId !== id) throw new ConflictException('Current strategy changed; reload before removing');
+    await stop();
+    await tx.delete(current).where(and(eq(current.owner, owner), eq(current.strategyId, id)));
+  }
   async update(owner: string, id: string, expectedRevision: number, input: StrategyDraftInput): Promise<UserInvestmentStrategy> {
     const content = this.normalize(input);
     return this.db.transaction(async tx => {
@@ -173,7 +192,7 @@ export class UserInvestmentStrategyService {
         const evidence = Array.isArray(version.snapshot?.evidence) ? version.snapshot.evidence : [];
         const evidenceIds = new Set<string>(evidence.flatMap(item => item && typeof item === 'object' && typeof item.id === 'string' ? [item.id] : []));
         try {
-          if (version.snapshot?.executionPlanError) throw new Error('Report execution proposal failed validation');
+          if (version.snapshot?.executionPlanError && version.snapshot.executionPlan?.parameterOrigin !== 'system_observation') throw new Error('Report execution proposal failed validation');
           executionPlan = parseReportExecutionPlan(version.snapshot?.executionPlan, evidenceIds);
         }
         catch { throw new BadRequestException('No validated report execution strategy is available; select another section for observation'); }
@@ -252,7 +271,8 @@ export class UserInvestmentStrategyService {
   async importSource(owner: string, source: StrategySourceInput, includeConfirmed = false): Promise<UserInvestmentStrategy> {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner); const snapshot = await this.resolveSource(tx, owner, source);
-      const existing = await tx.select().from(strategies).where(and(eq(strategies.owner, owner), includeConfirmed?undefined:eq(strategies.status, 'draft'))).orderBy(desc(strategies.updatedAt));
+      // Background report handoff respects a user's deleted draft. An explicit copy may create it again.
+      const existing = await tx.select().from(strategies).where(and(eq(strategies.owner, owner), includeConfirmed?undefined:eq(strategies.status, 'draft'), includeConfirmed?undefined:isNull(strategies.deletedAt))).orderBy(desc(strategies.updatedAt));
       const duplicate = existing.find(row => row.sources.some(item => item.key === snapshot.key)); if (duplicate) return map(duplicate);
       const base = snapshot.executionPlan?.strategy ?? this.emptyContent(); const addition = sourceAddition(base, [], snapshot);
       this.assertAdditionCapacity(0, 0, addition);
