@@ -61,6 +61,7 @@ export function nativeFailureCode(error: unknown): string {
     NATIVE_AGENT_TOOL_ISOLATION_FAILED: 'LOCAL_TOOL_ISOLATION_FAILED',
     NATIVE_AGENT_USAGE_LIMIT: 'LOCAL_USAGE_LIMIT',
     NATIVE_AGENT_RATE_LIMIT: 'LOCAL_RATE_LIMIT',
+    NATIVE_AGENT_NETWORK_FAILED: 'LOCAL_NETWORK_UNAVAILABLE',
   };
   return error instanceof Error ? codes[error.message] ?? 'LOCAL_TASK_FAILED' : 'LOCAL_TASK_FAILED';
 }

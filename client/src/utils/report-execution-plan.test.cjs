@@ -173,3 +173,17 @@ test('clipboard failure leaves readable strategy text available for manual copyi
   assert.match(document.body.textContent, /Select the strategy text below to copy it/);
   assert.match(document.querySelector('textarea[readonly]').value, /Buy 2 AAPL/);
 }));
+
+test('one-click apply posts quick-apply and then offers opening the simulation', async () => withDom(async ({ root }) => {
+  const { load, state } = fixture(); state.queries.set('research-document', { data: report(plan()) });
+  let applied = null;
+  load('api/ai-investment.ts').quickApplyReport = async (input) => { applied = input; return { status: 'running', policy: { revision: 1 }, evaluationState: 'running' }; };
+  const Component = load('components/ReportExecutionPlan.tsx').default;
+  await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Component, { versionId: 'exact-version' }))));
+  const button = () => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === 'Apply to simulation');
+  assert.ok(button(), 'the one-click apply button is visible');
+  await React.act(async () => button().click());
+  assert.equal(applied?.versionId, 'exact-version');
+  assert.match(document.body.textContent, /Applied/);
+  assert.ok([...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Open simulation'));
+}));

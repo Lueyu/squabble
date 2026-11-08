@@ -21,6 +21,8 @@ export class UserInvestmentStrategyController {
   importSource(@Req() req: Request, @Body() body: { source: StrategySourceInput }) { return this.service.importSource(req.userContext.userId, body.source); }
   @NeedLogin() @Get(':id')
   get(@Req() req: Request, @Param('id') id: string) { return this.service.get(req.userContext.userId, id); }
+  @NeedLogin() @Delete(':id')
+  remove(@Req() req: Request, @Param('id') id: string) { return this.service.remove(req.userContext.userId, id); }
   @NeedLogin() @Get(':id/revisions')
   revisions(@Req() req: Request, @Param('id') id: string, @Query('before') before?: string) { return this.service.revisions(req.userContext.userId, id, before === undefined ? undefined : Number(before)); }
   @NeedLogin() @Patch(':id')

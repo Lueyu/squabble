@@ -87,14 +87,15 @@ test('cash-only portfolio remains an asset account after a full sale',()=>{
   const f=fixture();f.state.queries.set('today',{data:{...base,overview:{...base.overview,holdingCount:0,totalValueUsd:1500,cashUsd:1500},assetMetrics:{...base.assetMetrics,totalValueUsd:1500,knownValueUsd:1500,cashUsd:1500,partial:false}}});
   const html=f.render(f.load('pages/Today/TodayPage.tsx').default);
   assert.match(html,/1,500\.00/);
-  assert.doesNotMatch(html,/Bring in your holdings/);
+  assert.doesNotMatch(html,/Welcome — pick a way to start/);
 });
 
 test('empty workspace retains cash confirmation and report-derived strategy access',()=>{
   const f=fixture();f.state.queries.set('today',{data:{...base,overview:{...base.overview,holdingCount:0},assetMetrics:{...base.assetMetrics,knownValueUsd:0,holdingsValueUsd:0}}});
   f.state.queries.set('investment-strategies',{data:{current:null,drafts:[{id:'report-draft',sources:[{key:'report:fixed'}],updatedAt:'2026-11-06T04:00:00Z',content:{title:'Draft from a research report'}}],history:[]}});
   const html=f.render(f.load('pages/Today/TodayPage.tsx').default);
-  assert.match(html,/Bring in your holdings/,'the onboarding guide stays visible');
+  assert.match(html,/Welcome — pick a way to start/,'the onboarding guide stays visible');
+  assert.match(html,/Try with simulated cash/,'a no-holding user can start instantly with simulated cash');
   assert.match(html,/Confirm cash/,'cash can be reconciled before holdings exist');
   assert.match(html,/href="\/paper"[^>]*>Manage simulation strategy/,'strategy management is reachable in the simulation');
 });

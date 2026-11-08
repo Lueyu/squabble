@@ -22,4 +22,5 @@ export const investmentStrategiesApi = {
   prepare: async (id: string, expectedRevision: number, requestKey:string = crypto.randomUUID()) => (await http.post<UserInvestmentStrategy>(`${path(id)}/prepare`, { expectedRevision, requestKey },{timeout:600000})).data,
   apply:async(input:{strategyId:string;expectedRevision:number;previewHash:string;expectedCurrentId:string|null;requestKey:string})=>
     (await http.post('/api/ai-investment/apply-strategy',input)).data,
+  remove: async (id: string) => (await http.delete<{ success: true }>(path(id))).data,
 };

@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
-import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
+import { z } from 'zod';
+import { DRIZZLE_DATABASE, type PostgresJsDatabase, simpleExperienceEnabled } from '../../common/platform';
 import { builderProfiles, cashAccounts, holdings, paperAccounts, paperEvents, paperOrders, paperPositions, paperSnapshots, paperTrades } from '../../database/schema';
 import { investmentConstraintProposals, investmentCycles, investmentPolicies, investmentPreviews, investmentRequests } from '../../database/investment-policy.schema';
 import { experiencePreferences } from '../../database/simple-experience.schema';
@@ -24,6 +25,8 @@ import type { SimulationSeed } from '../../../shared/simulation-experiment.inter
 
 export type InvestmentTx = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 export type PolicyRow = typeof investmentPolicies.$inferSelect;
+/** Starting virtual cash when a new user applies a report before importing holdings. */
+const QUICK_APPLY_DEFAULT_CASH = 100_000;
 export const policyView = (p: PolicyRow): InvestmentPolicy => ({ ...p, effectiveConfig: effectiveInvestmentConfig(p.baseConfig, p.constraintRecords), status: p.status as InvestmentPolicy['status'], confirmedAt: p.confirmedAt.toISOString(), updatedAt: p.updatedAt.toISOString() });
 export function investmentHash(value: unknown): string {
   const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object'
@@ -60,7 +63,7 @@ export class InvestmentPolicyService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase, private readonly simulations: SimulationExperimentsService, @Optional() private readonly userStrategies?: UserInvestmentStrategyService, @Optional() private readonly reviewTeam?: SimpleCouncilService) {}
   async assertFeatureEnabled(owner: string) {
     const [preferences] = await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
-    if (process.env.SQUABBLE_SIMPLE_EXPERIENCE !== 'true' || preferences?.enabled === false) throw new NotFoundException('SIMPLE_EXPERIENCE_DISABLED');
+    if (!simpleExperienceEnabled(preferences?.enabled)) throw new NotFoundException('SIMPLE_EXPERIENCE_DISABLED');
   }
   private parse<K extends Parameters<typeof normalizeInvestmentRequest>[0]>(kind: K, value: unknown) {
     try { return normalizeInvestmentRequest(kind, value); } catch { throw new BadRequestException({ code: 'INVALID_INVESTMENT_REQUEST', message: 'Please check the supplied investment details.' }); }
@@ -248,6 +251,66 @@ export class InvestmentPolicyService {
         }
         return { status: saved.status, policy: policyView(saved), strategy, evaluationState: 'monitoring' };
       });
+    });
+  }
+  /**
+   * One-click path used by the daily report. It ensures a simulation account
+   * exists, brings in the report's execution strategy and applies it, so the
+   * user never performs a separate account-setup or multi-step wizard.
+   */
+  async quickApply(owner: string, input: unknown) {
+    const request = z.object({
+      versionId: z.string().uuid(),
+      requestKey: z.string().regex(/^[a-zA-Z0-9_-]{8,128}$/u),
+    }).strict().parse(input);
+    if (!this.userStrategies) throw new BadRequestException('USER_STRATEGY_SERVICE_UNAVAILABLE');
+    const compact = request.versionId.replace(/-/g, '');
+    const pvKey = `qa${compact}pv`; const stKey = `qa${compact}st`;
+
+    // 1. Ensure an active simulation account and policy exist.
+    const overview = await this.overview(owner);
+    if (!overview.account || !overview.policy) {
+      const [holdingRow] = await this.db.select({ id: holdings.id }).from(holdings)
+        .where(eq(holdings.owner, owner)).limit(1);
+      const preview = await this.preview(owner, holdingRow
+        ? { origin: 'holdings' as const, requestKey: pvKey }
+        : { origin: 'cash' as const, cash: { amount: QUICK_APPLY_DEFAULT_CASH, currency: 'USD' as const }, requestKey: pvKey });
+      await this.start(owner, { previewId: preview.id, requestKey: stKey });
+    }
+
+    // 2. Bring in the report's execution strategy (fall back to observation items).
+    // includeConfirmed reuses the already-applied strategy from this report so a
+    // repeat is a clean no-op instead of creating duplicate drafts.
+    let strategy;
+    try {
+      strategy = await this.userStrategies.importSource(owner,
+        { kind: 'report', versionId: request.versionId, sectionId: 'execution-strategy' }, true);
+    } catch {
+      try {
+        strategy = await this.userStrategies.importSource(owner,
+          { kind: 'report', versionId: request.versionId }, true);
+      } catch {
+        throw new BadRequestException('REPORT_STRATEGY_UNAVAILABLE');
+      }
+    }
+
+    // 3. Deterministically compile a preview without invoking a model.
+    if (!strategy.preview) {
+      strategy = await this.userStrategies.preview(owner, strategy.id, strategy.revision);
+    }
+
+    // 4. Apply to the simulation, replacing the current strategy if one exists.
+    const workspace = await this.userStrategies.workspace(owner);
+    // Re-applying the already-active report is a clean no-op, never a revision bump or key conflict.
+    if (workspace.current?.id === strategy.id) {
+      return { status: overview.policy?.status ?? 'running', policy: overview.policy, strategy, evaluationState: 'monitoring' };
+    }
+    return this.applyStrategy(owner, {
+      strategyId: strategy.id,
+      expectedRevision: strategy.revision,
+      previewHash: strategy.preview.contentHash,
+      expectedCurrentId: workspace.current?.id ?? null,
+      requestKey: request.requestKey,
     });
   }
   async enqueue(tx: InvestmentTx, policy: PolicyRow, trigger: string) {

@@ -39,9 +39,9 @@ export default function TodayPage() {
   const report = latestTodayReport(data);
   if (data.overview.holdingCount === 0 && !(data.assetMetrics?.knownValueUsd || data.overview.cashUsd)) return <div className="mx-auto w-full max-w-4xl space-y-6 p-3 sm:p-6">
     <header><h1 className="text-2xl font-semibold">{zh ? '今日' : 'Today'}</h1><p className="mt-1 text-sm text-muted-foreground">{data.date} · {data.timezone}</p></header>
-    <section className="space-y-5 rounded-2xl border bg-card px-5 py-8 sm:p-10"><h2 className="text-xl font-semibold">{zh ? '先把持仓带进来，一起看懂每天的变化' : 'Bring in your holdings to understand what changes each day'}</h2>
-      <p className="max-w-xl text-sm leading-7 text-muted-foreground">{zh ? '导入后，今日会显示持仓概况、值得关注的变化和 AI 股友的研究。也可以先在频道核对一个具体事实。' : 'After import, Today shows your portfolio, changes that deserve attention and your AI team’s research. You can also check one specific fact in the channel.'}</p>
-      <div className="flex flex-wrap gap-3"><Button asChild><Link to="/import">{zh ? '导入持仓' : 'Import holdings'}</Link></Button><Button asChild variant="outline" className="h-auto whitespace-normal"><Link to="/council">{zh ? '先到频道问一句' : 'Check one fact in the channel'}</Link></Button></div>
+    <section className="space-y-5 rounded-2xl border bg-card px-5 py-8 sm:p-10"><h2 className="text-xl font-semibold">{zh ? '欢迎，先选一个开始方式' : 'Welcome — pick a way to start'}</h2>
+      <p className="max-w-xl text-sm leading-7 text-muted-foreground">{zh ? '有真实持仓就导入，没有也可以直接用模拟资金体验整套流程。全程不需要看说明书。' : 'Import your real holdings if you have them, or start instantly with simulated cash. No manual needed.'}</p>
+      <div className="flex flex-wrap gap-3"><Button asChild><Link to="/import">{zh ? '导入我的持仓' : 'Import my holdings'}</Link></Button><Button asChild variant="outline"><Link to="/paper">{zh ? '先用模拟资金体验' : 'Try with simulated cash'}</Link></Button></div>
     </section>
     <AssetOverview data={data}/>
     <nav className="flex flex-wrap gap-5 text-sm"><Link className="text-primary underline" to="/holdings">{zh ? '手动添加持仓' : 'Add holdings manually'}</Link><Link className="text-primary underline" to="/paper">{zh ? '管理模拟策略' : 'Manage simulation strategy'}</Link></nav>

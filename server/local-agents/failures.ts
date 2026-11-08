@@ -55,6 +55,15 @@ export function providerFailure(diagnostic: unknown, fallback = 'NATIVE_AGENT_FA
   return providerLimitFailure(diagnostic) ?? new Error(fallback);
 }
 
+/** Strong network/transport signals emitted by a CLI when its model endpoint is unreachable. */
+const NETWORK_FAILURE_PATTERN = /(?:workspace routing discovery failed|transport channel closed|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|EAI_AGAIN|EPIPE|could not resolve|getaddrinfo|fetch failed|network request failed|network error|failed to connect|connection (?:refused|reset|timed out|closed)|connect (?:etimedout|econnrefused|enotfound)|proxy|tunnel|timed out|timeout)/iu;
+
+/** Inspect a failed CLI process and classify connectivity failures distinctly from generic task errors. */
+export function detectNetworkFailure(result: { stdout?: string; stderr?: string }): string | null {
+  const text = `${result.stderr ?? ''}\n${result.stdout ?? ''}`;
+  return NETWORK_FAILURE_PATTERN.test(text) ? 'NATIVE_AGENT_NETWORK_FAILED' : null;
+}
+
 /** OpenCode can log a primary stream failure without emitting a terminal JSON event. */
 export function readOpenCodeDiagnostic(line: string): void {
   if (!/(?:^ERROR\b|\blevel=ERROR\b)/u.test(line)

@@ -14,3 +14,4 @@ export type { SquabbleDatabase, PostgresJsDatabase } from './database.provider';
 export { NeedLogin, NEED_LOGIN_KEY } from './need-login.decorator';
 export { AuthGlobalGuard } from './auth.guard';
 export { staticAssets } from './static-assets.middleware';
+export { simpleExperienceEnabled, simpleExperienceEnvironmentEnabled } from './simple-experience';

@@ -2,11 +2,15 @@ import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
+import { Check, FlaskConical, Loader2 } from 'lucide-react';
 import type { ReportExecutionPlan as ExecutionPlan } from '@shared/report-execution-plan.interface';
 import type { StrategyDraftInput, StrategySourceInput } from '@shared/user-investment-strategy.interface';
 import { strategyImportReadableContent } from '@shared/strategy-source-reading';
 import { fetchResearchDocument } from '@/api/research-documents';
 import { investmentStrategiesApi } from '@/api/investment-strategies';
+import { quickApplyReport } from '@/api/ai-investment';
+import { friendlyError } from '@/utils/error-message';
 import { Button } from '@/components/ui/button';
 import InvestmentStrategySourceDialog from '@/pages/Today/InvestmentStrategySourceDialog';
 import { businessTime } from '@/utils/strategy-dates';
@@ -60,6 +64,7 @@ export default function ReportExecutionPlan({ versionId, onAddToStrategy }: { ve
   const [source, setSource] = useState<StrategySourceInput | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [importing, setImporting] = useState(false); const [importFailed, setImportFailed] = useState('');
+  const [applying, setApplying] = useState(false); const [applied, setApplied] = useState(false);
   const query = useQuery({ queryKey: ['research-document', versionId], queryFn: () => fetchResearchDocument(versionId), enabled: Boolean(versionId), retry: false });
   const version = query.data?.version; const candidate = savedPlan(version?.snapshot?.executionPlan);
   const plan = version?.snapshot?.executionPlanError && candidate?.parameterOrigin !== 'system_observation' ? null : candidate;
@@ -75,6 +80,19 @@ export default function ReportExecutionPlan({ versionId, onAddToStrategy }: { ve
       navigate(`/paper?investmentStrategyId=${encodeURIComponent(draft.id)}#investment-strategy`);
     } catch (error) { setImportFailed(importError(error, zh)); }
     finally { importLock.current = false; setImporting(false); }
+  };
+  const quickApply = async () => {
+    if (applying || applied || !available) return;
+    setApplying(true);
+    try {
+      await quickApplyReport({ versionId, requestKey: crypto.randomUUID() });
+      setApplied(true);
+      toast.success(zh ? '已应用到模拟盘' : 'Applied to the simulation');
+      await client.invalidateQueries({ queryKey: ['ai-investment'] });
+      await client.invalidateQueries({ queryKey: ['investment-strategies'] });
+    } catch (error) {
+      toast.error(friendlyError(error, zh, { zh: '应用失败，请稍后重试。', en: 'Apply failed. Please try again.' }));
+    } finally { setApplying(false); }
   };
   if (!plan) {
     const error = version.snapshot?.executionPlanError;
@@ -104,7 +122,13 @@ export default function ReportExecutionPlan({ versionId, onAddToStrategy }: { ve
     {!observation && (content.limits || plan.readiness !== 'no_trade') && <div className="space-y-2 rounded-xl border bg-background/50 p-3"><h4 className="text-sm font-medium">{zh ? 'AI 提议的风险边界' : 'AI-proposed risk limits'}</h4>{content.limits ? <dl className="grid gap-x-4 gap-y-2 text-xs sm:grid-cols-2">{Object.entries(content.limits).map(([key, value]) => <div className="flex justify-between gap-2" key={key}><dt className="text-muted-foreground">{labels[key as keyof Limits]}</dt><dd>{value}%</dd></div>)}</dl> : <p className="text-xs text-muted-foreground">{zh ? '尚未明确，应用前需补充并核对。' : 'Not specified. Complete and review limits before applying.'}</p>}</div>}
     {(plan.gaps.length > 0 || plan.preview.issues.length > 0) && <div className="space-y-2 text-sm text-amber-700 dark:text-amber-300"><h4 className="font-medium">{zh ? '待补信息与核对事项' : 'Information and checks needed'}</h4><ul className="list-disc space-y-1 pl-5">{[...new Set([...plan.gaps, ...plan.preview.issues.map(issue => issue.message[language])])].map(item => <li className="[overflow-wrap:anywhere]" key={item}>{item}</li>)}</ul></div>}
     {!available && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{zh ? '报告依据已撤回或不可用，请重新研究后再加入草稿。' : 'Report evidence is withdrawn or unavailable. Update the research before adding it to a draft.'}</p>}
-    <div className="flex flex-wrap gap-2"><Button size="sm" disabled={!available || importing} onClick={() => void importPlan()}>{importing ? (zh ? '正在复制…' : 'Copying…') : (zh ? '一键复制到 AI 模拟盘' : 'Copy to AI simulation')}</Button><Button size="sm" variant="outline" onClick={() => void copy()}>{zh ? '复制策略文本' : 'Copy strategy text'}</Button></div>
+    <div className="flex flex-wrap gap-2">
+      {!observation && <Button size="sm" disabled={!available || applying || applied} onClick={() => void quickApply()}>
+        {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : applied ? <Check className="h-4 w-4" /> : <FlaskConical className="h-4 w-4" />}
+        {applied ? (zh ? '已在模拟盘执行' : 'Applied') : zh ? '一键应用到模拟盘' : 'Apply to simulation'}
+      </Button>}
+      {applied && <Button size="sm" variant="outline" onClick={() => navigate('/paper')}>{zh ? '查看模拟盘' : 'Open simulation'}</Button>}
+      <Button size="sm" variant={observation ? 'default' : 'outline'} disabled={!available || importing} onClick={() => void importPlan()}>{importing ? (zh ? '正在复制…' : 'Copying…') : (zh ? '一键复制到 AI 模拟盘' : 'Copy to AI simulation')}</Button><Button size="sm" variant="outline" onClick={() => void copy()}>{zh ? '复制策略文本' : 'Copy strategy text'}</Button></div>
     <p className="text-xs leading-6 text-muted-foreground">{zh ? '复制后直接打开模拟盘中的草稿，核对并确认后才开始执行。' : 'Opens the copied draft in your simulation. Review and confirm it there to begin execution.'}</p>
     {importFailed && <p role="alert" className="text-sm text-destructive">{importFailed}</p>}
     <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">{zh ? '合并到已有草稿' : 'Add to an existing draft'}</summary><Button className="mt-2" size="sm" variant="ghost" disabled={!available || importing} onClick={() => { const selected: StrategySourceInput = { kind: 'report', versionId, sectionId: 'execution-strategy' }; if (onAddToStrategy) onAddToStrategy(selected); else setSource(selected); }}>{zh ? '选择草稿' : 'Choose a draft'}</Button></details>

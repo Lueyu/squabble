@@ -8,9 +8,15 @@ import { mkdtemp,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const connection: LocalAgentConnection = { id: 'native-opencode', provider: 'opencode', name: 'OpenCode', state: 'ready', connected: true, available: true, busy: false, source: 'native', loginCommand: '', installUrl: '', models: [{ id: 'gateway/deepseek-v4-flash', name: 'DeepSeek' }], defaultModel: 'deepseek-v4-flash' };
-test('credentials do not hide OpenCode bare default with empty actual model', () => {
+test('an unambiguous bare OpenCode default is resolved to its provider/model id', () => {
   const result = executionReadiness(connection);
-  assert.equal(result.connected, true); assert.equal(result.executable, false); assert.equal(result.state, 'configuration_required');
+  assert.equal(result.connected, true); assert.equal(result.executable, true); assert.equal(result.state, 'ready');
+  assert.equal(result.effectiveModel.id, 'gateway/deepseek-v4-flash');
+});
+test('an unresolvable bare OpenCode model still requires configuration', () => {
+  const bare = { ...connection, models: [{ id: 'gateway/other-model', name: 'Other' }] };
+  const result = executionReadiness(bare);
+  assert.equal(result.executable, false); assert.equal(result.state, 'configuration_required');
   assert.equal(result.failure?.code, 'LOCAL_INVALID_CONFIGURATION');
 });
 test('explicit app provider/model override wins without changing the default', () => {

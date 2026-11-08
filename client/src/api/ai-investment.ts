@@ -41,3 +41,7 @@ export const marketLabel = (market: Market, zh: boolean) => ({ US: zh ? '美股'
 
 export const applyInvestmentStrategy = async (input: { strategyId: string; expectedRevision: number; previewHash: string; expectedCurrentId: string | null; requestKey: string }) =>
   (await http.post('/api/ai-investment/apply-strategy', input)).data;
+
+/** One-click: ensure the simulation account exists, import the report strategy and apply it. */
+export const quickApplyReport = async (input: { versionId: string; requestKey: string }): Promise<{ status: string; policy: InvestmentPolicy; evaluationState: string }> =>
+  (await http.post('/api/ai-investment/quick-apply', input)).data;

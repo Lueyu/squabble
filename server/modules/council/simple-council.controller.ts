@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, UseGuards, NotFoundException, type CanActivate } from '@nestjs/common';
 import type { Request } from 'express';
 import { NeedLogin } from '../../common/platform/need-login.decorator';
+import { simpleExperienceEnvironmentEnabled } from '../../common/platform';
 import { SimpleCouncilService } from './simple-council.service';
 import type { CreateResearchConversationInput, ResearchConversationMessageInput, ResumeDailyReportInput } from '../../../shared/simple-conversation.interface';
 import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
@@ -8,7 +9,7 @@ import type { NativeAgentConfiguration } from '../../../shared/local-agents.inte
 
 export class ResearchConversationEnabledGuard implements CanActivate {
   canActivate(): boolean {
-    if (process.env.SQUABBLE_SIMPLE_EXPERIENCE !== 'true') throw new NotFoundException('Research conversations unavailable');
+    if (!simpleExperienceEnvironmentEnabled()) throw new NotFoundException('Research conversations unavailable');
     return true;
   }
 }

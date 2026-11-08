@@ -75,6 +75,25 @@ export class UserInvestmentStrategyService {
     if (!row) throw new NotFoundException('Strategy not found'); return row;
   }
   async get(owner: string, id: string): Promise<UserInvestmentStrategy> { return map(await this.row(this.db, owner, id)); }
+  /**
+   * Delete a strategy that is not the one currently applied. Drafts and historical
+   * confirmed strategies can be removed; the active simulation authority cannot,
+   * so execution state is never orphaned.
+   */
+  async remove(owner: string, id: string): Promise<{ success: true }> {
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      await this.row(tx, owner, id, true);
+      const [pointer] = await tx.select().from(current).where(eq(current.owner, owner)).for('update');
+      if (pointer?.strategyId === id) {
+        throw new ConflictException('Cannot delete the strategy currently applied to the simulation. Apply another strategy or pause first.');
+      }
+      await tx.delete(preparations).where(and(eq(preparations.owner, owner), eq(preparations.strategyId, id)));
+      await tx.delete(revisions).where(and(eq(revisions.owner, owner), eq(revisions.strategyId, id)));
+      await tx.delete(strategies).where(and(eq(strategies.id, id), eq(strategies.owner, owner)));
+      return { success: true as const };
+    });
+  }
   private async page(owner: string, status: Row['status'], cursor?: string): Promise<UserInvestmentStrategyPage> {
     if (!owner?.trim()) throw new BadRequestException('Strategy owner is required');
     const anchor = cursor ? await this.row(this.db, owner, cursor) : null;
