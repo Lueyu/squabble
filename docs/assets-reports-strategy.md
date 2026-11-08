@@ -54,7 +54,7 @@ AI 模拟盘的“我的投资策略”可直接手写，也可从报告或频�
 
 ## Upgrade and data behavior
 
-- Back up the current database before upgrading. Startup applies the additive migrations registered in `server/common/platform/database.provider.ts`, currently through `44_strategy_draft_deletion.sql`; fresh installations include the same schema. The Docker runtime ships the entire migration directory.
+- Back up the current database before upgrading. Startup applies the current ordered migration list in [`server/common/platform/database.provider.ts`](../server/common/platform/database.provider.ts); fresh installations include the same schema. The Docker runtime ships the entire migration directory.
 - Duplicate cash rows are archived before enforcing one owner/currency row. Conflicting nonzero duplicates require reconciliation and are never summed blindly. Opening positions are checkpointed once; restarting does not checkpoint new trades or promote new unconfirmed cash.
 - Existing holdings, transactions, completed trades, raw research and report archives remain available. Known legacy report sources are linked to their original discussion without replacing valid references.
 - Legacy managed automatic accounts without an explicitly confirmed investor strategy pause on upgrade. In-flight candidates and reservations are cancelled; completed records remain. Review and apply a strategy before resuming.

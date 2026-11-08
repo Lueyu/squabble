@@ -90,4 +90,4 @@
 
 ## 核对实现
 
-可以从[数据库结构](../server/database/schema.ts)、[账号认证](../server/modules/auth/auth.service.ts)、[供应商设置](../server/modules/settings/settings.service.ts)、[凭证加密](../server/modules/settings/settings-security.ts)、[模型调用](../server/modules/multi-agent/llm.service.ts)、[截图识别](../server/modules/import/ocr.service.ts)及[通知发送](../server/modules/notifications/notification.service.ts)入手。检查出网范围时，还应查看部署配置和依赖。敏感问题请通过[安全报告渠道](../SECURITY.md)提交。
+可以从[数据库结构](../server/database/schema.ts)、[账号认证](../server/modules/auth/auth.service.ts)、[供应商设置](../server/modules/settings/settings.service.ts)、[凭证加密](../server/modules/settings/settings-security.ts)、[模型调用](../server/modules/research-core/llm.service.ts)、[截图识别](../server/modules/import/ocr.service.ts)及[通知发送](../server/modules/notifications/notification.service.ts)入手。检查出网范围时，还应查看部署配置和依赖。敏感问题请通过[安全报告渠道](../SECURITY.md)提交。

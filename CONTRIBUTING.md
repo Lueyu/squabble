@@ -4,7 +4,9 @@ Help make personal investing tools easier to understand and safer to try.
 Useful contributions include clearer onboarding, verified research data,
 paper-trading rules, privacy controls, translations and bug fixes.
 Start with the [local setup guide](docs/self-hosting.md), then use the
-[development guide](docs/development.md) if you want to change the app.
+[development guide](docs/development.md) if you want to change the app. The
+[Chinese code-reading tour](docs/code-reading.zh-CN.md) follows the current
+report-to-strategy-to-channel journey and explains module responsibilities.
 If you use an AI coding agent, share the repository's
 [Squabble contributor skill](.agents/skills/squabble-contributor/SKILL.md) with it.
 
@@ -16,7 +18,9 @@ requests:
 | Path | What lives there |
 |---|---|
 | `client/` | React SPA (pages, components, hooks, api wrappers) |
+| `client/src/features/investment-strategies/` | Strategy import, editing, preparation and review composed by pages |
 | `server/` | NestJS backend (modules, first-party auth, platform layer in `server/common/platform/`) |
+| `server/modules/research-core/`, `research-routing/` | Shared research services and configured executor selection |
 | `server/local-agents/` | Native research agent detection, login, model configuration and execution |
 | `shared/` | Types shared by front-end and backend |
 | `agent/` | Optional Python agent CLI |
@@ -65,15 +69,19 @@ disable a check or push directly to `main` to get around a failure.
 ```bash
 npm ci                     # install the versions in package-lock.json
 npm run lint               # eslint + typecheck + stylelint
-npm run test:server        # offline server tests
+npm run test:server        # server tests, including disposable-database integration
 npm run test:client        # client behavior tests
 npm run test:local-agents  # native runtime, pairing and durable task tests
 ```
 
 These checks must pass for application changes. For documentation changes,
 check local links, rendered Markdown and commands against the current scripts.
-Database integration and memory evaluation remain covered by web CI; see the
-[development guide](docs/development.md) for disposable database prerequisites.
+`test:server` is not an offline-only suite: some integration cases fail when
+their database variable is absent, while others explicitly skip. Set the
+documented disposable database variables for a complete run; skipped database
+cases are not passing integration coverage. Database integration and memory
+evaluation also run in web CI; see the [development guide](docs/development.md)
+for prerequisites and the focused test-selection reference.
 `npm run test:desktop` and installer packaging are retained for manual recovery
 and become required again only when desktop development is explicitly resumed.
 Native-agent tests use fixture executables and disposable task directories;

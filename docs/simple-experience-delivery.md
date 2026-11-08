@@ -1,5 +1,8 @@
 # Squabble 简化体验交付记录 / Simplified experience delivery
 
+> **历史交付记录。** 以下开关默认值、功能说明和验收结果对应当时基线，不代表当前版本。
+> 当前流程见[资产、报告与策略](assets-reports-strategy.md)、[频道](channel-workbench.md)和[文档导航](README.md)。
+
 对应审阅稿：产品说明与2026-11-06开发计划。基线8e04fbc，开发分支codex/simple-experience。本记录随最终验收更新，不以设计目标代替实际验证。
 
 ## 功能与任务

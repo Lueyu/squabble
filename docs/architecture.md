@@ -1,19 +1,25 @@
 # Architecture
 
-Squabble is a React client, a NestJS backend and PostgreSQL for personal portfolio records, research and simulated investing. The current experience starts in **Today**, produces a sealed independent daily research report and a proposed strategy, then requires explicit application before simulated execution. The channel presents sourced changes and user decisions alongside this workflow.
+Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent investing assistant: portfolio-aware research, coordinated agents, readable reports, a stock-friend channel and explicitly applied simulated strategies.
 
-**Verification note — 2026-11-07:** the original five-flow review used baseline `7de30fb`. The complete-portfolio changes were reviewed against `65c388e` plus the current working-tree changes: diagrams 2 and 3 now include atomic owner input, explicit saved-research continuation and timestamp-based simulation coverage. Diagram 1's service/owner boundaries, diagram 4's publication/seal/outbox gates and diagram 5's real-ledger/import transactions remain unchanged; this change does not add a provider, publication authority or ledger write. These are reviewed source baselines, not a claim that uncommitted work has a release revision. The development phase is web-only, established at `fe9df6c`. Desktop code and manual recovery workflow are retained, with development/testing/packaging paused until explicitly resumed.
+**Structural review — 2026-11-09:** inspected baseline `46cb370` plus this refactor. The system overview now names shared research infrastructure and executor routing. The report, strategy, channel and real-ledger flows retain their behavior, source/owner checks, recovery and transaction boundaries. Code moves are not a new release or evidence of a deployed instance. Prior review history is available in Git.
 
-**Saved-result acceptance review — 2026-11-07, baseline `f0137167` plus working-tree changes:** diagram 2 distinguishes completed native output from locally accepted research and shows validation/reparse of a saved result before a new summary. The other four diagrams retain their structure: service/owner boundaries, simulation execution/observation semantics, channel publication gates and real-ledger writes are unchanged. The citation correction retains the existing sixty-record research evidence bound and does not grant new source or execution authority.
+The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
-**Report-import review — 2026-11-07, baseline `f032f7e` plus working-tree changes:** diagram 3 adds the readable-source gate and separates validated typed plans from losslessly split research observations. Diagrams 1, 2, 4 and 5 retain their structure: service/owner boundaries, immutable research/recovery, channel publication gates and real-ledger writes are unchanged. Draft import still grants no execution authority; explicit confirmation and final paper-order fences remain the same.
+## Module ownership
 
-For setup see [self-hosting](self-hosting.md), for commands/tests see [development](development.md), and for focused code navigation see the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
+| Boundary | Responsibility | Dependency direction |
+|---|---|---|
+| `research-core` | Model calls, financial evidence/source adapters and portfolio context | Shared infrastructure; never imports current or retained orchestration |
+| `research-routing` | Select a usable configured research executor | Uses research-core and local-agent readiness; starts no task itself |
+| `council`, `experience` | Research workflow, current-report projection and scheduling | Consume shared research services and retained history where required |
+| `paper-trading` | Draft confirmation, simulated policy/runtime and ledger | Uses research-routing; never imports experience |
+| `channel` | Source-based conversation, decisions and execution receipts | Projects authoritative research and simulated results |
+| Client `features/investment-strategies` | Strategy import, editing, review and management | Composed by pages; never imports pages |
 
-**Daily simulation journey review — 2026-11-07, baseline `5dc6bdd` plus this change:** diagrams 2–4 now cover system-authored observation fallback, direct draft navigation to the simulation, draft deletion/current-strategy removal and visible fill receipts. Diagram 1 retains its service/owner boundaries; migration 44 adds only a draft tombstone. Diagram 5 is unchanged: these actions never mutate recorded real assets. Immutable report/confirmation history, final order fences and explicit strategy application remain authoritative.
+`multi-agent/` still owns retained pipeline APIs and historical reading; it is not dead code. Its shared infrastructure has moved to research-core. Settings keeps its pre-existing local LLM provider; consolidating global Settings initialization is a separate change. LLM native dispatch retains lazy ModuleRef lookup to avoid a research-core/local-agent/research-tools module cycle.
 
-**Native model dispatch review — 2026-11-08, baseline `c2f15ca` plus this change:** diagram 1 makes configuration resolution before task staging explicit. `execution-readiness.ts` resolves an unambiguous bare OpenCode model to its advertised `provider/model` identity; `LocalAgentsService` returns that configuration internally and new task staging freezes it for the actual CLI arguments. Explicit reasoning variants survive resolution; ambiguous defaults fail before dispatch. Existing journal tasks retain their original configuration and are never relaunched by this fix. Diagrams 2–5 retain their research acceptance, explicit strategy application, channel publication and real-ledger boundaries; this change adds no recovery request, provider fallback, migration or trade authority.
-
+Static dependency directions are checked by ESLint and `npm run test:architecture`. `npm run test:wiring` checks compiled Nest provider resolution against a disposable database without bootstrapping jobs. User workflows still require behavioral/integration checks.
 <a id="system-overview"></a>
 ## 1. System overview
 
@@ -26,11 +32,17 @@ flowchart LR
     auth --> strategy["Strategy and simulation"]
     auth --> ledger["Recorded real assets and imports"]
     experience --> council["Independent research and publication"]
-    council --> models["Configured model API"]
+    council --> core["Shared research core: models, evidence and portfolio context"]
+    legacy["Retained analysis APIs"] --> core
+    core --> models["Configured model API"]
+    experience --> routing["Shared research executor selection"]
+    strategy --> routing
+    routing --> core
     council --> nativeConfig["Validate and resolve native model configuration"]
     nativeConfig --> native["Native agent task journal; frozen execution configuration"]
     native --> provider["Agent provider and research sources"]
     experience --> data["Quotes and FX"]
+    core --> data
     strategy --> data
     channel --> data
     council --> db[("PostgreSQL")]
@@ -44,7 +56,7 @@ flowchart LR
 
 - `client/src/app.tsx` routes `/` to `TodayPage`, `/analysis` to `SimpleAnalysisPage`, `/council` to `SimpleCouncilPage` (the channel), and `/paper` to `AiInvestmentPage` when the current experience is enabled. `ExperienceRoute` retains older pages when disabled. `/analysis/reports/:versionId` always identifies a specific report version. `/agent-builder` redirects to `/settings/agents` in the current experience.
 - `server/app.module.ts` composes Nest modules; `ViewModule` stays last for the SPA fallback. Development runs Vite/Nest separately. The production web build serves the client through Nest. Clean Docker uses a separate PostgreSQL container; optional demo Compose uses fictional seed data.
-- `server/common/platform/database.provider.ts` owns the direct postgres.js/Drizzle connection and registered startup migrations. This is a local compatibility layer, not a hosted aPaaS dependency. Fresh installations need `scripts/db/01_schema.sql`; startup additions do not initialize the base schema. Read the actual registration list, currently through `44_strategy_draft_deletion.sql` with noncontiguous numbering, rather than assuming every number exists.
+- `server/common/platform/database.provider.ts` owns the direct postgres.js/Drizzle connection and registered startup migrations. This is a local compatibility layer, not a hosted aPaaS dependency. Fresh installations need `scripts/db/01_schema.sql`; startup additions do not initialize the base schema. Read the actual registration list rather than assuming every migration number exists.
 - `server/modules/local-agents/` owns connections, pairing, research receipts and durable task identity. `server/local-agents/native.ts` executes supported provider CLIs with bounded output. Native execution can still contact external inference/research providers. Restart recovery does not replay unfinished native calls; completed artifacts remain available. Docker's retained companion path polls outbound from the host helper.
 
 - `server/modules/quote/` and `server/modules/fx/` obtain external data; freshness/coverage remain explicit. Model API budgets and native provider billing are distinct. `agent/` is an optional Python CLI scaffold; it does not orchestrate built-in Nest research. `/mcp` is a separate scoped agent-session integration. The legacy agent gateway is disabled by default.
@@ -148,7 +160,7 @@ flowchart TD
     paper --> projection["Channel execution projection"]
 ```
 
-Current UI entrypoints are `client/src/components/ReportExecutionPlan.tsx` and `client/src/pages/Today/InvestmentStrategySourceDialog.tsx`, `InvestmentStrategyEditor.tsx`, `InvestmentStrategySection.tsx`. `POST /api/investment-strategies/import-source` resolves the exact source via `UserInvestmentStrategyService`; importing a typed report section preserves proposed entries/periods/limits, while other prose is observation material. The daily publication handoff can create/reuse a draft. Neither path activates a policy. Report copy navigates directly to the returned draft in `/paper`; account setup preserves its ID. The simulation owns editing, deletion and application. Draft deletion uses migration 44’s `deleted_at` tombstone; explicit re-import may create a new draft, while background import respects the tombstone. Current-strategy removal checks strategy/policy revisions, atomically pauses automatic actions and mandates, clears current authority and cancels pending work/reservations. Confirmed strategy and trade history remain readable.
+Current UI entrypoints are `client/src/components/ReportExecutionPlan.tsx` and `client/src/features/investment-strategies/InvestmentStrategySourceDialog.tsx`, `InvestmentStrategyEditor.tsx`, `InvestmentStrategySection.tsx`. `POST /api/investment-strategies/import-source` resolves the exact source via `UserInvestmentStrategyService`; importing a typed report section preserves proposed entries/periods/limits, while other prose is observation material. The daily publication handoff can create/reuse a draft. Neither path activates a policy. Report copy navigates directly to the returned draft in `/paper`; account setup preserves its ID. The simulation owns editing, deletion and application. Draft deletion uses migration 44’s `deleted_at` tombstone; explicit re-import may create a new draft, while background import respects the tombstone. Current-strategy removal checks strategy/policy revisions, atomically pauses automatic actions and mandates, clears current authority and cancels pending work/reservations. Confirmed strategy and trade history remain readable.
 
 `shared/strategy-source-reading.ts` provides the same readable-source gate to the dialog and backend: missing/invalid execution-plan placeholders and internal metadata are excluded from readable choices, while public source links remain. Raw source and derived readable text each retain a 200000-character bound. Ordinary research is split losslessly at paragraph/line boundaries where possible, preserving separators and Unicode surrogate pairs, into observation entries of at most 12000 characters. Each part pins the same exact source key and raw-content hash and adds no directive, mandate rule or AI request. Preview and save enforce the existing twenty-source/twenty-entry capacity, including prior draft content and every new part; failures explain the cause and permit reselection. The typed `execution-strategy` branch still revalidates its structured plan, periods and source evidence with no relaxation of execution authority.
 

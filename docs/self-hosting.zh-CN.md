@@ -9,6 +9,7 @@
 | 桌面应用 | Windows x64 或 macOS Intel／Apple 芯片安装包 | 本机吵股应用数据目录 |
 | Docker Compose | Git 和带 Compose 的 Docker | 本地 PostgreSQL 与密钥 Docker 卷 |
 
+<a id="桌面应用"></a>
 ## 🖥️ 桌面应用
 
 从 [Squabble Releases](https://github.com/Lueyu/squabble/releases) 下载与你系统匹配的文件：Windows x64 `.exe` 安装包，或适用于 macOS Intel（x64）／Apple 芯片（arm64）的 `.dmg`。安装并打开吵股。桌面应用会启动自己的本地后端和数据库，不要求 Docker、Node.js 或 Python。如果没有配置签名证书，macOS 构建未经签名，系统可能警告或阻止打开；决定打开前请核对安装包来源。
@@ -42,6 +43,7 @@ Windows 安装向导启动时可选择简体中文或 English。安装包需要�
 
 如果应用无法打开，先确认安装包与你的系统匹配、Windows 上没有以管理员身份运行，并检查可用磁盘空间。重新安装后若已有应用数据目录，应用会继续使用该数据；更换应用或排查启动问题前先备份。
 
+<a id="docker-compose"></a>
 ## 🐳 Docker Compose
 
 安装 [Git](https://git-scm.com/downloads/) 和[带 Compose 的 Docker](https://docs.docker.com/get-started/get-docker/)。Windows／macOS 用户先打开 Docker Desktop，等待引擎启动；Linux 用户安装 Docker Engine 和 Compose 插件。先检查：
@@ -142,7 +144,7 @@ docker compose ps
 
 这里显式拉取预构建镜像；源码构建需沿用 `-f docker-compose.yml -f docker-compose.source.yml` 和 `up -d --build`。若仅进行备份，验证后可用 `docker compose start app` 恢复应用，再按需打开伴随程序。
 
-重新检查[健康状态](http://localhost:3000/api/health)、认证模式和已有保存数据，不要为验收启动研究或确认策略。部分研究入口在打开时自动派发任务，因此使用只读视图。启动迁移以 [`database.provider.ts`](../server/common/platform/database.provider.ts) 的显式列表为准，目前末项为 `43_channel_workbench.sql`，编号并不连续。全新数据库先加载汇总后的 `01_schema.sql`；不得把基础结构脚本应用到已有数据，也不能凭最大文件编号认定数据库迁移状态。升级时不要删除 Docker 卷。Git 提示本地修改时，先处理再拉取；应用启动失败时先查看应用与数据库日志。
+重新检查[健康状态](http://localhost:3000/api/health)、认证模式和已有保存数据，不要为验收启动研究或确认策略。部分研究入口在打开时自动派发任务，因此使用只读视图。启动迁移以 [`database.provider.ts`](../server/common/platform/database.provider.ts) 中当前显式列表及顺序为准，编号并不连续。全新数据库先加载汇总后的 `01_schema.sql`；不得把基础结构脚本应用到已有数据，也不能凭最大文件编号认定数据库迁移状态。升级时不要删除 Docker 卷。Git 提示本地修改时，先处理再拉取；应用启动失败时先查看应用与数据库日志。
 
 回滚时保留旧镜像／发布目录和当前所有卷。只有确认兼容性后，才能让旧应用连接已经迁移的数据库；否则把匹配的数据库、密钥、配置和 Agent 状态恢复到独立目标，验证后再切换。保留失败时的数据，不要重放中断的任务。源码实例发现、Windows 进程身份核对、恢复演练与回滚顺序见[私有部署操作指南](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md)。
 

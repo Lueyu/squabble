@@ -1,4 +1,11 @@
 # Research memory roadmap / 研究记忆升级路线
+
+> **Historical roadmap and delivery record / 历史路线与交付记录。** Stage status
+> refers to the baseline below, not a current backlog or a new validation run.
+> Current behavior is described in [research data](research-data.md) and the
+> [architecture](architecture.md); use the [documentation index](README.md) to
+> enter current Web development.
+
 Updated: 2026-11-04. Baseline: main `6ed6c4d`.
 
 ## Product outcome / 产品目标

@@ -82,9 +82,9 @@ Override `SERVER_PORT=3000` and `CLIENT_DEV_PORT=8080` in `.env.local` if needed
 | **Portfolio import** | CSV with auto column mapping (5 broker presets). Select up to 20 screenshots for sequential recognition by a connected image-capable local agent or vision API. Remove unwanted images, then review the combined, editable results before one import confirmation. |
 | **Notifications** | Webhook, Bark, ServerChan, SMTP, Telegram. Every fill and risk event, pushed to you. |
 
-## Simplified experience (opt-in rollout)
+## Current Web experience
 
-Set `SQUABBLE_SIMPLE_EXPERIENCE=true` on the server to use **Today**, **Channel** and **AI simulation**. Today puts the latest complete report first, followed by position value and confirmed cash, separating daily P&L, asset changes and external net flows. Missing prices, previous closes or FX keep known values visible with an explanation. Record trades and cash flows manually or import CSV, Excel and screenshots for review before posting.
+**Today**, **Channel** and **AI simulation** are enabled by default. An explicit saved disabled preference or server setting `SQUABBLE_SIMPLE_EXPERIENCE=false` can retain the earlier experience. Today puts the latest complete report first, followed by position value and confirmed cash, separating daily P&L, asset changes and external net flows. Missing prices, previous closes or FX keep known values visible with an explanation. Record trades and cash flows manually or import CSV, Excel and screenshots for review before posting.
 
 Today shows the latest complete report, with earlier reports available through a quiet history link. Full reports remain available by date and source, including each round's report in its original conversation. Current public work steps expand during research and collapse afterward unless you opened them yourself. Reports render as readable text; retained known JSON formats can be reformatted without another AI call.
 
@@ -172,15 +172,19 @@ Each agent gets a spending limit, a read-only or trade permission, and an approv
 
 ## Privacy
 
-Self-hosted. Zero telemetry. The only outbound requests are the ones you make with your own API keys. [Full details →](docs/privacy.md)
+Self-hosted. Zero telemetry. Market-data services and configured AI providers receive the requests needed for their features; public market-data requests can occur without a personal API key. [Full details →](docs/privacy.md)
 
 ## Docs
 
 | Topic | Link |
 |---|---|
+| Current Web workflows and historical guides | [Documentation index](docs/README.md) |
+| Reports, strategy review and simulation | [Assets, reports and strategies](docs/assets-reports-strategy.md) |
+| Stock-friend channel | [Channel workbench](docs/channel-workbench.md) |
+| Read the current code journey (Chinese) | [代码阅读指南](docs/code-reading.zh-CN.md) |
 | Local setup and troubleshooting | [docs/self-hosting.md](docs/self-hosting.md) |
 | Seven research agents and per-member model settings | [docs/local-agents.md](docs/local-agents.md) |
-| Server deployment (HTTPS) | [docs/public-deployment.md](docs/public-deployment.md) |
+| Public deployment boundary (retired guide) | [docs/public-deployment.md](docs/public-deployment.md) |
 | Import your portfolio | [docs/import.md](docs/import.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Development guide | [docs/development.md](docs/development.md) |

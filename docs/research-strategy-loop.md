@@ -1,5 +1,12 @@
 # Research → discussion → strategy → simulation
 
+> **Retained advanced workflow.** This guide describes report adoption,
+> revisions and experiment/mandate controls that remain available in retained
+> flows. For the current daily Web journey, start with
+> [assets, reports and strategies](assets-reports-strategy.md) and
+> [the channel](channel-workbench.md). Existing APIs and historical readers
+> have not been retired by the code organization changes.
+
 The workflow links the existing `/analysis`, `/council` and `/paper` screens. It starts from a current portfolio and evaluates future paper decisions. It does not place broker orders or implement historical point-in-time backtesting. The detailed Chinese user guide is [research-strategy-loop.zh-CN.md](./research-strategy-loop.zh-CN.md).
 
 ## Workflow

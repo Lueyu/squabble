@@ -1,10 +1,6 @@
 # Research, execution and provenance contracts
 
-Use this reference for current research, report import, strategy state, channel publication and ledger changes. Paths are relative to the selected repository checkout. See [repository-map.md](repository-map.md) for routing and `docs/architecture.md` for the five diagrams. Original baseline: `7de30fb`; saved-report reading: `f0fb2a0` (PR #80). Atomic owner input, explicit daily continuation and timestamp coverage were reviewed on 2026-11-07 against `65c388e` plus the working-tree changes, not an invented release commit. Inspect affected source after subsequent changes.
-
-Completed-but-unaccepted native result handling and the bounded reverse-check citation correction were additionally reviewed against `f0137167` plus the working-tree changes on the same date. This later review changes the research/report flow only; the other four architecture diagrams retain their structure.
-
-Report-to-strategy source reading and long-observation imports were reviewed against `f032f7e` plus the working-tree changes on the same date. Only the strategy diagram's source-selection/packing branch changes; research publication/recovery, channel, real-ledger and service/owner boundaries retain their structure.
+Use this reference for current research, report import, strategy state, channel publication and ledger changes. Paths are relative to the selected checkout. See [repository-map.md](repository-map.md) for current module ownership and `docs/architecture.md` for the five flows. The 2026-11-09 refactor against `46cb370` changes shared provider and UI ownership, preserving these behavioral contracts. Earlier verification scopes are recorded in `context-manifest.json`; inspect affected source after subsequent changes.
 
 ## Today → sealed research → immutable report
 
@@ -70,7 +66,7 @@ Daily simulation journey reviewed against `5dc6bdd` plus this change:
 | Prepare an explanation | `POST /api/investment-strategies/:id/prepare`; `GET /:id/preparation` | Explicit, durable single-request claim; status read does not rerun the model |
 | Apply after review | `POST /api/ai-investment/apply-strategy` | Atomic confirmation, policy activation, old-candidate cancellation and runtime installation |
 
-The draft controller is `server/modules/paper-trading/user-investment-strategy.controller.ts`. The apply endpoint is in **`server/modules/paper-trading/investment-policy.controller.ts`**, calling `InvestmentPolicyService.applyStrategy` and then `UserInvestmentStrategyService.confirmInTransaction`. There is no substitute standalone strategy-confirm endpoint to guess. The client uses `client/src/api/investment-strategies.ts` and `client/src/api/ai-investment.ts`; the source dialog and the editor/section mounted in AI simulation own the current review flow (their source files remain under Today).
+The draft controller is `server/modules/paper-trading/user-investment-strategy.controller.ts`. The apply endpoint is in **`server/modules/paper-trading/investment-policy.controller.ts`**, calling `InvestmentPolicyService.applyStrategy` and then `UserInvestmentStrategyService.confirmInTransaction`. There is no substitute standalone strategy-confirm endpoint to guess. The client uses `client/src/api/investment-strategies.ts` and `client/src/api/ai-investment.ts`; the source dialog and the editor/section mounted in AI simulation own the current review flow (their source files live under client/src/features/investment-strategies/).
 
 Source rules:
 
@@ -142,7 +138,7 @@ Transaction imports classify broker/source identities and fingerprints, return b
 
 Use [development-and-tests.md](development-and-tests.md) for commands and disposable database setup. Relevant existing regression families include:
 
-- Research: `server/modules/experience/daily-channel-research.integration.spec.ts`, `research-entry.integration.spec.ts`; `server/modules/council/` independent/daily/publication suites; `server/modules/research-documents/research-documents.integration.spec.ts`.
+- Research: `server/modules/experience/daily-channel-research.integration.spec.ts`, `server/modules/research-routing/research-entry.integration.spec.ts`; `server/modules/council/` independent/daily/publication suites; `server/modules/research-documents/research-documents.integration.spec.ts`.
 - Complete input and paid continuation: `server/modules/council/council.owner-context.spec.ts`, `council.context.spec.ts`, `council.daily.spec.ts`, `council-report-resume.integration.spec.ts`; `client/src/utils/resume-daily-report.test.cjs`. Cover intact full JSON/cash/limits, ordinary-source budgets, refusal before staging/dispatch, actual saved wire comparisons, unchanged openings, idempotency, stale/foreign/ambiguous-task rejection and corrected-check identity across summary retries. The resume integration requires a disposable `COUNCIL_TEST_DATABASE_URL` and asserts that prerequisite rather than silently skipping.
 - Saved report recovery/reading: `server/modules/experience/report-recovery.integration.spec.ts` (requires `EXPERIENCE_TEST_DATABASE_URL`); `client/src/utils/current-report-recovery.test.cjs`, `simulation-review-reading.test.cjs`. Cover old daily receipts, exact returned-version links, owner/revocation boundaries, unchanged archives, unknown figures and no executor calls.
 - Simulation observation coverage and report identity: `server/modules/paper-trading/simulation-review.integration.spec.ts`, `simulation-experiments.integration.spec.ts`; `client/src/utils/simulation-review-reading.test.cjs`, `report-kind-reading.test.cjs`. Cover a single initialization observation, later true zero changes, missing timestamps and strategy-boundary valuations, one-time model notes and separate research/ledger labels. Database cases require a disposable `STRATEGY_TEST_DATABASE_URL`.
