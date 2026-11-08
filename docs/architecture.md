@@ -12,6 +12,8 @@ For setup see [self-hosting](self-hosting.md), for commands/tests see [developme
 
 **Daily simulation journey review — 2026-11-07, baseline `5dc6bdd` plus this change:** diagrams 2–4 now cover system-authored observation fallback, direct draft navigation to the simulation, draft deletion/current-strategy removal and visible fill receipts. Diagram 1 retains its service/owner boundaries; migration 44 adds only a draft tombstone. Diagram 5 is unchanged: these actions never mutate recorded real assets. Immutable report/confirmation history, final order fences and explicit strategy application remain authoritative.
 
+**Native model dispatch review — 2026-11-08, baseline `c2f15ca` plus this change:** diagram 1 makes configuration resolution before task staging explicit. `execution-readiness.ts` resolves an unambiguous bare OpenCode model to its advertised `provider/model` identity; `LocalAgentsService` returns that configuration internally and new task staging freezes it for the actual CLI arguments. Explicit reasoning variants survive resolution; ambiguous defaults fail before dispatch. Existing journal tasks retain their original configuration and are never relaunched by this fix. Diagrams 2–5 retain their research acceptance, explicit strategy application, channel publication and real-ledger boundaries; this change adds no recovery request, provider fallback, migration or trade authority.
+
 <a id="system-overview"></a>
 ## 1. System overview
 
@@ -25,7 +27,8 @@ flowchart LR
     auth --> ledger["Recorded real assets and imports"]
     experience --> council["Independent research and publication"]
     council --> models["Configured model API"]
-    council --> native["Native agent task journal"]
+    council --> nativeConfig["Validate and resolve native model configuration"]
+    nativeConfig --> native["Native agent task journal; frozen execution configuration"]
     native --> provider["Agent provider and research sources"]
     experience --> data["Quotes and FX"]
     strategy --> data
@@ -43,6 +46,7 @@ flowchart LR
 - `server/app.module.ts` composes Nest modules; `ViewModule` stays last for the SPA fallback. Development runs Vite/Nest separately. The production web build serves the client through Nest. Clean Docker uses a separate PostgreSQL container; optional demo Compose uses fictional seed data.
 - `server/common/platform/database.provider.ts` owns the direct postgres.js/Drizzle connection and registered startup migrations. This is a local compatibility layer, not a hosted aPaaS dependency. Fresh installations need `scripts/db/01_schema.sql`; startup additions do not initialize the base schema. Read the actual registration list, currently through `44_strategy_draft_deletion.sql` with noncontiguous numbering, rather than assuming every number exists.
 - `server/modules/local-agents/` owns connections, pairing, research receipts and durable task identity. `server/local-agents/native.ts` executes supported provider CLIs with bounded output. Native execution can still contact external inference/research providers. Restart recovery does not replay unfinished native calls; completed artifacts remain available. Docker's retained companion path polls outbound from the host helper.
+
 - `server/modules/quote/` and `server/modules/fx/` obtain external data; freshness/coverage remain explicit. Model API budgets and native provider billing are distinct. `agent/` is an optional Python CLI scaffold; it does not orchestrate built-in Nest research. `/mcp` is a separate scoped agent-session integration. The legacy agent gateway is disabled by default.
 
 Protected controllers derive owner from `req.userContext.userId`; services scope reads/writes and joins by that owner. `AUTH_MODE=local` selects one local workspace identity and requires loopback binding with no proxy trust. Account mode uses first-party login and sessions. These are application ownership guarantees, not a blanket PostgreSQL RLS claim. Credentials are encrypted private settings; native task files and import images are private runtime artifacts, not fixture sources. See [privacy](privacy.md) and [local agents](local-agents.md).
@@ -110,6 +114,11 @@ The older `server/modules/multi-agent/pipeline.service.ts` bull/bear/critic/risk
 
 ```mermaid
 flowchart TD
+    realHoldings["Recorded real holdings: copy to simulation"] --> seedRoute["Handle seedReal in the current simulation page"]
+    seedRoute --> seedPreview["Preview holdings and cash; explicit quote and FX gaps"]
+    seedPreview --> seedConfirm["User confirms the new simulated starting point"]
+    seedConfirm --> accountSetup["Create or account-fenced restart; retain prior ledger"]
+    accountSetup --> destination
     source["Exact report version and selected section"] --> readable["Readable selection excludes placeholders and metadata"]
     opinion["Exact released discussion opinion"] --> readable
     readable -->|"Validated execution-strategy"| typed["Preserve typed proposed entries and limits"]

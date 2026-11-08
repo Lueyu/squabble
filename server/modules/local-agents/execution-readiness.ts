@@ -21,8 +21,9 @@ export function executionReadiness(item: LocalAgentConnection, settings?: Native
   if (!item.connected) return { ...base, state: 'not_connected', executable: false };
   if (item.state === 'login_required') return { ...base, state: 'login_required', executable: false,
     failure: { code: 'LOCAL_LOGIN_REQUIRED', stage: 'preflight', recoveries: ['fix_configuration'] } };
+  const effectiveSettings = item.provider === 'opencode' && model ? { ...settings, model } : settings;
   try {
-    validateNativeAgentConfiguration(settings, item);
+    validateNativeAgentConfiguration(effectiveSettings, item);
     // OpenCode splits provider/model. A bare default becomes provider + empty model.
     if (item.provider === 'opencode' && model && !/^[^/\s]+\/[^\s]+$/u.test(model)) throw new Error('LOCAL_INVALID_CONFIGURATION');
   } catch (error) {
@@ -31,7 +32,7 @@ export function executionReadiness(item: LocalAgentConnection, settings?: Native
       stage: 'preflight', recoveries: ['fix_configuration'] } };
   }
   if (!item.available) return { ...base, state: 'unknown', executable: false, failure: { code: 'LOCAL_UNAVAILABLE', stage: 'preflight', recoveries: ['check_existing'] } };
-  const route = { mode: 'local' as const, agentId: item.id, ...(settings ? { agentSettings: settings } : {}) };
+  const route = { mode: 'local' as const, agentId: item.id, ...(effectiveSettings ? { agentSettings: effectiveSettings } : {}) };
   if (item.busy) return { ...base, route, state: 'busy', executable: false };
   return { ...base, state: 'ready', executable: true, route };
 }

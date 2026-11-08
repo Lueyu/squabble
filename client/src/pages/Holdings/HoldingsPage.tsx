@@ -346,7 +346,7 @@ export default function HoldingsPage() {
             />
             {t('ui.tx.refresh')}
           </Button>
-          <Button variant="outline" size="sm" asChild><Link to="/paper?seedReal=1">{i18n.language.startsWith('en') ? 'Create paper experiment' : '复制为模拟实验'}</Link></Button>
+            <Button variant="outline" size="sm" asChild><Link to="/paper?seedReal=1">{i18n.language.startsWith('en') ? 'Copy to simulation' : '复制到模拟盘'}</Link></Button>
           <Button size="sm" onClick={() => setAddOpen(true)}>
             <Plus className="size-4" />
             {t('holdings.addHolding')}

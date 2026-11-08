@@ -21,6 +21,8 @@ The first completed daily report and latest discussion-derived report are separa
 
 Execution recovery is persistent: current projections reconcile retained results, native journals retain submission identity, and interrupted native tasks are not replayed automatically. Do not turn read/recovery operations into implicit paid retries.
 
+Native OpenCode model dispatch was reviewed against `c2f15ca` plus working-tree changes on 2026-11-08. `execution-readiness.ts` resolves an unambiguous bare default or override to its advertised `provider/model` ID, preserving the requested reasoning variant. The resolved route configuration is returned internally by `LocalAgentsService.validatedConfiguration` and frozen when a new task is staged, so `researchInvocation` receives it as `--model`. Ambiguous matches refuse dispatch. Existing task retrieval/resume bypasses staging and preserves its original configuration; this fix does not replay a provider call or rewrite native preferences.
+
 ### Complete owner input and explicit saved-research continuation
 
 `SimpleCouncilService.resolveContext` creates `Frozen owner context` evidence from owner-scoped records. Its full JSON is atomic: all holdings and recorded cash rows, zero/unknown balances, confirmed investor limits, evidence IDs and capture/as-of times must survive native/API packing. `frozenOwnerEvidence`/`evidenceExcerpts` in `council.rules.ts`, `agentAssignment` in `council.native.ts`, `packDiscussionContext` in `council.context.ts` and workflow work/review packing in `council.workflow-executor.ts` keep those records whole while ordinary sources retain their excerpt budgets. More than twenty frozen records fails explicitly; full request token/byte gates decide fit. Native oversized assignments fail before staging/provider dispatch. Do not solve a no-fit by clipping the account JSON or increasing its limits without authorization. Stored prices remain recorded marks, not fresh quotes.
@@ -96,6 +98,8 @@ Apply requires `{ strategyId, expectedRevision, previewHash, expectedCurrentId, 
 Do not consolidate these helpers based on similar names without reviewing stored records and compatibility. `previewHash` sent by the client is the saved strategy preview's `contentHash`, not a newly invented hash of displayed prose.
 
 ## Applied strategy → simulation
+
+Holdings copy navigation uses `/paper?seedReal=1`. In the current simplified experience, `AiInvestmentPage` must consume it and open the holdings preview through `/api/ai-investment/preview`; the retained legacy `PaperPage` handler alone is insufficient. A current managed account uses the existing confirmed restart path with its expected account identity and retained history. Navigation/preview never confirms a restart, applies a strategy or mutates real holdings. Quote/FX acquisition during seed preview may run concurrently while preserving currency, market and freshness gates; missing observations remain gaps rather than invented values.
 
 `server/modules/paper-trading/user-strategy-runtime.ts` converts confirmed preview directives to investor mandate rules and an internal builder profile. `strategy.scheduler.ts`/`strategy.service.ts` evaluate rules; `strategy-route.rules.ts`, portfolio-risk checks and `paper-trading.service.ts` control final order placement. Configured, currently effective, monitoring, awaiting review and filled are different states.
 

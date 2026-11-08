@@ -19,7 +19,7 @@ export const fetchAiInvestment = async (): Promise<AiInvestmentView> => (await h
 export const fetchInvestmentDecision = async (id: string): Promise<InvestmentDecision> =>
   (await http.get(`/api/ai-investment/decisions/${encodeURIComponent(id)}`)).data;
 export const previewAiInvestment = async (input: { origin: 'holdings' | 'cash'; cash?: { amount: number; currency: 'USD' | 'HKD' | 'CNY' }; requestKey: string }): Promise<AiInvestmentPreview> =>
-  (await http.post('/api/ai-investment/preview', input)).data;
+  (await http.post('/api/ai-investment/preview', input, input.origin === 'holdings' ? { timeout: 60_000 } : undefined)).data;
 export const startAiInvestment = async (input: InvestmentStartRequest): Promise<{ status: string; policy: InvestmentPolicy; evaluationState: string }> =>
   (await http.post('/api/ai-investment/start', input)).data;
 export const restartAiInvestment = async (input: InvestmentStartRequest & { expectedAccountId: string }) =>

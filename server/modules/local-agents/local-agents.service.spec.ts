@@ -9,9 +9,58 @@ import { LocalAgentStore } from './local-agents.store';
 import { parseCompanionPoll, providerFromId, providerCatalog, validateNativeAgentConfiguration } from './local-agents.requests';
 import { nativeFailureCode, type LocalAgentExecution } from './local-agents.types';
 import { LOCAL_AGENT_PROVIDERS } from '../../../shared/local-agents.interface';
+import { researchInvocation } from '../../local-agents/research';
 
 const options = (messageId = 'message-1'): LocalAgentExecution => ({ agentId: 'native-codex', messageId, prompt: 'Public research',
   onTask: async () => undefined, onProgress: async () => undefined, shouldContinue: async () => true });
+
+test('a resolved OpenCode default is persisted and reaches native invocation argv without changing preferences', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'squabble-native-model-'));
+  const connection = { ...providerCatalog.opencode, state: 'ready' as const, defaultModel: 'fixture-model', models: [{ id: 'gateway/fixture-model', name: 'Fixture' }] };
+  let executions = 0;
+  const service = new LocalAgentsService({
+    detectNativeAgents: async () => [connection], openNativeLogin: async () => undefined,
+    runNativeAgent: async (provider, prompt, run) => {
+      executions++;
+      assert.deepEqual(run.agentSettings, { model: 'gateway/fixture-model' });
+      const invocation = await researchInvocation(provider, prompt, run.agentSettings!, directory, {}, {}, async () => { throw new Error('No CLI or provider requests allowed'); });
+      assert.equal(invocation.args[invocation.args.indexOf('--model') + 1], 'gateway/fixture-model');
+      return { text: 'Fixture research', usageTokens: null };
+    },
+  }, new LocalAgentStore(directory));
+  Object.defineProperty(service, 'mode', { get: () => 'native' });
+  try {
+    await service.connect('alice', 'native-opencode');
+    const request = { ...options('resolved-model'), agentId: 'native-opencode', onTask: async ({ taskId }: { taskId: string }) => {
+      assert.deepEqual((await service.store.task('alice', taskId)).agentSettings, { model: 'gateway/fixture-model' }, 'configuration is frozen before execution');
+    } };
+    const result = await service.execute('alice', request);
+    assert.equal(result.text, 'Fixture research');
+    assert.equal(connection.defaultModel, 'fixture-model');
+    await service.execute('alice', { ...request, remoteTaskId: result.taskId });
+    assert.equal(executions, 1, 'reading the original result never launches a new task');
+  } finally {
+    await service.onModuleDestroy(); await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('ambiguous OpenCode defaults fail before staging or invoking a task', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'squabble-native-ambiguous-model-'));
+  let executions = 0;
+  const service = new LocalAgentsService({
+    detectNativeAgents: async () => [{ ...providerCatalog.opencode, state: 'ready', defaultModel: 'fixture-model', models: [{ id: 'one/fixture-model', name: 'One' }, { id: 'two/fixture-model', name: 'Two' }] }],
+    openNativeLogin: async () => undefined, runNativeAgent: async () => { executions++; throw new Error('No provider requests allowed'); },
+  }, new LocalAgentStore(directory));
+  Object.defineProperty(service, 'mode', { get: () => 'native' });
+  try {
+    await service.connect('alice', 'native-opencode');
+    await assert.rejects(service.execute('alice', { ...options('ambiguous-model'), agentId: 'native-opencode' }), /LOCAL_INVALID_CONFIGURATION/u);
+    assert.equal(await service.store.findMessage('alice', 'ambiguous-model'), undefined);
+    assert.equal(executions, 0);
+  } finally {
+    await service.onModuleDestroy(); await rm(directory, { recursive: true, force: true });
+  }
+});
 
 for (const kind of ['USAGE_LIMIT', 'RATE_LIMIT']) test(`native ${kind} persists and resuming does not charge for a second run`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'squabble-native-limit-'));
