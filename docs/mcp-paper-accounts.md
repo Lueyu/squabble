@@ -1,5 +1,13 @@
 # MCP paper experiment identity / MCP 模拟实验身份
 
+This guide describes the retained single-active-account MCP workflow. Multiple
+active accounts return `ACCOUNT_SELECTION_REQUIRED`; selecting an account in the
+current workspace does not change MCP scope. Managed-account write guards remain.
+
+本文描述保留的单活跃账户 MCP 流程。存在多个活跃账户时返回
+`ACCOUNT_SELECTION_REQUIRED`；当前工作区中的账户选择不会改变 MCP 作用域，
+托管账户的写入保护继续生效。
+
 `get_portfolio` returns the selected experiment's `accountId`. Pass that exact
 value to the existing `place_paper_order` tool alongside ticker, side and
 quantity. Missing or changed account IDs reject the request before execution.

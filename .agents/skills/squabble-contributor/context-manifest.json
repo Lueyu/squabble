@@ -4,13 +4,14 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "f032f7e8724e1798113b30146e7143d2d7e5d002",
+    "commit": "9e2d83a32580bc05587fed07505205bb4ae4ea9e",
     "workingTreeChanges": true,
-    "reviewedAt": "2026-11-07",
+    "reviewedAt": "2026-11-09",
     "scope": [
-      "Report source selection excludes missing/invalid plan placeholders and internal metadata",
-      "Long readable research imports losslessly as bounded observations with unchanged source identity",
-      "Preview/save share source and entry limits while typed-plan validation and execution authority remain unchanged"
+      "Independent simulation accounts and reviewed strategy combinations with explicit owner/account/policy/source authority",
+      "Saved real/simulation comparison without valuation writes; trusted no-external-flow continuity and distinct observation origins",
+      "Account-scoped runtime, allocation/shared-cash fences, channel projection and actual-fill publication",
+      "Migration 45, historical migration 42 compatibility, repeated startup and retained legacy guards; all five architecture flows reviewed"
     ]
   },
   "areas": [
@@ -21,13 +22,16 @@
         "client/src/components/Layout",
         "server/main.ts",
         "server/app.module.ts",
-        "server/modules/auth/"
+        "server/modules/auth/",
+        "client/src/pages/Overview/",
+        "client/src/features/portfolio-comparison/"
       ],
       "entrypoints": [
         "client/src/app.tsx",
         "server/main.ts",
         "server/app.module.ts",
-        "server/modules/auth/auth.module.ts"
+        "server/modules/auth/auth.module.ts",
+        "client/src/pages/Overview/PortfolioOverviewPage.tsx"
       ],
       "references": [
         "references/repository-map.md",
@@ -48,7 +52,9 @@
         "server/modules/cash-accounts/",
         "client/src/pages/Import/",
         "client/src/pages/Holdings/",
-        "server/database/asset-ledger.schema.ts"
+        "server/database/asset-ledger.schema.ts",
+        "server/modules/paper-trading/portfolio-comparison",
+        "shared/portfolio-comparison.interface.ts"
       ],
       "entrypoints": [
         "server/modules/experience/today.service.ts",
@@ -57,7 +63,11 @@
         "server/modules/import/transaction-imports.service.ts",
         "server/modules/import/position-checkpoint.ts",
         "server/modules/transactions/transactions.service.ts",
-        "server/database/asset-ledger.schema.ts"
+        "server/database/asset-ledger.schema.ts",
+        "server/modules/paper-trading/portfolio-comparison.service.ts",
+        "server/modules/paper-trading/portfolio-comparison.rules.ts",
+        "server/modules/paper-trading/portfolio-comparison.integration.spec.ts",
+        "client/src/features/portfolio-comparison/PortfolioComparisonPanel.tsx"
       ],
       "references": [
         "references/repository-map.md",
@@ -121,7 +131,9 @@
         "shared/user-investment-strategy.interface.ts",
         "shared/strategy-source-reading.ts",
         "client/src/pages/Paper/",
-        "client/src/features/investment-strategies/"
+        "client/src/features/investment-strategies/",
+        "server/database/portfolio-workspace.schema.ts",
+        "shared/portfolio-workspace.interface.ts"
       ],
       "entrypoints": [
         "server/modules/paper-trading/report-execution-plan.ts",
@@ -142,7 +154,20 @@
         "client/src/features/investment-strategies/InvestmentStrategyEditor.tsx",
         "client/src/pages/Paper/AiInvestmentPage.tsx",
         "server/modules/paper-trading/user-strategy-removal.integration.spec.ts",
-        "client/src/features/investment-strategies/use-investment-strategy-editor.ts"
+        "client/src/features/investment-strategies/use-investment-strategy-editor.ts",
+        "server/modules/paper-trading/portfolio-workspace.controller.ts",
+        "server/modules/paper-trading/portfolio-workspace.service.ts",
+        "server/modules/paper-trading/portfolio-workspace.rules.ts",
+        "server/modules/paper-trading/strategy-allocation.ts",
+        "server/modules/paper-trading/portfolio-workspace.integration.spec.ts",
+        "server/modules/paper-trading/portfolio-runtime.integration.spec.ts",
+        "server/modules/paper-trading/portfolio-capacity.integration.spec.ts",
+        "server/modules/paper-trading/portfolio-legacy.integration.spec.ts",
+        "server/modules/paper-trading/legacy-builder-boundary.integration.spec.ts",
+        "client/src/pages/Paper/SimulationAccountsPage.tsx",
+        "client/src/pages/Paper/SimulationAccountPage.tsx",
+        "client/src/features/investment-strategies/AccountStrategyCombinationPage.tsx",
+        "client/src/features/investment-strategies/ReportStrategyTarget.tsx"
       ],
       "references": [
         "references/repository-map.md",
@@ -171,7 +196,11 @@
         "server/modules/channel/channel-mood-validation.ts",
         "server/modules/channel/channel-runtime.ts",
         "server/modules/channel/channel.service.ts",
-        "server/modules/channel/channel-contract.spec.ts"
+        "server/modules/channel/channel-contract.spec.ts",
+        "server/modules/channel/channel-workspace.integration.spec.ts",
+        "server/modules/channel/channel-executions.ts",
+        "client/src/utils/channel-question.ts",
+        "server/modules/channel/channel-question-account.integration.spec.ts"
       ],
       "references": [
         "references/repository-map.md",
@@ -267,7 +296,9 @@
         "package.json",
         ".github/workflows/ci.yml",
         "Dockerfile",
-        "docker-compose.yml"
+        "docker-compose.yml",
+        "scripts/db/42_user_strategy_runtime.sql",
+        "scripts/db/45_portfolio_workspace.sql"
       ],
       "references": [
         "references/development-and-tests.md",
@@ -299,7 +330,11 @@
         "shared/simple-conversation.interface.ts",
         "shared/research-workflow.interface.ts",
         "shared/simulation-experiment.interface.ts",
-        "shared/simulation-review-reading.ts"
+        "shared/simulation-review-reading.ts",
+        "shared/portfolio-workspace.interface.ts",
+        "shared/portfolio-comparison.interface.ts",
+        "client/src/api/portfolio-workspace.ts",
+        "client/src/api/portfolio-comparison.ts"
       ],
       "references": [
         "references/repository-map.md",
@@ -317,14 +352,14 @@
     }
   ],
   "reviewNotes": {
-    "architecture": "Report strategy import reviewed against f032f7e plus working-tree changes. Only the strategy diagram changes: readable source selection branches into validated typed plans or lossless observation splitting before freezing an exact source snapshot. The other four diagrams retain their service/owner, research/recovery, channel publication and real-ledger structure.",
-    "behavior": "Missing/invalid execution-plan placeholders and internal metadata are excluded from selectable/readable report import content. Raw source identity remains intact. Long readable research is split into observation entries without AI calls, inferred directives or mandate rules; source keys/content hashes and typed-plan validation remain unchanged. Preview and save preserve existing source/entry capacity and owner/revision/source fences. Documentation does not certify a live deployment or research result.",
+    "architecture": "Reviewed 9e2d83a plus the portfolio-workspace working tree on 2026-11-09. All five diagrams checked: system routes and saved comparison, account strategy combinations, channel account/runtime identity and saved real-ledger comparison readers changed. Research diagram changes its page entry only; sealed submissions, saved-result recovery and immutable publication keep their existing authority.",
+    "behavior": "Independent accounts compile enabled strategy snapshots into one account profile/mandate; drafts, previews and immutable combination revisions are account-scoped. Final fills preserve source/policy identity, shared cash and attributed exposure caps. Comparison reads saved observations only and never infers a cash-flow-adjusted return. Channel account selection is read-only; monitoring/fill identities include account and source entry. No broker order or real-ledger mutation is introduced.",
     "tooling": "Complete-portfolio changes do not modify the context helpers or CI integration; their prior verification remains separate from the new application behavior review.",
     "testFixtures": "CI crossed Shanghai midnight: three integration suites now align scenario clocks and dates; stale-report and ledger guards remain unchanged. These test-only changes do not alter any of the five architecture flows.",
     "concurrentMain": "PR #80 (f0fb2a0) inspected during final integration: added saved daily-report recovery, returnedDocumentId and readable simulation review projections. Repository/research references and report diagram updated; other architecture flows unchanged. Date fixture fixes preserve both calendar derivation and deterministic clocks.",
     "completePortfolioResearch": "Reviewed against 65c388e plus working-tree changes on 2026-11-07, not an uncreated release commit. Checked council input packers, resume reservation and correction-bound reverse-check selection, report coverage/body publication, simulation review timestamps and archived/category readers. Retained independent openings are never retroactively labelled complete after supplementation; formatting recovery remains separate from explicit AI continuation.",
-    "unchangedFlows": "For report strategy import, diagrams 1, 2, 4 and 5 need no structural changes: route/module/auth/provider boundaries remain the same; research execution, saved-result acceptance and immutable publication are unchanged; channel seals/template/deduplication/outbox remain unchanged; no real-ledger/import/reconstruction mutation is introduced. Diagram 3 changes only draft-source selection/packing; strategy application and final order fences are unchanged.",
-    "documentationVerification": "Report-import documentation review: context helper tests passed 15 cases with zero skips; structural checker is valid with no errors, retaining the expected working-tree drift warning. Whitespace and retrieval checks cover the shared reading helper, 200000 source bound and lossless splitting contract. These checks do not certify runtime research or deployment.",
+    "unchangedFlows": "Research independent-submission, completed-result acceptance, recovery and immutable report publication contracts were checked and remain unchanged. Real transaction/import/cash reconstruction writers are unchanged; diagram5 adds only their saved observation consumer. Module ownership remains research-core/research-routing with paper-trading independent of experience.",
+    "documentationVerification": "Documentation task: npm run test:context passed 15 tests with zero failures/skips; npm run check:context returned valid=true and no errors, retaining the expected semantic-review warning and review-required drift status. Local documentation links and all five Mermaid block identities were checked; whitespace validation passed. No product integration suite, paid research, live instance, ledger mutation, deployment or global-skill synchronization was performed by this documentation task.",
     "savedResultAcceptance": "Reviewed f0137167 plus working-tree changes: assertSavedDailyResult and checkpoint.remote.reparseExisting bind original task identity and SHA-256 promptHash/resultHash/contextHash at reservation and reparseDailyTurn. Normal recordTurn accepts the same turn; old provider calls and budgets are not repeated. A saved challenge needs only a subsequent summary call, while a saved summary can publish with zero new calls. parseDailyReverseCheck now shares the sixty-record inventory bound; unknown/sixty-one references remain invalid. User documentation only corrects the prior unconditional AI-call wording.",
     "reportStrategyImport": "Reviewed f032f7e plus working-tree changes: shared strategyImportSections/strategyImportReadableContent/splitStrategySourceText align dialog and backend readable selection, retain public links and filter placeholder/metadata text. Raw/readable sources are each capped at 200000; observation parts at 12000 preserve exact readable text, separators, surrogate pairs and one source key/raw-content hash. Preview/save retain twenty sources/entries and typed-plan validation. No AI call, inferred execution rule, policy activation or live-ledger mutation is introduced.",
     "dailySimulationLoop": "Reviewed source baseline 5dc6bdd plus this change: report exact-source navigation/system observation fallback, simulation-owned strategy editing/deletion, migration 44 tombstones and atomic stop/remove, visible actual fills and strategy-context brief renewal. Architecture flows 2–4 updated; system ownership and real ledger boundaries in flows 1/5 unchanged. Baseline hashes identify inspected source before these working-tree changes, not a released revision.",
@@ -347,6 +382,15 @@
       "scope": "Shared model/evidence/context moved to research-core; research-routing owns executor selection; strategy UI/hook/form/review live in one feature. System overview names these module boundaries. Research/report, strategy, channel and real-ledger flows retain source/owner checks, recovery, transaction boundaries and historical reading. Settings-local LLM provider remains explicitly documented. Static dependency fixtures and compiled Nest provider checks complement behavior tests; no deployed instance is certified.",
       "validation": "Local final server911/client352/memory99 passed without skips; native180 and dev8 passed with one POSIX-only Windows skip each. Lint/Web build/static boundaries5/compiled Nest wiring/context helpers15 and context structural checks passed. Independent source reviews and 238 document links passed. Required Linux/PG16 CI is separate; local DB was disposable PG18.6. No deployed instance is certified.",
       "reviewedSourceCommit": "bd0f258744b377228531ea8a1fe1295deac604b4"
+    },
+    "portfolioWorkspace": {
+      "baseline": "9e2d83a32580bc05587fed07505205bb4ae4ea9e",
+      "workingTreeChanges": true,
+      "reviewedAt": "2026-11-09",
+      "scope": "100 enabled execution symbols share preview/runtime capacity; fixed reviewed rules do not consume the retained twenty-symbol per-market daily AI discussion cap. Migration45 preserves old index names with scoped definitions and migration42 recognizes portfolio authority on replay. Archived state, legacy ambiguity/managed guards, original filled-entry identity and immutable strategy histories remain. Selected account pause also stops protections; enabled scheduler valuation continues for paused non-archived accounts. Channel questions freeze the explicit owned account in receipt/deferred identity; simulation cash/position reads use that ledger and pending questions filter by selected account. Owner-wide historical log scope remains explicit.",
+      "validation": "Final local validation on Windows/Node24/PostgreSQL16 disposable fixtures: server937 and client373 passed with zero failures/skips; local agents180 passed with one POSIX-only Windows skip. Lint, Web build, compiled module wiring, static architecture5, context15 and structural checks passed. Independent design/source reviews and desktop1440/mobile390 browser journeys completed in an isolated fictional-data preview with automatic trading disabled. The personal instance and global installed skill were not changed. Required Linux CI is tracked separately on the PR. See docs/portfolio-workspace-validation.md.",
+      "reviewedSourceCommit": "d69cd8f8438a9a668824446bd648e18fe32e488f",
+      "knowledgeScenarioReview": "Independent read-only scenario review traced account-bound channel questions/pending results, complete migration replay and private instance backup/cutover/rollback from the canonical checkout when an installed copy is older. Corrected the stale channel GET side-effect paragraph and documented STRATEGY_TEST_DATABASE_URL for both new account channel suites. Final current-journey/channel/MCP scope documentation review checked 141 local links, balanced fences and all five architecture anchors; no live or paid operation was used."
     }
   }
 }

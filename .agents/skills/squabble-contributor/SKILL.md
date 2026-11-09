@@ -13,7 +13,8 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 2. 从已安装 skill 或仓库正本运行 `node <skill目录>/scripts/inspect-workspace.cjs --repo <仓库根目录>`。它只读 Git 状态、知识版本、路径和迁移登记；不会安装依赖、迁移数据库或调用 AI。`--config <私有配置文件>` 仅补充位置提示。
 3. 优先读取当前 checkout 的本 skill 和下面与任务有关的参考资料。`context-manifest.json` 记录核对基线、模块入口和相关图。版本差异、缺失基线和脏文件需要定向核对，不代表运行实例损坏。不要把旧文档当作当前代码的证明，也不要重新通读整个仓库。
 4. 明确是当前简化体验还是保留的旧流程，再打开对应入口。当前 `/council` 通过 `SimpleCouncilPage` 进入频道；旧 `CouncilPage` 和 `multi-agent/` 分析仍存在。
-5. 共享研究基础在 `server/modules/research-core/`，执行器选择在 `research-routing/`；策略界面在 `client/src/features/investment-strategies/`。不要把旧目录名当作功能归属；中文阅读顺序见 `docs/code-reading.zh-CN.md`。
+5. 当前 `/` 为账户表现总览，`/paper` 为多模拟仓列表，`/paper/:accountId/strategies` 管理该仓组合；比较和频道账户选择是只读操作，不替代显式应用。旧无账户接口保留歧义与托管账户保护。
+6. 共享研究基础在 `server/modules/research-core/`，执行器选择在 `research-routing/`；策略界面在 `client/src/features/investment-strategies/`。不要把旧目录名当作功能归属；中文阅读顺序见 `docs/code-reading.zh-CN.md`。
 
 所有反引号内的仓库路径都相对于选定仓库；参考文件之间的链接相对于 skill。
 

@@ -2,11 +2,12 @@
 
 Squabble is an investing assistant built around portfolio research, multiple
 agent perspectives, readable reports and a stock-friend channel. The current Web
-journey is **Today → review a strategy → AI simulation → Channel**. Research
-opinions and strategy drafts become simulation authority only after confirmation.
+journey is **Portfolio overview → Research reports → Choose a simulation → Review
+and apply its combination → Channel**. Accounts run independently; report imports
+remain disabled account drafts until explicitly applied.
 
 吵股是一款智能投资助手：围绕持仓开展多 Agent 研究，用报告和股友频道呈现观点与变化。
-当前 Web 日常流程是**今日 → 核对策略 → AI 模拟盘 → 频道**；研究观点和策略草稿需经确认才用于模拟执行。
+当前 Web 日常流程是**投资总览 → 研究报告 → 选择模拟仓并核对组合 → 频道**；多个模拟仓独立运行，报告导入先保存默认停用的账户草稿，明确应用后才用于模拟执行。
 
 ## Start and use · 安装与使用
 
@@ -32,6 +33,7 @@ is needed for local Docker.
 - [代码阅读指南（中文）](code-reading.zh-CN.md): follow the current journey, module responsibilities, design tradeoffs and future work.
 - [Development](development.md): source setup, current commands and disposable database prerequisites.
 - [Architecture](architecture.md): five maintained flows and current versus retained boundaries.
+- [Portfolio workspace design](portfolio-workspace-design.md), [implementation plan](portfolio-workspace-plan.md) and [validation record](portfolio-workspace-validation.md): reviewed screens, account contracts and delivery checks.
 - [Contributing](../CONTRIBUTING.md): PR checks, translations and change review.
 - [Squabble contributor skill](../.agents/skills/squabble-contributor/SKILL.md): targeted source map, tests and maintenance instructions for coding agents.
 - [Deployment and recovery runbook](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md): inspect and update an existing private instance.
