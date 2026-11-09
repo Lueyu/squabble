@@ -176,7 +176,7 @@ test('durable channel publishes once, reseals across compiler versions and prese
     assert.equal(completed[0].weight, 'nudge');
     assert.match(completed[0].text, /100/u);
     assert.ok(completed[0].evidence.sources.some(source => source.id === order.id));
-    assert.equal(completed[0].evidence.sources[0].uri, `/paper?orderId=${encodeURIComponent(order.id)}`, 'receipt points at the supported simulation route');
+    assert.equal(completed[0].evidence.sources[0].uri, `/paper/${account.id}?orderId=${encodeURIComponent(order.id)}`, 'receipt points at the exact simulation account');
     const [draft] = await db.insert(userInvestmentStrategies).values({ owner: runtimeOwner, content: { title: 'Fictional editable plan', body: 'Observe only', timezone: 'Asia/Shanghai', startsAt: validAt, endsAt: future, entries: [{ id: 'watch', text: 'Observe only', sourceKeys: [] }] } }).returning();
     assert.ok((await readChannelRuntime(db, runtimeOwner)).proposals.some(proposal => proposal.id === draft.id));
     const action = { id: 'review-fictional-draft', kind: 'review_proposal' as const, label: 'Review', targetId: draft.id, expectedRevision: draft.revision };

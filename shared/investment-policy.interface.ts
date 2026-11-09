@@ -13,6 +13,8 @@ export interface InvestmentConstraintRecord {
   status: 'active' | 'expired' | 'revoked'; constraint: InvestmentConstraint;
 }
 export interface InvestmentConfig {
+  /** Immutable, independently budgeted authority for this simulation account. */
+  portfolio?: import('./portfolio-workspace.interface').PortfolioStrategyAssignment[];
   /** Immutable investor authority; research never replaces it. */
   reviewMembers?: import('./council.interface').CouncilMember[];
   userStrategy?: import('./user-investment-strategy.interface').ConfirmedInvestmentStrategy;

@@ -13,7 +13,7 @@ test('a pending Council cycle does not block a later protective scan', async () 
   let protectiveScans = 0;
   const service = new StrategyService(db as never, { getActiveProfile: async () => profile } as never,
     {} as never, {} as never, {} as never, {} as never, { runtime: async () => ({}) } as never, {} as never);
-  Object.assign(service, { stillActive: async () => true, monitorProtections: async () => { protectiveScans++; },
+  Object.assign(service, { accountProfile: async () => profile, stillActive: async () => true, monitorProtections: async () => { protectiveScans++; },
     universe: async () => ['AAPL'], tickMarket: async () => pending });
   const first = service.tick('owner');
   await new Promise(resolve => setImmediate(resolve));
@@ -25,7 +25,7 @@ test('a pending Council cycle does not block a later protective scan', async () 
 test('scheduler dispatch remains available to protections while earlier strategy jobs wait', async () => {
   let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; });
   let dispatches = 0;
-  const db = { select: () => ({ from: () => ({ innerJoin: () => ({ where: async () => [{ owner: 'fixture', config: { automation: { enabled: true } } }] }) }) }) };
+  const db = { select: () => ({ from: () => ({ where: async () => [{ owner: 'fixture', accountId: 'account', botEnabled: true }] }) }) };
   const strategy = { tick: async () => { dispatches++; if (dispatches === 1) await pending; } };
   const scheduler = new StrategyScheduler(db as never, strategy as never, { tick: async () => undefined } as never);
   const first = scheduler.tick();

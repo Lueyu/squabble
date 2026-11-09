@@ -5,6 +5,7 @@ import type {ChannelAction,ChannelBubble,ChannelEvidenceCard,ChannelProjection,C
 import {Sheet,SheetContent,SheetDescription,SheetHeader,SheetTitle} from '@/components/ui/sheet';
 import CouncilMemberAvatar from '../Council/CouncilMemberAvatar';
 import {channelText} from './channel-copy';
+import {simulationStrategyPath} from '@/utils/portfolio-workspace';
 import './channel.css';
 
 const friendAvatars={laozhou:'value',ajie:'technical',xiaoqi:'macro'} as const;
@@ -25,13 +26,14 @@ export function RuntimeBoard({snapshot,language}:{snapshot:ChannelRuntimeSnapsho
  const proposal=snapshot.proposals.find(item=>item.status==='applying')??snapshot.proposals.find(item=>item.status==='proposed')??snapshot.proposals[0];
  const execution=snapshot.executions[0],rule=snapshot.current.rules.find(item=>item.effective);
  const allExpired=snapshot.current.rules.length>0&&snapshot.current.rules.every(item=>item.effectiveReason==='expired');
- const current=!snapshot.current.strategyId?c.observing:snapshot.monitoringStatus==='paused'?c.paused:snapshot.monitoringStatus==='stopped'?(allExpired?c.expiredStrategy:c.stopped):snapshot.monitoringStatus==='observing'?(snapshot.monitoringReason==='OBSERVATION_ONLY'?c.observation_only:c.monitorObserving):snapshot.monitoringStatus==='running'?(rule?`${rule.label} · ${rule.value}`:c.noEffectiveRules):c.monitorUnconfirmed;
+ const hasStrategy=Boolean(snapshot.current.strategyId||snapshot.current.strategies?.length);
+ const current=snapshot.selectionRequired?c.chooseAccount:!hasStrategy?c.observing:snapshot.monitoringStatus==='paused'?c.paused:snapshot.monitoringStatus==='stopped'?(allExpired?c.expiredStrategy:c.stopped):snapshot.monitoringStatus==='observing'?(snapshot.monitoringReason==='OBSERVATION_ONLY'?c.observation_only:c.monitorObserving):snapshot.monitoringStatus==='running'?(rule?`${rule.label} · ${rule.value}`:c.noEffectiveRules):c.monitorUnconfirmed;
  const executionLabel=execution?((execution.symbol?execution.symbol+' · ':'')+c[execution.status]):c.noExecution;
  return <><section className="channel-runtime-board" aria-label={c.boardDescription}>
   <button className="channel-runtime-cell" data-runtime-cell="current" onClick={()=>setOpen(true)}>
    <span className="channel-cell-label"><ShieldCheck size={13}/>{c.current}</span>
    <strong className="channel-cell-main" title={current}>{current}</strong>
-   <span className="channel-cell-meta">{snapshot.accountId?channelDate(snapshot.confirmedAt,language):c.noAccountHint}</span>
+   <span className="channel-cell-meta">{snapshot.accountId?`${snapshot.accountName??''} · ${channelDate(snapshot.confirmedAt,language)}`:snapshot.selectionRequired?c.account:c.noAccountHint}</span>
   </button>
   <button className="channel-runtime-cell channel-runtime-proposal" data-runtime-cell="proposal" onClick={()=>setOpen(true)}>
    <span className="channel-cell-label"><Sparkles size={13}/>{c.proposal}</span>
@@ -47,9 +49,9 @@ export function RuntimeBoard({snapshot,language}:{snapshot:ChannelRuntimeSnapsho
  <Sheet open={open} onOpenChange={setOpen}><SheetContent className="channel-drawer overflow-y-auto" closeLabel={c.close}><SheetHeader><SheetTitle>{c.details}</SheetTitle><SheetDescription>{c.boardDescription}</SheetDescription></SheetHeader>
   <section className="channel-drawer-section"><h3>{c.current}</h3><p>{current}</p><p className="channel-muted">{snapshot.accountId?channelDate(snapshot.confirmedAt,language):c.unknownTime}</p>
    {snapshot.current.rules.map(item=><div className="channel-detail-row" key={item.id}><span>{item.label}</span><strong>{item.value}</strong><span>{item.status==='active'?c.configured:c[item.status]} · {item.effective?c.effective:item.effectiveReason==='expired'?c.ruleExpired:item.effectiveReason?c[item.effectiveReason]:c.monitorUnconfirmed}</span></div>)}
-   <Link to="/paper" className="channel-inline-link">{c.continueObserve}<ArrowUpRight size={13}/></Link>
+   <Link to={snapshot.accountId?`/paper/${encodeURIComponent(snapshot.accountId)}`:'/paper'} className="channel-inline-link">{c.continueObserve}<ArrowUpRight size={13}/></Link>
   </section>
-  <section className="channel-drawer-section"><h3>{c.proposal}</h3>{snapshot.proposals.length?snapshot.proposals.map(item=><article key={item.id} className="channel-detail-card"><strong>{c[item.status]}</strong><p>{c.changeBefore}: {item.before}</p><p>{c.changeAfter}: {item.after}</p><p className="channel-muted">{item.status==='active'?c.active:c.unapplied}</p><Link to={`/?investmentStrategyId=${encodeURIComponent(item.id)}#investment-strategy`} className="channel-inline-link">{c.details}<ArrowUpRight size={13}/></Link></article>):<p>{c.noProposal}</p>}</section>
+  <section className="channel-drawer-section"><h3>{c.proposal}</h3>{snapshot.proposals.length?snapshot.proposals.map(item=><article key={item.id} className="channel-detail-card"><strong>{c[item.status]}</strong><p>{c.changeBefore}: {item.before}</p><p>{c.changeAfter}: {item.after}</p><p className="channel-muted">{item.status==='active'?c.active:c.unapplied}</p><Link to={snapshot.accountId?simulationStrategyPath(snapshot.accountId,item.id):`/paper?investmentStrategyId=${encodeURIComponent(item.id)}`} className="channel-inline-link">{c.details}<ArrowUpRight size={13}/></Link></article>):<p>{c.noProposal}</p>}</section>
   <section className="channel-drawer-section"><h3>{c.execution}</h3>{snapshot.executions.length?snapshot.executions.map(item=><article key={item.id} className="channel-detail-card"><strong>{item.symbol?item.symbol+' · ':''}{c[item.status]}</strong><p>{c.filledLabel} {item.filledQuantity} / {item.requestedQuantity} · {c.remaining} {item.remainingQuantity}</p><p className="channel-muted">{channelDate(item.updatedAt,language)} · {item.strategyRevision>0?(c.strategy+' v'+item.strategyRevision):c.executionSourceUnknown}</p></article>):<p>{c.noExecution}</p>}</section>
  </SheetContent></Sheet></>;
 }
@@ -67,6 +69,7 @@ export function ChannelBubbleCard({bubble,language,pending=false,onAction,onPrio
  return <article className={`channel-bubble channel-bubble-${bubble.weight} channel-speaker-${bubble.speaker}`} id={`channel-bubble-${bubble.id}`} tabIndex={-1} data-channel-bubble={bubble.id} data-weight={bubble.weight} data-stance={bubble.stance}>
   <ChannelFriendAvatar speaker={bubble.speaker} language={language}/><div className="channel-bubble-content">
    <header><strong>{names[bubble.speaker]}</strong><time dateTime={bubble.createdAt}>{channelDate(bubble.createdAt,language)}</time>{bubble.weight==='poke'&&<span className="channel-attention-dot" aria-label={c.pinned}/>}</header>
+   {bubble.accountName&&<p className="channel-muted">{bubble.accountName}</p>}
    <p className="channel-line">{bubble.text}</p>
    {bubble.sourceState&&bubble.sourceState!=='current'&&<span className="channel-source-state" role="note">{bubble.sourceState==='corrected'?c.sourceCorrected:c.sourceSuperseded}</span>}
    {bubble.correctionOf&&<p className="channel-correction">{c.corrected}</p>}
@@ -89,7 +92,7 @@ export function ChannelWorkbenchView({view,language,pending=false,onVibe,onActio
   <RuntimeBoard snapshot={view.runtime} language={language}/>
   <div className="channel-pinned-slot">{view.pinned&&<section className="channel-pinned" aria-label={c.pinned}><div className="channel-pinned-label"><Pin size={13}/><strong>{c.pinned}</strong>{view.pendingCount>1&&<button type="button" onClick={onPending}>{c.otherPending} · {view.pendingCount-1}</button>}</div><ChannelBubbleCard bubble={view.pinned} language={language} pending={pending} onAction={onAction} onPrior={onPrior}/></section>}</div>
   <section className="channel-episodes" aria-label={c.keyChanges}>
-   {episodes.length?episodes.map(group=><section className="channel-episode" key={group.episode.id} data-episode={group.episode.id}><div className="channel-episode-heading"><span>{group.episode.phase==='closed'?c.postureClose:group.episode.phase==='accompany'?c.postureAccompany:c.postureAlarm}</span><span className="channel-muted">{group.bubbles.length}</span></div>{group.bubbles.map(bubble=><ChannelBubbleCard key={bubble.id} bubble={bubble} language={language} pending={pending} onAction={onAction} onPrior={onPrior}/>)}</section>):!view.pinned&&<div className="channel-empty"><div className="channel-empty-friends">{(['laozhou','ajie','xiaoqi'] as const).map(speaker=><ChannelFriendAvatar key={speaker} speaker={speaker} language={language}/>)}</div><h2>{c.emptyTitle}</h2><p>{view.report?c.emptyBody:c.emptyWithoutReport}</p><Link className="channel-inline-link" to={view.report?.href??'/'}><FileText size={14}/>{view.report?c.today:c.reportNotReady}<ArrowUpRight size={13}/></Link></div>}
+   {episodes.length?episodes.map(group=><section className="channel-episode" key={group.episode.id} data-episode={group.episode.id}><div className="channel-episode-heading"><span>{group.episode.phase==='closed'?c.postureClose:group.episode.phase==='accompany'?c.postureAccompany:c.postureAlarm}</span><span className="channel-muted">{group.bubbles.length}</span></div>{group.bubbles.map(bubble=><ChannelBubbleCard key={bubble.id} bubble={bubble} language={language} pending={pending} onAction={onAction} onPrior={onPrior}/>)}</section>):!view.pinned&&<div className="channel-empty"><div className="channel-empty-friends">{(['laozhou','ajie','xiaoqi'] as const).map(speaker=><ChannelFriendAvatar key={speaker} speaker={speaker} language={language}/>)}</div><h2>{c.emptyTitle}</h2><p>{view.report?c.emptyBody:c.emptyWithoutReport}</p><Link className="channel-inline-link" to={view.report?.href??'/analysis'}><FileText size={14}/>{view.report?c.today:c.reportNotReady}<ArrowUpRight size={13}/></Link></div>}
    <DeferredQuestions questions={view.deferredQuestions} language={language} pending={pending} onSelect={onSelect}/>
   </section>
   <section className="channel-asides" aria-label={c.aside} aria-live="off"><div className="channel-aside-title"><MessageCircle size={13}/><button type="button" onClick={onLogs} title={c.viewAllTaps}>{c.aside}</button><label><span className="sr-only">{c.vibe}</span><select value={view.vibe} onChange={event=>onVibe?.(event.target.value as ChannelVibe)} disabled={pending} aria-label={c.vibe}>{(['quiet','deskmate','chatty'] as const).map(vibe=><option key={vibe} value={vibe}>{c[vibe]}</option>)}</select></label></div><div className="channel-aside-items">{view.visibleTaps.length?view.visibleTaps.map(bubble=><ChannelBubbleCard key={bubble.id} bubble={bubble} language={language} pending={pending} onAction={onAction} onPrior={onPrior}/>):<p className="channel-muted">{c.noTaps}</p>}</div></section>

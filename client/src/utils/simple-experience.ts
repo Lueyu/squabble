@@ -1,8 +1,10 @@
 export function simpleNavigation(language: string) {
   const zh = language.startsWith('zh');
-  return [{ path: '/', label: zh ? '今日' : 'Today', end: true },
-    { path: '/council', label: zh ? '频道' : 'Channel' },
-    { path: '/paper', label: zh ? 'AI 模拟盘' : 'AI simulation' }];
+  return [{ path: '/', label: zh ? '投资总览' : 'Overview', end: true },
+    { path: '/paper', label: zh ? '模拟账户' : 'Simulations' },
+    { path: '/analysis', label: zh ? '研究报告' : 'Research' },
+    { path: '/council', label: zh ? '研究频道' : 'Channel' },
+    { path: '/holdings', label: zh ? '资产与账本' : 'Assets & ledger' }];
 }
 
 // Historical context takes priority over any live security included in an old link.

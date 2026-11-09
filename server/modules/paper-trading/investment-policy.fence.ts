@@ -1,10 +1,14 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { BadRequestException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { investorAssignments, investorRuleId, investorSnapshotHash, isSameInvestorEntry } from './user-strategy-runtime';
+import { ResearchDocumentsService } from '../research-documents/research-documents.service';
+import type { PostgresJsDatabase } from '../../common/platform';
 import { investmentPolicies } from '../../database/investment-policy.schema';
 import { paperAccounts, paperTrades, paperPositions } from '../../database/schema';
 import { strategyMandates, strategyRouteReviews } from '../../database/strategy-mandates.schema';
 import { strategySignals } from '../../database/strategy.schema';
-import { councilSessions } from '../../database/council.schema';
+import { councilMessages, councilSessions } from '../../database/council.schema';
 import { councilIndependentSubmissions } from '../../database/simple-council.schema';
 import { simulationSeeds } from '../../database/simulation-experiments.schema';
 import type { MemoryFenceTransaction } from '../research-memory/research-memory.fence';
@@ -28,22 +32,47 @@ export async function investmentExecutionFence(tx: MemoryFenceTransaction, owner
   if (!candidate || candidate.parentPolicyId !== policy.id || candidate.parentPolicyRevision !== policy.revision) return { policy, block: 'INVESTMENT_AUTHORIZATION_CHANGED' };
   const block = investmentOrderBlock(policy.effectiveConfig, { ...order, protectiveStop: candidate.protectiveStop });
   if (block) return { policy, block };
-  const investor = policy.baseConfig.userStrategy;
-  if (candidate.protectiveStop) return { policy, block: investor && !investor.preview.directives.some(d => d.entryId === candidate.ruleId && d.ticker === order.ticker && d.stopLossPrice
-    && now.getTime() >= Date.parse(investor.content.startsAt) && now.getTime() < Date.parse(investor.content.endsAt)
-    && now.getTime() >= Date.parse(d.startsAt) && now.getTime() < Date.parse(d.endsAt)) ? 'USER_STRATEGY_PROTECTION_NOT_AUTHORIZED' : null };
+  const assignments = investorAssignments(policy.baseConfig);
+  const assignment = assignments.find(item => item.enabled && item.strategyId === candidate.userStrategyId
+    && item.strategyRevision === candidate.userStrategyRevision);
+  const investor = assignment?.snapshot;
+  if (assignments.length && !investor) return { policy, block: 'USER_STRATEGY_ASSIGNMENT_CHANGED' };
+  if (candidate.protectiveStop && !assignments.length) return { policy, block: null };
   const [mandate] = candidate.mandateId ? await tx.select().from(strategyMandates).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.id, candidate.mandateId))).for('share') : [];
   const config = mandate?.config as AutonomousMandateInput | undefined;
-  if (!config || config.parentPolicyId !== policy.id || config.parentPolicyRevision !== policy.revision) return { policy, block: 'INVESTMENT_PARENT_BINDING_REQUIRED' };
+  if (!config || mandate?.status !== 'published' || mandate.accountId !== accountId || candidate.accountId !== accountId
+    || mandate.version !== candidate.mandateVersion || config.parentPolicyId !== policy.id || config.parentPolicyRevision !== policy.revision) return { policy, block: 'INVESTMENT_PARENT_BINDING_REQUIRED' };
   const rule = config.rules.find(r => r.id === candidate.ruleId);
   if (investor) {
-    const directive = investor.preview.directives.find(d => d.entryId === candidate.ruleId);
-    if (config.userStrategyId !== investor.id || config.userStrategyRevision !== investor.revision || candidate.userStrategyId !== investor.id || candidate.userStrategyRevision !== investor.revision
-      || !rule || !directive || JSON.stringify(rule.userDirective) !== JSON.stringify(directive) || directive.ticker !== order.ticker || directive.side !== order.side
+    const entryId = candidate.userEntryId ?? rule?.userEntryId ?? rule?.userDirective?.entryId ?? candidate.ruleId;
+    const directive = investor.preview.directives.find(d => d.entryId === entryId);
+    const expectedRuleId = investorRuleId(investor.id, entryId);
+    if (!rule || !directive || rule.userStrategyId !== investor.id || rule.userStrategyRevision !== investor.revision
+      || candidate.ruleId !== expectedRuleId && candidate.ruleId !== directive.entryId
+      || candidate.userStrategySnapshotHash && candidate.userStrategySnapshotHash !== investorSnapshotHash(investor)
+      || rule.userStrategySnapshotHash && rule.userStrategySnapshotHash !== investorSnapshotHash(investor)
+      || rule.allocationPct !== undefined && rule.allocationPct !== assignment!.allocationPct
+      || JSON.stringify(rule.userDirective) !== JSON.stringify(directive) || directive.ticker !== order.ticker
+      || !candidate.protectiveStop && directive.side !== order.side
+      || now.getTime() < Date.parse(investor.content.startsAt) || now.getTime() >= Date.parse(investor.content.endsAt)
       || now.getTime() < Date.parse(directive.startsAt) || now.getTime() >= Date.parse(directive.endsAt)
-      || directive.quantity !== undefined && candidate.quantity > directive.quantity) return { policy, block: 'USER_STRATEGY_SCOPE_OR_PERIOD_CHANGED' };
-    const filled = await tx.select().from(strategySignals).where(and(eq(strategySignals.owner, owner), eq(strategySignals.state, 'filled'), eq(strategySignals.ruleId, directive.entryId)));
-    if (filled.some(signal => signal.candidate.accountId === accountId && signal.candidate.userStrategyId === investor.id)) return { policy, block: 'USER_STRATEGY_ENTRY_ALREADY_EXECUTED' };
+      || !candidate.protectiveStop && directive.quantity !== undefined && candidate.quantity > directive.quantity) {
+      return { policy, block: candidate.protectiveStop ? 'USER_STRATEGY_PROTECTION_NOT_AUTHORIZED' : 'USER_STRATEGY_SCOPE_OR_PERIOD_CHANGED' };
+    }
+    try {
+      const sources = investor.sources.filter(item => directive.sourceKeys.includes(item.key));
+      await new ResearchDocumentsService(tx as PostgresJsDatabase).assertExecutionSourcesInTransaction(tx, owner,
+        sources.filter(item => item.versionId).map(item => ({ versionId: item.versionId!, ...(item.sectionId ? { sectionId: item.sectionId } : {}) })), now);
+      for (const source of sources.filter(item => item.kind === 'message')) {
+        const [message] = await tx.select().from(councilMessages).where(and(eq(councilMessages.owner, owner), eq(councilMessages.id, source.messageId!))).for('share');
+        const content = message?.metadata?.response ? JSON.stringify({ content: message.content, response: message.metadata.response }) : message?.content;
+        if (!content || createHash('sha256').update(content).digest('hex') !== source.contentHash) return { policy, block: 'USER_STRATEGY_SOURCE_CHANGED' };
+      }
+    } catch { return { policy, block: 'USER_STRATEGY_SOURCE_CHANGED' }; }
+    if (candidate.protectiveStop) return { policy, block: directive.stopLossPrice && order.side === 'sell' ? null : 'USER_STRATEGY_PROTECTION_NOT_AUTHORIZED' };
+    const filled = await tx.select().from(strategySignals).where(and(eq(strategySignals.owner, owner), eq(strategySignals.state, 'filled'),
+      sql`${strategySignals.candidate}->>'accountId' = ${accountId}`, sql`${strategySignals.candidate}->>'userStrategyId' = ${investor.id}`));
+    if (filled.some(signal => isSameInvestorEntry(signal.candidate, accountId, investor.id, directive.entryId))) return { policy, block: 'USER_STRATEGY_ENTRY_ALREADY_EXECUTED' };
     if (!rule.security || rule.security.market !== order.market || rule.security.ticker !== order.ticker || rule.security.leveraged !== false || rule.security.inverse !== false
       || !policy.effectiveConfig.assetTypes.includes(rule.security.assetType) || now.getTime() - Date.parse(rule.security.observedAt) > 24 * 3600000) return { policy, block: 'WAITING_VERIFIED_SECURITY' };
     if (reviewComplete && order.side === 'buy' && !policy.baseConfig.initialTickers?.some(ticker => investmentSecurityKey(ticker) === investmentSecurityKey(order.ticker))) {

@@ -71,18 +71,19 @@ test('a single entry expiry releases its pending cash without stopping other val
     const mandates = new StrategyMandateService(db, docs, builder, {} as never, {} as never);
     const plan = await mandates.dailyPlan(owner, profile, (await db.select().from(strategyMandates))[0], 'US', tradingMarketSchedule('US', now));
     const store = new StrategyStore(db);
-    for (const ruleId of ['early', 'later']) {
-      const candidate = { signalId: randomUUID(), planId: plan.id, planVersion: plan.version, ruleId, ticker: 'AAPL', market: 'US', side: 'buy', quantity: 1, price: 99, quoteAt: now.toISOString(), protectiveStop: false, reason: text, accountId: account.accountId,
+    for (const entryId of ['early', 'later']) {
+      const ruleId = mandate.config.rules.find(rule => rule.userEntryId === entryId)!.id;
+      const candidate = { signalId: randomUUID(), planId: plan.id, planVersion: plan.version, ruleId, userEntryId: entryId, ticker: 'AAPL', market: 'US', side: 'buy', quantity: 1, price: 99, quoteAt: now.toISOString(), protectiveStop: false, reason: text, accountId: account.accountId,
         mandateId: mandate.id, mandateVersion: mandate.version, parentPolicyId: applied.policy.id, parentPolicyRevision: applied.policy.revision, userStrategyId: draft.id, userStrategyRevision: draft.revision } as StrategyCandidate;
       assert.equal(await store.claimSignal(owner, profile, candidate), true);
     }
     t.mock.timers.tick(60000);
     await new StrategyMonitorService(db, docs, simulations).heartbeat(owner, account.accountId);
     const signals = await db.select().from(strategySignals); const reservations = await db.select().from(strategyReservations);
-    assert.equal(signals.find(signal => signal.ruleId === 'early')!.state, 'expired');
-    assert.equal(reservations.find(reservation => reservation.signalId === signals.find(signal => signal.ruleId === 'early')!.id)!.status, 'released');
-    assert.equal(signals.find(signal => signal.ruleId === 'later')!.state, 'reviewing');
-    assert.equal(reservations.find(reservation => reservation.signalId === signals.find(signal => signal.ruleId === 'later')!.id)!.status, 'active');
+    assert.equal(signals.find(signal => signal.candidate.userEntryId === 'early')!.state, 'expired');
+    assert.equal(reservations.find(reservation => reservation.signalId === signals.find(signal => signal.candidate.userEntryId === 'early')!.id)!.status, 'released');
+    assert.equal(signals.find(signal => signal.candidate.userEntryId === 'later')!.state, 'reviewing');
+    assert.equal(reservations.find(reservation => reservation.signalId === signals.find(signal => signal.candidate.userEntryId === 'later')!.id)!.status, 'active');
     assert.equal((await db.select().from(strategyMandates))[0].status, 'published');
   });
 });
@@ -102,7 +103,10 @@ test('protective exits remain bound to the exact confirmed entry and its explici
         numericEvidence: [{ field: 'quantity', value: 1, quote: text }, { field: 'trigger.price', value: 100, quote: text }, { field: 'stopLossPrice', value: 80, quote: text }] } }] });
     const ready = await drafts.preview(owner, draft.id, draft.revision);
     const applied = await policies.applyStrategy(owner, { strategyId: draft.id, expectedRevision: draft.revision, previewHash: ready.preview!.contentHash, expectedCurrentId: null, requestKey: 'entry-stop-apply' });
-    const candidate = { protectiveStop: true, ruleId: 'protected-entry', parentPolicyId: applied.policy.id, parentPolicyRevision: applied.policy.revision } as StrategyCandidate;
+    const [mandate] = await db.select().from(strategyMandates);
+    const candidate = { protectiveStop: true, accountId: account.accountId, mandateId: mandate.id, mandateVersion: mandate.version,
+      userStrategyId: draft.id, userStrategyRevision: draft.revision, userEntryId: 'protected-entry',
+      ruleId: mandate.config.rules[0].id, parentPolicyId: applied.policy.id, parentPolicyRevision: applied.policy.revision } as StrategyCandidate;
     const check = (at: Date, signal = candidate) => db.transaction(tx => investmentExecutionFence(tx, owner, account.accountId, { ticker: 'AAPL', market: 'US', side: 'sell' }, 'agent', signal, at));
     assert.equal((await check(now)).block, 'USER_STRATEGY_PROTECTION_NOT_AUTHORIZED', 'a future entry cannot authorize a stop yet');
     assert.equal((await check(startsAt)).block, null);

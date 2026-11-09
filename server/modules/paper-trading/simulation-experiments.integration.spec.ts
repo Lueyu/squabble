@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { NotFoundException } from '@nestjs/common';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -115,8 +116,22 @@ test('real snapshot creates an immutable independent opening ledger with idempot
     t.mock.timers.setTime(new Date('2026-11-05T15:30:00Z').getTime());
     market = 'US'; currency = 'USD'; price = 100;
     await experiments.select(owner, oldAccount.id);
+    const accountLedgers = async () => Promise.all([
+      db.select().from(paperAccounts).where(eq(paperAccounts.owner, owner)).orderBy(paperAccounts.id),
+      db.select().from(simulationCash).where(eq(simulationCash.owner, owner)).orderBy(simulationCash.id),
+      db.select().from(paperPositions).where(eq(paperPositions.owner, owner)).orderBy(paperPositions.id),
+      db.select().from(paperOrders).where(eq(paperOrders.owner, owner)).orderBy(paperOrders.id),
+      db.select().from(paperTrades).where(eq(paperTrades.owner, owner)).orderBy(paperTrades.id),
+    ]);
+    const beforeStaleOrder = await accountLedgers();
     await assert.rejects(paper.placeOrder(owner, { ticker: 'AAPL', side: 'buy', quantity: 1 }, 'manual', undefined, true,
-      false, undefined, undefined, undefined, first.id), /account changed/);
+      false, undefined, undefined, undefined, first.id), (error: unknown) => {
+        assert.ok(error instanceof NotFoundException);
+        assert.equal(error.getStatus(), 404);
+        assert.equal(error.message, 'Active paper account not found');
+        return true;
+      });
+    assert.deepEqual(await accountLedgers(), beforeStaleOrder, 'an inactive account ID cannot mutate either account ledger');
     assert.equal((await paper.getOverview(owner)).positions.length, 0);
     assert.equal((await paper.getOverview(owner)).recentOrders.length, 0);
     await assert.rejects(paper.approveOrder(owner, sell.id), /active paper account/);

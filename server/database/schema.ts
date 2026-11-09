@@ -888,10 +888,11 @@ export const portfolioAnalysisRuns = pgTable("portfolio_analysis_runs", {
 ]);
 export const portfolioAnalysisRunsTable = portfolioAnalysisRuns;
 
-/** User-configured beginner agent; one active profile per owner. */
+/** User-configured execution profile; active profiles are scoped to an account. */
 export const builderProfiles = pgTable("builder_profiles", {
   id: uuid("id").primaryKey().defaultRandom(),
   owner: userProfile("owner").notNull(),
+  accountId: uuid("account_id"),
   config: jsonb("config").notNull(),
   status: varchar("status", { length: 12 }).default("draft").notNull(),
   version: integer("version").default(1).notNull(),
@@ -943,6 +944,7 @@ export * from './research-memory.schema';
 export * from './research-workflow.schema';
 export * from './simple-experience.schema';
 export * from './investment-policy.schema';
+export * from './portfolio-workspace.schema';
 export * from './simple-council.schema';
 export * from './import-batches.schema';
 export * from './research-analysis-requests.schema';

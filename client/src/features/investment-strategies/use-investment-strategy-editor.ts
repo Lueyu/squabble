@@ -16,7 +16,12 @@ import { normalizeApiPreparationError } from '@/utils/strategy-preparation';
 import { simulationLimits } from './strategy-editor-limits';
 
 export type StrategyEditorAction =
-  'save' | 'prepare' | 'apply' | 'read' | 'observe' | 'recheck';
+  | 'save'
+  | 'prepare'
+  | 'apply'
+  | 'read'
+  | 'observe'
+  | 'recheck';
 
 interface UseInvestmentStrategyEditorOptions {
   item: UserInvestmentStrategy | null;
@@ -25,6 +30,7 @@ interface UseInvestmentStrategyEditorOptions {
   investment?: AiInvestmentView;
   onClose: () => void;
   onChanged: () => void;
+  onReviewed?: (strategy: UserInvestmentStrategy) => Promise<void>;
 }
 
 function initialContent(
@@ -54,6 +60,7 @@ export function useInvestmentStrategyEditor({
   investment,
   onClose,
   onChanged,
+  onReviewed,
 }: UseInvestmentStrategyEditorOptions) {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
@@ -213,6 +220,13 @@ export function useInvestmentStrategyEditor({
           !simulationReady
         )
           throw Error('PREVIEW');
+        if (onReviewed) {
+          // Account combinations publish only through their own reviewed apply transaction.
+          await onReviewed(saved);
+          onChanged();
+          onClose();
+          return;
+        }
         const revision = `${saved.id}:${saved.revision}:${saved.preview.contentHash}`;
         if (applyIntent.current?.revision !== revision)
           applyIntent.current = { revision, key: crypto.randomUUID() };

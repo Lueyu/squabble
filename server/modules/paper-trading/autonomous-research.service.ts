@@ -41,7 +41,7 @@ export class AutonomousResearchService {
 
   async queueCurrentMarkets(): Promise<void> {
     const policies = await this.db.select().from(investmentPolicies).where(eq(investmentPolicies.status, 'running'));
-    for (const policy of policies.filter(p => !p.baseConfig.userStrategy)) for (const market of policy.effectiveConfig.markets) {
+    for (const policy of policies.filter(p => !p.baseConfig.userStrategy && p.baseConfig.portfolio === undefined)) for (const market of policy.effectiveConfig.markets) {
       const schedule = await this.market.getSchedule(market);
       if (!schedule.calendarVerified || !schedule.isTradingDay || !schedule.closesAt || !schedule.opensAt
         || Date.now() < Date.parse(schedule.opensAt) - 60 * 60000 || Date.now() >= Date.parse(schedule.closesAt)) continue;
@@ -53,7 +53,7 @@ export class AutonomousResearchService {
         const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, policy.owner), eq(paperAccounts.id, policy.accountId))).for('update');
         const [unexpired] = await tx.select().from(investmentPolicies).where(eq(investmentPolicies.id, policy.id)).for('update');
         const current = await expireInvestmentConstraints(tx, unexpired);
-        if (!account?.isActive || !account.botEnabled || current.status !== 'running') return;
+        if (!account?.isActive || !account.botEnabled || current.status !== 'running' || current.baseConfig.userStrategy || current.baseConfig.portfolio !== undefined) return;
         const existing = await tx.select().from(investmentCycles).where(and(eq(investmentCycles.policyId, current.id), eq(investmentCycles.policyRevision, current.revision), eq(investmentCycles.market, market), eq(investmentCycles.marketDate, schedule.tradingDate))).orderBy(desc(investmentCycles.createdAt));
         const phase = Date.now() < Date.parse(schedule.opensAt!) ? 'preopen' : 'open';
         if (existing.some(c => ['researching', 'queued', 'uncertain'].includes(c.state))) return;
@@ -85,7 +85,7 @@ export class AutonomousResearchService {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
       const [policy] = await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.id, policyId)));
-      if (!policy || policy.baseConfig.userStrategy || policy.status !== 'running' || !policy.effectiveConfig.markets.includes(market)) return null;
+      if (!policy || policy.baseConfig.userStrategy || policy.baseConfig.portfolio !== undefined || policy.status !== 'running' || !policy.effectiveConfig.markets.includes(market)) return null;
       const [cycle] = await tx.insert(investmentCycles).values({ owner, policyId, accountId: policy.accountId, policyRevision: policy.revision,
         market, marketDate: paperRiskDay(new Date(), market === 'US' ? 'America/New_York' : market === 'HK' ? 'Asia/Hong_Kong' : 'Asia/Shanghai'), eventKey, trigger, priority: trigger === 'evidence_invalidated' ? 0 : 1 }).onConflictDoNothing().returning();
       return cycle ?? null;
@@ -107,7 +107,7 @@ export class AutonomousResearchService {
         await tx.update(investmentCycles).set({ state: 'uncertain', result: { reason: 'LEASE_EXPIRED_DISPATCH_NOT_REPLAYED' }, updatedAt: new Date() }).where(eq(investmentCycles.id, id)); return null;
       }
       if (cycle.state !== 'queued') return null;
-      if (policy.baseConfig.userStrategy || !account?.isActive || !account.botEnabled || policy.status !== 'running' || policy.revision !== cycle.policyRevision) {
+      if (policy.baseConfig.userStrategy || policy.baseConfig.portfolio !== undefined || !account?.isActive || !account.botEnabled || policy.status !== 'running' || policy.revision !== cycle.policyRevision) {
         await tx.update(investmentCycles).set({ state: 'cancelled', result: { reason: 'POLICY_CHANGED' }, updatedAt: new Date() }).where(eq(investmentCycles.id, id)); return null;
       }
       const token = randomUUID();
@@ -120,7 +120,7 @@ export class AutonomousResearchService {
     const [policy] = await this.db.select().from(investmentPolicies).where(eq(investmentPolicies.id, cycle.policyId));
     const [account] = await this.db.select().from(paperAccounts).where(eq(paperAccounts.id, cycle.accountId));
     return Boolean(current?.state === 'researching' && current.leaseUntil && current.leaseUntil.getTime() > Date.now()
-      && policy?.status === 'running' && !policy.baseConfig.userStrategy && policy.revision === cycle.policyRevision && account?.isActive && account.botEnabled);
+      && policy?.status === 'running' && !policy.baseConfig.userStrategy && policy.baseConfig.portfolio === undefined && policy.revision === cycle.policyRevision && account?.isActive && account.botEnabled);
   }
   private async save(cycle: Cycle, token: string, state: string, result: Record<string, unknown>) {
     await this.db.update(investmentCycles).set({ state, result, updatedAt: new Date() }).where(and(eq(investmentCycles.id, cycle.id), eq(investmentCycles.leaseToken, token), eq(investmentCycles.state, 'researching')));
@@ -130,7 +130,7 @@ export class AutonomousResearchService {
       await lockMemoryOwner(tx, owner);
       await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, policy.accountId))).for('update');
       const [currentPolicy] = await tx.select().from(investmentPolicies).where(eq(investmentPolicies.id, policy.id)).for('update');
-      if (currentPolicy.status !== 'running' || currentPolicy.revision !== policy.revision) throw new Error('INVESTMENT_POLICY_CHANGED');
+      if (currentPolicy.status !== 'running' || currentPolicy.revision !== policy.revision || currentPolicy.baseConfig.userStrategy || currentPolicy.baseConfig.portfolio !== undefined) throw new Error('INVESTMENT_POLICY_CHANGED');
       const profiles = await tx.select().from(builderProfiles).where(eq(builderProfiles.owner, owner));
       const prefix = 'investment-policy:' + policy.id;
       const profileKey = prefix + ':' + investmentHash({ members, executorIdentities }).slice(0, 24);
@@ -139,10 +139,10 @@ export class AutonomousResearchService {
       if (existing?.status === 'active' || existing && !replacing) return existing;
       if (replacing) {
         await cancelInvestmentCandidates(tx, owner, policy.accountId, 'Allowed research team changed; previous candidates invalidated', false);
-        await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active')));
+        await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.accountId, policy.accountId), eq(builderProfiles.status, 'active')));
       }
       if (existing) {
-        const [reactivated] = await tx.update(builderProfiles).set({ status: 'active', updatedAt: new Date() }).where(eq(builderProfiles.id, existing.id)).returning(); return reactivated;
+        const [reactivated] = await tx.update(builderProfiles).set({ status: 'active', accountId: policy.accountId, updatedAt: new Date() }).where(eq(builderProfiles.id, existing.id)).returning(); return reactivated;
       }
       const config = normalizeBuilderConfig({ name: 'AI investment team', template: 'balanced', tickers: [], minimumRating: 'Buy', customPrompt: profileKey,
         maxOrderPct: Math.min(20, Math.max(0.1, policy.effectiveConfig.limits.maxOrderPct)), dailyLossLimitPct: Math.min(20, Math.max(0.1, policy.effectiveConfig.limits.dailyLossLimitPct)), maxOrdersPerDay: 20,
@@ -151,7 +151,7 @@ export class AutonomousResearchService {
       // The product supports single-source research. Do not create a fictitious second role to satisfy the legacy Builder form.
       config.council = { enabled: true, members, webResearch: false };
       config.automation = { ...config.automation!, enabled: true, fastReviewer: members[0] };
-      const [profile] = await tx.insert(builderProfiles).values({ owner, config, status: replacing ? 'active' : 'draft' }).returning(); return profile;
+      const [profile] = await tx.insert(builderProfiles).values({ owner, accountId: policy.accountId, config, status: replacing ? 'active' : 'draft' }).returning(); return profile;
     });
   }
   async runCycle(owner: string, id: string): Promise<void> {

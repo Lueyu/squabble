@@ -27,7 +27,7 @@ function renderVersion(version, language = 'en') {
   state.queries.set('research-document', { data: { version } });
   const html = render(load('pages/Analysis/SimpleReportReader.tsx').default, { versionId: version.id });
   const dom = new JSDOM(html);
-  const content = [...dom.window.document.querySelectorAll('article > section')].map(section => section.textContent).join('\n');
+  const content = [...dom.window.document.querySelectorAll('article .report-section')].map(section => section.textContent).join('\n');
   dom.window.close(); return { html, content, state };
 }
 

@@ -22,6 +22,8 @@ export interface StrategyRule {
   /** Exact approved intent, independent of technical quote/slippage guards. */
   userDirective?: import('./user-investment-strategy.interface').CompiledStrategyDirective;
   userStrategyId?: string; userStrategyRevision?: number;
+  /** Stable source identity survives mandate rebuilds and account pause/resume. */
+  userEntryId?: string; userStrategySnapshotHash?: string; allocationPct?: number;
   security?: import('./investment-policy.interface').VerifiedInvestmentSecurity;
   executorIdentities?: string[]; requiresIndependentReview?: boolean;
   /** A bounded daily review may suspend an entry without discarding its protective stop. */
@@ -63,6 +65,7 @@ export interface StrategyRuntime {
 }
 export interface StrategyCandidate {
   userStrategyId?: string; userStrategyRevision?: number;
+  userEntryId?: string; userStrategySnapshotHash?: string; allocationPct?: number;
   parentPolicyId?: string; parentPolicyRevision?: number; cycleId?: string;
   accountId?: string;
   mandateId?: string;

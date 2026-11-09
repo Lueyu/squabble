@@ -37,7 +37,10 @@ test('copied opening security can use one verified source; a novel ticker cannot
     const mandate = await new AutonomousPlanCompiler(db, docs).activate(owner, cycle.id, token, profile.id, [...rules, forgedExemption]);
     const evaluate = (ticker: string, ruleId: string) => db.transaction(async tx => {
       await lockMemoryOwner(tx, owner); await tx.select().from(paperAccounts).where(eq(paperAccounts.id, start.accountId)).for('update');
-      return investmentExecutionFence(tx, owner, start.accountId, { ticker, market: 'US', side: 'buy' }, 'agent', { parentPolicyId: start.policy.id, parentPolicyRevision: 1, mandateId: mandate!.id, ruleId } as never);
+      return investmentExecutionFence(tx, owner, start.accountId, { ticker, market: 'US', side: 'buy' }, 'agent', {
+        accountId: start.accountId, parentPolicyId: start.policy.id, parentPolicyRevision: 1,
+        mandateId: mandate!.id, mandateVersion: mandate!.version, ruleId,
+      } as never);
     });
     assert.equal((await evaluate('ABC', rules[0].id)).block, null);
     assert.equal((await evaluate('NOVEL', 'new_entry')).block, 'INVESTMENT_INDEPENDENT_REVIEW_REQUIRED');

@@ -75,22 +75,18 @@ export class UserInvestmentStrategyService {
     if (!row) throw new NotFoundException('Strategy not found'); return row;
   }
   async get(owner: string, id: string): Promise<UserInvestmentStrategy> { return map(await this.row(this.db, owner, id)); }
-  /**
-   * Delete a strategy that is not the one currently applied. Drafts and historical
-   * confirmed strategies can be removed; the active simulation authority cannot,
-   * so execution state is never orphaned.
-   */
+  /** Confirmed authority is durable history; draft removal is a reversible tombstone. */
   async remove(owner: string, id: string): Promise<{ success: true }> {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
-      await this.row(tx, owner, id, true);
+      const row = await this.row(tx, owner, id, true);
+      if (row.status === 'confirmed') throw new ConflictException('CONFIRMED_STRATEGY_HISTORY_IMMUTABLE');
       const [pointer] = await tx.select().from(current).where(eq(current.owner, owner)).for('update');
       if (pointer?.strategyId === id) {
         throw new ConflictException('Cannot delete the strategy currently applied to the simulation. Apply another strategy or pause first.');
       }
-      await tx.delete(preparations).where(and(eq(preparations.owner, owner), eq(preparations.strategyId, id)));
-      await tx.delete(revisions).where(and(eq(revisions.owner, owner), eq(revisions.strategyId, id)));
-      await tx.delete(strategies).where(and(eq(strategies.id, id), eq(strategies.owner, owner)));
+      await tx.update(strategies).set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(strategies.id, id), eq(strategies.owner, owner)));
       return { success: true as const };
     });
   }
@@ -364,6 +360,33 @@ export class UserInvestmentStrategyService {
       await this.db.update(preparations).set({ status: 'failed', result }).where(and(eq(preparations.owner, owner), eq(preparations.requestKey, requestKey)));
       throw error;
     }
+  }
+  /** Read/revalidate account authority without changing the legacy owner selection pointer. */
+  async accountSnapshot(tx: UserStrategyTransaction, owner: string, id: string, revision: number,
+    confirm = false): Promise<ConfirmedInvestmentStrategy> {
+    const row = await this.row(tx, owner, id, true);
+    if (row.revision !== revision) throw new ConflictException('STRATEGY_REVISION_CHANGED');
+    const preview = previewStrategy(row.content, row.sources, row.revision);
+    if (!row.preview || row.preview.contentHash !== strategyContentHash(row.content, row.sources)
+      || !preview.canConfirm) throw new ConflictException('STRATEGY_REVIEW_REQUIRED');
+    for (const source of row.sources) {
+      if (source.kind === 'report' && source.versionId) {
+        await this.documents.assertExecutionSourcesInTransaction(tx, owner,
+          [{ versionId: source.versionId, ...(source.sectionId ? { sectionId: source.sectionId } : {}) }], new Date());
+      } else if (source.kind === 'message' && source.messageId) {
+        const latest = await this.resolveSource(tx, owner, { kind: 'message', messageId: source.messageId });
+        if (latest.contentHash !== source.contentHash) throw new ConflictException('PINNED_DISCUSSION_CHANGED');
+      }
+    }
+    // A preview's proposed confirmation timestamp is excluded from the combination hash.
+    const confirmedAt = row.confirmedAt ?? new Date();
+    const snapshot = map({ ...row, status: 'confirmed', preview, confirmedAt,
+      updatedAt: confirm && row.status === 'draft' ? confirmedAt : row.updatedAt }) as ConfirmedInvestmentStrategy;
+    if (confirm && row.status === 'draft') {
+      await tx.update(strategies).set({ status: 'confirmed', preview, confirmedAt, updatedAt: new Date() })
+        .where(and(eq(strategies.owner, owner), eq(strategies.id, id)));
+    }
+    return snapshot;
   }
   /** Caller supplies the existing policy activation and candidate invalidation inside this SAME transaction. */
   async confirmInTransaction(tx: UserStrategyTransaction, owner: string, id: string, expectedRevision: number, expectedPreviewHash: string,

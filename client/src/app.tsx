@@ -34,10 +34,12 @@ import RecoverPage from './pages/Auth/RecoverPage';
 import PrivacyPage from './pages/Privacy/PrivacyPage';
 import NotFound from './pages/NotFound/NotFound';
 import ResearchDocumentPage from './pages/Analysis/ResearchDocumentPage';
-import TodayPage from './pages/Today/TodayPage';
+import PortfolioOverviewPage from './pages/Overview/PortfolioOverviewPage';
 import SimpleAnalysisPage from './pages/Analysis/SimpleAnalysisPage';
 import SimpleCouncilPage from './pages/Council/SimpleCouncilPage';
-import AiInvestmentPage from './pages/Paper/AiInvestmentPage';
+import SimulationAccountsPage from './pages/Paper/SimulationAccountsPage';
+import SimulationAccountPage from './pages/Paper/SimulationAccountPage';
+import AccountStrategyCombinationPage from './features/investment-strategies/AccountStrategyCombinationPage';
 import { useSimpleExperience } from './hooks/use-simple-experience';
 
 function ExperienceRoute({ current, legacy }: { current: React.ReactNode; legacy: React.ReactNode }) {
@@ -70,13 +72,15 @@ const RoutesComponent = () => {
       <Route path="/recover" element={localWorkspace ? <Navigate to="/" replace /> : <RecoverPage />} />
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route element={<Layout />}>
-        <Route index element={<ExperienceRoute current={<TodayPage />} legacy={<DashboardPage />} />} />
+        <Route index element={<ExperienceRoute current={<PortfolioOverviewPage />} legacy={<DashboardPage />} />} />
         <Route path="holdings" element={<HoldingsPage />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="watchlist" element={<WatchlistPage />} />
         <Route path="analysis" element={<ExperienceRoute current={<SimpleAnalysisPage />} legacy={<AnalysisPage />} />} />
         <Route path="analysis/reports/:versionId" element={<ResearchDocumentPage />} />
-        <Route path="paper" element={<ExperienceRoute current={<AiInvestmentPage />} legacy={<PaperPage />} />} />
+        <Route path="paper" element={<ExperienceRoute current={<SimulationAccountsPage />} legacy={<PaperPage />} />} />
+        <Route path="paper/:accountId" element={<SimulationAccountPage />} />
+        <Route path="paper/:accountId/strategies" element={<AccountStrategyCombinationPage />} />
         <Route path="agent-builder" element={<ExperienceRoute current={<Navigate to="/settings/agents" replace />} legacy={<AgentBuilderPage />} />} />
         <Route path="council" element={<ExperienceRoute current={<SimpleCouncilPage />} legacy={<CouncilPage />} />} />
         <Route path="analysis/deep-report/:runId" element={<DeepReportPage />} />

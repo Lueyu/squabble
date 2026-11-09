@@ -6,7 +6,7 @@ const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 const { MemoryRouter } = require('react-router-dom');
 
-module.exports = function fixture() {
+module.exports = function fixture({ realQuery = false } = {}) {
   const state = { language: 'en', queries: new Map(), requests: [] };
   const cache = new Map();
   function load(relative) {
@@ -17,10 +17,11 @@ module.exports = function fixture() {
       if (id.endsWith('.css')) return {};
       if (id === 'react-i18next') return { useTranslation: () => ({ i18n: { language: state.language, resolvedLanguage: state.language }, t: key => key }) };
       if (id === '@/hooks/use-simple-experience') return { useSimpleExperience: () => ({ enabled: true }) };
+      if (id === '@tanstack/react-query' && realQuery) return require(id);
       if (id === '@tanstack/react-query') return {
         useQuery: options => state.queries.get(JSON.stringify(options.queryKey)) ?? state.queries.get(options.queryKey[0]) ?? { data: undefined, isPending: false },
         useMutation: options => state.mutationFactory ? state.mutationFactory(options) : state.mutation ?? ({ isPending: false, mutateAsync: async () => {}, mutate() {} }),
-        useQueryClient: () => ({ invalidateQueries() {}, setQueryData() {} }),
+        useQueryClient: () => ({ invalidateQueries() {}, setQueryData() {}, async cancelQueries() {} }),
       };
       if (id === './http') return { __esModule: true, default: Object.fromEntries(['get', 'post', 'patch', 'put', 'delete'].map(method =>
         [method, async (...args) => { state.requests.push({ method, args }); return { data: state.responses?.get(args[0]) ?? (method === 'get' && args[0].endsWith('/preparation') ? { status: 'none' } : {}) }; }])) };

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { AiInvestmentPreview, InvestmentConfig } from '@shared/investment-policy.interface';
+import type { AiInvestmentPreview, InvestmentConfig, InvestmentStartRequest } from '@shared/investment-policy.interface';
 import { startAiInvestment, restartAiInvestment } from '@/api/ai-investment';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,8 +12,9 @@ export const limitLabels = (zh: boolean): Record<keyof InvestmentConfig['limits'
   maxGrossExposurePct: zh ? '总仓位上限' : 'Gross exposure cap', minCashPct: zh ? '最低现金比例' : 'Minimum cash', dailyLossLimitPct: zh ? '当日亏损限制' : 'Daily loss threshold',
 });
 
-export default function StartInvestmentCard({ preview, onStarted, onRefresh, onCancel, restartAccountId }: {
+export default function StartInvestmentCard({ preview, onStarted, onRefresh, onCancel, restartAccountId, onCreate }: {
   preview: AiInvestmentPreview; onStarted: () => void; onRefresh?: () => void; onCancel?: () => void; adoptAccountId?: string; restartAccountId?: string;
+  onCreate?: (request: InvestmentStartRequest) => Promise<void>;
 }) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
   const [extra, setExtra] = useState<Record<string, string>>({}); const [confirmCash, setConfirmCash] = useState(false);
@@ -30,12 +31,14 @@ export default function StartInvestmentCard({ preview, onStarted, onRefresh, onC
       ...(confirmCash ? { confirmOpeningCash: true } : {}), ...(zeroCash ? { confirmNoCash: true } : {}), ...(restartAccountId ? { expectedAccountId: restartAccountId } : {}) };
     try {
       const request = { ...payload, requestKey: intent.current.keyFor(payload) };
-      if (restartAccountId) await restartAiInvestment({ ...request, expectedAccountId: restartAccountId }); else await startAiInvestment(request);
+      if (onCreate) await onCreate(request);
+      else if (restartAccountId) await restartAiInvestment({ ...request, expectedAccountId: restartAccountId });
+      else await startAiInvestment(request);
       intent.current.complete(); onStarted();
     } catch { setError(zh ? '创建尚未确认，请重试。起点有变化时请重新预览。' : 'Creation is unconfirmed. Retry, or refresh if the starting data changed.'); }
     finally { lock.current = false; setPending(false); }
   };
-  return <section aria-label={zh ? '确认复制模拟盘' : 'Confirm paper portfolio copy'} className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
+  return <section aria-label={zh ? '确认模拟账户起点' : 'Confirm the simulation starting point'} className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
     <h2 className="text-lg font-semibold">{zh ? '确认模拟账户起点' : 'Confirm the simulation starting point'}</h2>
     <p className="text-sm text-muted-foreground">{preview.seed.positions.length} {zh ? '项持仓' : 'positions'} · {new Date(preview.seed.capturedAt).toLocaleString(i18n.language)}</p>
     <div className="grid gap-3 sm:grid-cols-3">{(['USD', 'HKD', 'CNY'] as const).map(currency => {
@@ -51,6 +54,6 @@ export default function StartInvestmentCard({ preview, onStarted, onRefresh, onC
     {invalid && <p role="alert" className="text-sm text-destructive">{zh ? '请先补全证券币种或修正无效余额。' : 'Complete the security currency or correct invalid balances first.'}</p>}
     {expired && <p role="alert" className="text-sm">{zh ? '预览已过期，请重新预览。' : 'Preview expired. Refresh the starting point.'}</p>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    <div className="flex flex-wrap gap-2"><Button disabled={pending || expired || invalid || !amountsValid} onClick={() => void start()}>{pending ? (zh ? '正在创建…' : 'Creating…') : (zh ? '确认复制并观察' : 'Copy and observe')}</Button>{onRefresh && <Button variant="outline" disabled={pending} onClick={onRefresh}>{zh ? '重新预览' : 'Refresh preview'}</Button>}{onCancel && <Button variant="ghost" disabled={pending} onClick={onCancel}>{zh ? '取消复制' : 'Cancel copy'}</Button>}</div>
+    <div className="flex flex-wrap gap-2"><Button disabled={pending || expired || invalid || !amountsValid} onClick={() => void start()}>{pending ? (zh ? '正在创建…' : 'Creating…') : onCreate ? (zh ? '确认创建并观察' : 'Create and observe') : (zh ? '确认复制并观察' : 'Copy and observe')}</Button>{onRefresh && <Button variant="outline" disabled={pending} onClick={onRefresh}>{zh ? '重新预览' : 'Refresh preview'}</Button>}{onCancel && <Button variant="ghost" disabled={pending} onClick={onCancel}>{onCreate ? (zh ? '取消创建' : 'Cancel creation') : (zh ? '取消复制' : 'Cancel copy')}</Button>}</div>
   </section>;
 }

@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import { builderProfiles, builderProposals } from '../../database/schema';
+import { builderProfiles, builderProposals, paperAccounts } from '../../database/schema';
 import { LlmService } from '../research-core/llm.service';
 import type {
   BuilderConfig,
@@ -145,6 +145,11 @@ export class AgentBuilderService {
 
   async pauseProfile(userId: string, id: string): Promise<BuilderProfile> {
     const row = await this.db.transaction(async (tx) => {
+      await lockMemoryOwner(tx, userId);
+      await assertLegacyInvestmentWrite(tx, userId);
+      const activeAccounts = await tx.select({ id: paperAccounts.id }).from(paperAccounts)
+        .where(and(eq(paperAccounts.owner, userId), eq(paperAccounts.isActive, true))).limit(2);
+      if (activeAccounts.length > 1) throw new BadRequestException('ACCOUNT_SELECTION_REQUIRED');
       const [current] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.id, id))).for('update');
       if (!current) return undefined;
       if (current.status === 'paused') return current;

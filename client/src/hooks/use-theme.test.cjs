@@ -89,12 +89,12 @@ function createBrowser(initial = {}, blockedStorage = false) {
   };
 }
 
-test('keeps the existing dark default and adds the classic design default', () => {
+test('opens new workspaces in light classic mode without overriding saved preferences', () => {
   const browser = createBrowser();
   const state = browser.useTheme();
-  assert.equal(state.theme, 'dark');
+  assert.equal(state.theme, 'light');
   assert.equal(state.designTheme, 'classic');
-  assert.equal(browser.root.classList.dark, true);
+  assert.equal(browser.root.classList.dark, false);
   assert.equal(browser.root.dataset.designTheme, 'classic');
 });
 
@@ -125,7 +125,7 @@ test('storage changes synchronize without being written back and clear resets bo
   browser.dispatchStorage('sq-design-theme', 'unsupported-theme');
   assert.equal(browser.useTheme().designTheme, 'classic');
   browser.dispatchStorage(null, null);
-  assert.equal(browser.useTheme().theme, 'dark');
+  assert.equal(browser.useTheme().theme, 'light');
   assert.equal(browser.useTheme().designTheme, 'classic');
   assert.deepEqual(browser.writes, []);
 });
@@ -164,7 +164,7 @@ test('startup bootstrap falls back safely for invalid or blocked storage', () =>
   for (const blocked of [false, true]) {
     const browser = createBrowser({ 'pt-theme': 'sepia', 'sq-design-theme': 'neon' }, blocked);
     browser.runBootstrap();
-    assert.equal(browser.root.classList.dark, true);
+    assert.equal(browser.root.classList.dark, false);
     assert.equal(browser.root.dataset.designTheme, 'classic');
   }
 });

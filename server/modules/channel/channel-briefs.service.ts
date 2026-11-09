@@ -77,7 +77,7 @@ export class ChannelBriefsService {
       const validUntil = new Date(report.createdAt.getTime() + 24 * 3600000).toISOString();
       const publicationFactId = channelHash([report.owner, report.id, report.revision, 'publication']);
       const publicationCard: ChannelEvidenceCard = { id: `card:${publicationFactId}`, kind: 'evidence', summary: '原报告已完成并归档，原始判断与核查结果可追溯。',
-        sources: [{ id: source.report.id, kind: 'ledger', title: report.title, uri: `/?reportId=${encodeURIComponent(report.id)}`, publishedAt: source.report.createdAt.toISOString(),
+        sources: [{ id: source.report.id, kind: 'ledger', title: report.title, uri: `/analysis/reports/${encodeURIComponent(report.id)}`, publishedAt: source.report.createdAt.toISOString(),
           observedAt: source.report.createdAt.toISOString(), verification: 'checked' }], asOf: source.report.createdAt.toISOString(), gaps: [],
         supports: [{ factId: publicationFactId, scope: '报告已发布及其不可变来源版本' }] };
       await this.channel.ingestFact(report.owner, { id: publicationFactId, revision: 1, ownerId: report.owner, key: 'research.report_published',
@@ -160,7 +160,7 @@ export class ChannelBriefsService {
     const fact: ChannelFact = { id: factId, revision: 1, ownerId: owner, key: arrival ? 'process.elapsedMinutes' : 'research.completed',
       value: arrival ? minutes : 1, observedAt: brief.compilation.finishedAt, expiresAt: brief.expiresAt, subject: 'research_process' };
     const card: ChannelEvidenceCard = { id: `card:${factId}`, kind: 'evidence', summary: arrival ? `本轮研究实际耗时 ${minutes} 分钟，结果已归档。` : '当日研究已生成可查阅的报告。',
-      sources: [{ id: brief.compilation.sourceCouncilReportId, kind: 'ledger', title: '已完成的研究记录', uri: `/?reportId=${encodeURIComponent(brief.reportId)}`,
+      sources: [{ id: brief.compilation.sourceCouncilReportId, kind: 'ledger', title: '已完成的研究记录', uri: `/analysis/reports/${encodeURIComponent(brief.reportId)}`,
         publishedAt: brief.compilation.finishedAt, observedAt: brief.compilation.finishedAt, verification: 'checked' }], asOf: brief.compilation.finishedAt,
       gaps: ['完成研究不代表研究判断已被市场或反证核查证明正确。'], supports: [{ factId, scope: '研究开始、完成及归档时点' }] };
     await this.channel.publishTemplate(owner, { briefId: brief.id, templateRevision: brief.text.templateRevision, episodeId, entityId: brief.compilation.sessionId, title: '今日研究',
@@ -195,7 +195,7 @@ export class ChannelBriefsService {
     const card: ChannelEvidenceCard = { id: `card:${factId}`, kind: 'evidence', summary: `${ticker} 价格 ${quote.price} ${quote.currency}，报告条件 ${condition.operator} ${threshold} ${condition.unit} 已满足。`,
       sources: [{ id: fact.sourceId!, kind: 'market_data', title: `${ticker} · ${quote.source ?? '行情'}`, uri: `/holdings?ticker=${encodeURIComponent(ticker)}`,
         publishedAt: quote.quoteAt!, observedAt: new Date().toISOString(), verification: 'retrieved' },
-      { id: brief.reportId, kind: 'tool_result', title: '原报告中的结构化观察条件', uri: `/?reportId=${encodeURIComponent(brief.reportId)}`,
+      { id: brief.reportId, kind: 'tool_result', title: '原报告中的结构化观察条件', uri: `/analysis/reports/${encodeURIComponent(brief.reportId)}`,
         publishedAt: brief.compilation.finishedAt, observedAt: brief.compilation.finishedAt, verification: 'checked' }], asOf: quote.quoteAt!,
       gaps: ['这是研究观察条件，不是交易指令；本次未修改策略或提交模拟订单。'], supports: [{ factId, scope: condition.rationale }] };
     await this.channel.publishTemplate(owner, { briefId: brief.id, templateRevision: brief.text.templateRevision, episodeId, entityId: ticker, title: `${ticker} · 报告观察条件`,

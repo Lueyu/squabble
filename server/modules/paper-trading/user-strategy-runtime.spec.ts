@@ -30,3 +30,12 @@ test('target total exposure uses existing shares, costs and market lot rounding 
   assert.equal(size({ ...base, ticker: '0700.HK', market: 'HK', equityUsd: 100000, heldShares: 200, positionPct: 50, lotSize: 200 }), 200);
   assert.equal(size({ ...base, ticker: '0700.HK', market: 'HK', equityUsd: 100000, heldShares: 1000, positionPct: 50, lotSize: 200, side: 'sell' }), 400, 'round toward the target without selling below it');
 });
+
+test('combination rule identities are namespaced but entry consumption survives rebuilds and legacy IDs', () => {
+  const identity = { accountId: 'account-a', userStrategyId: 'strategy-a', userEntryId: 'entry-1', ruleId: 'strategy-a:entry-1' };
+  assert.notEqual(runtime.investorRuleId('strategy-a', 'entry-1'), runtime.investorRuleId('strategy-b', 'entry-1'));
+  assert.equal(runtime.isSameInvestorEntry(identity, 'account-a', 'strategy-a', 'entry-1'), true);
+  assert.equal(runtime.isSameInvestorEntry({ ...identity, userEntryId: undefined, ruleId: 'entry-1' }, 'account-a', 'strategy-a', 'entry-1'), true);
+  assert.equal(runtime.isSameInvestorEntry(identity, 'account-b', 'strategy-a', 'entry-1'), false);
+  assert.equal(runtime.isSameInvestorEntry(identity, 'account-a', 'strategy-b', 'entry-1'), false);
+});

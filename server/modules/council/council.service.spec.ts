@@ -12,7 +12,9 @@ import type { BuilderConfig } from '../../../shared/api.interface';
 
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
 const dbTest = url ? test : test.skip;
-const client = url ? postgres(url, { max: 4, onnotice: () => undefined }) : null;
+const namespace = 'council_test_' + randomUUID().replaceAll('-', '');
+const admin = url ? postgres(url, { max: 1, onnotice: () => undefined }) : null;
+const client = url ? postgres(url, { max: 4, onnotice: () => undefined, connection: { search_path: namespace } }) : null;
 const db = client ? drizzle(client) : null;
 const owner = randomUUID();
 const other = randomUUID();
@@ -23,6 +25,8 @@ const portfolio = { totalValue: 1000, totalMv: 0, cash: 1000, cashRatio: 100, ho
 
 before(async () => {
   if (!client) return;
+  await admin.unsafe('CREATE SCHEMA ' + namespace);
+  await client.unsafe(readFileSync('scripts/db/01_schema.sql', 'utf8'));
   await client.unsafe(readFileSync('scripts/db/08_investment_council.sql', 'utf8'));
   await client.unsafe(readFileSync('scripts/db/21_research_archive_jobs.sql', 'utf8'));
   await client.unsafe(readFileSync('scripts/db/12_council_dialogue.sql', 'utf8'));
@@ -32,9 +36,12 @@ before(async () => {
 });
 after(async () => {
   if (!client) return;
-  await db.delete(councilSessions).where(eq(councilSessions.owner, owner));
-  await db.delete(builderProfiles).where(eq(builderProfiles.owner, owner));
   await client.end();
+  try {
+    await admin.unsafe('DROP SCHEMA IF EXISTS ' + namespace + ' CASCADE');
+  } finally {
+    await admin.end();
+  }
 });
 
 function service(chat = async () => ({ data: { decision: 'wait', summary: 'Need verified data', evidenceIds: [], dissent: [], nextReviewCondition: 'financials' }, tokens: 5 }), configured = true) {

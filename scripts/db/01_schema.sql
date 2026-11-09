@@ -1577,20 +1577,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS portfolio_value_point_slot ON portfolio_value_
 -- Managed accounts need explicit investor strategy authority before resuming.
 -- Preserve all ledgers, snapshots, reports and completed trades. Idempotent on upgrade.
 UPDATE investment_policies SET status = 'paused', revision = revision + 1, updated_at = NOW()
-WHERE status = 'running' AND base_config -> 'userStrategy' IS NULL;
+WHERE status = 'running' AND base_config -> 'userStrategy' IS NULL AND NOT (base_config ? 'portfolio');
 UPDATE paper_accounts a SET bot_enabled = FALSE, updated_at = NOW()
 FROM investment_policies p WHERE p.account_id = a.id AND p.owner = a.owner
-AND p.status = 'paused' AND p.base_config -> 'userStrategy' IS NULL AND a.bot_enabled = TRUE;
+AND p.status = 'paused' AND p.base_config -> 'userStrategy' IS NULL AND NOT (base_config ? 'portfolio') AND a.bot_enabled = TRUE;
 UPDATE investment_cycles c SET state = 'cancelled', updated_at = NOW(), result = jsonb_build_object('reason', 'Confirm an investor strategy before execution')
-FROM investment_policies p WHERE p.id = c.policy_id AND p.owner = c.owner AND p.base_config -> 'userStrategy' IS NULL
+FROM investment_policies p WHERE p.id = c.policy_id AND p.owner = c.owner AND p.base_config -> 'userStrategy' IS NULL AND NOT (base_config ? 'portfolio')
 AND c.state IN ('queued', 'researching', 'waiting');
 UPDATE strategy_mandates m SET status = 'paused', updated_at = NOW()
-FROM investment_policies p WHERE p.account_id = m.account_id AND p.owner = m.owner AND p.base_config -> 'userStrategy' IS NULL AND m.status = 'published';
+FROM investment_policies p WHERE p.account_id = m.account_id AND p.owner = m.owner AND p.base_config -> 'userStrategy' IS NULL AND NOT (base_config ? 'portfolio') AND m.status = 'published';
 UPDATE strategy_reservations r SET status = 'released', reason = 'Confirm an investor strategy before execution', updated_at = NOW()
-FROM investment_policies p WHERE p.account_id = r.account_id AND p.owner = r.owner AND p.base_config -> 'userStrategy' IS NULL AND r.status = 'active';
+FROM investment_policies p WHERE p.account_id = r.account_id AND p.owner = r.owner AND p.base_config -> 'userStrategy' IS NULL AND NOT (base_config ? 'portfolio') AND r.status = 'active';
 UPDATE strategy_signals s SET state = 'cancelled', reason = 'Confirm an investor strategy before execution', updated_at = NOW()
 FROM investment_policies p WHERE p.owner = s.owner AND s.candidate ->> 'accountId' = p.account_id::text
-AND p.base_config -> 'userStrategy' IS NULL AND s.state IN ('claimed', 'pending', 'reviewing', 'approved', 'wait');
+AND p.base_config -> 'userStrategy' IS NULL AND NOT (base_config ? 'portfolio') AND s.state IN ('claimed', 'pending', 'reviewing', 'approved', 'wait');
 CREATE TABLE IF NOT EXISTS simulation_valuation_baselines (
   account_id UUID PRIMARY KEY,
   owner TEXT NOT NULL,
@@ -1606,7 +1606,7 @@ FOR EACH ROW EXECUTE FUNCTION reject_simulation_valuation_baseline_mutation();
 
 UPDATE paper_orders o SET status = 'cancelled', reason = 'Confirm an investor strategy before execution'
 FROM investment_policies p WHERE p.account_id = o.account_id AND p.owner = o.owner
-AND p.base_config -> 'userStrategy' IS NULL AND o.status = 'pending_approval';
+AND p.base_config -> 'userStrategy' IS NULL AND NOT (base_config ? 'portfolio') AND o.status = 'pending_approval';
 
 -- 43_channel_workbench.sql
 -- Additive channel state. Existing accounts, reports and execution ledgers are untouched.
@@ -1696,3 +1696,79 @@ CREATE TRIGGER channel_reflection_append_only BEFORE UPDATE OR DELETE ON channel
 -- 44_strategy_draft_deletion.sql
 -- Keep deleted draft revisions and model-dispatch receipts for audit and deduplication.
 ALTER TABLE user_investment_strategies ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+
+-- 45_portfolio_workspace.sql
+-- Historical migrations run on every boot. Retain their index names with
+-- compatible account-scoped definitions so they cannot recreate singletons.
+ALTER TABLE builder_profiles ADD COLUMN IF NOT EXISTS account_id uuid REFERENCES paper_accounts(id);
+UPDATE builder_profiles p SET account_id = m.account_id
+FROM strategy_mandates m
+JOIN paper_accounts a ON a.id = m.account_id AND a.owner = m.owner AND a.is_active
+WHERE p.id = m.profile_id AND p.owner = m.owner AND p.account_id IS NULL
+  AND p.version = m.profile_version AND m.status = 'published'
+  AND NOT EXISTS (
+    SELECT 1 FROM strategy_mandates other
+    JOIN paper_accounts target ON target.id = other.account_id AND target.owner = other.owner AND target.is_active
+    WHERE other.owner = p.owner AND other.profile_id = p.id AND other.profile_version = p.version
+      AND other.status = 'published' AND other.account_id <> m.account_id
+  );
+DROP INDEX IF EXISTS paper_accounts_active_owner;
+CREATE UNIQUE INDEX paper_accounts_active_owner ON paper_accounts(owner, id) WHERE is_active;
+DROP INDEX IF EXISTS idx_builder_profiles_active;
+CREATE UNIQUE INDEX idx_builder_profiles_active ON builder_profiles(owner, account_id)
+  WHERE status = 'active' AND account_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_builder_profiles_active_legacy ON builder_profiles(owner)
+  WHERE status = 'active' AND account_id IS NULL;
+
+CREATE TABLE IF NOT EXISTS portfolio_strategy_assignments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  account_id uuid NOT NULL REFERENCES paper_accounts(id), strategy_id uuid NOT NULL,
+  strategy_revision integer NOT NULL, allocation_pct numeric(7,4) NOT NULL CHECK (allocation_pct BETWEEN 0 AND 100),
+  enabled boolean NOT NULL, snapshot jsonb NOT NULL, policy_revision integer NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS portfolio_assignment_account_strategy
+  ON portfolio_strategy_assignments(owner, account_id, strategy_id);
+CREATE TABLE IF NOT EXISTS portfolio_combination_revisions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  account_id uuid NOT NULL REFERENCES paper_accounts(id), policy_revision integer NOT NULL,
+  allocations jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS portfolio_combination_revision
+  ON portfolio_combination_revisions(owner, account_id, policy_revision);
+CREATE TABLE IF NOT EXISTS portfolio_combination_drafts (
+  owner text NOT NULL, account_id uuid NOT NULL REFERENCES paper_accounts(id),
+  expected_policy_revision integer NOT NULL, allocations jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS portfolio_combination_draft_account
+  ON portfolio_combination_drafts(owner, account_id);
+CREATE TABLE IF NOT EXISTS portfolio_combination_previews (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  account_id uuid NOT NULL REFERENCES paper_accounts(id), policy_revision integer NOT NULL,
+  preview_hash text NOT NULL, allocations jsonb NOT NULL, expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- Never turn an archived strategy/account back on. Only the live pre-upgrade
+-- policy is backfilled, and existing combinations remain authoritative on boot.
+INSERT INTO portfolio_strategy_assignments
+  (owner, account_id, strategy_id, strategy_revision, allocation_pct, enabled, snapshot, policy_revision)
+SELECT p.owner, p.account_id, (p.base_config->'userStrategy'->>'id')::uuid,
+  (p.base_config->'userStrategy'->>'revision')::integer, 100, true, p.base_config->'userStrategy', p.revision
+FROM investment_policies p JOIN paper_accounts a ON a.id = p.account_id AND a.owner = p.owner
+WHERE a.is_active AND p.status <> 'archived' AND p.base_config->'userStrategy'->>'status' = 'confirmed'
+  AND NOT (p.base_config ? 'portfolio')
+ON CONFLICT (owner, account_id, strategy_id) DO NOTHING;
+UPDATE investment_policies p SET
+  base_config = jsonb_set(p.base_config, '{portfolio}', assignments.allocations),
+  effective_config = jsonb_set(p.effective_config, '{portfolio}', assignments.allocations)
+FROM (SELECT owner, account_id, jsonb_agg(jsonb_build_object(
+  'strategyId', strategy_id, 'strategyRevision', strategy_revision,
+  'allocationPct', allocation_pct, 'enabled', enabled, 'snapshot', snapshot)) AS allocations
+  FROM portfolio_strategy_assignments GROUP BY owner, account_id) assignments
+WHERE p.owner = assignments.owner AND p.account_id = assignments.account_id
+  AND p.status <> 'archived' AND NOT (p.base_config ? 'portfolio');
+INSERT INTO portfolio_combination_revisions(owner, account_id, policy_revision, allocations)
+SELECT owner, account_id, revision, base_config->'portfolio' FROM investment_policies
+WHERE base_config ? 'portfolio' AND status <> 'archived'
+ON CONFLICT (owner, account_id, policy_revision) DO NOTHING;

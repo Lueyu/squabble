@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase, simpleExperienceEnabled } from '../../common/platform';
 import { builderProfiles, cashAccounts, holdings, paperAccounts, paperEvents, paperOrders, paperPositions, paperSnapshots, paperTrades } from '../../database/schema';
 import { investmentConstraintProposals, investmentCycles, investmentPolicies, investmentPreviews, investmentRequests } from '../../database/investment-policy.schema';
+import { portfolioCombinationRevisions, portfolioStrategyAssignments } from '../../database/portfolio-workspace.schema';
 import { experiencePreferences } from '../../database/simple-experience.schema';
 import { simulationCash, simulationPreviews, simulationSeeds } from '../../database/simulation-experiments.schema';
 import { strategyMandates, strategyReservations, strategyMonitorState, strategyRouteReviews } from '../../database/strategy-mandates.schema';
@@ -15,12 +16,12 @@ import { SimpleCouncilService } from '../council/simple-council.service';
 import { UserInvestmentStrategyService } from './user-investment-strategy.service';
 import { channelDecisionReflections,channelEpisodes,channelUserActions } from '../../database/channel.schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
-import { installInvestorMandate } from './user-strategy-runtime';
+import { installInvestorCombinationMandate, installInvestorMandate } from './user-strategy-runtime';
 import { SimulationExperimentsService } from './simulation-experiments.service';
 import { DEFAULT_INVESTMENT_CONFIG, effectiveInvestmentConfig, investmentConstraintSchema, normalizeInvestmentRequest } from './investment-policy.rules';
 import { seedRevision } from './simulation-experiments.rules';
 import { paperRiskDay } from './paper-risk-day';
-import type { InvestmentConfig, InvestmentConstraint, InvestmentPolicy } from '../../../shared/investment-policy.interface';
+import type { AiInvestmentView, InvestmentConfig, InvestmentConstraint, InvestmentPolicy } from '../../../shared/investment-policy.interface';
 import type { SimulationSeed } from '../../../shared/simulation-experiment.interface';
 
 export type InvestmentTx = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
@@ -54,7 +55,8 @@ export async function expireInvestmentConstraints(tx: InvestmentTx, policy: Poli
   await tx.update(strategyMandates).set({ status: 'paused', updatedAt: now }).where(and(eq(strategyMandates.owner, policy.owner), eq(strategyMandates.accountId, policy.accountId), eq(strategyMandates.status, 'published')));
   const [saved] = await tx.update(investmentPolicies).set({ revision: policy.revision + 1, constraintRecords: records,
     effectiveConfig: effectiveInvestmentConfig(policy.baseConfig, records, now), updatedAt: now }).where(eq(investmentPolicies.id, policy.id)).returning();
-  if (saved.status === 'running' && saved.baseConfig.userStrategy) await installInvestorMandate(tx, saved.owner, saved, saved.baseConfig.userStrategy);
+  if (saved.status === 'running' && saved.baseConfig.portfolio?.some(a => a.enabled)) await installInvestorCombinationMandate(tx, saved.owner, saved, saved.baseConfig.portfolio);
+  else if (saved.status === 'running' && saved.baseConfig.userStrategy) await installInvestorMandate(tx, saved.owner, saved, saved.baseConfig.userStrategy);
   return saved;
 }
 
@@ -68,11 +70,14 @@ export class InvestmentPolicyService {
   private parse<K extends Parameters<typeof normalizeInvestmentRequest>[0]>(kind: K, value: unknown) {
     try { return normalizeInvestmentRequest(kind, value); } catch { throw new BadRequestException({ code: 'INVALID_INVESTMENT_REQUEST', message: 'Please check the supplied investment details.' }); }
   }
-  async overview(owner: string) {
+  async overview(owner: string, accountId?: string): Promise<AiInvestmentView> {
     const accounts = await this.db.select().from(paperAccounts).where(eq(paperAccounts.owner, owner)).orderBy(desc(paperAccounts.createdAt));
-    const policies = await this.db.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), ne(investmentPolicies.status, 'archived')));
-    const policy = policies.find(p => accounts.some(a => a.id === p.accountId && a.isActive)) ?? policies[0] ?? null;
-    const account = accounts.find(a => a.id === policy?.accountId) ?? accounts.find(a => a.isActive) ?? null;
+    const policies = await this.db.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), accountId ? eq(investmentPolicies.accountId, accountId) : ne(investmentPolicies.status, 'archived')));
+    const policy = accountId ? policies.find(p => p.accountId === accountId) ?? null
+      : policies.find(p => accounts.some(a => a.id === p.accountId && a.isActive)) ?? policies[0] ?? null;
+    const account = accountId ? accounts.find(a => a.id === accountId) ?? null
+      : accounts.find(a => a.id === policy?.accountId) ?? accounts.find(a => a.isActive) ?? null;
+    if (accountId && !account) throw new NotFoundException('ACCOUNT_NOT_FOUND');
     const [positions, actions, mandates, heartbeats] = account ? await Promise.all([
       this.db.select().from(paperPositions).where(and(eq(paperPositions.owner, owner), eq(paperPositions.accountId, account.id))),
       this.db.select().from(paperOrders).where(and(eq(paperOrders.owner, owner), eq(paperOrders.accountId, account.id))).orderBy(desc(paperOrders.createdAt)).limit(20),
@@ -82,7 +87,6 @@ export class InvestmentPolicyService {
     const cycles = policy ? await this.db.selectDistinctOn([investmentCycles.market]).from(investmentCycles).where(and(eq(investmentCycles.owner, owner), eq(investmentCycles.policyId, policy.id), eq(investmentCycles.policyRevision, policy.revision), ne(investmentCycles.state, 'cancelled'), ne(investmentCycles.state, 'superseded')))
       .orderBy(investmentCycles.market, desc(investmentCycles.createdAt), desc(investmentCycles.updatedAt)) : [];
     const waiting = cycles.find(c => ['waiting', 'uncertain', 'failed'].includes(c.state));
-    if (account) await this.simulations.establishBaseline(owner, account.id).catch(() => false);
     const performance = account ? await this.simulations.review(owner, account.id).catch(() => null) : null;
     const [runtime, snapshots, signals, trades] = account ? await Promise.all([
       this.db.select().from(strategyRuntime).where(and(eq(strategyRuntime.owner, owner), eq(strategyRuntime.profileId, mandates[0]?.profileId ?? '00000000-0000-0000-0000-000000000000'))),
@@ -92,13 +96,13 @@ export class InvestmentPolicyService {
     ]) : [[], [], [], []];
     const [openingSeed] = account ? await this.db.select().from(simulationSeeds).where(and(eq(simulationSeeds.owner, owner), eq(simulationSeeds.accountId, account.id))) : [];
     const decisions = account ? await this.db.select().from(strategyRouteReviews).where(and(eq(strategyRouteReviews.owner, owner), eq(strategyRouteReviews.accountId, account.id))) : [];
-    return { currentStrategy: policy?.baseConfig.userStrategy ?? null, netAssetUsd: snapshots[0]?.equity ?? performance?.endingEquityUsd ?? null, todayChangeUsd: snapshots[0]?.dailyPl ?? null, waitingReasons: [...new Set([...runtime.map(item => item.data.reason), ...(performance?.gaps ?? [])])], lastCheckAt: runtime.map(item => item.data.lastCheckAt).filter(Boolean).sort().at(-1) ?? null, status: policy ? policy.status === 'paused' ? 'paused' : waiting ? 'attention_required' : 'running' : account ? 'needs_confirmation' : 'not_started',
+    return { currentStrategy: policy?.baseConfig.userStrategy ?? null, netAssetUsd: snapshots[0]?.equity ?? performance?.endingEquityUsd ?? null, todayChangeUsd: snapshots[0]?.dailyPl ?? null, waitingReasons: [...new Set([...runtime.map(item => item.data.reason), ...(performance?.gaps ?? [])])], lastCheckAt: runtime.map(item => item.data.lastCheckAt).filter(Boolean).sort().at(-1) ?? null, status: policy ? policy.status !== 'running' ? 'paused' : waiting ? 'attention_required' : 'running' : account ? 'needs_confirmation' : 'not_started',
       account, policy: policy ? policyView(policy) : null, needsInput: !policy && account ? ['CONFIRM_LEGACY_ADOPTION'] : [],
       limits: policy?.effectiveConfig.limits ?? DEFAULT_INVESTMENT_CONFIG.limits, constraints: policy?.constraintRecords ?? [],
-      currentThinking: policy && !policy.baseConfig.userStrategy ? null : mandates[0]?.config.objective ?? (waiting ? String(waiting.result.reason ?? 'Waiting for verified independent research') : null),
-      actions: actions.map(action => ({ ...action, strategyId: signals.find(signal => signal.orderId === action.id)?.candidate.userStrategyId ?? null, strategyEntryId: signals.find(signal => signal.orderId === action.id)?.ruleId ?? null, fee: trades.find(trade => trade.orderId === action.id)?.fee ?? null, discussionId: decisions.find(d => d.signalId && d.councilSessionId && action.sessionId === d.councilSessionId)?.councilSessionId ?? action.sessionId })), holdings: positions.map(position => ({ ...position, originalCost: openingSeed?.seed.positions.find(item => item.ticker === position.ticker)?.historicalCost })), performance, lastHeartbeatAt: heartbeats[0]?.lastHeartbeat.toISOString() ?? null,
+      currentThinking: policy && !policy.baseConfig.userStrategy && !policy.baseConfig.portfolio?.length ? null : mandates[0]?.config.objective ?? (waiting ? String(waiting.result.reason ?? 'Waiting for verified independent research') : null),
+      actions: actions.map(action => ({ ...action, createdAt: action.createdAt.toISOString(), strategyId: signals.find(signal => signal.orderId === action.id)?.candidate.userStrategyId ?? null, strategyEntryId: signals.find(signal => signal.orderId === action.id)?.candidate.userEntryId ?? signals.find(signal => signal.orderId === action.id)?.ruleId ?? null, fee: trades.find(trade => trade.orderId === action.id)?.fee ?? null, discussionId: decisions.find(d => d.signalId && d.councilSessionId && action.sessionId === d.councilSessionId)?.councilSessionId ?? action.sessionId })), holdings: positions.map(position => ({ ...position, originalCost: openingSeed?.seed.positions.find(item => item.ticker === position.ticker)?.historicalCost })), performance, lastHeartbeatAt: heartbeats[0]?.lastHeartbeat.toISOString() ?? null,
       legacyAccounts: accounts.filter(a => !policies.some(p => p.accountId === a.id)).map(a => ({ id: a.id, name: a.name, active: a.isActive, botEnabled: a.botEnabled })),
-      cycles: cycles.map(c => ({ id: c.id, state: c.state, market: c.market, reason: c.result.reason ?? null })),
+      cycles: cycles.map(c => ({ id: c.id, state: c.state, market: c.market, reason: c.result.reason ? String(c.result.reason) : null })),
     };
   }
   async preview(owner: string, input: unknown) {
@@ -140,15 +144,24 @@ export class InvestmentPolicyService {
   }
   async start(owner: string, input: unknown) { return this.startInternal(owner, this.parse('start', input)); }
   async restart(owner: string, input: unknown) { return this.startInternal(owner, this.parse('restart', input)); }
-  private async startInternal(owner: string, request: ReturnType<typeof normalizeInvestmentRequest<'start'>> & { expectedAccountId?: string }) {
+  async createAccount(owner: string, input: unknown) {
+    const parsed = z.object({ name: z.string().trim().min(1).max(80) }).passthrough().safeParse(input);
+    if (!parsed.success) throw new BadRequestException('ACCOUNT_NAME_REQUIRED');
+    const { name, ...body } = parsed.data;
+    const request = this.parse('start', body);
+    if (request.adoptAccountId) throw new BadRequestException('NEW_ACCOUNT_CANNOT_ADOPT_EXISTING_LEDGER');
+    return this.startInternal(owner, request, name);
+  }
+  private async startInternal(owner: string, request: ReturnType<typeof normalizeInvestmentRequest<'start'>> & { expectedAccountId?: string }, independentName?: string) {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
-      return this.idempotent(tx, owner, request.expectedAccountId ? 'restart' : 'start', request, async () => {
+      return this.idempotent(tx, owner, independentName ? 'create-account:' + independentName : request.expectedAccountId ? 'restart' : 'start', request, async () => {
         const accounts = await tx.select().from(paperAccounts).where(eq(paperAccounts.owner, owner)).for('update');
+        if (!independentName && accounts.filter(a => a.isActive).length > 1) throw new ConflictException('ACCOUNT_SELECTION_REQUIRED');
         const active = accounts.find(a => a.isActive);
         if (request.expectedAccountId && active?.id !== request.expectedAccountId) throw new ConflictException('ACCOUNT_CHANGED');
         const [existingPolicy] = active ? await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, active.id))).for('update') : [];
-        if (existingPolicy && !request.expectedAccountId) throw new ConflictException('INVESTMENT_ALREADY_STARTED');
+        if (existingPolicy && !request.expectedAccountId && !independentName) throw new ConflictException('INVESTMENT_ALREADY_STARTED');
         const [preview] = await tx.select().from(investmentPreviews).where(and(eq(investmentPreviews.owner, owner), eq(investmentPreviews.id, request.previewId))).for('update');
         if (!preview) throw new NotFoundException('Preview not found');
         if (preview.expiresAt.getTime() <= Date.now()) throw new ConflictException('PREVIEW_EXPIRED');
@@ -175,6 +188,7 @@ export class InvestmentPolicyService {
         const rate = (currency: string) => Number(seed.fx.find(item => item.currency === currency)?.rate ?? 0);
         seed.initialEquityUsd = missingBaseline ? null : String(seed.positions.reduce((sum, position) => sum + Number(position.shares) * Number(position.initialPrice) * rate(position.currency), 0) + seed.cash.reduce((sum, cash) => sum + Number(cash.total) * rate(cash.currency), 0));
         const base = structuredClone(DEFAULT_INVESTMENT_CONFIG);
+        if (independentName) base.portfolio = [];
         const [preferences] = await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
         base.timezone = preferences?.timezone ?? base.timezone;
         base.markets = request.markets ?? (seed.positions.length ? [...new Set(seed.positions.map(p => p.market))] : [seed.cash[0]?.currency === 'HKD' ? 'HK' : seed.cash[0]?.currency === 'CNY' ? 'CN' : 'US']);
@@ -185,16 +199,18 @@ export class InvestmentPolicyService {
         if (account && (await tx.select({ id: investmentPolicies.id }).from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, account.id)))).length) throw new ConflictException('PREVIOUSLY_MANAGED_ACCOUNT_IS_READ_ONLY');
         base.initialTickers = account ? (await tx.select().from(paperPositions).where(and(eq(paperPositions.owner, owner), eq(paperPositions.accountId, account.id)))).filter(p => Number(p.shares) > 0).map(p => p.ticker)
           : seed.positions.map(p => p.ticker);
-        for (const target of [...new Map([active, account].filter(Boolean).map(a => [a!.id, a!])).values()]) {
+        for (const target of [...new Map([independentName ? undefined : active, account].filter(Boolean).map(a => [a!.id, a!])).values()]) {
           await cancelInvestmentCandidates(tx, owner, target.id, 'User confirmed investment takeover/restart');
           await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, target.id), eq(strategyMandates.status, 'published')));
         }
-        await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active')));
-        await tx.update(paperAccounts).set({ isActive: false, botEnabled: false, updatedAt: new Date() }).where(eq(paperAccounts.owner, owner));
-        if (existingPolicy) await tx.update(investmentPolicies).set({ status: 'archived', revision: existingPolicy.revision + 1, updatedAt: new Date() }).where(eq(investmentPolicies.id, existingPolicy.id));
+        if (!independentName) {
+          await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active')));
+          await tx.update(paperAccounts).set({ isActive: false, botEnabled: false, updatedAt: new Date() }).where(eq(paperAccounts.owner, owner));
+          if (existingPolicy) await tx.update(investmentPolicies).set({ status: 'archived', revision: existingPolicy.revision + 1, updatedAt: new Date() }).where(eq(investmentPolicies.id, existingPolicy.id));
+        }
         if (!account) {
           const cashUsd = seed.cash.reduce((sum, c) => sum + Number(c.total) * Number(seed.fx.find(f => f.currency === c.currency)?.rate ?? 0), 0);
-          [account] = await tx.insert(paperAccounts).values({ owner, name: 'AI investment', isActive: true, botEnabled: false, ledgerMode: 'native_currency', initialCash: seed.initialEquityUsd ?? '0', cashBalance: String(cashUsd), executionModel: seed.model,
+          [account] = await tx.insert(paperAccounts).values({ owner, name: independentName ?? 'AI investment', isActive: true, botEnabled: false, ledgerMode: 'native_currency', initialCash: seed.initialEquityUsd ?? '0', cashBalance: String(cashUsd), executionModel: seed.model,
             guardrails: { maxOrderPct: base.limits.maxOrderPct, dailyLossLimitPct: base.limits.dailyLossLimitPct, maxOrdersPerDay: 20 } }).returning();
           let sourcePreviewId = preview.sourcePreviewId;
           if (!sourcePreviewId) { const [saved] = await tx.insert(simulationPreviews).values({ owner, seed, expiresAt: preview.expiresAt }).returning(); sourcePreviewId = saved.id; }
@@ -211,7 +227,9 @@ export class InvestmentPolicyService {
     });
   }
   private async current(tx: InvestmentTx, owner: string) {
-    const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true))).for('update');
+    const accounts = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true))).for('update');
+    if (accounts.length > 1) throw new ConflictException('ACCOUNT_SELECTION_REQUIRED');
+    const [account] = accounts;
     if (!account) throw new NotFoundException('INVESTMENT_NOT_STARTED');
     const [policy] = await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, account.id))).for('update');
     if (!policy) throw new NotFoundException('INVESTMENT_NOT_STARTED');
@@ -228,11 +246,16 @@ export class InvestmentPolicyService {
         let saved = policy;
         const activate = async (snapshot: import('../../../shared/user-investment-strategy.interface').ConfirmedInvestmentStrategy) => {
           await cancelInvestmentCandidates(tx, owner, account.id, 'User applied a confirmed strategy; old results cannot execute');
-          const baseConfig = { ...policy.baseConfig, userStrategy: snapshot, timezone: snapshot.content.timezone, limits: { ...policy.baseConfig.limits, ...snapshot.content.limits }, ...(availableReviewers?.members.length ? { reviewMembers: availableReviewers.members } : {}) };
+          const portfolio = [{ strategyId: snapshot.id, strategyRevision: snapshot.revision, allocationPct: 100, enabled: true, snapshot }];
+          const baseConfig = { ...policy.baseConfig, portfolio, userStrategy: snapshot, timezone: snapshot.content.timezone, limits: { ...policy.baseConfig.limits, ...(policy.baseConfig.portfolio === undefined ? snapshot.content.limits : {}) }, ...(availableReviewers?.members.length ? { reviewMembers: availableReviewers.members } : {}) };
           const effectiveConfig = effectiveInvestmentConfig(baseConfig, policy.constraintRecords);
           [saved] = await tx.update(investmentPolicies).set({ revision: policy.revision + 1, status: 'running', baseConfig, effectiveConfig, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id)).returning();
           await tx.update(paperAccounts).set({ botEnabled: true, updatedAt: new Date() }).where(eq(paperAccounts.id, account.id));
           await installInvestorMandate(tx, owner, saved, snapshot);
+          await tx.delete(portfolioStrategyAssignments).where(and(eq(portfolioStrategyAssignments.owner, owner), eq(portfolioStrategyAssignments.accountId, account.id)));
+          await tx.insert(portfolioStrategyAssignments).values({ owner, accountId: account.id, strategyId: snapshot.id,
+            strategyRevision: snapshot.revision, allocationPct: '100', enabled: true, snapshot, policyRevision: saved.revision });
+          await tx.insert(portfolioCombinationRevisions).values({ owner, accountId: account.id, policyRevision: saved.revision, allocations: portfolio });
         };
         const strategy = await this.userStrategies!.confirmInTransaction(tx, owner, request.strategyId, request.expectedRevision, request.previewHash, request.expectedCurrentId, async (_tx, snapshot) => activate(snapshot));
         if (saved === policy && policy.baseConfig.userStrategy?.id !== strategy.id) await activate(strategy);
@@ -259,6 +282,9 @@ export class InvestmentPolicyService {
    * user never performs a separate account-setup or multi-step wizard.
    */
   async quickApply(owner: string, input: unknown) {
+    const activeAccounts = await this.db.select({ id: paperAccounts.id }).from(paperAccounts)
+      .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true)));
+    if (activeAccounts.length > 1) throw new ConflictException('ACCOUNT_SELECTION_REQUIRED');
     const request = z.object({
       versionId: z.string().uuid(),
       requestKey: z.string().regex(/^[a-zA-Z0-9_-]{8,128}$/u),
@@ -314,7 +340,7 @@ export class InvestmentPolicyService {
     });
   }
   async enqueue(tx: InvestmentTx, policy: PolicyRow, trigger: string) {
-    if (policy.baseConfig.userStrategy) return;
+    if (policy.baseConfig.userStrategy || policy.baseConfig.portfolio !== undefined) return;
     for (const market of policy.effectiveConfig.markets) await tx.insert(investmentCycles).values({ owner: policy.owner, accountId: policy.accountId, policyId: policy.id, policyRevision: policy.revision, market,
       marketDate: paperRiskDay(new Date(), market === 'US' ? 'America/New_York' : market === 'HK' ? 'Asia/Hong_Kong' : 'Asia/Shanghai'), trigger, eventKey: `${trigger}:${policy.revision}` }).onConflictDoNothing();
   }
@@ -331,9 +357,11 @@ export class InvestmentPolicyService {
         await this.userStrategies!.removeCurrentInTransaction(tx, owner, request.strategyId, request.expectedRevision, async () => {
           await cancelInvestmentCandidates(tx, owner, account.id, 'User stopped and removed the current strategy');
           await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, account.id), eq(strategyMandates.status, 'published')));
-          await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active')));
+          await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.accountId, account.id), eq(builderProfiles.status, 'active')));
           await tx.update(paperAccounts).set({ botEnabled: false, updatedAt: new Date() }).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, account.id)));
-          const baseConfig = { ...policy.baseConfig }; delete baseConfig.userStrategy;
+          const baseConfig = { ...policy.baseConfig, portfolio: [] }; delete baseConfig.userStrategy;
+          await tx.delete(portfolioStrategyAssignments).where(and(eq(portfolioStrategyAssignments.owner, owner), eq(portfolioStrategyAssignments.accountId, account.id)));
+          await tx.insert(portfolioCombinationRevisions).values({ owner, accountId: account.id, policyRevision: policy.revision + 1, allocations: [] });
           await tx.update(investmentPolicies).set({ status: 'paused', revision: policy.revision + 1, baseConfig,
             effectiveConfig: effectiveInvestmentConfig(baseConfig, policy.constraintRecords), updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id));
         });
@@ -347,13 +375,14 @@ export class InvestmentPolicyService {
       await lockMemoryOwner(tx, owner);
       return this.idempotent(tx, owner, running ? 'resume' : 'pause', request, async () => {
         const { account, policy } = await this.current(tx, owner);
-        if (running && !policy.baseConfig.userStrategy) throw new ConflictException('CONFIRMED_USER_STRATEGY_REQUIRED');
+        if (running && !policy.baseConfig.userStrategy && !policy.baseConfig.portfolio?.some(a => a.enabled)) throw new ConflictException('CONFIRMED_USER_STRATEGY_REQUIRED');
         if (policy.revision !== request.expectedRevision) throw new ConflictException('POLICY_REVISION_CHANGED');
         await cancelInvestmentCandidates(tx, owner, account.id, running ? 'Resume requires fresh evaluation' : 'All automatic trading paused, including protective exits');
         await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, account.id), eq(strategyMandates.status, 'published')));
         await tx.update(paperAccounts).set({ botEnabled: running, updatedAt: new Date() }).where(eq(paperAccounts.id, account.id));
         const [saved] = await tx.update(investmentPolicies).set({ status: running ? 'running' : 'paused', revision: policy.revision + 1, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id)).returning();
-        if (running && saved.baseConfig.userStrategy) await installInvestorMandate(tx, owner, saved, saved.baseConfig.userStrategy);
+        if (running && saved.baseConfig.portfolio?.some(a => a.enabled)) await installInvestorCombinationMandate(tx, owner, saved, saved.baseConfig.portfolio);
+        else if (running && saved.baseConfig.userStrategy) await installInvestorMandate(tx, owner, saved, saved.baseConfig.userStrategy);
         return { status: saved.status, policy: policyView(saved), evaluationState: running ? 'queued' : 'cancelled' };
       });
     });
@@ -411,7 +440,8 @@ export class InvestmentPolicyService {
         const [saved] = await tx.update(investmentPolicies).set({ revision: policy.revision + 1, constraintRecords: records, effectiveConfig, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id)).returning();
         await tx.update(investmentConstraintProposals).set({ state: revoke ? 'revoked' : 'confirmed' }).where(eq(investmentConstraintProposals.id, id));
         if (saved.status === 'running') {
-          if (saved.baseConfig.userStrategy) await installInvestorMandate(tx, owner, saved, saved.baseConfig.userStrategy);
+          if (saved.baseConfig.portfolio?.some(a => a.enabled)) await installInvestorCombinationMandate(tx, owner, saved, saved.baseConfig.portfolio);
+          else if (saved.baseConfig.userStrategy) await installInvestorMandate(tx, owner, saved, saved.baseConfig.userStrategy);
           else await this.enqueue(tx, saved, 'constraint');
         }
         return { status: 'applied', policy: policyView(saved), impact: proposal.impact };
@@ -431,7 +461,7 @@ export class InvestmentPolicyService {
         await tx.update(paperAccounts).set({ botEnabled: false, updatedAt: new Date() }).where(eq(paperAccounts.id, accountId));
         const [policy] = await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, accountId))).for('update');
         if (policy && policy.status !== 'archived') await tx.update(investmentPolicies).set({ status: 'paused', revision: policy.revision + 1, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id));
-        await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active')));
+        await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.accountId, accountId), eq(builderProfiles.status, 'active')));
         await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, accountId), eq(strategyMandates.status, 'published')));
         return { status: 'paused', accountId };
       });
@@ -445,7 +475,9 @@ export class InvestmentPolicyService {
     const rule = mandate?.config.rules.find(r => r.id === signal?.ruleId) as (import('../../../shared/strategy-mandate.interface').MandateRule & { sourceCycleId?: string }) | undefined;
     const [cycle] = rule?.sourceCycleId ? await this.db.select().from(investmentCycles).where(and(eq(investmentCycles.owner, owner), eq(investmentCycles.id, rule.sourceCycleId))) : [];
     const [review] = signal ? await this.db.select().from(strategyRouteReviews).where(and(eq(strategyRouteReviews.owner, owner), eq(strategyRouteReviews.signalId, signal.id))) : [];
-    return { strategy: mandate?.config.userStrategyId && rule ? { id: mandate.config.userStrategyId, revision: mandate.config.userStrategyRevision, title: mandate.config.title, entryId: rule.id, text: rule.userDirective?.reviewedText ?? rule.rationale, route: review?.decision.route ?? null } : null, order, candidate: signal?.candidate ?? null, evidence: mandate?.config.references ?? [], authorization: mandate?.config ?? null,
+    const strategyId = rule?.userStrategyId ?? mandate?.config.userStrategyId;
+    const sourceStrategy = strategyId && this.userStrategies ? await this.userStrategies.get(owner, strategyId).catch(() => null) : null;
+    return { strategy: strategyId && rule ? { id: strategyId, revision: rule.userStrategyRevision ?? mandate?.config.userStrategyRevision, title: sourceStrategy?.content.title ?? mandate?.config.title, entryId: rule.userEntryId ?? rule.id, text: rule.userDirective?.reviewedText ?? rule.rationale, route: review?.decision.route ?? null } : null, order, candidate: signal?.candidate ?? null, evidence: mandate?.config.references ?? [], authorization: mandate?.config ?? null,
       actualResearch: Array.isArray(cycle?.result.completedResearch) ? cycle.result.completedResearch.filter(item => item && typeof item === 'object' && item.ticker === order.ticker) : [], actualExecutors: cycle?.input.actualExecutors ?? [], discussionId: review?.councilSessionId ?? order.sessionId };
   }
 }

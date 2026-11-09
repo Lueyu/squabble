@@ -11,6 +11,7 @@ import { normalizeBuilderConfig } from './agent-builder.rules';
 import { AgentBuilderService } from './agent-builder.service';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import { StrategyMandateService } from './strategy-mandate.service';
+import { strategyMandates } from '../../database/strategy-mandates.schema';
 import type { StrategyMandateInput } from '../../../shared/strategy-mandate.interface';
 
 test('exact strategy navigation is read-only and changed teams require an explicit version rebind', { skip: !process.env.STRATEGY_TEST_DATABASE_URL }, async () => {
@@ -59,5 +60,16 @@ test('exact strategy navigation is read-only and changed teams require an explic
     assert.equal(rebound.profileVersion, 2); assert.equal(rebound.revision, edited.revision + 1);
     assert.equal((await service.publish(owner, rebound.id, rebound.revision, null)).status, 'published');
     await assert.rejects(service.rebindProfile(owner, rebound.id, rebound.revision, 2), /Draft changed/);
+    const [secondAccount] = await db.insert(paperAccounts).values({ owner, isActive: true, botEnabled: true }).returning();
+    const otherDraft = await service.create(owner, { ...input, accountId: secondAccount.id });
+    await assert.rejects(service.publish(owner, otherDraft.id, otherDraft.revision, null), /PROFILE_ACCOUNT_MISMATCH/,
+      'an unbound legacy profile with live authority cannot serve a second account');
+    await db.update(builderProfiles).set({ accountId: activeAccount.id }).where(eq(builderProfiles.id, profile.id));
+    builder.assertCanActivate = async () => undefined;
+    await assert.rejects(service.publish(owner, otherDraft.id, otherDraft.revision, null, true), /PROFILE_ACCOUNT_MISMATCH/,
+      'activating publication must never rebind another account execution profile');
+    assert.equal((await db.select().from(builderProfiles).where(eq(builderProfiles.id, profile.id)))[0].accountId, activeAccount.id);
+    assert.equal((await db.select().from(strategyMandates).where(eq(strategyMandates.id, rebound.id)))[0].status, 'published');
+    assert.equal((await db.select().from(strategyMandates).where(eq(strategyMandates.id, otherDraft.id)))[0].status, 'draft');
   } finally { await sql.end(); await admin.unsafe('DROP SCHEMA ' + namespace + ' CASCADE'); await admin.end(); }
 });

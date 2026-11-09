@@ -41,6 +41,10 @@ import { ResearchDiscoveryService } from '../research-tools/research-discovery.s
 import { UserInvestmentStrategyService } from './user-investment-strategy.service';
 import { UserInvestmentStrategyController } from './user-investment-strategy.controller';
 import { ResearchRoutingModule } from '../research-routing/research-routing.module';
+import { PortfolioWorkspaceService } from './portfolio-workspace.service';
+import { PortfolioWorkspaceController } from './portfolio-workspace.controller';
+import { PortfolioComparisonService } from './portfolio-comparison.service';
+import { PortfolioComparisonController } from './portfolio-comparison.controller';
 
 @Module({
   imports: [
@@ -61,6 +65,8 @@ import { ResearchRoutingModule } from '../research-routing/research-routing.modu
     SimulationExperimentsController,
     InvestmentPolicyController,
     UserInvestmentStrategyController,
+    PortfolioWorkspaceController,
+    PortfolioComparisonController,
   ],
   providers: [
     PaperTradingService,
@@ -84,6 +90,8 @@ import { ResearchRoutingModule } from '../research-routing/research-routing.modu
     AutonomousPlanCompiler,
     ResearchDiscoveryService,
     UserInvestmentStrategyService,
+    PortfolioWorkspaceService,
+    PortfolioComparisonService,
   ],
   exports: [
     PaperTradingService,

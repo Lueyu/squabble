@@ -8,5 +8,6 @@
 @import url("./tailwind-theme.css");
 @import url("./typography.css");
 @import url("./themes.css");
+@import url("./portfolio-workspace.css");
 
 @config "../../tailwind.config.ts";

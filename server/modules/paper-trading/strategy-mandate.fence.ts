@@ -17,6 +17,8 @@ import { ResearchDocumentsService } from '../research-documents/research-documen
 import type { PostgresJsDatabase } from '../../common/platform';
 import { paperRiskDay } from './paper-risk-day';
 import type { AutonomousMandateRule } from '../../../shared/investment-policy.interface';
+import { investorAllocationBlock } from './strategy-allocation';
+import type { PortfolioRiskSnapshot } from './strategy-portfolio-risk';
 
 /** Recomputed under the paper account lock, including other still-live candidates. */
 export async function mandateExposure(tx: MemoryFenceTransaction, owner: string, accountId: string,
@@ -50,7 +52,7 @@ export async function mandateExposure(tx: MemoryFenceTransaction, owner: string,
 /** Caller holds the shared owner fence and paper-account lock. It cannot be replaced by an AI approval. */
 export async function assertMandateExecution(tx: MemoryFenceTransaction, owner: string, accountId: string,
   candidate: StrategyCandidate, rule: StrategyRule, equityUsd: number, unitUsd: number, now = new Date(), snapshot?: TradingMarketSnapshot,
-  portfolioRisk?: { hardBlock: string | null; councilReason: string | null }): Promise<void> {
+  portfolioRisk?: { hardBlock: string | null; councilReason: string | null }, portfolio?: PortfolioRiskSnapshot): Promise<void> {
   if (candidate.accountId && candidate.accountId !== accountId) throw new BadRequestException('Strategy account changed');
   if (candidate.protectiveStop || !candidate.mandateId) return;
   const [reservation] = await tx.select().from(strategyReservations).where(and(eq(strategyReservations.owner, owner),
@@ -67,6 +69,11 @@ export async function assertMandateExecution(tx: MemoryFenceTransaction, owner: 
   }
   const config = mandate.config;
   if (portfolioRisk?.hardBlock) throw new BadRequestException(portfolioRisk.hardBlock);
+  if (rule.userStrategyId && rule.allocationPct !== undefined && candidate.side === 'buy') {
+    if (!portfolio) throw new BadRequestException('PORTFOLIO_ALLOCATION_VALUATION_REQUIRED');
+    const budgetBlock = await investorAllocationBlock(tx, owner, accountId, candidate, config, portfolio, now);
+    if (budgetBlock) throw new BadRequestException(budgetBlock);
+  }
   if (candidate.side === 'buy') await new ResearchDocumentsService(tx as PostgresJsDatabase)
     .assertExecutionSourcesInTransaction(tx, owner, config.references.filter(ref => rule.evidenceIds.includes(ref.versionId)), now);
   const authorized = config.rules.find(r => r.id === rule.id);

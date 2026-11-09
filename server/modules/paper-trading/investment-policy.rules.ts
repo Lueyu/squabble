@@ -58,6 +58,17 @@ export function effectiveInvestmentConfig(base: InvestmentConfig, records: Inves
       case 'markets': config.markets = [...new Set(c.markets)]; break;
     }
   }
+  // Each confirmed strategy may narrow the account's authority. Combine those
+  // promises conservatively without overwriting the user's base account caps.
+  for (const assignment of base.portfolio?.filter(item => item.enabled) ?? []) {
+    const limits = assignment.snapshot.content.limits;
+    if (!limits) continue;
+    for (const key of ['maxPositionPct', 'maxDailyIncreasePct', 'maxDailyTurnoverPct', 'maxGrossExposurePct', 'maxOrderPct'] as const) {
+      if (limits[key] !== undefined) config.limits[key] = Math.min(config.limits[key], limits[key]);
+    }
+    if (limits.minCashPct !== undefined) config.limits.minCashPct = Math.max(config.limits.minCashPct, limits.minCashPct);
+    config.limits.maxGrossExposurePct = Math.min(config.limits.maxGrossExposurePct, 100 - config.limits.minCashPct);
+  }
   if (!config.markets.length || config.limits.maxGrossExposurePct + config.limits.minCashPct > 100 + 1e-8) throw new Error('CONTRADICTORY_CONSTRAINTS');
   config.noBuy = [...new Set(config.noBuy)]; config.noSell = [...new Set(config.noSell)];
   return config;

@@ -88,11 +88,11 @@ function Layout() {
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
   const { enabled: simple } = useSimpleExperience();
-  const simpleItems = simple ? simpleNavigation(i18n.language).map((item, index) => ({ ...item, icon: [LayoutDashboard, Users, FlaskConical][index], literal: true })) : [];
-  const allItems = simple ? [...simpleItems, ...navItems.filter(item => ['/holdings', '/import', '/settings'].includes(item.path))] : navItems;
+  const simpleItems = simple ? simpleNavigation(i18n.language).map((item, index) => ({ ...item, icon: [LayoutDashboard, FlaskConical, BookOpen, Users, Briefcase][index], literal: true })) : [];
+  const allItems = simple ? [...simpleItems, ...navItems.filter(item => item.path === '/settings')] : navItems;
   const navGroups = simple ? [
-    { label: zh ? '日常' : 'Every day', items: simpleItems },
-    { label: zh ? '持仓与设置' : 'Portfolio & settings', items: navItems.filter(item => ['/holdings', '/import', '/settings'].includes(item.path)) },
+    { label: zh ? '工作区' : 'Workspace', items: simpleItems },
+    { label: zh ? '偏好' : 'Preferences', items: navItems.filter(item => item.path === '/settings') },
   ] : [
     { label: zh ? '我的投资' : 'Portfolio', items: navItems.slice(0, 4) },
     { label: zh ? '研究与实验' : 'Research & lab', items: navItems.slice(4, 10) },
@@ -125,10 +125,10 @@ function Layout() {
         <div className="flex h-full flex-col">
           <div className="app-brand flex items-center justify-between">
             <NavLink to="/" className="flex items-center gap-2.5" aria-label={t('layout.appName')}>
-              <Mascot className="app-brand-mark" />
+              {!simple && <Mascot className="app-brand-mark" />}
               <div className="app-brand-copy">
-                <div className="app-wordmark">Squabble<span className="text-[var(--brand)]">.</span></div>
-                <div className="app-brand-caption">BULLS. BEARS. YOU.</div>
+                <div className="app-wordmark">{simple ? 'squabble' : 'Squabble'}<span className="text-[var(--brand)]">.</span></div>
+                <div className="app-brand-caption">{simple ? (zh ? '研究，让判断可验证' : 'Research. Test. Learn.') : 'BULLS. BEARS. YOU.'}</div>
               </div>
             </NavLink>
             <button
@@ -196,6 +196,7 @@ function Layout() {
               <span>{i18n.language === 'zh-CN' ? 'English' : '中文'}</span>
             </button>
             {!localWorkspace && <LogoutButton />}
+            {simple && <AppearancePicker />}
             </div>
           </div>
         </div>
@@ -246,6 +247,10 @@ function Layout() {
           : 'app-content flex-1 overflow-y-auto safe-bottom'}>
           <Outlet />
         </main>
+        {simple && <nav className="portfolio-mobile-nav" aria-label={zh ? '快捷导航' : 'Quick navigation'}>
+          {[simpleItems[0], simpleItems[1], simpleItems[2], simpleItems[3]].map(item => <NavLink key={item.path} to={item.path} end={item.end}><item.icon size={18} /><span>{item.label}</span></NavLink>)}
+          <button type="button" onClick={() => setMobileOpen(true)} aria-expanded={mobileOpen}><Menu size={18} /><span>{zh ? '更多' : 'More'}</span></button>
+        </nav>}
       </div>
     </div>
   );
