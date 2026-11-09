@@ -6,6 +6,8 @@ For pull requests, see [CONTRIBUTING.md](../CONTRIBUTING.md). The
 [architecture map](architecture.md) describes current business flows; the
 [Squabble development skill](../.agents/skills/squabble-contributor/SKILL.md)
 routes coding agents to source entrypoints, focused tests and instance recovery.
+For a guided reading path through the current Web code, see the
+[Chinese code tour](code-reading.zh-CN.md).
 
 ## Current development phase
 
@@ -81,8 +83,8 @@ Logs are under `logs/`; inspect them if startup fails. The individual
 required environment variables in their shell when running them separately.
 
 Startup applies the explicit migration list in
-[`server/common/platform/database.provider.ts`](../server/common/platform/database.provider.ts),
-currently ending with `43_channel_workbench.sql`. Numbering is not contiguous;
+[`server/common/platform/database.provider.ts`](../server/common/platform/database.provider.ts).
+That source owns the current list and order. Numbering is not contiguous;
 use that registry, not a copied numeric range or every SQL file in the directory.
 `01_schema.sql` is the consolidated schema for an empty database. It is not an
 upgrade script, and startup migrations do not create that base schema. There is
@@ -127,6 +129,15 @@ reverse proxy or tunnel.
 
 ## Lint, types, tests
 
+`npm run test:architecture` checks the ESLint dependency rules with positive and
+negative fixtures; normal lint applies them to production source. After module
+wiring changes, also run `npm run test:wiring` with `WIRING_TEST_DATABASE_URL`
+pointing to an initialized disposable database. It builds the server and resolves
+the compiled Nest providers, but does not initialize the application, start
+schedulers or listen on a port. Registered migrations still run on the test
+database. Native-task files use a fresh temporary directory that is removed on
+normal completion. CI runs both checks.
+
 ```bash
 npm run lint          # eslint + stylelint + full typecheck (also runs in CI)
 npm run test:server   # Nest service/rule tests; database suites need the variables below
@@ -155,8 +166,11 @@ startup registry in its listed order. Some suites create independent fixture
 schemas themselves; CI's explicit bootstrap list is not the upgrade registry.
 See the [test-selection reference](../.agents/skills/squabble-contributor/references/development-and-tests.md)
 for a registry-driven PowerShell setup and focused suite matrix.
-Missing variables explicitly skip database cases; report those skips instead of
-calling an offline pass complete integration coverage. Verify target database
+`test:server` includes both service/rule tests and database integration. Some
+integration suites assert their database variable and fail if it is missing;
+others explicitly skip. It is not an offline-only command. Set all required
+variables for a complete integration run and report skips as missing coverage,
+not as passing integration tests. Verify target database
 identity, schema objects and expected tables after initialization; a successful
 shell exit alone does not establish that migrations ran.
 

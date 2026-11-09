@@ -9,7 +9,7 @@ import { HttpModule } from '@nestjs/axios';
 import { FxModule } from '../fx/fx.module';
 import { NotificationModule } from '../notifications/notification.module';
 import { QuoteModule } from '../quote/quote.module';
-import { MultiAgentModule } from '../multi-agent/multi-agent.module';
+import { ResearchCoreModule } from '../research-core/research-core.module';
 import { CouncilModule } from '../council/council.module';
 import { LocalAgentsModule } from '../local-agents/local-agents.module';
 import { BuilderCadenceService } from './builder-cadence.service';
@@ -40,15 +40,56 @@ import { AutonomousPlanCompiler } from './autonomous-plan.compiler';
 import { ResearchDiscoveryService } from '../research-tools/research-discovery.service';
 import { UserInvestmentStrategyService } from './user-investment-strategy.service';
 import { UserInvestmentStrategyController } from './user-investment-strategy.controller';
-import { PortfolioResearchRouteService } from '../experience/portfolio-research-route.service';
+import { ResearchRoutingModule } from '../research-routing/research-routing.module';
 
 @Module({
-  imports: [HttpModule, QuoteModule, FxModule, NotificationModule, MultiAgentModule, CouncilModule, LocalAgentsModule, ResearchDocumentsModule],
-  controllers: [PaperTradingController, AgentBuilderController, StrategyMandateController, SimulationExperimentsController,InvestmentPolicyController,UserInvestmentStrategyController],
-  providers: [PaperTradingService, AgentBuilderService, BuilderCadenceService, BotScheduler,
-    TradingMarketService, StrategyStore, StrategyModelService, StrategyService, StrategyNotificationsService, StrategyScheduler,
-    StrategyMandateService, SimulationExperimentsService, StrategyMonitorService, StrategyDailyAdjustments,InvestmentPolicyService,AutomaticResearchBudgetService,
-    AutonomousResearchService,AutonomousResearchScheduler,AutonomousPlanCompiler,ResearchDiscoveryService,UserInvestmentStrategyService,PortfolioResearchRouteService],
-  exports: [PaperTradingService,InvestmentPolicyService,AutomaticResearchBudgetService,UserInvestmentStrategyService],
+  imports: [
+    HttpModule,
+    QuoteModule,
+    FxModule,
+    NotificationModule,
+    ResearchCoreModule,
+    ResearchRoutingModule,
+    CouncilModule,
+    LocalAgentsModule,
+    ResearchDocumentsModule,
+  ],
+  controllers: [
+    PaperTradingController,
+    AgentBuilderController,
+    StrategyMandateController,
+    SimulationExperimentsController,
+    InvestmentPolicyController,
+    UserInvestmentStrategyController,
+  ],
+  providers: [
+    PaperTradingService,
+    AgentBuilderService,
+    BuilderCadenceService,
+    BotScheduler,
+    TradingMarketService,
+    StrategyStore,
+    StrategyModelService,
+    StrategyService,
+    StrategyNotificationsService,
+    StrategyScheduler,
+    StrategyMandateService,
+    SimulationExperimentsService,
+    StrategyMonitorService,
+    StrategyDailyAdjustments,
+    InvestmentPolicyService,
+    AutomaticResearchBudgetService,
+    AutonomousResearchService,
+    AutonomousResearchScheduler,
+    AutonomousPlanCompiler,
+    ResearchDiscoveryService,
+    UserInvestmentStrategyService,
+  ],
+  exports: [
+    PaperTradingService,
+    InvestmentPolicyService,
+    AutomaticResearchBudgetService,
+    UserInvestmentStrategyService,
+  ],
 })
 export class PaperTradingModule {}

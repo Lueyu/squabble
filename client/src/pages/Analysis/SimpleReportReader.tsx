@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { questionPath } from '@/utils/simple-experience';
 import {useState} from 'react';
 import type {StrategySourceInput} from '@shared/user-investment-strategy.interface';
-import InvestmentStrategySourceDialog from '@/pages/Today/InvestmentStrategySourceDialog';
+import InvestmentStrategySourceDialog from '@/features/investment-strategies/InvestmentStrategySourceDialog';
 import {readableResearchSection,researchSectionsRecord,researchReferences} from '@shared/research-reading';
 import ReportExecutionPlan from '@/components/ReportExecutionPlan';
 import { simulationReviewSections } from '@shared/simulation-review-reading';

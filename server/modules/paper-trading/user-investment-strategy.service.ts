@@ -11,7 +11,7 @@ import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { StrategyModelService } from './strategy-model.service';
 import { BudgetExceededException } from '../llm-budget/llm-budget.rules';
 import { LocalAgentError } from '../local-agents/local-agents.types';
-import { safeAnalysisError } from '../multi-agent/analysis-report';
+import { safeAnalysisError } from '../research-core/research-errors';
 import { readableResearch } from '../../../shared/research-reading';
 import { strategyImportReadableContent, STRATEGY_SOURCE_MAX_CHARACTERS } from '../../../shared/strategy-source-reading';
 import { normalizeStrategyDraft, previewStrategy, sourceAddition, strategyContentHash } from './user-investment-strategy.rules';

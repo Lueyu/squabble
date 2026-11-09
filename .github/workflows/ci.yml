@@ -42,6 +42,9 @@ jobs:
           npm run test:context
           npm run check:context
 
+      - name: Verify module dependency boundaries
+        run: npm run test:architecture
+
       - name: Initialize isolated integration database
         env:
           PGPASSWORD: test-only
@@ -61,6 +64,11 @@ jobs:
           RESEARCH_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
           EXPERIENCE_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
         run: npm run test:server
+
+      - name: Resolve compiled application providers without starting jobs
+        env:
+          WIRING_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
+        run: npm run test:wiring
 
       - name: Evaluate fictional research memory operations and retrieval
         env:

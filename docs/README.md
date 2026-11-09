@@ -1,35 +1,59 @@
-# 📚 Squabble documentation · 文档导航
+# Squabble documentation · 文档导航
 
-Choose one of the two supported local installation paths. You do not need the
-Python agent or a model key to start using Squabble.
+Squabble is an investing assistant built around portfolio research, multiple
+agent perspectives, readable reports and a stock-friend channel. The current Web
+journey is **Today → review a strategy → AI simulation → Channel**. Research
+opinions and strategy drafts become simulation authority only after confirmation.
 
-从两种受支持的本地安装方式中选择。开始使用吵股不需要安装 Python Agent，也不需要模型 Key。
+吵股是一款智能投资助手：围绕持仓开展多 Agent 研究，用报告和股友频道呈现观点与变化。
+当前 Web 日常流程是**今日 → 核对策略 → AI 模拟盘 → 频道**；研究观点和策略草稿需经确认才用于模拟执行。
 
-| Goal / 目标 | English | 简体中文 |
-|---|---|---|
-| 🖥️ Install the Windows or macOS desktop app / 安装桌面应用 | [Desktop installation](self-hosting.md#desktop-app) | [桌面应用](self-hosting.zh-CN.md#桌面应用) |
-| 🐳 Run clean local Docker Compose / 本地 Docker Compose 干净安装 | [Local setup](self-hosting.md#docker-compose) | [本地安装](self-hosting.zh-CN.md#docker-compose) |
-| 🔒 Understand data handling / 数据存在哪里、谁能访问 | [Privacy and data flow](privacy.md) | [数据与隐私](privacy.zh-CN.md) |
+## Start and use · 安装与使用
 
-For using the product / 功能使用：
+| Goal / 目标 | Guide / 指南 |
+|---|---|
+| Run the Web app locally / 本地运行 Web | [Local setup](self-hosting.md#docker-compose) · [本地安装](self-hosting.zh-CN.md#docker-compose) |
+| Follow a report through simulation / 从报告走到模拟盘 | [Assets, reports and strategies / 资产、报告与策略](assets-reports-strategy.md) |
+| Read stock-friend opinions and execution updates / 阅读股友观点与执行动态 | [Channel workbench / 频道](channel-workbench.md) |
+| Connect models and native research agents / 连接模型与本地研究 Agent | [Local agents / 本地 Agent](local-agents.md) · [Model connections and budgets](investment-council.md) / [模型连接与预算](investment-council.zh-CN.md) |
+| Record holdings and transactions / 记录持仓与交易 | [Portfolio import / 持仓导入](import.md) |
+| Understand data and privacy / 了解数据来源与隐私 | [Research data / 研究数据](research-data.md) · [Privacy](privacy.md) / [隐私](privacy.zh-CN.md) |
+| Change appearance / 调整外观 | [Appearance / 外观](appearance.md) |
 
-- [Investment council](investment-council.md) / [投委会与研究室](investment-council.zh-CN.md): customizable 2–6 member teams, model connections, discussion, reports and budgets.
-- [Local agent teams / 本地 Agent 团队](local-agents.md): detect, sign in and connect a supported native research agent; pair the desktop helper for local Docker. / 自动检测、登录和连接 受支持的本地研究 Agent；本机 Docker 通过桌面助手配对使用。
-- [Research data and tools / 研究数据与工具](research-data.md): Finnhub, SEC financial fallback, optional web search and source boundaries.
-- [Import a portfolio / 持仓导入](import.md): CSV mapping, Robinhood exports and optional screenshot extraction.
-- [Appearance / 外观](appearance.md): four themes, light/dark mode and browser preferences.
-- Model API setup, local agent connections and the research budget are in **Settings**. Local agents use their provider's billing; the model API budget can stay enabled. / 模型 API 配置、本地 Agent 连接和研究预算均在「**设置**」页内。本地 Agent 按供应商规则计费，无需关闭模型 API 研究预算。
+Starting an empty workspace does not require the optional Python agent or a model
+key. AI research requires an available configured model or native agent. Desktop
+installation instructions remain in [self-hosting](self-hosting.md#desktop-app) /
+[自托管指南](self-hosting.zh-CN.md#桌面应用); desktop development and packaging are
+currently paused. Native-agent setup documents explain when a desktop companion
+is needed for local Docker.
 
-For contributors / 参与开发：
+## Read and contribute · 阅读代码与参与开发
 
-- [Development](development.md): source setup, required environment and checks.
-- [Architecture](architecture.md): current components, data flow and capability boundaries.
-- [Contributing](../CONTRIBUTING.md): changes, translations and issue reports.
-- [Security](../SECURITY.md): private vulnerability reporting and deployment boundaries.
+- [代码阅读指南（中文）](code-reading.zh-CN.md): follow the current journey, module responsibilities, design tradeoffs and future work.
+- [Development](development.md): source setup, current commands and disposable database prerequisites.
+- [Architecture](architecture.md): five maintained flows and current versus retained boundaries.
+- [Contributing](../CONTRIBUTING.md): PR checks, translations and change review.
+- [Squabble contributor skill](../.agents/skills/squabble-contributor/SKILL.md): targeted source map, tests and maintenance instructions for coding agents.
+- [Deployment and recovery runbook](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md): inspect and update an existing private instance.
+- [Security](../SECURITY.md): private vulnerability reporting.
 
-Squabble does not operate a hosted service or support public server
-deployment. The [retired server guide](public-deployment.md) explains that
-boundary. An independently operated website needs its own privacy notice and
-support contact.
+## Retained workflows and history · 保留流程与历史记录
 
-吵股不运营托管服务，也不提供受支持的公网服务器部署；详见[原服务器指南说明](public-deployment.zh-CN.md)。第三方自行运营的网站需要提供自己的隐私说明与支持渠道。
+The retained analysis and Council APIs, report readers and advanced simulation
+flows still exist. Their guides explain those surfaces; they are not the default
+starting point for current Web changes. A historical document is evidence of a
+past design or verification run, not a promise about the current checkout.
+
+旧分析与投委会 API、报告读取和高级模拟流程仍然保留。下列资料用于理解兼容边界和历史决策，
+不作为当前 Web 的默认开发入口；历史验收结果也不代表本次改动已经通过验证。
+
+| Scope / 范围 | Documents / 资料 |
+|---|---|
+| Retained discussion and advanced simulation / 保留讨论与高级模拟流程 | [Council](investment-council.md) / [投委会](investment-council.zh-CN.md) · [Research–strategy loop](research-strategy-loop.md) / [研究策略闭环](research-strategy-loop.zh-CN.md) · [Paper-account MCP](mcp-paper-accounts.md) |
+| Historical product proposals / 历史产品方案 | [Simplified product proposal](squabble-simple-product.zh-CN.md) · [One-click analysis plan](one-click-analysis-plan.md) |
+| Historical design and roadmap / 历史设计与路线 | [Council personas](council-personas-design.md) · [Settings navigation](settings-navigation-design.md) · [Research memory roadmap](research-memory-roadmap.md) |
+| Past delivery and validation / 历史交付与验收 | [Simplified experience](simple-experience-delivery.md) · [Research recovery](research-experience-recovery-delivery.md) · [Research–strategy validation](research-strategy-loop-validation.md) |
+
+Squabble does not operate a hosted service or support public server deployment.
+The [retired server guide](public-deployment.md) / [原服务器指南](public-deployment.zh-CN.md)
+explains that boundary; it is not a current deployment tutorial.

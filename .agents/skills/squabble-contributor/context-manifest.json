@@ -121,7 +121,7 @@
         "shared/user-investment-strategy.interface.ts",
         "shared/strategy-source-reading.ts",
         "client/src/pages/Paper/",
-        "client/src/pages/Today/InvestmentStrategy"
+        "client/src/features/investment-strategies/"
       ],
       "entrypoints": [
         "server/modules/paper-trading/report-execution-plan.ts",
@@ -138,10 +138,11 @@
         "server/modules/paper-trading/simulation-review.integration.spec.ts",
         "shared/simulation-experiment.interface.ts",
         "server/modules/paper-trading/report-execution-runtime.integration.spec.ts",
-        "client/src/pages/Today/InvestmentStrategySourceDialog.tsx",
-        "client/src/pages/Today/InvestmentStrategyEditor.tsx",
+        "client/src/features/investment-strategies/InvestmentStrategySourceDialog.tsx",
+        "client/src/features/investment-strategies/InvestmentStrategyEditor.tsx",
         "client/src/pages/Paper/AiInvestmentPage.tsx",
-        "server/modules/paper-trading/user-strategy-removal.integration.spec.ts"
+        "server/modules/paper-trading/user-strategy-removal.integration.spec.ts",
+        "client/src/features/investment-strategies/use-investment-strategy-editor.ts"
       ],
       "references": [
         "references/repository-map.md",
@@ -151,7 +152,7 @@
       "diagrams": [
         "strategy-execution"
       ],
-      "verifiedCommit": "5dc6bddf22aae70a4abfc28c705b4b0745d0c0cc"
+      "verifiedCommit": "bd0f258744b377228531ea8a1fe1295deac604b4"
     },
     {
       "id": "channel",
@@ -180,6 +181,34 @@
         "channel-publication"
       ],
       "verifiedCommit": "5dc6bddf22aae70a4abfc28c705b4b0745d0c0cc"
+    },
+    {
+      "id": "research-foundation",
+      "paths": [
+        "server/modules/research-core/",
+        "server/modules/research-routing/",
+        "eslint.config.js",
+        "scripts/module-boundaries.spec.cjs",
+        "scripts/check-module-wiring.cjs"
+      ],
+      "entrypoints": [
+        "server/modules/research-core/research-core.module.ts",
+        "server/modules/research-core/llm.service.ts",
+        "server/modules/research-core/evidence.service.ts",
+        "server/modules/research-core/portfolio-context.service.ts",
+        "server/modules/research-routing/research-routing.module.ts",
+        "server/modules/research-routing/portfolio-research-route.service.ts"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md",
+        "references/development-and-tests.md"
+      ],
+      "diagrams": [
+        "system-overview",
+        "research-report"
+      ],
+      "verifiedCommit": "bd0f258744b377228531ea8a1fe1295deac604b4"
     },
     {
       "id": "agents-and-evidence",
@@ -310,6 +339,14 @@
       "workingTreeChanges": true,
       "reviewedAt": "2026-11-08",
       "scope": "Current simplified simulation consumes holdings seedReal link, displays preview progress/errors, and requires explicit creation/restart with the captured account fence. Seed preview quote/FX reads preserve gaps and valuation checks. Architecture flow3 updated; service/owner, research acceptance, channel publication and real-ledger write boundaries in flows1,2,4,5 unchanged."
+    },
+    "assistantMaintainability": {
+      "baseline": "46cb3705cb53541db78c23301775fedd48f31d87",
+      "workingTreeChanges": true,
+      "reviewedAt": "2026-11-09",
+      "scope": "Shared model/evidence/context moved to research-core; research-routing owns executor selection; strategy UI/hook/form/review live in one feature. System overview names these module boundaries. Research/report, strategy, channel and real-ledger flows retain source/owner checks, recovery, transaction boundaries and historical reading. Settings-local LLM provider remains explicitly documented. Static dependency fixtures and compiled Nest provider checks complement behavior tests; no deployed instance is certified.",
+      "validation": "Local final server911/client352/memory99 passed without skips; native180 and dev8 passed with one POSIX-only Windows skip each. Lint/Web build/static boundaries5/compiled Nest wiring/context helpers15 and context structural checks passed. Independent source reviews and 238 document links passed. Required Linux/PG16 CI is separate; local DB was disposable PG18.6. No deployed instance is certified.",
+      "reviewedSourceCommit": "bd0f258744b377228531ea8a1fe1295deac604b4"
     }
   }
 }

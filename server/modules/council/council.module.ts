@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MultiAgentModule } from '../multi-agent/multi-agent.module';
+import { ResearchCoreModule } from '../research-core/research-core.module';
 import { CouncilController } from './council.controller';
 import { CouncilService } from './council.service';
 import { ResearchMemoryModule } from '../research-memory/research-memory.module';
@@ -7,11 +8,26 @@ import { ResearchToolsModule } from '../research-tools/research-tools.module';
 import { LocalAgentsModule } from '../local-agents/local-agents.module';
 import { ResearchDocumentsModule } from '../research-documents/research-documents.module';
 import { SimpleCouncilService } from './simple-council.service';
-import { ResearchConversationsController, ResearchExecutionController } from './simple-council.controller';
+import {
+  ResearchConversationsController,
+  ResearchExecutionController,
+} from './simple-council.controller';
 
 @Module({
-  imports: [MultiAgentModule, LocalAgentsModule, ResearchMemoryModule, ResearchToolsModule, ResearchDocumentsModule],
-  controllers: [CouncilController, ResearchConversationsController, ResearchExecutionController],
+  imports: [
+    ResearchCoreModule,
+    // Saved stock evidence still belongs to retained runs, not the shared core.
+    MultiAgentModule,
+    LocalAgentsModule,
+    ResearchMemoryModule,
+    ResearchToolsModule,
+    ResearchDocumentsModule,
+  ],
+  controllers: [
+    CouncilController,
+    ResearchConversationsController,
+    ResearchExecutionController,
+  ],
   providers: [CouncilService, SimpleCouncilService],
   exports: [CouncilService, SimpleCouncilService],
 })

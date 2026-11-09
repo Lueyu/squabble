@@ -16,7 +16,7 @@ async function withSourceDialog(stateSetup, props, run) {
   state.queries.set('investment-strategies', { data: { drafts: [] } });
   stateSetup(state);
   state.mutationFactory ??= options => ({ isPending: false, mutate() { return options.mutationFn().then(data => options.onSuccess?.(data)); } });
-  const Dialog = load('pages/Today/InvestmentStrategySourceDialog.tsx').default, root = createRoot(document.getElementById('root'));
+  const Dialog = load('features/investment-strategies/InvestmentStrategySourceDialog.tsx').default, root = createRoot(document.getElementById('root'));
   try {
     await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Dialog, { onClose() {}, ...props }))));
     await run({ state, dom, root });
@@ -148,7 +148,7 @@ test('adding a report first shows its immutable addition and only saves after th
   state.queries.set('investment-strategy-source', { data: { source: { title: 'Original report', createdAt: '2026-11-06T00:00:00Z' }, entries: [{ id: 'source-entry', text: 'AAPL wait for earnings', sourceKeys: ['report:exact-version'] }], alreadyAdded: false } });
   state.responses = new Map([['/api/investment-strategies/import-source', { id: 'new-draft' }]]);
   state.mutationFactory = options => ({ isPending: false, mutate() { return options.mutationFn().then(data => options.onSuccess?.(data)); } });
-  const Dialog = load('pages/Today/InvestmentStrategySourceDialog.tsx').default;
+  const Dialog = load('features/investment-strategies/InvestmentStrategySourceDialog.tsx').default;
   const root = createRoot(document.getElementById('root'));
   try {
     await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Dialog, { source: { kind: 'report', versionId: 'exact-version' }, onClose() {} }))));
@@ -187,7 +187,7 @@ test('a long report requires an owned bounded section and saves that exact sourc
   state.responses = new Map([['/api/investment-strategies/drafts', { items: [{ id: 'older-draft', revision: 4, sources: [], content: { title: 'Older manual draft', body: 'Keep the older manual content' } }], nextCursor: null }],
     ['/api/investment-strategies/older-draft/add-source', { id: 'older-draft' }]]);
   state.mutationFactory = options => ({ isPending: false, mutate() { return options.mutationFn().then(data => options.onSuccess?.(data)); } });
-  const Dialog = load('pages/Today/InvestmentStrategySourceDialog.tsx').default;
+  const Dialog = load('features/investment-strategies/InvestmentStrategySourceDialog.tsx').default;
   const root = createRoot(document.getElementById('root'));
   try {
     await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Dialog, { source: { kind: 'report', versionId: 'large-version' }, onClose() {} }))));
@@ -233,7 +233,7 @@ test('reports with a saved execution plan default to its strategy section and sh
   state.queries.set('investment-strategy-source', { data: { source: { title: 'Execution strategy', createdAt: '2026-11-06T00:00:00Z', executionPlan: strategyPlan }, entries: [{ id: 'aapl-buy', text: 'Buy 2 AAPL at or below 100.', sourceKeys: ['report:exact-version:execution-strategy'] }], alreadyAdded: false } });
   state.responses = new Map([['/api/investment-strategies/import-source', { id: 'saved-draft' }]]);
   state.mutationFactory = options => ({ isPending: false, mutate() { return options.mutationFn().then(data => options.onSuccess?.(data)); } });
-  const Dialog = load('pages/Today/InvestmentStrategySourceDialog.tsx').default; const root = createRoot(document.getElementById('root'));
+  const Dialog = load('features/investment-strategies/InvestmentStrategySourceDialog.tsx').default; const root = createRoot(document.getElementById('root'));
   try {
     await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Dialog, { source: { kind: 'report', versionId: 'exact-version' }, onClose() {} }))));
     assert.equal(document.querySelector('select[aria-label="Report content to add"]').value, 'execution-strategy');
@@ -260,7 +260,7 @@ test('a plan period conflict tells the investor to select a new draft', async ()
   state.queries.set('investment-strategy-source-report', { data: { version: { content: 'Proposal', sections: [{ id: 'execution-strategy', title: 'Strategy', content: 'Proposal' }] } } });
   state.queries.set('investment-strategy-source', { data: { source: { title: 'Strategy', createdAt: '2026-11-06T00:00:00Z' }, entries: [], alreadyAdded: false } });
   state.mutation = { isPending: false, isError: true, error: { response: { data: { message: 'Report strategy validity exceeds this draft; create a new draft to preserve its proposed period' } } }, mutate() {} };
-  const Dialog = load('pages/Today/InvestmentStrategySourceDialog.tsx').default; const root = createRoot(document.getElementById('root'));
+  const Dialog = load('features/investment-strategies/InvestmentStrategySourceDialog.tsx').default; const root = createRoot(document.getElementById('root'));
   try {
     await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Dialog, { source: { kind: 'report', versionId: 'exact-version', sectionId: 'execution-strategy' }, onClose() {} }))));
     assert.match(document.body.textContent, /Choose “Create a new draft” to keep the proposed period/);

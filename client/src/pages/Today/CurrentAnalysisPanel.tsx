@@ -11,7 +11,7 @@ import ResearchMarkdown from '@/components/ResearchMarkdown';
 import TodaySummary from './TodaySummary';
 import CouncilMemberAvatar from '../Council/CouncilMemberAvatar';
 import type { StrategySourceInput } from '@shared/user-investment-strategy.interface';
-import InvestmentStrategySourceDialog from './InvestmentStrategySourceDialog';
+import InvestmentStrategySourceDialog from '@/features/investment-strategies/InvestmentStrategySourceDialog';
 import ReportExecutionPlan from '@/components/ReportExecutionPlan';
 import ResumeDailyReportButton from './ResumeDailyReportButton';
 

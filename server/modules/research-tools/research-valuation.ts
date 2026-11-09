@@ -1,4 +1,4 @@
-import type { EvidenceInput } from '../multi-agent/evidence.service';
+import type { EvidenceInput } from '../research-core/evidence.service';
 import type { ResearchToolResult, ResearchValuationInput, ResearchValuationMetric,
   ResearchValuationRequest, ResearchValuationQuote } from '@shared/research-tools.interface';
 import { citationUrl, isoDate, researchFailure, researchSource } from './research-tools.output';

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import type { SettingsService } from './settings.service';
 import type { LlmBudgetService } from '../llm-budget/llm-budget.service';
 

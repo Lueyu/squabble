@@ -7,10 +7,10 @@ import type {
   UpdateFinancialIntegrationRequest,
   UpdateLlmIntegrationRequest,
 } from '@shared/api.interface';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import { SettingsService } from './settings.service';
 import { BudgetExceededException } from '../llm-budget/llm-budget.rules';
-import { safeAnalysisError } from '../multi-agent/analysis-report';
+import { safeAnalysisError } from '../research-core/research-errors';
 import type { ModelRoute } from '../../../shared/model-route.interface';
 
 @NeedLogin()

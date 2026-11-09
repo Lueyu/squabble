@@ -1,5 +1,11 @@
 # One-click analysis and market overview
 
+> **Historical plan, superseded as the default product guide.** This document
+> records an earlier analysis/dashboard design. Retained analysis APIs and
+> readers still exist; current Web development starts with the
+> [assets, reports and strategy guide](assets-reports-strategy.md),
+> [channel guide](channel-workbench.md) and [code tour](code-reading.zh-CN.md).
+
 ## Accepted behavior
 
 - No API key: free built-in, deterministic evidence and risk review, visibly labeled Basic analysis. No fabricated AI debate or price targets.

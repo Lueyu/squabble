@@ -8,12 +8,12 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { CouncilService } from './council.service';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
-import { jsonChatMessages, type ChatMessage, type LlmCallOptions } from '../multi-agent/llm.service';
+import { jsonChatMessages, type ChatMessage, type LlmCallOptions } from '../research-core/llm.service';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { reviewDelivery, workflowReviewPrompt } from './council.workflow-review';
 import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../../shared/research-workflow.interface';
-import { parseFinnhubFinancials } from '../multi-agent/finnhub-financials';
-import { FinnhubEvidenceService } from '../multi-agent/finnhub-evidence.service';
+import { parseFinnhubFinancials } from '../research-core/finnhub-financials';
+import { FinnhubEvidenceService } from '../research-core/finnhub-evidence.service';
 
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
 const providerEvidence = (ticker: string) => parseFinnhubFinancials({ symbol: ticker, data: [{ symbol: ticker, cik: '123',

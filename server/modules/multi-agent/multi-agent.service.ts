@@ -45,6 +45,7 @@ import {
   agentAuditLog,
   analysis,
   deepReport,
+  holdings,
 } from '@server/database/schema';
 import type {
   AgentRun,
@@ -72,7 +73,8 @@ import type {
   LatestRating,
   AgentRunWithRating,
 } from '@shared/api.interface';
-import { buildPipelineReport, normalizeAnalysisLanguage, safeAnalysisError, type AnalysisExecutionInfo } from './analysis-report';
+import { buildPipelineReport, normalizeAnalysisLanguage, type AnalysisExecutionInfo } from './analysis-report';
+import { safeAnalysisError } from '../research-core/research-errors';
 import { SettingsService } from '../settings/settings.service';
 import { parseModelRoute } from '../settings/model-route.rules';
 import type { ModelRoute } from '../../../shared/model-route.interface';
@@ -99,6 +101,42 @@ export class MultiAgentService {
 
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     @Optional() private readonly settings?: SettingsService) {}
+
+  /**
+   * After a human approves/modifies a run, optionally write the resulting
+   * rating/action/targetPrice back onto the caller's holdings row for that
+   * ticker. No-op if the ticker is not currently held.
+   * @returns true if a holdings row was updated.
+   */
+  async applyRatingToHoldings(userId: string, runId: string): Promise<boolean> {
+    const [runRow, ratingRow] = await Promise.all([
+      this.db
+        .select()
+        .from(agentRuns)
+        .where(and(eq(agentRuns.id, runId), eq(agentRuns.owner, userId))),
+      this.db
+        .select()
+        .from(agentRatings)
+        .where(and(eq(agentRatings.runId, runId), eq(agentRatings.owner, userId))),
+    ]);
+
+    if (runRow.length === 0 || ratingRow.length === 0) return false;
+
+    const rating = ratingRow[0];
+    const ticker = runRow[0].ticker;
+
+    const updated = await this.db
+      .update(holdings)
+      .set({
+        rating: rating.rating,
+        action: rating.action,
+        targetPrice: rating.targetPrice !== null ? String(rating.targetPrice) : null,
+      })
+      .where(and(eq(holdings.ticker, ticker), eq(holdings.owner, userId)))
+      .returning({ id: holdings.id });
+
+    return updated.length > 0;
+  }
 
   /** Create a new run row in `pending` status. Does not start the pipeline. */
   async createRun(userId: string, dto: CreateAgentRunDto): Promise<AgentRun> {

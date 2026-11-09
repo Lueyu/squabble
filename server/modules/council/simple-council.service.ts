@@ -14,7 +14,7 @@ import { strategyMandates, strategyRouteReviews } from '../../database/strategy-
 import { CouncilService } from './council.service';
 import { newCheckpoint } from './council.dialogue';
 import { normalizeTicker, type CouncilEvidence } from './council.rules';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
 import { SettingsService } from '../settings/settings.service';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';

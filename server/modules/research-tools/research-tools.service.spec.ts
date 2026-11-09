@@ -5,7 +5,7 @@ import { getTableName, type SQL } from 'drizzle-orm';
 import { PgDialect, type PgTable } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from '../../common/platform';
 import type { QuoteService } from '../quote/quote.service';
-import type { EvidenceService, EvidenceInput } from '../multi-agent/evidence.service';
+import type { EvidenceService, EvidenceInput } from '../research-core/evidence.service';
 import type { ResearchMemoryService } from '../research-memory/research-memory.service';
 import type { ResearchMemoryRecall } from '../../../shared/research-memory.interface';
 import type { ResearchToolScope, ResearchToolResult } from '../../../shared/research-tools.interface';

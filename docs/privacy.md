@@ -154,7 +154,7 @@ Start with the [database schema](../server/database/schema.ts),
 [authentication](../server/modules/auth/auth.service.ts),
 [provider settings](../server/modules/settings/settings.service.ts),
 [credential encryption](../server/modules/settings/settings-security.ts),
-[model calls](../server/modules/multi-agent/llm.service.ts),
+[model calls](../server/modules/research-core/llm.service.ts),
 [screenshot recognition](../server/modules/import/ocr.service.ts), and
 [notification delivery](../server/modules/notifications/notification.service.ts).
 Review deployment configuration and dependencies as well as application calls

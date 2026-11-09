@@ -16,6 +16,7 @@ must not be exposed through a public bind, reverse proxy or tunnel.
 | Desktop app | Windows x64 or macOS Intel/Apple silicon installer | Squabble application data directory on your computer |
 | Docker Compose | Git and Docker with Compose | Local PostgreSQL and secrets Docker volumes |
 
+<a id="desktop-app"></a>
 ## 🖥️ Desktop app
 
 When a release includes desktop assets, download the installer for your system
@@ -96,6 +97,7 @@ A newly installed copy with an old application
 data directory will use that existing data; keep a backup before replacing
 the app or troubleshooting startup.
 
+<a id="docker-compose"></a>
 ## 🐳 Docker Compose
 
 Install [Git](https://git-scm.com/downloads/) and
@@ -299,8 +301,8 @@ Recheck [health](http://localhost:3000/api/health), authentication mode and
 existing saved data without starting research or confirming a strategy.
 Opening an automatic research entry can start work, so use read-only views.
 Startup applies the explicit SQL registry in
-[`database.provider.ts`](../server/common/platform/database.provider.ts),
-currently ending with `43_channel_workbench.sql`; numbering is not contiguous.
+[`database.provider.ts`](../server/common/platform/database.provider.ts).
+Use that source's current list and order; numbering is not contiguous.
 Fresh databases receive the consolidated `01_schema.sql` first. Never apply
 that base schema to a populated installation or infer migration state from a
 filename alone. Do not remove Docker volumes during an update. Resolve local

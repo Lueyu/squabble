@@ -11,7 +11,7 @@ import { latestTodayReport } from '@/utils/today-report';
 import AttentionCard from './AttentionCard';
 import CurrentAnalysisPanel from './CurrentAnalysisPanel';
 import AssetOverview from './AssetOverview';
-import InvestmentStrategySourceDialog from './InvestmentStrategySourceDialog';
+import InvestmentStrategySourceDialog from '@/features/investment-strategies/InvestmentStrategySourceDialog';
 import type { StrategySourceInput } from '@shared/user-investment-strategy.interface';
 
 export default function TodayPage() {

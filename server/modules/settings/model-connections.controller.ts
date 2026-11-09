@@ -3,8 +3,8 @@ import type { Request } from 'express';
 import type { SaveModelConnection } from '@shared/model-connections.interface';
 import { NeedLogin } from '../../common/platform';
 import { ModelConnectionsService } from './model-connections.service';
-import { LlmService } from '../multi-agent/llm.service';
-import { safeAnalysisError } from '../multi-agent/analysis-report';
+import { LlmService } from '../research-core/llm.service';
+import { safeAnalysisError } from '../research-core/research-errors';
 import { BudgetExceededException } from '../llm-budget/llm-budget.rules';
 
 @NeedLogin()

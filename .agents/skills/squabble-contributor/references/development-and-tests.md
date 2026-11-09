@@ -54,6 +54,9 @@ provider sessions, real portfolio writes or live strategy confirmations.
 | Startup or process management | `npm run test:dev`; inspect Windows/POSIX ownership semantics |
 | Schema/migration/package changes | Fresh-schema and existing-schema upgrade checks; affected database suites and `server/modules/experience/migration-packaging.spec.ts`; `npm run build:web` or Docker build as relevant |
 | Skill or context helpers | `npm run test:context`, `npm run check:context`; frontmatter, links and scenario verification |
+| Research infrastructure and executor routing | `server/modules/research-core/*.cjs`, `server/modules/research-core/*.spec.ts`, `server/modules/research-routing/*.spec.ts`; the routing integration suites need disposable council/experience databases. Check retained pipeline/settings consumers too; `npm run test:server` includes all moved files. |
+| Module dependency directions | `npm run test:architecture` exercises the actual ESLint configuration with allowed/forbidden static imports, type imports and re-exports. `npm run lint` enforces the same rules on production code. These checks do not validate runtime DI or dynamic imports. |
+| Nest provider ownership | `npm run test:wiring` compiles the server and resolves the actual application providers using an explicit disposable `WIRING_TEST_DATABASE_URL` with the base schema initialized. It verifies a single routing/evidence/context provider owner, uses a temporary native-task directory, then closes the app and pool. It never calls `init` or `listen`, so scheduler bootstrap and real research do not run. Startup migrations still run on that disposable database. |
 | Documentation only | Verify local links, commands against source, Markdown/Mermaid rendering and affected knowledge references; no unrelated local application test run is needed |
 | Optional Python `agent/` | In `agent/`: `uv sync`, then `uv run pytest -q` |
 
@@ -121,8 +124,7 @@ npm run test:memory-eval
 ```
 
 Read the provider before using this extraction if its format changes. Its
-explicit list is the startup upgrade authority, currently ending with
-`44_strategy_draft_deletion.sql`; numbering is not contiguous. Do not invent a
+explicit list is the startup upgrade authority; numbering is not contiguous. Do not invent a
 numeric migration range or glob in demo seed `02_demo_seed.sql`.
 `01_schema.sql` is the consolidated fresh-install schema, not an upgrade
 script. Startup does not create it and does not maintain a migration-version

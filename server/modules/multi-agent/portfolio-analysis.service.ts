@@ -8,8 +8,9 @@ import { cashAccounts, holdings, portfolioAnalysisRuns } from '@server/database/
 import { FxService } from '../fx/fx.service';
 import { SettingsService } from '../settings/settings.service';
 import { parseModelRoute } from '../settings/model-route.rules';
-import { LlmService } from './llm.service';
-import { normalizeAnalysisLanguage, safeAnalysisError } from './analysis-report';
+import { LlmService } from '../research-core/llm.service';
+import { normalizeAnalysisLanguage } from './analysis-report';
+import { safeAnalysisError } from '../research-core/research-errors';
 import { parsePortfolioReport, portfolioSnapshotEvidenceRefs } from './portfolio-report.rules';
 import type { AnalysisLanguage } from '@shared/api.interface';
 import type { ModelRoute } from '../../../shared/model-route.interface';

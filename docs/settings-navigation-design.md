@@ -1,5 +1,10 @@
 # Settings navigation redesign — 2026-11-03
 
+> **Historical design and delivery record.** The checklist and results below
+> describe that change, not current verification. For current setup, see
+> [local agents](local-agents.md) and [development](development.md); settings
+> source starts at [SettingsPage](../client/src/pages/Settings/SettingsPage.tsx).
+
 ## Goal and design
 
 Replace the growing settings feed with a persistent secondary navigation, inspired by the supplied Clowder screenshot and using Squabble's existing theme tokens.

@@ -4,7 +4,7 @@ import { attachValuation, excerptToolData, compactPeerComparison, compactHandoff
 import { nativeWorkflowSources } from './council.workflow-executor';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { workflowReviewPrompt } from './council.workflow-review';
-import { parseFinnhubFinancials } from '../multi-agent/finnhub-financials';
+import { parseFinnhubFinancials } from '../research-core/finnhub-financials';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { compactToolEvidence } from '../research-tools/research-tools.evidence';
 import { CouncilWorkflowExecutor } from './council.workflow-executor';

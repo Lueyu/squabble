@@ -81,9 +81,9 @@ npm run dev
 | **持仓导入** | CSV 自动列映射（5 券商预设）。可一次选择最多 20 张截图，按需删除不需要的图片，再依次交给已连接且支持图片的本地 Agent 或视觉 API 识别；合并、核对并编辑结果后统一确认导入。 |
 | **通知推送** | Webhook、Bark、Server酱、邮件、Telegram。每笔成交和风控事件即推。 |
 
-## 简化体验（按开关试用）
+## 当前 Web 体验
 
-在服务端设置 `SQUABBLE_SIMPLE_EXPERIENCE=true`，启用**今日、频道、AI 模拟盘**三个入口。今日先展示最新完整报告，下方合计持仓市值与已确认现金，分别展示当日盈亏、资产变化和外部净资金流；缺少行情、昨收或汇率时保留已知部分，并说明缺项。快速记账和批量导入支持成交、资金流水的 CSV、Excel 及截图，导入前先核对。
+**今日、频道、AI 模拟盘**三个入口默认启用。已保存的显式关闭偏好或服务端设置 `SQUABBLE_SIMPLE_EXPERIENCE=false` 可保留原体验。今日先展示最新完整报告，下方合计持仓市值与已确认现金，分别展示当日盈亏、资产变化和外部净资金流；缺少行情、昨收或汇率时保留已知部分，并说明缺项。快速记账和批量导入支持成交、资金流水的 CSV、Excel 及截图，导入前先核对。
 
 今日只展示最新的完整报告，较早报告通过低调的历史入口查阅。完整报告按日期和来源留存，每轮讨论的报告也保留在原会话。研究进行时展开当前公开步骤，完成后收成摘要，手动展开的内容保持展开。报告以清楚的文字阅读，旧的已知 JSON 格式可直接整理，无需重新调用 AI。
 
@@ -142,15 +142,19 @@ npm run dev
 
 ## 隐私
 
-自托管。零埋点。出网请求只有你自己用**自己的 API key** 发起的那几类。[完整说明 →](docs/privacy.zh-CN.md)
+自托管。零埋点。行情服务和已配置的 AI 供应商会收到相应功能所需的请求；公共行情请求无需个人 API key 也可能发生。[完整说明 →](docs/privacy.zh-CN.md)
 
 ## 文档
 
 | 主题 | 链接 |
 |---|---|
+| 当前 Web 流程与历史资料 | [文档导航](docs/README.md) |
+| 报告、策略审阅与模拟盘 | [资产、报告与策略](docs/assets-reports-strategy.md) |
+| 股友频道 | [频道使用说明](docs/channel-workbench.md) |
+| 沿当前用户流程阅读代码 | [代码阅读指南](docs/code-reading.zh-CN.md) |
 | 本地部署与排错 | [docs/self-hosting.zh-CN.md](docs/self-hosting.zh-CN.md) |
 | 七种研究 Agent 与成员模型设置 | [docs/local-agents.md](docs/local-agents.md) |
-| 服务器部署（HTTPS） | [docs/public-deployment.zh-CN.md](docs/public-deployment.zh-CN.md) |
+| 公网部署边界（已退役指南） | [docs/public-deployment.zh-CN.md](docs/public-deployment.zh-CN.md) |
 | 持仓导入 | [docs/import.md](docs/import.md) |
 | 架构 | [docs/architecture.md](docs/architecture.md) |
 | 开发指南 | [docs/development.md](docs/development.md) |

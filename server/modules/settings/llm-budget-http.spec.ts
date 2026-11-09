@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import axios from 'axios';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import { BudgetExceededException, estimateInputTokens, settleTokenUsage } from '../llm-budget/llm-budget.rules';
 import type { BudgetReservation, LlmBudgetService, ReserveBudgetRequest } from '../llm-budget/llm-budget.service';
 import type { SettingsService } from './settings.service';

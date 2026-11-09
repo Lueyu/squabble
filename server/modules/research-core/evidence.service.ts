@@ -6,7 +6,7 @@
  */
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { englishEvidenceText } from './evidence-language';
-import { analysisErrorCode } from './analysis-report';
+import { analysisErrorCode } from './research-errors';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq } from 'drizzle-orm';
 import { holdings, watchlist } from '@server/database/schema';

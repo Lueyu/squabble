@@ -11,7 +11,7 @@ import { researchMemories, researchMemoryPreferences } from '../../database/rese
 import type { BuilderConfig } from '../../../shared/api.interface';
 import type { ResearchToolScope } from '../../../shared/research-tools.interface';
 import type { QuoteService } from '../quote/quote.service';
-import type { EvidenceService, EvidenceInput } from '../multi-agent/evidence.service';
+import type { EvidenceService, EvidenceInput } from '../research-core/evidence.service';
 import { ResearchToolsService } from './research-tools.service';
 import { ResearchMemoryService } from '../research-memory/research-memory.service';
 

@@ -16,7 +16,7 @@ import InvestmentStatus from './InvestmentStatus';
 import StartInvestmentCard, { limitLabels } from './StartInvestmentCard';
 import DecisionCard from './DecisionCard';
 import LegacyDecisionPage from './LegacyDecisionPage';
-import InvestmentStrategySection from '../Today/InvestmentStrategySection';
+import InvestmentStrategySection from '@/features/investment-strategies/InvestmentStrategySection';
 
 export function constraintLabel(constraint: InvestmentConstraint, zh: boolean) {
   switch (constraint.kind) {

@@ -7,7 +7,7 @@ import postgres from 'postgres';
 import {drizzle} from 'drizzle-orm/postgres-js';
 import {eq} from 'drizzle-orm';
 import {PortfolioResearchRouteService} from './portfolio-research-route.service';
-import {CurrentResearchService} from './current-research.service';
+import {CurrentResearchService} from '../experience/current-research.service';
 import {PortfolioAnalysisService} from '../multi-agent/portfolio-analysis.service';
 import {ResearchDocumentsService} from '../research-documents/research-documents.service';
 import {portfolioAnalysisRuns,holdings} from '../../database/schema';

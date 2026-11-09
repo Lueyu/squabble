@@ -1,5 +1,8 @@
 # 研究、策略与模拟盘实施验收
 
+> **历史验收记录。** 下列数字和结果只适用于所列基线与当时执行，不表示当前版本通过了相同检查。
+> 当前验证方式见[开发指南](development.md)，当前功能入口见[文档导航](README.md)。
+
 日期：2026-11-05。实施基线：`main` 的 `81bfbfb`；工作分支：`codex/research-strategy-loop`。对应 [已批准设计](./superpowers/specs/2026-11-05-research-strategy-loop.md) 和 [实施计划](./superpowers/plans/2026-11-05-research-strategy-loop.md)。
 
 本记录覆盖 Web 应用。所有测试使用独立工作树、一次性 PostgreSQL 和虚构用户/持仓；没有读取个人数据库、连接真实券商下单或使用个人模型额度。浏览器估值调用公开行情源；AI 路由及研讨执行以受控模型夹具验证，未以付费模型做在线效果评测。

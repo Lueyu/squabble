@@ -6,7 +6,7 @@ import { councilMessages, councilReports, councilSessions } from '../../database
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { deepReport } from '../../database/schema';
 import { QuoteService } from '../quote/quote.service';
-import { EvidenceService, type EvidenceInput } from '../multi-agent/evidence.service';
+import { EvidenceService, type EvidenceInput } from '../research-core/evidence.service';
 import { ResearchMemoryService } from '../research-memory/research-memory.service';
 import type { CouncilEvidence } from '../council/council.rules';
 import type { QuoteResponse } from '@shared/api.interface';

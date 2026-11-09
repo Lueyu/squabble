@@ -41,7 +41,7 @@ import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 import { MultiAgentService } from './multi-agent.service';
 import { PipelineService } from './pipeline.service';
-import { PortfolioContextService } from './portfolio-context.service';
+import { PortfolioContextService } from '../research-core/portfolio-context.service';
 import { BatchService } from './batch.service';
 import type {
   AgentRun,
@@ -429,7 +429,7 @@ export class MultiAgentController {
         await this.multiAgentService.syncRatingToAnalysis(userId, id);
       }
       if (shouldApply) {
-        await this.portfolioContextService.applyRatingToHoldings(userId, id);
+        await this.multiAgentService.applyRatingToHoldings(userId, id);
       }
 
       await this.multiAgentService.addAuditLog(userId, id, `human_${dto.decision}` as const, {

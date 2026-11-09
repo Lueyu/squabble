@@ -17,7 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { isReadingLatest, researchModelLabel } from '@/utils/research-experience';
 import { researchTimeline, researchConversation } from '@/utils/research-events';
 import CouncilRoundReport from './CouncilRoundReport';
-import InvestmentStrategySourceDialog from '@/pages/Today/InvestmentStrategySourceDialog';
+import InvestmentStrategySourceDialog from '@/features/investment-strategies/InvestmentStrategySourceDialog';
 import type {StrategySourceInput} from '@shared/user-investment-strategy.interface';
 import CouncilChatMessage from './CouncilChatMessage';
 import QuickQuestion from './QuickQuestion';

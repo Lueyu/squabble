@@ -15,7 +15,7 @@ import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { CouncilWorkflowExecutor } from './council.workflow-executor';
 import { CouncilWorkflowStore } from './council.workflow-store';
 import { ResearchMemoryService } from '../research-memory/research-memory.service';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
 import { QuoteService } from '../quote/quote.service';
@@ -30,7 +30,7 @@ import { researchSnapshotPrompt } from '../../local-agents/tool-config';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import type { MemoryToolData } from '../research-memory/research-memory.context';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
-import { financialMetadata } from '../multi-agent/financial-evidence-metadata';
+import { financialMetadata } from '../research-core/financial-evidence-metadata';
 
 test('real executor submissions match durable inventories across languages, refresh, API failures, reviews and native callbacks', {
   skip: !process.env.COUNCIL_TEST_DATABASE_URL,

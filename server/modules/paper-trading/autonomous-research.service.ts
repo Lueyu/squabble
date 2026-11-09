@@ -9,7 +9,7 @@ import { simulationSeeds } from '../../database/simulation-experiments.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { SimpleCouncilService } from '../council/simple-council.service';
 import { ResearchDiscoveryService } from '../research-tools/research-discovery.service';
-import { EvidenceService } from '../multi-agent/evidence.service';
+import { EvidenceService } from '../research-core/evidence.service';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import { InvestmentPolicyService, cancelInvestmentCandidates, expireInvestmentConstraints, investmentHash, type PolicyRow } from './investment-policy.service';
 import { AutomaticResearchBudgetService } from './automatic-research-budget.service';

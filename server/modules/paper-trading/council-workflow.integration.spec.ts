@@ -11,7 +11,7 @@ import { builderProposals, paperAccounts, paperOrders, paperPositions, paperTrad
 import { councilMessages, councilReports, councilSessions } from '../../database/council.schema';
 import { llmBudgetUsage } from '../../database/llm-budget.schema';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
-import { LlmService } from '../multi-agent/llm.service';
+import { LlmService } from '../research-core/llm.service';
 import { CouncilService } from '../council/council.service';
 import { AgentBuilderService } from './agent-builder.service';
 import { BuilderCadenceService } from './builder-cadence.service';

@@ -6,7 +6,7 @@ import { councilMessages, councilSessions } from '../../database/council.schema'
 import type { CouncilMember, ResearchAcquisition } from '../../../shared/council.interface';
 import type { ResearchEvent } from '../../../shared/research-events.interface';
 import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../../shared/research-workflow.interface';
-import { jsonChatMessages, LlmService } from '../multi-agent/llm.service';
+import { jsonChatMessages, LlmService } from '../research-core/llm.service';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
 import { ResearchMemoryService, type MemoryDatabase } from '../research-memory/research-memory.service';
 import { validateDelivery } from './council.tasks';

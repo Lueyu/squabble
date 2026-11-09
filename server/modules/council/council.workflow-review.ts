@@ -2,7 +2,7 @@ import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
 import type { CouncilEvidence } from './council.rules';
 import { thesisEvidenceIds } from '../research-memory/research-memory.theses';
-import { jsonChatMessages } from '../multi-agent/llm.service';
+import { jsonChatMessages } from '../research-core/llm.service';
 import { evidencePromptMetadata } from '../research-memory/research-memory.temporal';
 
 /** Skill identities were checked against server pins by validateDelivery and remain in the stored delivery.

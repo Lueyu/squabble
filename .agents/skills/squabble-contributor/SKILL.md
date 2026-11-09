@@ -13,6 +13,7 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 2. 从已安装 skill 或仓库正本运行 `node <skill目录>/scripts/inspect-workspace.cjs --repo <仓库根目录>`。它只读 Git 状态、知识版本、路径和迁移登记；不会安装依赖、迁移数据库或调用 AI。`--config <私有配置文件>` 仅补充位置提示。
 3. 优先读取当前 checkout 的本 skill 和下面与任务有关的参考资料。`context-manifest.json` 记录核对基线、模块入口和相关图。版本差异、缺失基线和脏文件需要定向核对，不代表运行实例损坏。不要把旧文档当作当前代码的证明，也不要重新通读整个仓库。
 4. 明确是当前简化体验还是保留的旧流程，再打开对应入口。当前 `/council` 通过 `SimpleCouncilPage` 进入频道；旧 `CouncilPage` 和 `multi-agent/` 分析仍存在。
+5. 共享研究基础在 `server/modules/research-core/`，执行器选择在 `research-routing/`；策略界面在 `client/src/features/investment-strategies/`。不要把旧目录名当作功能归属；中文阅读顺序见 `docs/code-reading.zh-CN.md`。
 
 所有反引号内的仓库路径都相对于选定仓库；参考文件之间的链接相对于 skill。
 
@@ -31,6 +32,7 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 - 当前日报先独立封存判断，再反向核查。报告可读、历史可查；报告策略导入不重复抽取或自动激活。策略确认采用持久化内容的预览哈希，并在最终事务中复核修订和来源。自动交易的对象是模拟盘。
 - 每次改动检查 `docs/architecture.md` 的五张图及 skill 中受影响的介绍、入口、测试和运行手册。结构或数据流变化必须同步修改；结构未变则记录核对结论，不能只改日期掩盖未核对内容。详见维护指南。
 - 运行适合改动的检查及 `npm run test:context`、`npm run check:context`。机械校验检查路径和元数据，不能替代对图和文字的语义核对。
+- 新模块遵守现有静态依赖检查；涉及模块归属时运行 `npm run test:architecture`。注释说明职责、状态转换和副作用边界；使用常规多行格式，不压缩代码来减少行数。
 - 通过 PR 进入 main。必需检查为 **Lint & typecheck**、**Agent tests**、**Docker image build**；处理评审意见，不绕过保护。当前 `CONTRIBUTING.md`、CI 和仓库分支规则是合并要求的依据。
 - 合并后同步全局副本：先运行 `node <skill目录>/scripts/sync-skill.cjs --repo <仓库>` 查看计划，再在已获安装/更新授权的范围内加 `--apply`。保留安装版本信息；不要手动维护第二份知识。
 
