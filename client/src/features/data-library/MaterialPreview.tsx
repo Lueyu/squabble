@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { DataLibrarySource, DataLibraryVersion } from '@shared/data-library.interface';
-import { dataError, dataTime, materialKind, materialState, safeSourceUrl } from './data-library-labels';
+import { dataError, dataFailure, dataTime, materialKind, materialState, safeSourceUrl } from './data-library-labels';
 
 function SavedImage({ source }: { source: DataLibrarySource }) {
   const [url, setUrl] = useState('');
@@ -67,6 +67,7 @@ export default function MaterialPreview({ sourceId, onRemoved }: { sourceId: str
   if (detail.isPending) return <aside className="data-panel" role="status">{zh ? '正在读取资料…' : 'Loading source…'}</aside>;
   if (!source) return <aside className="data-panel" role="alert"><p>{dataError(detail.error, zh)}</p><Button variant="outline" onClick={() => void detail.refetch()}>{zh ? '重试' : 'Retry'}</Button></aside>;
   const sourceUrl = safeSourceUrl(source.url);
+  const capturedUrl = safeSourceUrl(version.data?.finalUrl);
   return <aside className="data-panel data-preview" aria-label={zh ? '资料预览' : 'Source preview'}>
     <div className="flex flex-wrap gap-2"><Badge variant="secondary">{materialKind(source.kind, zh)}</Badge><Badge variant="outline">{materialState(source.state, zh)}</Badge></div>
     <h2>{source.title}</h2>
@@ -80,6 +81,16 @@ export default function MaterialPreview({ sourceId, onRemoved }: { sourceId: str
       {!detail.data?.versions.length && <option value="">{zh ? '等待首次同步' : 'Awaiting first sync'}</option>}
       {detail.data?.versions.map(item => <option key={item.id} value={item.id}>v{item.version} · {dataTime(item.observedAt, i18n.language)}</option>)}
     </select></label>
+    {version.data?.acquisition && <section className="data-notice space-y-2" aria-label={zh ? '版本采集信息' : 'Version acquisition details'}>
+      <p className="font-medium">{version.data.acquisition === 'browser-rendered'
+        ? zh ? '浏览器渲染正文' : 'Browser-rendered content'
+        : version.data.acquisition === 'http' ? zh ? 'HTTP 静态采集' : 'HTTP static capture'
+          : zh ? '导入或手动保存' : 'Imported or written document'}</p>
+      <dl><dt>{zh ? '采集时间' : 'Captured at'}</dt><dd>{dataTime(version.data.observedAt, i18n.language)}</dd>
+        {version.data.pageTitle && <><dt>{zh ? '页面标题' : 'Page title'}</dt><dd>{version.data.pageTitle}</dd></>}
+        {capturedUrl && <><dt>{zh ? '实际页面' : 'Captured page'}</dt><dd><a className="underline" href={capturedUrl} target="_blank" rel="noopener noreferrer">{capturedUrl}</a></dd></>}
+      </dl>
+    </section>}
     <div className="border-t pt-4 space-y-3"><h3 className="text-sm font-medium">{zh ? '内容预览' : 'Content preview'}</h3>
       {version.isFetching && <p role="status" className="text-xs text-muted-foreground">{zh ? '正在读取版本…' : 'Loading version…'}</p>}
       {version.isError && <p role="alert" className="text-sm text-destructive">{dataError(version.error, zh)}</p>}
@@ -95,7 +106,7 @@ export default function MaterialPreview({ sourceId, onRemoved }: { sourceId: str
       <Button variant="ghost" size="sm" onClick={() => setDeleting(true)} aria-label={zh ? `删除资料 ${source.title}` : `Delete ${source.title}`}><Trash2 size={14} />{zh ? '删除' : 'Delete'}</Button>
     </div>
     {[sync, toggle, download].some(item => item.isError) && <p role="alert" className="text-sm text-destructive">{dataError(sync.error || toggle.error || download.error, zh)}</p>}
-    {sync.data && <p role="status" className="data-notice">{sync.data.job.state === 'succeeded' ? sync.data.job.outcome === 'unchanged' ? zh ? '同步完成，内容未变化。' : 'Sync complete; content unchanged.' : zh ? '新版本已入库。' : 'New version saved.' : `${zh ? '同步未完成' : 'Sync failed'} · ${sync.data.job.errorCode ?? sync.data.job.state}`}</p>}
+    {sync.data && <p role="status" className="data-notice">{sync.data.job.state === 'succeeded' ? sync.data.job.outcome === 'unchanged' ? zh ? '同步完成，内容未变化。' : 'Sync complete; content unchanged.' : zh ? '新版本已入库。' : 'New version saved.' : dataFailure(sync.data.job.errorCode, zh)}</p>}
     {editing && <EditMaterial source={source} version={version.data} onClose={() => setEditing(false)} />}
     <Dialog open={raw} onOpenChange={setRaw}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>{source.title} · v{version.data?.version}</DialogTitle><DialogDescription>{zh ? '原文以纯文本显示；不会执行网页脚本。' : 'Original content displayed as text; web scripts are never executed.'}</DialogDescription></DialogHeader><pre className="data-preview-text">{version.data?.rawContent}</pre></DialogContent></Dialog>
     <Dialog open={deleting} onOpenChange={open => { if (!remove.isPending) setDeleting(open); }}><DialogContent><DialogHeader><DialogTitle>{zh ? '删除这份资料？' : 'Delete this source?'}</DialogTitle><DialogDescription>{zh ? '该来源将停止同步和未来研究召回。已有报告保留原有引用记录，不会被改写。' : 'This source will stop syncing and will be excluded from future research retrieval. Existing reports retain their historical citations.'}</DialogDescription></DialogHeader>{remove.isError && <p role="alert">{dataError(remove.error, zh)}</p>}<div className="flex justify-end gap-2"><Button variant="ghost" disabled={remove.isPending} onClick={() => setDeleting(false)}>{zh ? '取消' : 'Cancel'}</Button><Button variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>{zh ? '确认删除' : 'Confirm deletion'}</Button></div></DialogContent></Dialog>

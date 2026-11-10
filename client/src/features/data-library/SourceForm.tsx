@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import type { DataLibraryAuthKind, DataLibrarySourceCreate } from '@shared/data-library.interface';
+import type { DataLibraryAuthKind, DataLibraryCaptureMode, DataLibrarySourceCreate } from '@shared/data-library.interface';
 import { dataLibraryApi, dataLibraryKey } from '@/api/data-library';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { dataError } from './data-library-labels';
+import CaptureModeFields from './CaptureModeFields';
 
 export interface CredentialDraft { authKind: DataLibraryAuthKind; credential: string; username: string; password: string }
 export const emptyCredential: CredentialDraft = { authKind: 'none', credential: '', username: '', password: '' };
@@ -26,7 +27,7 @@ export function CredentialFields({ value, onChange, saved = false }: {
 }) {
   const { i18n } = useTranslation(), zh = i18n.language.startsWith('zh');
   return <div className="space-y-4">
-    <label className="data-field">{zh ? '登录方式' : 'Authentication'}
+    <label className="data-field">{zh ? '认证方式' : 'Authentication'}
       <select className="data-select" value={value.authKind} onChange={event => onChange({ ...emptyCredential, authKind: event.target.value as DataLibraryAuthKind })}>
         <option value="none">{zh ? '无需登录' : 'Public source'}</option>
         <option value="cookie">{zh ? '授权 Cookie' : 'Authorized cookie'}</option>
@@ -60,6 +61,7 @@ export default function SourceForm({ subscription = false, onClose }: { subscrip
   const [title, setTitle] = useState(''), [description, setDescription] = useState('');
   const [text, setText] = useState(''), [url, setUrl] = useState('');
   const [format, setFormat] = useState<'html' | 'rss' | 'json'>('html');
+  const [captureMode, setCaptureMode] = useState<DataLibraryCaptureMode>('http');
   const [interval, setInterval] = useState(subscription ? '1440' : '');
   const [credential, setCredential] = useState<CredentialDraft>(emptyCredential);
   const [file, setFile] = useState<File | null>(null), [fileError, setFileError] = useState('');
@@ -72,7 +74,9 @@ export default function SourceForm({ subscription = false, onClose }: { subscrip
       }
       const input: DataLibrarySourceCreate = mode === 'text'
         ? { title: title.trim(), description, kind: 'page', format: 'text', text }
-        : { title: title.trim(), description, kind: 'website', format, url: url.trim(), enabled: true, syncIntervalMinutes: interval ? Number(interval) : null, ...credentialInput(credential) };
+        : { title: title.trim(), description, kind: 'website', format, captureMode, url: url.trim(), enabled: true,
+          syncIntervalMinutes: interval ? Number(interval) : null,
+          ...(captureMode === 'http' ? credentialInput(credential) : { authKind: 'none' as const }) };
       return dataLibraryApi.create(input);
     },
     onSuccess: async () => {
@@ -89,10 +93,12 @@ export default function SourceForm({ subscription = false, onClose }: { subscrip
       {mode === 'text' && <label className="data-field">{zh ? '页面内容' : 'Page content'}<Textarea required rows={9} value={text} onChange={event => setText(event.target.value)} /></label>}
       {mode === 'url' && <>
         <label className="data-field">{zh ? '来源地址' : 'Source URL'}<Input type="url" required placeholder="https://example.com/research" value={url} onChange={event => setUrl(event.target.value)} /></label>
-        <div className="grid gap-4 sm:grid-cols-2"><label className="data-field">{zh ? '内容格式' : 'Content format'}<select className="data-select" value={format} onChange={event => setFormat(event.target.value as typeof format)}><option value="html">HTML</option><option value="rss">RSS / Atom</option><option value="json">JSON</option></select></label>
+        <CaptureModeFields value={captureMode} disabled={save.isPending} onChange={value => { setCaptureMode(value); if (value === 'browser') setFormat('html'); }} />
+        <div className="grid gap-4 sm:grid-cols-2"><label className="data-field">{zh ? '内容格式' : 'Content format'}<select className="data-select" value={format} disabled={captureMode === 'browser'} onChange={event => setFormat(event.target.value as typeof format)}><option value="html">HTML</option><option value="rss">RSS / Atom</option><option value="json">JSON</option></select></label>
           <label className="data-field">{zh ? '更新频率' : 'Update frequency'}<select className="data-select" value={interval} onChange={event => setInterval(event.target.value)}><option value="">{zh ? '仅手动同步' : 'Manual only'}</option><option value="60">{zh ? '每小时' : 'Every hour'}</option><option value="360">{zh ? '每 6 小时' : 'Every 6 hours'}</option><option value="1440">{zh ? '每天' : 'Every day'}</option></select></label></div>
-        <CredentialFields value={credential} onChange={setCredential} />
-        <p className="text-xs leading-6 text-muted-foreground">{zh ? '保存后可立即同步。定时任务在应用运行期间执行；静态页面、RSS、JSON 可直接采集，只有登录框或需浏览器执行的页面会提示未取得正文。' : 'Sync after saving. Scheduled jobs run while the application is running. Static pages, RSS and JSON are supported; sign-in pages or browser-only content are reported as unavailable.'}</p>
+        {captureMode === 'http' ? <CredentialFields value={credential} onChange={setCredential} />
+          : <p className="data-notice">{zh ? '认证方式：在专用浏览器中登录。先保存订阅，再打开浏览器并保存连接，最后手动采集。' : 'Authentication: sign in using the dedicated browser. Save the subscription, open the browser and save its connection, then capture.'}</p>}
+        <p className="text-xs leading-6 text-muted-foreground">{zh ? '定时任务在应用运行期间执行。浏览器采集只保存配置地址的页面正文，不会自动遍历全站。' : 'Scheduled jobs run while the application is running. Browser capture saves only the configured page, without crawling the entire site.'}</p>
       </>}
       {mode === 'file' && <label className="data-field">{zh ? '文件 · 最大 8 MiB' : 'File · Up to 8 MiB'}<Input type="file" required accept=".txt,.md,.html,.htm,.json,.xml,.rss,.pptx,.png,.jpg,.jpeg,.webp" onChange={event => {
         const next = event.target.files?.[0] ?? null;

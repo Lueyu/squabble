@@ -1,19 +1,35 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Put, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { NeedLogin } from '../../common/platform';
 import { DataLibraryService } from './data-library.service';
 import { DataFinancialService } from './data-financial.service';
+import { DataBrowserService } from './data-browser.service';
 import type { DataFinancialOperation, DataFinancialProvider, DataLibraryFileUpload, DataLibrarySourceCreate, DataLibrarySourceUpdate } from '../../../shared/data-library.interface';
 @NeedLogin()
 @Controller('api/data-library')
 export class DataLibraryController {
-  constructor(private readonly library: DataLibraryService, private readonly financial: DataFinancialService) {}
+  constructor(private readonly library: DataLibraryService, private readonly financial: DataFinancialService,
+    private readonly browser: DataBrowserService) {}
+  private localBrowserRequest(req: Request) {
+    const remote = req.socket.remoteAddress;
+    if (process.env.AUTH_MODE !== 'local' || !remote || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
+      throw new ForbiddenException('BROWSER_LOGIN_LOCAL_ONLY');
+    }
+  }
   @Get('sources') list(@Req() req: Request, @Query() query: Record<string, unknown>) { return this.library.list(req.userContext.userId, query); }
   @Post('sources') create(@Req() req: Request, @Body() body: DataLibrarySourceCreate) { return this.library.create(req.userContext.userId, body); }
   @Get('sources/:id') detail(@Req() req: Request, @Param('id') id: string) { return this.library.detail(req.userContext.userId, id); }
   @Patch('sources/:id') update(@Req() req: Request, @Param('id') id: string, @Body() body: DataLibrarySourceUpdate) { return this.library.update(req.userContext.userId, id, body); }
   @Delete('sources/:id') remove(@Req() req: Request, @Param('id') id: string) { return this.library.remove(req.userContext.userId, id); }
   @Post('sources/:id/sync') sync(@Req() req: Request, @Param('id') id: string) { return this.library.sync(req.userContext.userId, id); }
+  @Get('sources/:id/browser') browserStatus(@Req() req: Request, @Param('id') id: string) { return this.browser.status(req.userContext.userId, id); }
+  @Post('sources/:id/browser/open') browserOpen(@Req() req: Request, @Param('id') id: string) {
+    this.localBrowserRequest(req); return this.browser.open(req.userContext.userId, id);
+  }
+  @Post('sources/:id/browser/confirm') browserConfirm(@Req() req: Request, @Param('id') id: string) {
+    this.localBrowserRequest(req); return this.browser.confirm(req.userContext.userId, id);
+  }
+  @Delete('sources/:id/browser/session') browserClear(@Req() req: Request, @Param('id') id: string) { return this.browser.clear(req.userContext.userId, id); }
   @Get('sources/:id/versions/:versionId') version(@Req() req: Request, @Param('id') id: string, @Param('versionId') versionId: string) {
     return this.library.version(req.userContext.userId, id, versionId);
   }

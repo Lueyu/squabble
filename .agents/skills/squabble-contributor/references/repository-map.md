@@ -1,5 +1,13 @@
 # Repository map
 
+Browser source collection lives in `server/modules/data-library/browser/` (runtime,
+rendered content and authenticated public-address egress), `data-browser.service.ts`
+(encrypted owner/source connections) and the existing `data-library.service.ts`
+(durable jobs/versions). Migration51 adds mode/session/lease and version provenance.
+`read_browser_source` in research-tools accepts a saved source ID only. Client
+connection controls are in `features/data-library/BrowserConnectionPanel.tsx` and
+`CaptureModeFields.tsx`; user/runtime limits are in `docs/browser-source-collection.md`.
+
 Resolve code and document paths against the **selected repository checkout**, not the installed skill directory. Read this map, then only the source and reference for the affected area. Contracts are in [research-and-execution.md](research-and-execution.md); the five maintained diagrams are in `docs/architecture.md`.
 
 Structure reviewed on **2026-11-10** against `98f073e` plus the V4 working tree. Account combinations, saved comparison, persistent interviews, companion identities, daily/data/memory entrypoints and navigation below describe that source. Earlier review scopes remain in `context-manifest.json`; this review does not certify a deployed instance.

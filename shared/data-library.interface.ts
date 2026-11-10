@@ -5,12 +5,15 @@ export const dataLibraryFormats = ['text', 'html', 'rss', 'json', 'pptx', 'image
 export type DataLibraryFormat = typeof dataLibraryFormats[number];
 export const dataLibraryAuthKinds = ['none', 'cookie', 'bearer', 'basic'] as const;
 export type DataLibraryAuthKind = typeof dataLibraryAuthKinds[number];
+export const dataLibraryCaptureModes = ['http', 'browser'] as const;
+export type DataLibraryCaptureMode = typeof dataLibraryCaptureModes[number];
 export type DataLibraryState = 'pending' | 'ready' | 'syncing' | 'needs-auth' | 'failed' | 'paused' | 'needs-text';
 export interface DataLibrarySection { locator: string; title?: string; text: string }
 export interface DataLibrarySource {
   id: string; kind: DataLibrarySourceKind; title: string; description: string;
   format: DataLibraryFormat; url: string | null; fileName: string | null; mimeType: string | null;
   enabled: boolean; authKind: DataLibraryAuthKind; hasCredential: boolean; needsReentry: boolean;
+  captureMode: DataLibraryCaptureMode; hasBrowserSession: boolean; browserConnectedAt: string | null;
   syncIntervalMinutes: number | null; nextSyncAt: string | null; latestVersionId: string | null;
   versionCount: number; state: DataLibraryState; lastSuccessAt: string | null; lastErrorCode: string | null;
   createdAt: string; updatedAt: string;
@@ -18,6 +21,7 @@ export interface DataLibrarySource {
 export interface DataLibraryVersionSummary {
   id: string; sourceId: string; version: number; contentHash: string; byteLength: number;
   observedAt: string; extractionState: 'ready' | 'needs-text'; sectionCount: number;
+  acquisition: 'document' | 'http' | 'browser-rendered'; finalUrl: string | null; pageTitle: string | null;
 }
 export interface DataLibraryVersion extends DataLibraryVersionSummary {
   rawContent: string; extractedText: string; sections: DataLibrarySection[];
@@ -27,13 +31,13 @@ export interface DataLibraryList { items: DataLibrarySource[]; total: number; of
 export interface DataLibrarySourceCreate {
   title: string; kind: 'page' | 'website'; description?: string; format?: 'text' | 'html' | 'rss' | 'json';
   text?: string; url?: string; enabled?: boolean; syncIntervalMinutes?: number | null;
-  authKind?: DataLibraryAuthKind;
+  authKind?: DataLibraryAuthKind; captureMode?: DataLibraryCaptureMode;
   /** Write only. Basic accepts username/password separately. Never include these in traces. */
   credential?: string; username?: string; password?: string;
 }
 export interface DataLibrarySourceUpdate {
   title?: string; description?: string; text?: string; enabled?: boolean;
-  syncIntervalMinutes?: number | null; authKind?: DataLibraryAuthKind;
+  syncIntervalMinutes?: number | null; authKind?: DataLibraryAuthKind; captureMode?: DataLibraryCaptureMode;
   credential?: string; username?: string; password?: string; clearCredential?: boolean;
 }
 export interface DataLibraryFileUpload {
@@ -45,6 +49,11 @@ export interface DataLibrarySyncJob {
   startedAt: string; finishedAt: string | null;
 }
 export interface DataLibrarySyncResult { job: DataLibrarySyncJob; source: DataLibrarySource }
+export interface DataBrowserStatus {
+  available: boolean; canOpenInteractive: boolean;
+  state: 'not-connected' | 'login-open' | 'connected' | 'needs-login' | 'unavailable';
+  reason?: string; connectedAt: string | null; loginWindowOpen: boolean;
+}
 export interface DataLibraryReference { sourceId: string; versionId: string }
 export interface DataLibrarySearchItem extends DataLibraryReference {
   title: string; kind: DataLibrarySourceKind; sourceUrl?: string; fileName?: string;

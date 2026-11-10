@@ -51,11 +51,14 @@ test('simple workspace exposes saved skill and failed tool activity directly wit
     skill: { id: 'financial-verification', title: 'Financial results', version: '1.0.0' },
     taskId: task.taskId, sessionId: session.id, memberId: 'm1', memberName: 'Analyst', turn: 0, revision: 1, sequence: 1 };
   const html = render({ message: base, simple: true, task: { ...task, status: 'succeeded', activities: [event,
-    { ...event, id: 'failed-tool', key: 'failed-tool', kind: 'tool', skill: undefined, status: 'failed', toolName: 'search_data_library', summary: 'Source was deleted.' }] } });
+    { ...event, id: 'failed-tool', key: 'failed-tool', kind: 'tool', skill: undefined, status: 'failed', toolName: 'search_data_library', summary: 'Source was deleted.' },
+    { ...event, id: 'browser-tool', key: 'browser-tool', kind: 'tool', skill: undefined, toolName: 'read_browser_source', summary: 'Saved the exact rendered source version.' }] } });
   assert.match(html, /<details[^>]*open[^>]*class="research-public-activity/u);
   assert.match(html, /Financial results/u);
   assert.match(html, /evidence snapshot only/u);
   assert.match(html, /Source was deleted/u);
+  assert.match(html, /Collect browser source/u);
+  assert.match(html, /exact rendered source version/u);
 });
 
 test('legacy automated replies expose missing submission records as unknown while user replies do not', () => {

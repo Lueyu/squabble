@@ -332,3 +332,14 @@ Basic analysis can run without an AI key, but it requests public market data.
 Model analysis, Finnhub research, screenshot recognition, notifications and
 connected agents use their configured external services. A local installation
 is not an offline model or a guarantee that no data leaves your computer.
+
+## Browser source collection
+
+The default Alpine image has no Chromium or graphical login screen. Browser
+sources report their actual runtime availability; this feature does not silently
+enable remote browser control or disable the Chromium sandbox. Local source
+installations can install the pinned browser with `npx playwright install chromium`
+and complete login on the service computer. Browser session state is separately
+encrypted in the database, so retain the matching settings key in every backup.
+See [browser collection](browser-source-collection.md) for the connection flow,
+rendered-version semantics and test prerequisites.

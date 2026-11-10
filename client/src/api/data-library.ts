@@ -1,7 +1,8 @@
 import http from './http';
 import type {
   DataFinancialConnection, DataFinancialProvider, DataFinancialQuery, DataFinancialQueryResult,
-  DataFinancialTestResult, DataLibraryFileUpload, DataLibraryList, DataLibrarySourceCreate,
+  DataBrowserStatus, DataFinancialTestResult, DataLibraryFileUpload, DataLibraryList, DataLibrarySource,
+  DataLibrarySourceCreate,
   DataLibrarySourceDetail, DataLibrarySourceKind, DataLibrarySourceUpdate, DataLibrarySyncJob,
   DataLibrarySyncResult, DataLibraryVersion,
 } from '@shared/data-library.interface';
@@ -17,11 +18,19 @@ export const dataLibraryApi = {
   version: async (id: string, versionId: string) =>
     (await http.get<DataLibraryVersion>(`${sourcePath(id)}/versions/${encodeURIComponent(versionId)}`)).data,
   create: async (input: DataLibrarySourceCreate) => (await http.post(`${base}/sources`, input)).data,
-  update: async (id: string, input: DataLibrarySourceUpdate) => (await http.patch(sourcePath(id), input)).data,
+  update: async (id: string, input: DataLibrarySourceUpdate) =>
+    (await http.patch<DataLibrarySource>(sourcePath(id), input)).data,
   remove: async (id: string) => (await http.delete(sourcePath(id))).data,
   upload: async (input: DataLibraryFileUpload) => (await http.post(`${base}/files`, input)).data,
   file: async (id: string) => (await http.get<Blob>(`${sourcePath(id)}/file`, { responseType: 'blob' })).data,
   sync: async (id: string) => (await http.post<DataLibrarySyncResult>(`${sourcePath(id)}/sync`, {}, { timeout: 90000 })).data,
+  browserStatus: async (id: string) => (await http.get<DataBrowserStatus>(`${sourcePath(id)}/browser`)).data,
+  openBrowser: async (id: string) =>
+    (await http.post<DataBrowserStatus>(`${sourcePath(id)}/browser/open`, {}, { timeout: 60000 })).data,
+  confirmBrowser: async (id: string) =>
+    (await http.post<DataBrowserStatus>(`${sourcePath(id)}/browser/confirm`, {}, { timeout: 60000 })).data,
+  disconnectBrowser: async (id: string) =>
+    (await http.delete<DataBrowserStatus>(`${sourcePath(id)}/browser/session`)).data,
   jobs: async (sourceId: string) =>
     (await http.get<{ items: DataLibrarySyncJob[]; total: number }>(`${base}/jobs`, { params: { sourceId } })).data,
   providers: async () => (await http.get<{ providers: DataFinancialConnection[] }>(`${base}/financial`)).data,

@@ -68,6 +68,74 @@ test('website creation sends explicit format and authorization once; error rende
   } finally { await close(); }
 });
 
+const browserSourceFixture = overrides => ({
+  id: 'fictional-browser-source', title: 'Fictional browser research', kind: 'website', format: 'html',
+  description: '', url: 'https://example.com/research', enabled: true, authKind: 'none',
+  hasCredential: false, needsReentry: false, captureMode: 'browser', hasBrowserSession: false,
+  browserConnectedAt: null, syncIntervalMinutes: null, nextSyncAt: null, latestVersionId: null,
+  versionCount: 0, state: 'pending', lastSuccessAt: null, lastErrorCode: null,
+  createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z', ...overrides,
+});
+
+test('browser subscriptions require saving settings, manual connection confirmation, then separate capture', async () => {
+  const { f, render, flush, close } = setup();
+  const calls = [];
+  let source = browserSourceFixture({ captureMode: 'http' });
+  let status = { available: true, canOpenInteractive: true, state: 'not-connected', connectedAt: null, loginWindowOpen: false };
+  const api = f.load('api/data-library.ts').dataLibraryApi;
+  api.list = async () => ({ items: [source], total: 1 });
+  api.detail = async () => ({ source, versions: [] });
+  api.update = async (id, body) => { calls.push(['save', body]); source = { ...source, ...body }; return source; };
+  api.browserStatus = async () => status;
+  api.openBrowser = async () => { calls.push(['open']); status = { ...status, state: 'login-open', loginWindowOpen: true }; return status; };
+  api.confirmBrowser = async () => { calls.push(['confirm']); source = { ...source, hasBrowserSession: true }; status = { ...status, state: 'connected', connectedAt: '2026-11-10T01:00:00Z', loginWindowOpen: false }; return status; };
+  api.sync = async () => { calls.push(['capture']); return { source, job: { state: 'succeeded', outcome: 'updated' } }; };
+  const Page = f.load('features/data-library/SubscriptionWorkspace.tsx').default;
+  try {
+    await render(Page); await flush(); await flush();
+    assert.ok(button('Browser dynamic capture'), 'collection method is separate from authentication');
+    await React.act(async () => button('Browser dynamic capture').click());
+    assert.equal(button('Open browser and sign in').disabled, true);
+    assert.equal(button('Capture now').disabled, true);
+    assert.match(document.body.textContent, /Save settings before opening the browser or capturing/);
+    await React.act(async () => button('Save settings').click()); await flush(); await flush();
+    assert.equal(calls[0][1].captureMode, 'browser');
+    await React.act(async () => button('Open browser and sign in').click()); await flush();
+    assert.deepEqual(calls.map(call => call[0]), ['save', 'open']);
+    assert.equal(button('Capture now').disabled, true, 'opening a window does not confirm authentication');
+    await React.act(async () => button('I signed in; save connection').click()); await flush();
+    assert.deepEqual(calls.map(call => call[0]), ['save', 'open', 'confirm']);
+    assert.equal(button('Capture now').disabled, false);
+    await React.act(async () => button('Capture now').click()); await flush();
+    assert.deepEqual(calls.map(call => call[0]), ['save', 'open', 'confirm', 'capture']);
+    assert.match(document.body.textContent, /new version saved/i);
+  } finally { await close(); }
+});
+
+test('browser failures use safe guidance, do not invent saved versions, and require explicit disconnection', async () => {
+  const { f, render, flush, close } = setup();
+  let source = browserSourceFixture({ state: 'needs-auth', lastErrorCode: 'TIMEOUT', hasBrowserSession: true });
+  const status = { available: false, state: 'unavailable', reason: 'BROWSER_NOT_INSTALLED', connectedAt: null, loginWindowOpen: false };
+  const api = f.load('api/data-library.ts').dataLibraryApi;
+  let disconnects = 0;
+  api.list = async () => ({ items: [source], total: 1 });
+  api.detail = async () => ({ source, versions: [] });
+  api.browserStatus = async () => status;
+  api.disconnectBrowser = async () => { disconnects += 1; source = { ...source, hasBrowserSession: false }; return { ...status, state: 'not-connected' }; };
+  const Page = f.load('features/data-library/SubscriptionWorkspace.tsx').default;
+  try {
+    await render(Page); await flush(); await flush();
+    assert.match(document.body.textContent, /browser is not installed/i);
+    assert.match(document.body.textContent, /No content has been saved yet/);
+    assert.doesNotMatch(document.body.textContent, /Saved versions remain available|TIMEOUT|BROWSER_NOT_INSTALLED/);
+    await React.act(async () => button('Disconnect browser').click());
+    assert.equal(disconnects, 0);
+    await React.act(async () => button('Confirm disconnect').click()); await flush();
+    assert.equal(disconnects, 1);
+    assert.doesNotMatch(document.body.textContent, /cookie=/i);
+  } finally { await close(); }
+});
+
 test('source preview keeps exact historical version in research links and requires explicit deletion', async () => {
   const { f, render, flush, close } = setup();
   const calls = [];
@@ -97,6 +165,67 @@ test('source preview keeps exact historical version in research links and requir
     assert.equal(removed, true);
     assert.equal(calls.filter(call => call[0] === 'delete').length, 1);
   } finally { await close(); }
+});
+
+test('browser version preview keeps the selected version acquisition details and page URL', async () => {
+  const { f, render, flush, close } = setup();
+  const source = browserSourceFixture({ state: 'ready', latestVersionId: 'browser-v2', versionCount: 2 });
+  const api = f.load('api/data-library.ts').dataLibraryApi;
+  api.detail = async () => ({ source, versions: [{ id: 'browser-v2', version: 2 }, { id: 'http-v1', version: 1 }] });
+  api.version = async (id, versionId) => versionId === 'browser-v2'
+    ? { id: versionId, version: 2, acquisition: 'browser-rendered', pageTitle: 'Rendered fictional page', finalUrl: 'https://example.com/research/after-login', observedAt: '2026-11-10T02:00:00Z', extractedText: 'Rendered evidence' }
+    : { id: versionId, version: 1, acquisition: 'http', pageTitle: 'Earlier static page', finalUrl: 'https://example.com/research/original', observedAt: '2026-11-09T01:00:00Z', extractedText: 'Earlier static evidence' };
+  const Page = f.load('features/data-library/MaterialPreview.tsx').default;
+  try {
+    await render(Page, { sourceId: source.id, onRemoved() {} }); await flush(); await flush();
+    assert.match(document.body.textContent, /Browser-rendered content/);
+    assert.match(document.body.textContent, /Rendered fictional page/);
+    assert.ok(document.querySelector('a[href="https://example.com/research/after-login"]'));
+    await change(document.querySelector('select'), 'http-v1'); await flush();
+    assert.match(document.body.textContent, /HTTP static capture/);
+    assert.match(document.body.textContent, /Earlier static page/);
+    assert.doesNotMatch(document.body.textContent, /Browser-rendered content|Rendered fictional page/);
+    assert.ok(document.querySelector('a[href="https://example.com/research/original"]'));
+  } finally { await close(); }
+});
+
+test('headless connected browsers can capture while interactive sign-in is unavailable and mobile returns to its list', async () => {
+  const { f, render, flush, close } = setup();
+  const scroller = document.getElementById('root');
+  scroller.className = 'app-content';
+  scroller.scrollTop = 240;
+  window.matchMedia = () => ({ matches: true });
+  window.requestAnimationFrame = callback => window.setTimeout(() => callback(0), 0);
+  window.cancelAnimationFrame = frame => window.clearTimeout(frame);
+  const source = browserSourceFixture({ hasBrowserSession: true });
+  const api = f.load('api/data-library.ts').dataLibraryApi;
+  api.list = async () => ({ items: [source], total: 1 });
+  api.detail = async () => ({ source, versions: [] });
+  api.browserStatus = async () => ({ available: true, canOpenInteractive: false, state: 'connected', reason: 'INTERACTIVE_DISPLAY_UNAVAILABLE', connectedAt: '2026-11-10T01:00:00Z', loginWindowOpen: false });
+  const Page = f.load('features/data-library/SubscriptionWorkspace.tsx').default;
+  try {
+    await render(Page); await flush(); await flush();
+    assert.equal(button('Capture now').disabled, false);
+    assert.equal(button('Reopen browser').disabled, true);
+    assert.match(document.body.textContent, /no interactive desktop/);
+    await React.act(async () => document.querySelector('.data-subscription-list .data-item').click());
+    await flush();
+    assert.ok(document.querySelector('.data-subscriptions.has-selection'));
+    assert.equal(scroller.scrollTop, 0);
+    scroller.scrollTop = 500;
+    await React.act(async () => button('Back to subscriptions').click());
+    await flush();
+    assert.equal(document.querySelector('.data-subscriptions.has-selection'), null);
+    assert.ok(document.querySelector('.data-subscription-list .data-item'));
+    assert.equal(scroller.scrollTop, 240);
+    assert.equal(document.activeElement, document.querySelector('.data-subscription-list .data-item'));
+  } finally {
+    await close();
+    scroller.className = '';
+    delete window.matchMedia;
+    delete window.requestAnimationFrame;
+    delete window.cancelAnimationFrame;
+  }
 });
 
 test('companion list uses stable animal fallbacks and offers only account operations', () => {

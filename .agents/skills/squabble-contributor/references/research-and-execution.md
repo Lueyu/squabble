@@ -1,5 +1,17 @@
 # Research, execution and provenance contracts
 
+## Browser-source collection
+
+`read_browser_source` collects only an enabled owned saved browser source. It
+cannot take a URL, credential, local profile or browser endpoint. Collection uses
+the subscription's ordinary durable job and exact version; rendered excerpts
+retain library references through archival, publication and memory. Task expiry
+and cancellation reach the browser operation. Login/open/confirm/disconnect are
+explicit user-facing connection actions, unavailable to model tools. Browser
+state is separately encrypted and never research evidence. Sync commits require
+the current source revision, job/token and unexpired lease; login does not occupy
+that lease. See `docs/browser-source-collection.md` and migration51.
+
 ## V5 research skills and library provenance
 
 The research workspace owns chat history, slash-selected trusted skills and the

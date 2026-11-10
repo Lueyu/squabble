@@ -1904,3 +1904,16 @@ CREATE TABLE IF NOT EXISTS financial_data_connections (
  last_test_ok boolean, last_test_code text, updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS financial_data_connection_owner_provider_idx ON financial_data_connections(owner, provider);
+
+-- 51_browser_sources.sql
+ALTER TABLE data_library_sources ADD COLUMN IF NOT EXISTS capture_mode text NOT NULL DEFAULT 'http';
+ALTER TABLE data_library_sources ADD COLUMN IF NOT EXISTS browser_state_enc text;
+ALTER TABLE data_library_sources ADD COLUMN IF NOT EXISTS browser_connected_at timestamptz;
+ALTER TABLE data_library_sources ADD COLUMN IF NOT EXISTS lease_token uuid;
+ALTER TABLE data_library_sources ADD COLUMN IF NOT EXISTS active_job_id uuid;
+ALTER TABLE data_library_jobs ADD COLUMN IF NOT EXISTS lease_token uuid;
+ALTER TABLE data_library_versions ADD COLUMN IF NOT EXISTS acquisition text NOT NULL DEFAULT 'document';
+ALTER TABLE data_library_versions ADD COLUMN IF NOT EXISTS final_url text;
+ALTER TABLE data_library_versions ADD COLUMN IF NOT EXISTS page_title text;
+UPDATE data_library_versions SET acquisition = 'http'
+WHERE acquisition = 'document' AND source_id IN (SELECT id FROM data_library_sources WHERE kind = 'website');
