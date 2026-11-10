@@ -1,5 +1,6 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { QuoteService } from '../quote/quote.service';
 import { councilReports, councilSessions } from '../../database/council.schema';
@@ -8,7 +9,7 @@ import type { ArchiveResearchReport, MemoryCitation, MemoryFlag, MemoryOmission,
   ResearchMemoryPreferences, ResearchMemoryQuery, ResearchMemoryRecall, ResearchMemoryRecallItem,
   ResearchThesis, ResearchThesisVersion, ThesisContent, UpdateResearchThesis, ResearchEvidenceGraph, ResearchEvidenceRecord } from '@shared/research-memory.interface';
 import { canonicalMemorySymbol, normalizedTopic, rankMemoryRecall } from './research-memory.rules';
-import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema,
+import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema, memoryInventoryQuerySchema,
   thesisCandidateSchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
 import { isUnverifiedCitation, normalizeThesisContent, thesisEvidenceIds, thesisFingerprint, validateThesisReferences } from './research-memory.theses';
 import { acceptedWorkflowProvenance } from './research-memory.provenance';
@@ -77,8 +78,8 @@ export class ResearchMemoryService {
     this.id(input.sessionId); this.id(input.report.id);
     const symbol = this.symbol(input);
     const [source] = await tx.select({ report: councilReports, session: councilSessions }).from(councilReports)
-      .innerJoin(councilSessions, and(eq(councilReports.sessionId, councilSessions.id), eq(councilSessions.owner, owner)))
-      .where(and(eq(councilReports.id, input.report.id), eq(councilReports.owner, owner),
+      .innerJoin(councilSessions, and(eq(councilReports.sessionId, councilSessions.id), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner)))
+      .where(and(eq(councilReports.id, input.report.id), councilReportSourceVisible(), eq(councilReports.owner, owner),
         eq(councilReports.sessionId, input.sessionId), eq(councilReports.version, input.report.version))).limit(1).for('update');
     if (!source) throw new NotFoundException('MEMORY_SOURCE_NOT_FOUND');
     const eligible = await archivalEligibility(tx, owner, source.report, source.session);
@@ -137,6 +138,26 @@ export class ResearchMemoryService {
 
   async list(owner: string, input: ResearchMemoryQuery): Promise<ResearchMemoryList> {
     return this.listCandidates(owner, input);
+  }
+  /** All visible source records, paged by source, with owner-scoped current thesis versions. */
+  async inventory(owner: string, input: { offset?: number; limit?: number } = {}): Promise<import('@shared/research-memory.interface').ResearchMemoryInventory> {
+    this.owner(owner);
+    const parsed = memoryInventoryQuerySchema.safeParse(input);
+    if (!parsed.success) throw new BadRequestException('MEMORY_INVALID_QUERY');
+    const { offset, limit } = parsed.data;
+    const visible = and(eq(researchMemories.owner, owner), isNull(researchMemories.deletedAt));
+    const [rows, totals, preferences] = await Promise.all([
+      this.db.select().from(researchMemories).where(visible).orderBy(desc(researchMemories.createdAt), researchMemories.id).limit(limit).offset(offset),
+      this.db.select({ total: count() }).from(researchMemories).where(visible),
+      this.getPreferences(owner),
+    ]);
+    const memories = await this.materializeMemories(owner, rows);
+    const byId = new Map(memories.map(memory => [memory.id, memory]));
+    const thesisRows = rows.length ? await this.db.select().from(researchTheses).where(and(eq(researchTheses.owner, owner),
+      inArray(researchTheses.memoryId, rows.map(row => row.id)), isNull(researchTheses.deletedAt)))
+      .orderBy(desc(researchTheses.updatedAt), researchTheses.id) : [];
+    return { memories, theses: thesisRows.map(row => this.materializeThesis(row, byId.get(row.memoryId)!)),
+      preferences, total: totals[0]?.total ?? 0, offset, limit };
   }
   private async listCandidates(owner: string, input: ResearchMemoryQuery, retrieval = false): Promise<ResearchMemoryList> {
     this.owner(owner);
@@ -261,7 +282,7 @@ export class ResearchMemoryService {
         if (!['dismiss', 'expire', 'exclude'].includes(input.action)) throw new BadRequestException('MEMORY_BREACH_REVIEW_REASON_REQUIRED');
       }
       const [liveMemory] = await tx.select().from(researchMemories).where(and(eq(researchMemories.owner, owner), eq(researchMemories.id, memory.id))).for('share');
-      const [liveSource] = await tx.select().from(councilReports).where(and(eq(councilReports.owner, owner), eq(councilReports.id, memory.reportId))).for('share');
+      const [liveSource] = await tx.select().from(councilReports).where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), eq(councilReports.id, memory.reportId))).for('share');
       if (!liveMemory || liveMemory.deletedAt || !liveSource) throw new BadRequestException('MEMORY_SOURCE_REQUIRED');
       const [updated] = await tx.update(researchTheses).set({ content, status, version: current.version + 1,
         excluded: input.excluded ?? current.excluded, expiresAt, updatedAt: new Date() })
@@ -330,9 +351,9 @@ export class ResearchMemoryService {
       const parents = await tx.select().from(researchMemories).where(and(eq(researchMemories.owner, owner),
         inArray(researchMemories.id, [...pins.filter(item => item.kind === 'history').map(item => item.id), ...theses.map(item => item.memoryId)])));
       // Lock physical sources too: SQL deletion need not participate in the application owner fence.
-      await tx.select({ id: councilSessions.id }).from(councilSessions).where(and(eq(councilSessions.owner, owner),
+      await tx.select({ id: councilSessions.id }).from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner),
         inArray(councilSessions.id, parents.map(item => item.sessionId)))).orderBy(councilSessions.id).for('share');
-      await tx.select({ id: councilReports.id }).from(councilReports).where(and(eq(councilReports.owner, owner),
+      await tx.select({ id: councilReports.id }).from(councilReports).where(and(councilReportSourceVisible(), eq(councilReports.owner, owner),
         inArray(councilReports.id, parents.map(item => item.reportId)))).orderBy(councilReports.id).for('share');
       await tx.select({ id: researchMemories.id }).from(researchMemories).where(and(eq(researchMemories.owner, owner),
         inArray(researchMemories.id, parents.map(item => item.id)))).orderBy(researchMemories.id).for('share');
@@ -440,8 +461,8 @@ export class ResearchMemoryService {
   }
   private async sourceReport(owner: string, memory: MemoryRow): Promise<ReportRow | null> {
     const [row] = await this.db.select({ report: councilReports, ticker: councilSessions.ticker }).from(councilReports)
-      .innerJoin(councilSessions, and(eq(councilReports.sessionId, councilSessions.id), eq(councilSessions.owner, owner)))
-      .where(and(eq(councilReports.owner, owner), eq(councilReports.id, memory.reportId),
+      .innerJoin(councilSessions, and(eq(councilReports.sessionId, councilSessions.id), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner)))
+      .where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), eq(councilReports.id, memory.reportId),
         eq(councilReports.sessionId, memory.sessionId), eq(councilReports.version, memory.reportVersion),
         eq(councilReports.revision, memory.reportRevision))).limit(1);
     if (!row) return null;

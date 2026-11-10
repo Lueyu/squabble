@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { isNull, and, desc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilSessions } from '../../database/council.schema';
 import { councilMemberAttempts, councilRecoveryRequests } from '../../database/simple-council.schema';
@@ -12,7 +12,7 @@ export class CouncilRecoveryService {
   async reserve(owner:string,sessionId:string,input:ResearchRecoveryInput){
     const inputHash=createHash('sha256').update(JSON.stringify({sessionId,...input})).digest('hex');
     return this.db.transaction(async tx=>{
-      const [session]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,sessionId))).for('update');
+      const [session]=await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,sessionId))).for('update');
       if(!session)throw new NotFoundException('Research conversation not found');
       const [prior]=await tx.select().from(councilRecoveryRequests).where(and(eq(councilRecoveryRequests.owner,owner),eq(councilRecoveryRequests.requestKey,input.requestKey)));
       if(prior){if(prior.inputHash!==inputHash)throw new ConflictException('REQUEST_KEY_CONFLICT');return{created:false,session,attempt:null};}

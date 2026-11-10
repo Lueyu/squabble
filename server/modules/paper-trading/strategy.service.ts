@@ -1,8 +1,9 @@
+import { investorAllocationBlock } from './strategy-allocation';
 import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { and, eq, gt, gte } from 'drizzle-orm';
+import { and, eq, gt, gte, isNull, or, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import { holdings, paperOrders, paperPositions, paperTrades, watchlist } from '../../database/schema';
+import { builderProfiles, holdings, paperOrders, paperPositions, paperTrades, watchlist } from '../../database/schema';
 import { strategyPlans, strategyProtections, strategySignals } from '../../database/strategy.schema';
 import { AgentBuilderService } from './agent-builder.service';
 import { PaperTradingService } from './paper-trading.service';
@@ -37,7 +38,7 @@ import { StrategyMonitorService } from './strategy-monitor.service';
 import { evaluatePortfolioRisk, readPortfolioRiskSnapshot } from './strategy-portfolio-risk';
 import { executionEconomics } from './simulation-experiments.rules';
 import type { StrategyRouteDecision } from '../../../shared/strategy-mandate.interface';
-import { investorTargetQuantity } from './user-strategy-runtime';
+import { investorTargetQuantity, isSameInvestorEntry } from './user-strategy-runtime';
 import { ResearchDiscoveryService } from '../research-tools/research-discovery.service';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { SimulationExperimentsService } from './simulation-experiments.service';
@@ -60,44 +61,55 @@ export class StrategyService {
     return this.store.runtime(owner, await this.builder.getProfile(owner, id));
   }
   async stillActive(owner: string, profile: BuilderProfile, expectedAccountId?: string): Promise<boolean> {
-    const [account, active] = await Promise.all([
-      requireActivePaperAccount(this.db, owner),
-      this.builder.getActiveProfile(owner),
-    ]);
-    return Boolean(account?.botEnabled && (!expectedAccountId || account.id === expectedAccountId) && active?.id === profile.id && active.version === profile.version
-      && active.config.automation?.enabled);
+    const account = await requireActivePaperAccount(this.db, owner, expectedAccountId);
+    const [active] = await this.db.select().from(builderProfiles).where(and(eq(builderProfiles.owner, owner),
+      eq(builderProfiles.id, profile.id), eq(builderProfiles.status, 'active')));
+    return Boolean(account.botEnabled && active && (!active.accountId || active.accountId === account.id)
+      && active.version === profile.version && (active.config as BuilderProfile['config']).automation?.enabled);
   }
-  async tick(owner: string): Promise<StrategyRuntime | null> {
-    const profile = await this.builder.getActiveProfile(owner);
-    if (!profile?.config.automation?.enabled) return null;
-    if (!await this.stillActive(owner, profile)) throw new BadRequestException('Automation is stopped');
+  private async accountProfile(owner: string, accountId: string, mandate?: MandateRow | null): Promise<BuilderProfile | null> {
+    if (mandate) return this.builder.getProfile(owner, mandate.profileId);
+    const profiles = await this.db.select().from(builderProfiles).where(and(eq(builderProfiles.owner, owner),
+      eq(builderProfiles.status, 'active'), or(eq(builderProfiles.accountId, accountId), isNull(builderProfiles.accountId))));
+    const scoped = profiles.find(profile => profile.accountId === accountId);
+    if (scoped) return this.builder.getProfile(owner, scoped.id);
+    if (!profiles.length) return null;
+    // Legacy unbound profiles only have meaning while the owner has one active account.
+    await requireActivePaperAccount(this.db, owner);
+    if (profiles.length !== 1) throw new BadRequestException('ACCOUNT_PROFILE_SELECTION_REQUIRED');
+    return this.builder.getProfile(owner, profiles[0].id);
+  }
+  async tick(owner: string, accountId?: string): Promise<StrategyRuntime | null> {
+    const account = await requireActivePaperAccount(this.db, owner, accountId);
+    const mandate = this.mandates ? await this.mandates.active(owner, account.id) : null;
+    const profile = await this.accountProfile(owner, account.id, mandate);
+    if (!profile?.config.automation?.enabled || !account.botEnabled) return null;
+    if (!await this.stillActive(owner, profile, account.id)) throw new BadRequestException('Automation is stopped');
+    const guardKey = `${owner}:${account.id}`;
     // Slow Council/model jobs must never hold up an independently authorized protective exit.
-    if (!this.protecting.has(owner)) {
-      this.protecting.add(owner);
+    if (!this.protecting.has(guardKey)) {
+      this.protecting.add(guardKey);
       try {
-        await this.mandates?.installCurrentProtections(owner, profile);
-        await this.monitorProtections(owner, profile);
+        await this.mandates?.installCurrentProtections(owner, profile, account.id);
+        await this.monitorProtections(owner, profile, account.id);
       }
-      finally { this.protecting.delete(owner); }
+      finally { this.protecting.delete(guardKey); }
     }
     if (this.monitor) {
-      const account = await requireActivePaperAccount(this.db, owner);
       await this.monitor.heartbeat(owner, account.id).catch(() => this.logger.warn('Monitor heartbeat or review could not complete'));
     }
-    if (this.running.has(owner)) return this.store.runtime(owner, profile);
-    this.running.add(owner);
+    if (this.running.has(guardKey)) return this.store.runtime(owner, profile);
+    this.running.add(guardKey);
     try {
-      const account = await requireActivePaperAccount(this.db, owner);
       if (this.simulations && !await this.simulations.establishBaseline(owner, account.id)) return this.store.runtime(owner, profile);
-      const mandate = this.mandates ? await this.mandates.active(owner, account.id) : null;
       if (this.mandates && !mandate && await this.mandates.hasHistory(owner, account.id)) return this.store.runtime(owner, profile);
       if (mandate && (mandate.profileId !== profile.id || mandate.profileVersion !== profile.version
         || Date.parse(mandate.config.startsAt) > Date.now())) return this.store.runtime(owner, profile);
-      const universe = mandate ? [...new Set(mandate.config.rules.map(r => r.ticker))] : await this.universe(owner, profile);
+      const universe = mandate ? [...new Set(mandate.config.rules.map(r => r.ticker))] : await this.universe(owner, profile, account.id);
       const markets = [...new Set(universe.map((ticker) => resolveTradingTicker(ticker)?.market).filter((value): value is Market => Boolean(value)))];
       for (const market of markets) {
         const tickers = universe.filter((ticker) => resolveTradingTicker(ticker)?.market === market);
-        try { await this.tickMarket(owner, profile, market, tickers, mandate ?? undefined); }
+        try { await this.tickMarket(owner, profile, market, tickers, account.id, mandate ?? undefined); }
         catch (error) {
           const dailyReason = dailyAiRuntimeReason(error, profile.config.language ?? 'zh-CN');
           this.logger.warn(`Strategy check failed for profile ${profile.id}, market ${market}`);
@@ -110,11 +122,11 @@ export class StrategyService {
         }
       }
       return this.store.runtime(owner, profile);
-    } finally { this.running.delete(owner); }
+    } finally { this.running.delete(guardKey); }
   }
-  private async universe(owner: string, profile: BuilderProfile): Promise<string[]> {
+  private async universe(owner: string, profile: BuilderProfile, accountId: string): Promise<string[]> {
     if (profile.config.tickers.length) return profile.config.tickers;
-    const account = await requireActivePaperAccount(this.db, owner);
+    const account = await requireActivePaperAccount(this.db, owner, accountId);
     const [owned, watched, positions] = await Promise.all([
       this.db.select({ ticker: holdings.ticker }).from(holdings).where(eq(holdings.owner, owner)),
       this.db.select({ ticker: watchlist.ticker }).from(watchlist).where(eq(watchlist.owner, owner)),
@@ -122,9 +134,9 @@ export class StrategyService {
     ]);
     return [...new Set([...owned, ...watched, ...positions].map((item) => item.ticker.toUpperCase()))];
   }
-  private async tickMarket(owner: string, profile: BuilderProfile, market: Market, tickers: string[], mandate?: MandateRow): Promise<void> {
+  private async tickMarket(owner: string, profile: BuilderProfile, market: Market, tickers: string[], accountId: string, mandate?: MandateRow): Promise<void> {
     const now = new Date();
-    const account = await requireActivePaperAccount(this.db, owner);
+    const account = await requireActivePaperAccount(this.db, owner, accountId);
     const config = normalizeAutomation(profile.config.automation);
     const invalidRules = mandate && this.mandates ? await this.mandates.reviewInvalidSources(owner, mandate, profile) : [];
     if (invalidRules.length && mandate?.config.parentPolicyId) await this.autonomous?.trigger(owner, mandate.config.parentPolicyId, market,
@@ -144,9 +156,12 @@ export class StrategyService {
     if (!schedule.calendarVerified || !schedule.isTradingDay || !schedule.closesAt || !discussionAt) {
       runtime.state = 'blocked'; runtime.reason = schedule.reason ?? 'Trading calendar unavailable'; return finish();
     }
-    if (tickers.length > 20) { runtime.state = 'blocked'; runtime.reason = 'Select at most 20 tickers per market for bounded daily discussion'; return finish(); }
+    // Fixed reviewed rules are already compiled; they do not enter the bounded daily discussion.
+    if (tickers.length > 20 && mandate?.config.dailyPlanMode !== 'fixed_rules') {
+      runtime.state = 'blocked'; runtime.reason = 'Select at most 20 tickers per market for bounded daily discussion'; return finish();
+    }
     if (current.closesAt && now.getTime() >= Date.parse(current.closesAt) && config.notifyClosingSummary && profile.config.notifyOnProposal) {
-      const overview = await this.paper.getOverview(owner);
+      const overview = await this.paper.getOverview(owner, account.id);
       const english = profile.config.language === 'en';
       const summary = english
         ? `Equity: $${overview.equity}\nToday's P/L: $${overview.todayPl ?? 'unavailable'}\nOrders today: ${overview.todayOrderCount}\nOpen positions: ${overview.positions.length}\nDaily strategy expires at the market close.`
@@ -220,14 +235,23 @@ export class StrategyService {
         if (rule.userDirective && mandate) {
           const verified = await this.verifyInvestorSecurity(owner, mandate, rule, snapshot);
           if (!verified) { runtime.reason = 'Waiting for verified security identity, asset type and lot size'; continue; }
-          const fills = await this.db.select().from(strategySignals).where(and(eq(strategySignals.owner, owner), eq(strategySignals.state, 'filled'), eq(strategySignals.ruleId, rule.id)));
-          if (fills.some(fill => fill.candidate.accountId === account.id && fill.candidate.userStrategyId === rule.userStrategyId)) { runtime.reason = 'This confirmed strategy entry already executed'; continue; }
+          const fills = await this.db.select({ candidate: strategySignals.candidate, marketDate: strategyPlans.marketDate })
+            .from(strategySignals).leftJoin(strategyPlans, and(eq(strategyPlans.owner, owner), eq(strategyPlans.id, strategySignals.planId)))
+            .where(and(eq(strategySignals.owner, owner), eq(strategySignals.state, 'filled'),
+            sql`${strategySignals.candidate}->>'accountId' = ${account.id}`, sql`${strategySignals.candidate}->>'userStrategyId' = ${rule.userStrategyId}`));
+          const daily = rule.userDirective.executionFrequency?.kind === 'per_trading_day';
+          if (fills.some(fill => isSameInvestorEntry(fill.candidate, account.id, rule.userStrategyId!, rule.userEntryId ?? rule.userDirective!.entryId)
+            && (!daily || !fill.marketDate || fill.marketDate === current.tradingDate))) {
+            runtime.reason = daily ? 'This entry already executed for this trading day or its prior day cannot be verified'
+              : 'This confirmed strategy entry already executed'; continue;
+          }
+          // Daily frequency and live duplicate reservations are rechecked by claimSignal's account-locked fence.
         }
-        let quantity = rule.side === 'sell' ? await this.sellableQuantity(owner, ticker, market, shares, snapshot.lotSize)
-          : await this.buyQuantity(owner, profile, rule.maxPositionPct, snapshot, shares, mandate?.config.limits.maxOrderPct);
+        let quantity = rule.side === 'sell' ? await this.sellableQuantity(owner, ticker, market, shares, account.id, snapshot.lotSize)
+          : await this.buyQuantity(owner, profile, rule.maxPositionPct, snapshot, shares, account.id, mandate?.config.limits.maxOrderPct);
         if (rule.userDirective) {
           const d = rule.userDirective;
-          const overview = await this.paper.getOverview(owner);
+          const overview = await this.paper.getOverview(owner, account.id);
           const fx = await this.fx.convert(1, snapshot.currency ?? 'USD', 'USD');
           const desired = d.quantity ?? investorTargetQuantity({ ticker, market, side: rule.side, heldShares: shares, equityUsd: Number(overview.equity ?? 0), price: snapshot.price, fx, positionPct: Number(d.positionPct), feeBps: account.executionModel?.feeBps, slippageBps: account.executionModel?.slippageBps, lotSize: snapshot.lotSize });
           if (d.positionPct !== undefined && desired === 0) { runtime.reason = 'Target position reached or remaining difference smaller than one market lot'; continue; }
@@ -239,6 +263,7 @@ export class StrategyService {
         if (reviewAttempt === null) continue;
         const candidate: StrategyCandidate = { signalId: randomUUID(), planId: plan.id, planVersion: plan.version,
           userStrategyId: rule.userStrategyId, userStrategyRevision: rule.userStrategyRevision,
+          userEntryId: rule.userEntryId, userStrategySnapshotHash: rule.userStrategySnapshotHash, allocationPct: rule.allocationPct,
           ruleId: rule.id, ticker, market, side: rule.side, quantity, price: snapshot.price,
           quoteAt: snapshot.quoteTimestamp, protectiveStop: false, reason: rule.rationale, reviewAttempt,
           accountId: account.id, ...(mandate ? { mandateId: mandate.id, mandateVersion: mandate.version,
@@ -338,10 +363,10 @@ export class StrategyService {
     }
   }
   private async buyQuantity(owner: string, profile: BuilderProfile, maxPositionPct: number,
-    snapshot: TradingMarketSnapshot, heldShares: number, maxOrderPct = 100): Promise<number> {
+    snapshot: TradingMarketSnapshot, heldShares: number, accountId: string, maxOrderPct = 100): Promise<number> {
     if (!snapshot.currency || !snapshot.price || !snapshot.market) return 0;
-    const account = await requireActivePaperAccount(this.db, owner);
-    const overview = await this.paper.getOverview(owner);
+    const account = await requireActivePaperAccount(this.db, owner, accountId);
+    const overview = await this.paper.getOverview(owner, account.id);
     const fx = await this.fx.convert(1, snapshot.currency, 'USD');
     if (!Number.isFinite(fx) || fx <= 0) return 0;
     const equity = Number(overview.equity);
@@ -364,8 +389,8 @@ export class StrategyService {
       budgetUsd: budget, cashUsd: availableCash * (account.ledgerMode === 'native_currency' ? fx : 1),
       lotSize: snapshot.lotSize, feeBps: account.executionModel?.feeBps, slippageBps: account.executionModel?.slippageBps });
   }
-  private async sellableQuantity(owner: string, ticker: string, market: Market, held: number, lotSize?: number | null): Promise<number> {
-    const account = await requireActivePaperAccount(this.db, owner);
+  private async sellableQuantity(owner: string, ticker: string, market: Market, held: number, accountId: string, lotSize?: number | null): Promise<number> {
+    const account = await requireActivePaperAccount(this.db, owner, accountId);
     const [position] = await this.db.select().from(paperPositions).where(and(eq(paperPositions.owner, owner),
       eq(paperPositions.accountId, account.id), eq(paperPositions.ticker, ticker)));
     const orders = market === 'CN' ? await this.db.select().from(paperOrders).where(and(eq(paperOrders.owner, owner),
@@ -377,11 +402,11 @@ export class StrategyService {
       .reduce((sum, order) => sum + Number(order.quantity), 0);
     return sizeStrategySell(ticker, market, Math.min(held, Number(position?.shares ?? 0)), Number(position?.restrictedShares ?? 0), bought, lotSize);
   }
-  private async monitorProtections(owner: string, profile: BuilderProfile): Promise<void> {
-    const account = await requireActivePaperAccount(this.db, owner);
+  private async monitorProtections(owner: string, profile: BuilderProfile, accountId: string): Promise<void> {
+    const account = await requireActivePaperAccount(this.db, owner, accountId);
     const [policy] = await this.db.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, account.id)));
     const previous = await this.store.runtime(owner, profile);
-    for (const protection of await this.store.protections(owner)) {
+    for (const protection of await this.store.protections(owner, account.id)) {
       if (protection.accountId !== account.id) continue;
       const market = protection.market as Market;
       const checkedAt = previous.markets.find((item) => item.market === market)?.lastCheckAt;
@@ -394,12 +419,15 @@ export class StrategyService {
       }
       const snapshot = await this.market.getSnapshot(protection.ticker);
       if (!snapshot.quoteUsable || !snapshot.price || !snapshot.quoteTimestamp || snapshot.price > Number(protection.stopLossPrice)) continue;
-      const quantity = await this.sellableQuantity(owner, protection.ticker, market, Math.floor(Number(position.shares)), snapshot.lotSize);
+      const quantity = await this.sellableQuantity(owner, protection.ticker, market, Math.floor(Number(position.shares)), account.id, snapshot.lotSize);
       if (quantity <= 0) continue;
       const [plan] = await this.db.select().from(strategyPlans).where(and(eq(strategyPlans.owner, owner), eq(strategyPlans.id, protection.planId)));
       const rule = plan?.rules.find((item) => item.id === protection.ruleId);
       if (!plan || !rule) continue;
       const candidate: StrategyCandidate = { signalId: randomUUID(), planId: plan.id, planVersion: plan.version,
+        userStrategyId: rule.userStrategyId, userStrategyRevision: rule.userStrategyRevision, userEntryId: rule.userEntryId,
+        userStrategySnapshotHash: rule.userStrategySnapshotHash, allocationPct: rule.allocationPct,
+        ...(rule.userStrategyId ? { mandateId: plan.mandateId ?? undefined, mandateVersion: plan.mandateVersion ?? undefined } : {}),
         ruleId: protection.ruleId, ticker: protection.ticker, market, side: 'sell', quantity, price: snapshot.price,
         quoteAt: snapshot.quoteTimestamp, protectiveStop: true, protectionId: protection.id,
         protectionVersion: protection.version, reason: 'Protective stop loss', accountId: account.id,
@@ -418,7 +446,7 @@ export class StrategyService {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
       const [current] = await tx.select().from(strategyMandates).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.id, mandate.id))).for('update');
-      if (!current || current.status !== 'published' || current.config.userStrategyId !== rule.userStrategyId || current.config.parentPolicyRevision !== policy.revision) return false;
+      if (!current || current.status !== 'published' || !current.config.rules.some(item => item.id === rule.id && item.userStrategyId === rule.userStrategyId && item.userStrategyRevision === rule.userStrategyRevision) || current.config.parentPolicyRevision !== policy.revision) return false;
       const config = { ...current.config, rules: current.config.rules.map(item => item.id === rule.id ? { ...item, security } : item) };
       await tx.update(strategyMandates).set({ config }).where(eq(strategyMandates.id, current.id));
       return true;
@@ -427,12 +455,12 @@ export class StrategyService {
   private async reviewAndExecute(owner: string, profile: BuilderProfile, candidate: StrategyCandidate,
     snapshot: TradingMarketSnapshot, rule: StrategyRule): Promise<string> {
     try {
-      const account = await requireActivePaperAccount(this.db, owner);
+      const account = await requireActivePaperAccount(this.db, owner, candidate.accountId);
       if (!await this.stillActive(owner, profile, candidate.accountId)) throw new Error('Account changed');
       const mandate = candidate.mandateId && this.mandates ? await this.mandates.get(owner, candidate.mandateId) : null;
       const sources = mandate && this.mandates ? await this.mandates.evidence(owner, mandate, rule.evidenceIds) : [];
       if (candidate.side === 'buy' && sources.some(source => source.status !== 'valid' || source.sourceStatus !== 'available')) throw new Error('Research source unavailable');
-      const overview = await this.paper.getOverview(owner);
+      const overview = await this.paper.getOverview(owner, account.id);
       let route: 'direct' | 'ai' | 'council' | 'blocked' = candidate.protectiveStop ? 'direct' : 'ai';
       let routeStatistics: Pick<StrategyRouteDecision, 'postTradeExposurePct' | 'accumulatedIncreasePct'> = { postTradeExposurePct: null, accumulatedIncreasePct: null };
       let routeReason = candidate.protectiveStop ? 'Authorized protective exit' : 'Legacy strategy review';
@@ -444,6 +472,7 @@ export class StrategyService {
         const unit = execution.price * rate;
         const portfolioSnapshot = await readPortfolioRiskSnapshot(this.db, owner, account.id, this.market, this.fx);
         const portfolioRisk = evaluatePortfolioRisk(portfolioSnapshot, mandate.config, candidate, unit, execution.fee * rate);
+        const allocationBlock = await investorAllocationBlock(this.db, owner, account.id, candidate, mandate.config, portfolioSnapshot);
         const exposure = await mandateExposure(this.db, owner, account.id, candidate, mandate.config, portfolioSnapshot.equityUsd ?? 0, unit);
         const authority = mandate.config.rules.find(r => r.id === rule.id);
         reservedExecutionTaskId = (authority as AutonomousMandateRule | undefined)?.executionTaskId;
@@ -452,7 +481,7 @@ export class StrategyService {
         const decision = routeStrategyCandidate({ ...exposure,
           hardBlock: !snapshot.quoteUsable || !snapshot.schedule.isOpen ? 'Market or quote is not executable'
             : mandate.status !== 'published' || mandate.accountId !== account.id ? 'Mandate is not active'
-            : candidate.side === 'buy' && overview.circuitBreakerActive ? 'Daily risk limit blocks new exposure' : portfolioRisk.hardBlock,
+            : candidate.side === 'buy' && overview.circuitBreakerActive ? 'Daily risk limit blocks new exposure' : allocationBlock ?? portfolioRisk.hardBlock,
           side: candidate.side, protectiveStop: candidate.protectiveStop,
           deterministic: authority?.reviewMode !== 'ai', semanticCondition: authority?.semanticCondition ?? '',
           conflict: requiresFirstBuyCouncil || Boolean(portfolioRisk.councilReason) || (this.mandates ? await this.mandates.hasResearchConflict(owner, mandate, rule.evidenceIds) : true),

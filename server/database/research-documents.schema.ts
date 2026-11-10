@@ -17,6 +17,7 @@ export const researchDocumentVersions = pgTable('research_document_versions', {
   source: jsonb('source').$type<ReportSource | null>(), snapshot: jsonb('snapshot').$type<ResearchInputSnapshot | null>(),
   dataAsOf: timestamp('data_as_of', { withTimezone: true, mode: 'date' }), availableAt: timestamp('available_at', { withTimezone: true, mode: 'date' }),
   parentVersionId: uuid('parent_version_id'), changeReason: text('change_reason'), revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'date' }), revocationReason: text('revocation_reason'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'date' }),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, table => [uniqueIndex('research_versions_number_idx').on(table.reportId, table.version), uniqueIndex('research_versions_key_idx').on(table.owner, table.idempotencyKey),
   index('research_versions_owner_idx').on(table.owner, table.reportId)]);

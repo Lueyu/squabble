@@ -1,7 +1,11 @@
 import http from './http';
+import type { DeleteResearchDocumentVersionInput, ResearchDeletionResult } from '@shared/research-deletion.interface';
 import type { ReportReference, ReportSource, ResolvedReportReference, ResearchDocumentVersion, ResearchDocumentView, ResearchRevisionDraft, ResearchRevisionInput, ResearchDocumentIndex, ResearchDocumentIndexQuery } from '@shared/research-document.interface';
 
 const root = '/api/research-documents';
+export async function deleteResearchDocumentVersion(id: string, input: DeleteResearchDocumentVersionInput): Promise<ResearchDeletionResult> {
+  return (await http.post<ResearchDeletionResult>(`${root}/versions/${encodeURIComponent(id)}/delete`, input)).data;
+}
 export async function fetchResearchDocuments(query: ResearchDocumentIndexQuery = {}): Promise<ResearchDocumentIndex> {
   return (await http.get<ResearchDocumentIndex>(root, { params: query })).data;
 }

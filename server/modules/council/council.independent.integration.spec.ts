@@ -25,7 +25,7 @@ test('independent submissions stay blind in actual execution, persist, and relea
   const client = postgres(url!, { max: 6, onnotice: () => {}, connection: { search_path: namespace } });
   try {
     await admin`CREATE SCHEMA ${admin(namespace)}`;
-    for (const file of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && Number(name.slice(0, 2)) <= 34).sort()) {
+    for (const file of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && (Number(name.slice(0, 2)) <= 34 || name.startsWith('49_'))).sort()) {
       try { await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8')); }
       catch (error) { throw new Error(`Migration ${file}`, { cause: error }); }
     }

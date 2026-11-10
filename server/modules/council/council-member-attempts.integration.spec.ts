@@ -18,7 +18,7 @@ test('durable member claims enforce concurrent limits, preserve neighbors and fe
   const client = postgres(process.env.COUNCIL_TEST_DATABASE_URL!, { max: 8, onnotice: () => {}, connection: { search_path: namespace } });
   try {
     await admin`CREATE SCHEMA ${admin(namespace)}`;
-    for (const name of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && Number(name.slice(0, 2)) <= 34).sort()) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
+    for (const name of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && (Number(name.slice(0, 2)) <= 34 || name.startsWith('49_'))).sort()) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     const owner = randomUUID(); await client`INSERT INTO users(id,username,password_hash) VALUES(${owner},'attempt-fixture','test')`;
     const members = ['one','two','three'].map((id,index) => ({ id, name: id, role: index === 2 ? 'manager' as const : 'researcher' as const, model: 'fast' as const, instructions: '' }));
     const checkpoint = newCheckpoint(members, { independent: true });

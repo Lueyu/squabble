@@ -51,10 +51,10 @@ test('historical reader preserves public evidence and next-evidence sections wit
   assert.match(html,/Public supporting fact/u);assert.match(html,/Check the next filing/u);
   assert.doesNotMatch(html,/PRIVATE_RAW_PAYLOAD|PRIVATE_LEDGER_PAYLOAD/u);
 });
-test('analysis exposes saved report history with date and topic filters',()=>{
+test('portfolio research retains an explicit historical reading link without embedding the history list',()=>{
   state.queries.set('research-document-index',{data:{items:[],topics:[],total:0}});
   const html=render(load('pages/Analysis/SimpleAnalysisPage.tsx').default);
-  assert.match(html,/Report history/);assert.match(html,/Report topic/);assert.match(html,/Report date/);
+  assert.match(html,/View report history/);assert.match(html,/href="\/analysis\?topic=portfolio"/);assert.doesNotMatch(html,/Report topic|id="report-history"/);
 });
 test('the Today report panel names the latest report and keeps its exact discussion reference',()=>{
   const Panel=load('pages/Today/CurrentAnalysisPanel.tsx').default;

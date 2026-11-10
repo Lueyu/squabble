@@ -72,7 +72,15 @@ export function strategyTriggerMatches(rule: StrategyRule, price: number,
     const d = rule.userDirective;
     if (now.getTime() < Date.parse(d.startsAt) || now.getTime() >= Date.parse(d.endsAt)) return false;
     if (d.trigger.kind === 'always' || d.trigger.kind === 'semantic') return true;
-    return d.trigger.kind === 'price_lte' ? price <= Number(d.trigger.price) : price >= Number(d.trigger.price);
+    const threshold = Number(d.trigger.price);
+    if (!Number.isFinite(threshold)) return false;
+    switch (d.trigger.kind) {
+      case 'price_lt': return price < threshold;
+      case 'price_lte': return price <= threshold;
+      case 'price_gt': return price > threshold;
+      case 'price_gte': return price >= threshold;
+      default: return false;
+    }
   }
   const value = rule.trigger.value;
   switch (rule.trigger.kind) {

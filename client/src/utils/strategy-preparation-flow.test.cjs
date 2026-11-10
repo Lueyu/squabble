@@ -8,7 +8,7 @@ const fixture=require('./simple-test-loader.cjs');
 const content={title:'Watchlist',body:'',timezone:'Asia/Shanghai',startsAt:'2026-11-06T00:00:00Z',endsAt:'2026-11-13T15:59:59Z',entries:[{id:'watch',text:'持续监控FICT，寻找加仓机会',sourceKeys:[]}]};
 const draft={id:'watch-draft',revision:1,status:'draft',parentId:null,content,sources:[],preview:null,confirmedAt:null};
 const ready={...draft,preview:{canConfirm:true,revision:1,contentHash:'watch-only-hash',entries:[{id:'watch',state:'observation',startsAt:content.startsAt,endsAt:content.endsAt,timezone:content.timezone,explanation:{en:'Observation only; no automatic trades.','zh-CN':'仅观察，不自动买卖。'}}],directives:[],mandateRules:[],issues:[]}};
-async function scenario(status,run,{item=draft,setup=()=>{}}={}){
+async function scenario(status,run,{item=draft,setup=()=>{},onReviewed}={}){
  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/'}),previous={window:global.window,document:global.document,act:global.IS_REACT_ACT_ENVIRONMENT};
  global.window=dom.window;global.document=dom.window.document;global.IS_REACT_ACT_ENVIRONMENT=true;
  const root=createRoot(document.getElementById('root'));
@@ -18,7 +18,7 @@ async function scenario(status,run,{item=draft,setup=()=>{}}={}){
   f.state.responses=new Map([['/api/investment-strategies/watch-draft/preparation',status],['/api/investment-strategies/watch-draft',draft],['/api/investment-strategies/watch-draft/preview',ready],['/api/investment-strategies/watch-draft/prepare',ready]]);
   setup(f);
   const Editor=f.load('features/investment-strategies/InvestmentStrategyEditor.tsx').default;
-  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:structuredClone(item),currentId:null,timezone:content.timezone,investment:{account:{id:'paper'},policy:{id:'policy'}},onChanged(){},onClose(){}}))));
+  await React.act(async()=>root.render(React.createElement(MemoryRouter,null,React.createElement(Editor,{item:structuredClone(item),currentId:null,timezone:content.timezone,investment:{account:{id:'paper'},policy:{id:'policy'}},onChanged(){},onClose(){},onReviewed}))));
   const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
   await run({f,button,dom});
  }finally{await React.act(async()=>root.unmount());dom.window.close();Object.assign(global,{window:previous.window,document:previous.document,IS_REACT_ACT_ENVIRONMENT:previous.act});}
@@ -144,4 +144,16 @@ test('an existing stale explanation can be rechecked without another model call'
   const posts=f.state.requests.filter(r=>r.method==='post');assert.equal(posts.length,1);assert.match(posts[0].args[0],/\/preview$/);
   assert.equal(button('Review and apply to simulation').disabled,false);
  },{item:ready});
+});
+
+
+test('reviewing for an account combination stages the saved strategy without invoking global apply',async()=>{
+ let staged=null;
+ await scenario({status:'none'},async({f,button})=>{
+  const save=button('Save to combination draft');assert.ok(save);
+  await React.act(async()=>save.click());
+  assert.equal(staged?.id,ready.id);
+  assert.equal(staged?.revision,ready.revision);
+  assert.equal(f.state.requests.filter(request=>request.method==='post').length,0,'review callback must not activate global policy');
+ },{item:ready,onReviewed:async strategy=>{staged=strategy;}});
 });

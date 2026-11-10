@@ -155,9 +155,13 @@ migration logs, `GET /api/health`, `GET /api/auth/mode` and loading existing
 workspace/report/strategy data. Health proves app/DB readiness, not provider
 connectivity or data completeness. Use read-only pages with no automatic
 research trigger; opening the Today research entry can schedule work.
-Do not infer read-only behavior from GET: `GET /api/channel` calls interrupted
-supplement recovery and can initialize preferences/persona memories. Use verified
-read-only queries or existing captured responses for strict no-mutation inspection. Do not
+Do not infer read-only behavior from GET alone. In the current workspace,
+`GET /api/channel` reads stored preferences and supplement status without recovery
+or initialization; account selection only changes that read projection. Opening
+the channel UI can still acknowledge notifications, and explicit questions/actions
+write state. Application bootstrap also applies migrations and runs recovery and
+background services. Use verified read-only queries or existing captured responses
+for strict no-mutation inspection. Do not
 start research, publish channel content, confirm a strategy, submit an order or
 reconnect paid agents as an upgrade smoke test. Observe durable interrupted-task
 handling without replay. Record the release and read-only verification result.
@@ -209,3 +213,11 @@ Ignored `tmp/` scripts, ad hoc launchers and old chat snippets can contain
 machine-specific paths, credentials or stale PIDs. Never replay them as a
 deployment procedure. Read only the necessary non-secret behavior and replace
 it with reviewed commands derived from the current verified instance.
+
+## Portfolio-workspace schema compatibility
+
+The portfolio workspace introduces migration `45_portfolio_workspace.sql` and a compatibility change to historical `42_user_strategy_runtime.sql`. Ship the complete registered migration directory and synchronized `01_schema.sql`; do not copy only migration 45. Startup replays historical files. Scoped definitions retain the old account/profile index names, and migration 42 recognizes portfolio authority so a later startup does not restore singletons or pause/cancel confirmed combinations. Backfill only maps unambiguous active published profile versions and never reactivates archived accounts.
+
+Before an authorized release, verify a disposable fresh install, a legacy upgrade and a second complete startup after creating two independently running accounts. Read-only comparison and account selection are useful UI checks, but account detail can establish a missing baseline and application bootstrap can run migrations/schedulers. Do not describe those operations as read-only probes. A pre-workspace binary assumes owner singletons: rollback requires the matching pre-upgrade database backup or a separately validated data-compatible release, not simply launching old code over multi-account data. Preserve private data and the exact prior backup until recovery is verified.
+
+Research deletion adds migration49, receipt storage and tombstone columns/triggers. Ship the complete synchronized migration set; startup must not clear tombstones or rebuild deleted legacy archives. Verify completed, inactive and provider-uncertain research separately before cutover; pending report revisions are also paid work. The old binary lacks deletion-aware reads and final source fences, so once records have been deleted it is not a validated rollback target over that database. Restore the matched backup into a separate database and preserve any newer state for reconciliation if rollback is necessary. Deployment smoke tests read existing reports/tasks and native readiness; test deletion only against fictional records in a disposable instance.

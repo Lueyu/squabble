@@ -1,6 +1,6 @@
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { isNull, and, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilMessages, councilSessions } from '../../database/council.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
@@ -23,7 +23,7 @@ export class CouncilWorkflowStore {
   async initialize(row: Session, plans: TaskPlan[], skills: (key: ResearchTaskKind) => ResearchSkillPin[]): Promise<void> {
     await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, row.owner);
-      const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
+      const [current] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       if (current?.revision !== row.revision || current.status !== 'running' || current.checkpoint?.cycleId !== row.checkpoint?.cycleId) return;
       await tx.insert(councilResearchTasks).values(plans.map(plan => ({ ...plan, owner: row.owner, sessionId: row.id,
         cycleId: row.checkpoint!.cycleId, revision: row.revision, skills: skills(plan.key) }))).onConflictDoNothing();
@@ -38,7 +38,7 @@ export class CouncilWorkflowStore {
   async rebase(owner: string, row: Session, selected?: ResearchTaskKind[]): Promise<void> {
     await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, row.owner);
-      const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, row.id))).for('update');
+      const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, row.id))).for('update');
       if (session?.revision !== row.revision || session.status !== 'running') return;
       const tasks = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner),
         eq(councilResearchTasks.sessionId, row.id), eq(councilResearchTasks.cycleId, row.checkpoint!.cycleId))).for('update');
@@ -55,7 +55,7 @@ export class CouncilWorkflowStore {
   async claim(row: Session, task: ResearchTask, kind: 'work' | 'review'): Promise<ResearchTaskAttempt | null> {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, row.owner);
-      const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
+      const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       if (session?.status !== 'running' || session.revision !== row.revision || session.checkpoint?.cycleId !== task.cycleId) return null;
       const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.id, task.id))).for('update');
       if (!current || current.revision !== row.revision || !(kind === 'review' ? ['submitted'] : ['queued', 'needs_revision']).includes(current.state)) return null;
@@ -72,7 +72,7 @@ export class CouncilWorkflowStore {
   async markRemote(row: Session, task: ResearchTask, attemptId: string, patch: Partial<ResearchTaskAttempt>, dispatch = false): Promise<void> {
     await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, row.owner);
-      const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
+      const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.id, task.id))).for('update');
       if (!current || !current.attempts.some(a => a.id === attemptId)) throw new Error('LOCAL_PAUSED');
       if (dispatch && (session?.revision !== row.revision || session.status !== 'running' || session.checkpoint?.cycleId !== task.cycleId
@@ -87,7 +87,7 @@ export class CouncilWorkflowStore {
   }): Promise<boolean> {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, row.owner);
-      const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
+      const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.id, task.id))).for('update');
       if (!current) return false;
       const fresh = session?.status === 'running' && session.revision === row.revision && session.checkpoint?.cycleId === task.cycleId

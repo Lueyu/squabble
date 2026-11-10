@@ -1,4 +1,8 @@
 import http from './http';
+import type { DeleteResearchConversationInput, ResearchDeletionResult } from '@shared/research-deletion.interface';
+
+export const deleteResearchConversation = async (id: string, input: DeleteResearchConversationInput): Promise<ResearchDeletionResult> =>
+  (await http.post<ResearchDeletionResult>(`/api/research-conversations/${encodeURIComponent(id)}/delete`, input)).data;
 import type { CreateResearchConversationInput, ResearchConversationMessageInput, ResearchConversationView, ResearchConversationResult, ResumeDailyReportInput } from '@shared/simple-conversation.interface';
 import type { ResearchExecutionReadiness, ResearchRecoveryInput } from '@shared/research-execution.interface';
 import type { NativeAgentConfiguration } from '@shared/local-agents.interface';

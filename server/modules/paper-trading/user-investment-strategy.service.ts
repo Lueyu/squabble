@@ -75,22 +75,18 @@ export class UserInvestmentStrategyService {
     if (!row) throw new NotFoundException('Strategy not found'); return row;
   }
   async get(owner: string, id: string): Promise<UserInvestmentStrategy> { return map(await this.row(this.db, owner, id)); }
-  /**
-   * Delete a strategy that is not the one currently applied. Drafts and historical
-   * confirmed strategies can be removed; the active simulation authority cannot,
-   * so execution state is never orphaned.
-   */
+  /** Confirmed authority is durable history; draft removal is a reversible tombstone. */
   async remove(owner: string, id: string): Promise<{ success: true }> {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
-      await this.row(tx, owner, id, true);
+      const row = await this.row(tx, owner, id, true);
+      if (row.status === 'confirmed') throw new ConflictException('CONFIRMED_STRATEGY_HISTORY_IMMUTABLE');
       const [pointer] = await tx.select().from(current).where(eq(current.owner, owner)).for('update');
       if (pointer?.strategyId === id) {
         throw new ConflictException('Cannot delete the strategy currently applied to the simulation. Apply another strategy or pause first.');
       }
-      await tx.delete(preparations).where(and(eq(preparations.owner, owner), eq(preparations.strategyId, id)));
-      await tx.delete(revisions).where(and(eq(revisions.owner, owner), eq(revisions.strategyId, id)));
-      await tx.delete(strategies).where(and(eq(strategies.id, id), eq(strategies.owner, owner)));
+      await tx.update(strategies).set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(strategies.id, id), eq(strategies.owner, owner)));
       return { success: true as const };
     });
   }
@@ -139,6 +135,26 @@ export class UserInvestmentStrategyService {
       const [row] = await tx.insert(strategies).values({ owner, content, parentId: parent?.id, sources }).returning();
       await this.saveRevision(tx, row); return map(row);
     });
+  }
+  /** Interview authoring shares the caller's owner fence and commits its saved preview atomically. */
+  async createInterviewPreviewInTransaction(tx: UserStrategyTransaction, owner: string, input: StrategyDraftInput, parentId?: string): Promise<UserInvestmentStrategy> {
+    const content = this.normalize(input);
+    const parent = parentId ? await this.row(tx, owner, parentId) : null;
+    const sources = parent?.sources ?? [];
+    this.assertSourceKeys(content, sources);
+    const [written] = await tx.insert(strategies).values({ owner, content, parentId: parent?.id, sources }).returning();
+    const preview = previewStrategy(written.content, written.sources, written.revision);
+    const [saved] = await tx.update(strategies).set({ preview }).where(eq(strategies.id, written.id)).returning();
+    await this.saveRevision(tx, saved);
+    return map(saved);
+  }
+  /** Changed interview answers invalidate a previously materialized draft, never immutable confirmations. */
+  async invalidateInterviewPreviewInTransaction(tx: UserStrategyTransaction, owner: string, id: string, expectedRevision: number): Promise<void> {
+    const previous = await this.row(tx, owner, id, true, true);
+    if (previous.status !== 'draft' || previous.revision !== expectedRevision || previous.deletedAt) return;
+    const [saved] = await tx.update(strategies).set({ preview: null, revision: previous.revision + 1, updatedAt: new Date() })
+      .where(eq(strategies.id, id)).returning();
+    await this.saveRevision(tx, saved);
   }
   private assertSourceKeys(content: StrategyDraftInput, sources: StrategySourceSnapshot[]) {
     if (content.entries.some(entry => entry.sourceKeys.some(key => !sources.some(source => source.key === key)))) throw new BadRequestException('Unknown strategy source');
@@ -207,7 +223,7 @@ export class UserInvestmentStrategyService {
         ticker: version.ticker, createdAt: version.createdAt, capturedAt, ...(executionPlan ? { executionPlan } : {}) };
     }
     const [row] = await tx.select({ message: councilMessages, session: councilSessions }).from(councilMessages)
-      .innerJoin(councilSessions, and(eq(councilSessions.id, councilMessages.sessionId), eq(councilSessions.owner, owner)))
+      .innerJoin(councilSessions, and(eq(councilSessions.id, councilMessages.sessionId), eq(councilSessions.owner, owner), isNull(councilSessions.deletedAt)))
       .where(and(eq(councilMessages.owner, owner), eq(councilMessages.id, source.messageId))).for('share');
     if (!row) throw new NotFoundException('Discussion message not found');
     const message = row.message;
@@ -331,7 +347,8 @@ export class UserInvestmentStrategyService {
     try {
       const output = await this.model.json(owner, undefined, randomUUID(), 'user-strategy-preview',
         'Prepare an editable PAPER strategy explanation, never orders. Return {entries:[{id,directive}]} with the existing entry ids only. ' +
-        'directive schema: {ticker,side:"buy"|"sell",trigger:{kind:"price_lte"|"price_gte"|"always"|"semantic",price?,text?},quantity? or positionPct?,minPrice?,maxPrice?,stopLossPrice?,reviewedText,numericEvidence:[{field,value,quote}]}. ' +
+        'directive schema: {ticker,side:"buy"|"sell",trigger:{kind:"price_lt"|"price_lte"|"price_gt"|"price_gte"|"always"|"semantic",price?,text?},quantity? or positionPct?,minPrice?,maxPrice?,stopLossPrice?,reviewedText,numericEvidence:[{field,value,quote}]}. ' +
+        'Preserve strict versus inclusive comparisons exactly: below means price_lt; at or below means price_lte. Never choose execution frequency; only an existing explicitly selected frequency may be preserved. ' +
         'Use exact existing text as reviewedText. For EVERY numeric field supply an exact quote from that entry containing the same numeric token. ' +
         'positionPct means TOTAL account exposure after the trade, never the incremental amount of the order. Extract it only for an explicit total target. ' +
         'Phrases such as increase by 5% are ambiguous increments: preserve them as observation unless an explicit share quantity or total target is supplied. ' +
@@ -346,7 +363,8 @@ export class UserInvestmentStrategyService {
       const content = this.normalize({ ...row.content, entries: row.content.entries.map(entry => {
         const candidate = extracted.entries.find(item => item.id === entry.id)?.directive;
         if (!candidate) return { ...entry, directive: undefined, mandateRule: undefined };
-        return { ...entry, directive: { ...candidate, semanticAuthorized: entry.directive?.semanticAuthorized === true && entry.directive.trigger.text === (candidate.trigger as { text?: string } | undefined)?.text } };
+        return { ...entry, directive: { ...candidate, executionFrequency: entry.directive?.reviewedText === entry.text ? entry.directive.executionFrequency : undefined,
+          semanticAuthorized: entry.directive?.semanticAuthorized === true && entry.directive.trigger.text === (candidate.trigger as { text?: string } | undefined)?.text } };
       }) });
       return await this.db.transaction(async tx => {
         await lockMemoryOwner(tx, owner); const previous = await this.row(tx, owner, id, true); this.assertDraft(previous, expectedRevision);
@@ -364,6 +382,33 @@ export class UserInvestmentStrategyService {
       await this.db.update(preparations).set({ status: 'failed', result }).where(and(eq(preparations.owner, owner), eq(preparations.requestKey, requestKey)));
       throw error;
     }
+  }
+  /** Read/revalidate account authority without changing the legacy owner selection pointer. */
+  async accountSnapshot(tx: UserStrategyTransaction, owner: string, id: string, revision: number,
+    confirm = false): Promise<ConfirmedInvestmentStrategy> {
+    const row = await this.row(tx, owner, id, true);
+    if (row.revision !== revision) throw new ConflictException('STRATEGY_REVISION_CHANGED');
+    const preview = previewStrategy(row.content, row.sources, row.revision);
+    if (!row.preview || row.preview.contentHash !== strategyContentHash(row.content, row.sources)
+      || !preview.canConfirm) throw new ConflictException('STRATEGY_REVIEW_REQUIRED');
+    for (const source of row.sources) {
+      if (source.kind === 'report' && source.versionId) {
+        await this.documents.assertExecutionSourcesInTransaction(tx, owner,
+          [{ versionId: source.versionId, ...(source.sectionId ? { sectionId: source.sectionId } : {}) }], new Date());
+      } else if (source.kind === 'message' && source.messageId) {
+        const latest = await this.resolveSource(tx, owner, { kind: 'message', messageId: source.messageId });
+        if (latest.contentHash !== source.contentHash) throw new ConflictException('PINNED_DISCUSSION_CHANGED');
+      }
+    }
+    // A preview's proposed confirmation timestamp is excluded from the combination hash.
+    const confirmedAt = row.confirmedAt ?? new Date();
+    const snapshot = map({ ...row, status: 'confirmed', preview, confirmedAt,
+      updatedAt: confirm && row.status === 'draft' ? confirmedAt : row.updatedAt }) as ConfirmedInvestmentStrategy;
+    if (confirm && row.status === 'draft') {
+      await tx.update(strategies).set({ status: 'confirmed', preview, confirmedAt, updatedAt: new Date() })
+        .where(and(eq(strategies.owner, owner), eq(strategies.id, id)));
+    }
+    return snapshot;
   }
   /** Caller supplies the existing policy activation and candidate invalidation inside this SAME transaction. */
   async confirmInTransaction(tx: UserStrategyTransaction, owner: string, id: string, expectedRevision: number, expectedPreviewHash: string,

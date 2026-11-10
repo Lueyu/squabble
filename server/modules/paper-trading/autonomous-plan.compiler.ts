@@ -58,13 +58,13 @@ export class AutonomousPlanCompiler {
       const [unexpired] = await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.id, foundCycle.policyId))).for('update');
       if (!unexpired) throw new ConflictException('INVESTMENT_POLICY_MISSING');
       const policy = await expireInvestmentConstraints(tx, unexpired);
-      if (policy.baseConfig.userStrategy) throw new ConflictException('USER_STRATEGY_CANNOT_BE_REPLACED_BY_AUTONOMOUS_RESEARCH');
+      if (policy.baseConfig.userStrategy || policy.baseConfig.portfolio !== undefined) throw new ConflictException('USER_STRATEGY_CANNOT_BE_REPLACED_BY_AUTONOMOUS_RESEARCH');
       const [cycle] = await tx.select().from(investmentCycles).where(eq(investmentCycles.id, cycleId)).for('update');
       if (!account?.isActive || !account.botEnabled || policy.status !== 'running' || policy.revision !== cycle.policyRevision
         || cycle.state !== 'researching' || cycle.leaseToken !== leaseToken || !cycle.leaseUntil || cycle.leaseUntil.getTime() <= Date.now()) throw new ConflictException('INVESTMENT_POLICY_OR_LEASE_CHANGED');
       const [profile] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.id, profileId))).for('update');
       if (!profile) throw new ConflictException('INVESTMENT_RESEARCH_TEAM_CHANGED');
-      if (profile.status === 'paused') throw new ConflictException('INVESTMENT_RESEARCH_TEAM_CHANGED');
+      if (profile.status === 'paused' || profile.accountId && profile.accountId !== account.id) throw new ConflictException('INVESTMENT_RESEARCH_TEAM_CHANGED');
       const [current] = await tx.select().from(strategyMandates).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, account.id), eq(strategyMandates.status, 'published'))).for('update');
       const existing = (current?.config as AutonomousMandateInput | undefined)?.rules ?? [];
       const rules = mergeAutonomousRules(existing, incoming, cycle.market as Market);
@@ -84,8 +84,8 @@ export class AutonomousPlanCompiler {
       await tx.update(strategyPlans).set({ status: 'superseded' }).where(and(eq(strategyPlans.owner, owner), eq(strategyPlans.accountId, account.id), eq(strategyPlans.status, 'active')));
       const [mandate] = await tx.insert(strategyMandates).values({ owner, accountId: account.id, profileId, profileVersion: profile.version,
         parentPolicyId: policy.id, parentPolicyRevision: policy.revision, cycleId, parentId: current?.id, version: (current?.version ?? 0) + 1, status: 'published', config, publishedAt: new Date() }).returning();
-      await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active'), ne(builderProfiles.id, profileId)));
-      await tx.update(builderProfiles).set({ status: 'active', updatedAt: new Date() }).where(eq(builderProfiles.id, profileId));
+      await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.accountId, account.id), eq(builderProfiles.status, 'active'), ne(builderProfiles.id, profileId)));
+      await tx.update(builderProfiles).set({ status: 'active', accountId: account.id, updatedAt: new Date() }).where(eq(builderProfiles.id, profileId));
       await tx.update(investmentCycles).set({ state: 'completed', mandateId: mandate.id, result: { ...cycle.result, ruleCount: incoming.length }, updatedAt: new Date() }).where(eq(investmentCycles.id, cycleId));
       for (const ref of references) await this.documents.recordStrategyUseInTransaction(tx, owner, ref.versionId, mandate.id);
       return mandate;

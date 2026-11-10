@@ -1,5 +1,6 @@
+import { requireActivePaperAccount } from './simulation-account';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperAccounts, paperOrders, paperPositions } from '../../database/schema';
@@ -166,7 +167,7 @@ export class StrategyMandateService {
     const [account] = await this.db.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, config.accountId)));
     if (!account) throw new NotFoundException('Paper account not found');
     if (config.sourceSessionId) {
-      const [session] = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, config.sourceSessionId)));
+      const [session] = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, config.sourceSessionId)));
       if (!session) throw new NotFoundException('Research discussion not found');
     }
     const [row] = await this.db.insert(strategyMandates).values({ owner, accountId: config.accountId, profileId: config.profileId,
@@ -178,7 +179,7 @@ export class StrategyMandateService {
     if (config.accountId !== previous.accountId || config.profileId !== previous.profileId) throw new BadRequestException('Create a new draft to change the account or agent');
     await this.documents.resolveReferences(owner, config.references);
     if (config.sourceSessionId) {
-      const [session] = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, config.sourceSessionId)));
+      const [session] = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, config.sourceSessionId)));
       if (!session) throw new NotFoundException('Research discussion not found');
     }
     const [row] = await this.db.update(strategyMandates).set({ config, revision: previous.revision + 1, updatedAt: new Date() })
@@ -248,6 +249,13 @@ export class StrategyMandateService {
       await this.documents.assertExecutionSourcesInTransaction(tx, owner, config.references, new Date());
       const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, draft.accountId))).for('update');
       const [profile] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.id, draft.profileId))).for('update');
+      if (profile?.accountId && profile.accountId !== account?.id) throw new ConflictException('PROFILE_ACCOUNT_MISMATCH');
+      const otherAuthority = profile ? await tx.select({ id: strategyMandates.id }).from(strategyMandates)
+        .innerJoin(paperAccounts, and(eq(paperAccounts.id, strategyMandates.accountId), eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true)))
+        .where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.profileId, profile.id),
+          eq(strategyMandates.profileVersion, profile.version), eq(strategyMandates.status, 'published'),
+          ne(strategyMandates.accountId, draft.accountId))).limit(1) : [];
+      if (otherAuthority.length) throw new ConflictException('PROFILE_ACCOUNT_MISMATCH');
       if (!account?.isActive || !profile || profile.version !== draft.profileVersion || selected.version !== profile.version
         || !activateExecution && (!account.botEnabled || profile.status !== 'active' || !(profile.config as BuilderProfile['config']).automation?.enabled)) {
         throw new BadRequestException('The selected account or agent changed. Reload and review before publishing.');
@@ -266,9 +274,9 @@ export class StrategyMandateService {
       let publishedProfileVersion = profile.version;
       if (activateExecution) {
         await tx.update(builderProfiles).set({ status: 'paused', version: sql`${builderProfiles.version} + 1`, updatedAt: new Date() })
-          .where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active'), sql`${builderProfiles.id} <> ${profile.id}`));
+          .where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.status, 'active'), eq(builderProfiles.accountId, account.id), sql`${builderProfiles.id} <> ${profile.id}`));
         if (JSON.stringify(profile.config) !== JSON.stringify(executionConfig)) publishedProfileVersion++;
-        await tx.update(builderProfiles).set({ status: 'active', config: executionConfig, version: publishedProfileVersion, updatedAt: new Date() }).where(eq(builderProfiles.id, profile.id));
+        await tx.update(builderProfiles).set({ status: 'active', accountId: account.id, config: executionConfig, version: publishedProfileVersion, updatedAt: new Date() }).where(eq(builderProfiles.id, profile.id));
         await tx.update(paperAccounts).set({ botEnabled: true, updatedAt: new Date() }).where(eq(paperAccounts.id, account.id));
       }
       if (current.length) await this.stopInTransaction(tx, owner, current[0], 'superseded');
@@ -331,11 +339,12 @@ export class StrategyMandateService {
     return Boolean(row);
   }
   /** Base protective exits do not wait for a daily model, and outlive its entry authorization. */
-  async installCurrentProtections(owner: string, profile: BuilderProfile): Promise<void> {
+  async installCurrentProtections(owner: string, profile: BuilderProfile, accountId?: string): Promise<void> {
     await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
       const [currentProfile] = await tx.select().from(builderProfiles).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.id, profile.id))).for('share');
-      const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true))).for('update');
+      const selected = await requireActivePaperAccount(tx, owner, accountId);
+      const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, selected.id), eq(paperAccounts.isActive, true))).for('update');
       if (!account?.botEnabled || !currentProfile || currentProfile.status !== 'active' || currentProfile.version !== profile.version) return;
       const mandates = await tx.select().from(strategyMandates).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, account.id),
         eq(strategyMandates.profileId, profile.id), eq(strategyMandates.profileVersion, profile.version), eq(strategyMandates.status, 'published'))).for('share');
@@ -350,9 +359,18 @@ export class StrategyMandateService {
     const held = new Set(positions.filter(position => Number(position.shares) > 0).map(position => position.ticker));
     const strongest = new Map<string, MandateRule>();
     for (const rule of mandate.config.rules) if (rule.stopLossPrice > 0 && held.has(rule.ticker) && Date.parse(rule.expiresAt) > now.getTime()
+      && (!rule.userDirective || Date.parse(rule.userDirective.startsAt) <= now.getTime())
       && (!strongest.has(rule.ticker) || strongest.get(rule.ticker)!.stopLossPrice < rule.stopLossPrice)) strongest.set(rule.ticker, rule);
+    const storedProtections = await tx.select().from(strategyProtections).where(and(eq(strategyProtections.owner, owner), eq(strategyProtections.accountId, mandate.accountId))).for('update');
+    const protections: typeof storedProtections = [];
+    for (const protection of storedProtections) {
+      const authority = mandate.config.rules.find(rule => rule.id === protection.ruleId);
+      if (mandate.config.rules.some(rule => rule.userDirective) && (!authority?.userDirective
+        || Date.parse(authority.userDirective.startsAt) > now.getTime() || Date.parse(authority.expiresAt) <= now.getTime())) {
+        await tx.delete(strategyProtections).where(eq(strategyProtections.id, protection.id));
+      } else protections.push(protection);
+    }
     if (!strongest.size) return;
-    const protections = await tx.select().from(strategyProtections).where(and(eq(strategyProtections.owner, owner), eq(strategyProtections.accountId, mandate.accountId))).for('update');
     const needed = [...strongest.values()].filter(rule => !protections.some(protection => protection.ticker === rule.ticker && Number(protection.stopLossPrice) >= rule.stopLossPrice));
     const markets = [...new Set(needed.map(rule => resolveTradingTicker(rule.ticker)!.market))];
     for (const market of markets) {
@@ -410,7 +428,9 @@ export class StrategyMandateService {
         market, marketDate: schedule.tradingDate, rules, sessionIds: task.sessionIds, reportIds: councilIds,
         summary: current.config.objective, expiresAt, memoryInventory }).returning();
       const positions = await tx.select().from(paperPositions).where(eq(paperPositions.accountId, mandate.accountId));
-      for (const rule of rules) if (rule.stopLossPrice > 0 && positions.some(p => p.ticker === rule.ticker && Number(p.shares) > 0)) {
+      for (const rule of rules) if (rule.stopLossPrice > 0
+        && (!rule.userDirective || Date.parse(rule.userDirective.startsAt) <= Date.now())
+        && positions.some(p => p.ticker === rule.ticker && Number(p.shares) > 0)) {
         await tx.insert(strategyProtections).values({ owner, accountId: mandate.accountId, ticker: rule.ticker, market,
           stopLossPrice: String(rule.stopLossPrice), planId: plan.id, ruleId: rule.id }).onConflictDoUpdate({
           target: [strategyProtections.owner, strategyProtections.accountId, strategyProtections.ticker],

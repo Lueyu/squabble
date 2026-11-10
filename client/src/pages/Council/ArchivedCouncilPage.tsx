@@ -28,12 +28,13 @@ import CouncilRecoveryCard from './CouncilRecoveryCard';
 import CouncilResearchTimeline from './CouncilResearchTimeline';
 import CouncilMemberAvatar from './CouncilMemberAvatar';
 import CouncilModelConfiguration from './CouncilModelConfiguration';
+import type { ResearchWorkspaceComposer } from '@/features/research-workspace/research-workspace-state';
 
-export default function ArchivedCouncilPage({readOnly=false}:{readOnly?:boolean}) {
+export default function ArchivedCouncilPage({readOnly=false,embeddedSessionId,workspace}:{readOnly?:boolean;embeddedSessionId?:string;workspace?:ResearchWorkspaceComposer}) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
   const [params, setParams] = useSearchParams(); const client = useQueryClient();
-  const id = params.get('session') || params.get('sessionId');
-  const [context, setContext] = useState<ResearchContext | undefined>(() => contextFromSearch(params));
+  const id = embeddedSessionId || params.get('session') || params.get('sessionId');
+  const [context, setContext] = useState<ResearchContext | undefined>(() => contextFromSearch(params) ?? (workspace ? { kind: 'portfolio' } : undefined));
   const [reply, setReply] = useState<CouncilMessage | null>(null); const [pending, setPending] = useState(false);
   const [search, setSearch] = useState(''); const [history, setHistory] = useState(false);
   const [details, setDetails] = useState(false); const [newMessages, setNewMessages] = useState(false);
@@ -60,7 +61,8 @@ export default function ArchivedCouncilPage({readOnly=false}:{readOnly?:boolean}
   const configuration = readiness.data?.find(item => item.connectionId === configurationId);
   const timeline = session ? researchTimeline(session) : undefined;
   const conversation = session ? researchConversation(session) : undefined;
-  useEffect(() => { setContext(contextFromSearch(params)); setReply(null); setClarification(null); }, [params]);
+  const workspaceMode = Boolean(workspace);
+  useEffect(() => { setContext(contextFromSearch(params) ?? (workspaceMode ? { kind: 'portfolio' } : undefined)); setReply(null); setClarification(null); }, [params, workspaceMode]);
   useEffect(() => { followLatest.current = true; setNewMessages(false); setOriginal(null); originalRequest.current++; setRename(false); setProposal(null); setConfigurationMember(null); }, [id]);
   useEffect(() => {
     const element = scroll.current;
@@ -74,16 +76,26 @@ export default function ArchivedCouncilPage({readOnly=false}:{readOnly?:boolean}
     try {
       const payload = id ? { message, ...(reply ? { replyTo: reply.id } : {}) }
         : { message, ...((override || context) ? { context: override || context } : {}) };
-      const requestKey = intent.current.keyFor({ id, ...payload });
-      const saved = id ? await postResearchConversationMessage(id, { ...payload, requestKey }) : await createResearchConversation({ ...payload, requestKey });
-      if ('needsInput' in saved) { setClarification(saved); setOriginalQuestion(message); setReceipt(null); return false; }
-      intent.current.complete(); setClarification(null); setReply(null);
+      const requestIntent = workspace?.request.intent ?? intent.current;
+      const submission = workspace?.request.submission ?? { ...payload, requestKey: requestIntent.keyFor({ id, ...payload }) };
+      if (workspace) workspace.request.submission = submission;
+      const saved = id ? await postResearchConversationMessage(id, submission) : await createResearchConversation(submission);
+      if ('needsInput' in saved) { if (workspace) workspace.request.submission = undefined; setClarification(saved); setOriginalQuestion(message); setReceipt(null); return false; }
+      requestIntent.complete();
+      if (workspace) workspace.request.submission = undefined;
+      setClarification(null); setReply(null);
       setReceipt('accepted'); followLatest.current = true;
       client.setQueryData(['research-conversation', saved.id], saved);
       void client.invalidateQueries({ queryKey: ['research-conversations'] });
       void client.invalidateQueries({ queryKey: ['today'] });
-      setParams({ session: saved.id }); return true;
-    } catch { setReceipt(null); toast.error(zh ? '问题未能确认送达，请重试。重试会保留同一次请求。' : 'The question could not be confirmed. Retry will reuse the same request.'); return false; }
+      if (workspace) workspace.onAccepted(saved.id);
+      else if (!embeddedSessionId) setParams({ session: saved.id });
+      return true;
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (workspace && status && status >= 400 && status < 500 && status !== 408 && status !== 429) workspace.request.submission = undefined;
+      setReceipt(null); toast.error(zh ? '问题未能确认送达，请重试。重试会保留同一次请求。' : 'The question could not be confirmed. Retry will reuse the same request.'); return false;
+    }
     finally { sendLock.current = false; setPending(false); }
   };
   const contextLabel = session?.contextLabel || (context?.kind === 'stock' ? `${zh ? '正在讨论：' : 'Discussing: '}${context.ticker}`
@@ -130,9 +142,9 @@ export default function ArchivedCouncilPage({readOnly=false}:{readOnly?:boolean}
   };
   return <div data-archive-readonly={readOnly || undefined} className="research-room flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border bg-card">
     <header className="research-room-header flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-3 border-b p-3 sm:px-5"><div className="min-w-0 flex-1"><h1 className="line-clamp-2 font-semibold [overflow-wrap:anywhere]">{session?.title || (zh ? '投研室' : 'Research room')}</h1><p className="mt-1 text-xs text-muted-foreground">{session?.initializing ? (zh ? '问题已收到，正在安排股友。' : 'Question received. Arranging your stock friends.') : session ? stageLabel[session.stage] : (zh ? '一点好奇，几位股友，一起想明白。' : 'A little curiosity. A few friends. A clearer view.')}</p></div>
-      <div className="research-room-actions flex min-w-0 flex-wrap gap-2">{session && <Button size="sm" variant="ghost" className="hidden sm:inline-flex" onClick={() => setDetails(true)}>{zh ? '研究详情' : 'Research details'}</Button>}<Button size="sm" variant="outline" onClick={() => setHistory(true)}>{zh ? '最近讨论' : 'Recent discussions'}</Button>{session?.status === 'running' && <Button size="sm" variant="outline" disabled={pending} onClick={() => void stop()}>{zh ? '停止本轮' : 'Stop round'}</Button>}<Button size="sm" aria-label={zh ? '新讨论' : 'New discussion'} onClick={() => { setParams({}); setContext(undefined); setReceipt(null); }}><Plus size={14} className="sm:hidden" /><span className="hidden sm:inline">{zh ? '新讨论' : 'New discussion'}</span></Button></div></header>
+      <div className="research-room-actions flex min-w-0 flex-wrap gap-2">{session && <Button size="sm" variant="ghost" className="hidden sm:inline-flex" onClick={() => setDetails(true)}>{zh ? '研究详情' : 'Research details'}</Button>}{!embeddedSessionId && !workspace && <Button size="sm" variant="outline" onClick={() => setHistory(true)}>{zh ? '最近讨论' : 'Recent discussions'}</Button>}{session?.status === 'running' && <Button size="sm" variant="outline" disabled={pending} onClick={() => void stop()}>{zh ? '停止本轮' : 'Stop round'}</Button>}{!embeddedSessionId && !workspace && <Button size="sm" aria-label={zh ? '新讨论' : 'New discussion'} onClick={() => { setParams({}); setContext(undefined); setReceipt(null); }}><Plus size={14} className="sm:hidden" /><span className="hidden sm:inline">{zh ? '新讨论' : 'New discussion'}</span></Button>}</div></header>
     {rename && <form className="flex shrink-0 gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); void updateAuxiliary('rename', title.trim()); }}><Input aria-label={zh ? '讨论标题' : 'Discussion title'} maxLength={160} value={title} onChange={event => setTitle(event.target.value)} /><Button type="submit" size="sm" disabled={pending || !title.trim()}>{zh ? '保存' : 'Save'}</Button></form>}
-    <Sheet open={history} onOpenChange={setHistory}><SheetContent className="min-w-0 overflow-y-auto" closeLabel={zh ? '关闭最近讨论' : 'Close recent discussions'}><SheetHeader className="p-0 pr-6"><SheetTitle>{zh ? '最近讨论' : 'Recent discussions'}</SheetTitle><SheetDescription>{zh ? '回到原来的问题与研究。' : 'Return to the original question and findings.'}</SheetDescription></SheetHeader><section className="min-w-0 space-y-2"><label className="sr-only" htmlFor="discussion-search">{zh ? '搜索最近讨论' : 'Search recent discussions'}</label><Input id="discussion-search" value={search} onChange={event => setSearch(event.target.value)} placeholder={zh ? '搜索标题或问题' : 'Search title or question'} />
+    <Sheet open={!embeddedSessionId && !workspace && history} onOpenChange={setHistory}><SheetContent className="min-w-0 overflow-y-auto" closeLabel={zh ? '关闭最近讨论' : 'Close recent discussions'}><SheetHeader className="p-0 pr-6"><SheetTitle>{zh ? '最近讨论' : 'Recent discussions'}</SheetTitle><SheetDescription>{zh ? '回到原来的问题与研究。' : 'Return to the original question and findings.'}</SheetDescription></SheetHeader><section className="min-w-0 space-y-2"><label className="sr-only" htmlFor="discussion-search">{zh ? '搜索最近讨论' : 'Search recent discussions'}</label><Input id="discussion-search" value={search} onChange={event => setSearch(event.target.value)} placeholder={zh ? '搜索标题或问题' : 'Search title or question'} />
       {(sessions.data || []).filter(item => `${item.title} ${item.subject || ''} ${item.messages?.map(message => message.content).join(' ') || ''}`.toLowerCase().includes(search.toLowerCase())).map(item => <button type="button" key={item.id} className="block w-full min-w-0 rounded-lg p-2 text-left text-sm [overflow-wrap:anywhere] hover:bg-muted" onClick={() => { setParams({ session: item.id }); setHistory(false); }}>{item.title || item.subject || item.ticker}<span className="ml-2 text-xs text-muted-foreground">{new Date(item.updatedAt).toLocaleDateString(i18n.language)}</span></button>)}
       {sessions.isError && <Button size="sm" variant="outline" onClick={() => void sessions.refetch()}>{zh ? '重试读取讨论' : 'Retry discussions'}</Button>}</section></SheetContent></Sheet>
     <Sheet open={Boolean(configurationMember)} onOpenChange={open => { if (!open) setConfigurationMember(null); }}><SheetContent className="min-w-0 overflow-y-auto sm:max-w-lg" closeLabel={zh ? '关闭模型配置' : 'Close model configuration'}><SheetHeader className="p-0 pr-6"><SheetTitle>{zh ? '修复模型配置' : 'Fix model configuration'}</SheetTitle><SheetDescription>{zh ? '保留原讨论和已完成观点，只修改这位股友的连接。' : 'Keep the original discussion and accepted views while fixing this member’s connection.'}</SheetDescription></SheetHeader>
@@ -153,7 +165,7 @@ export default function ArchivedCouncilPage({readOnly=false}:{readOnly?:boolean}
     {session && <CouncilMemberActivity session={session} onDetails={() => setDetails(true)} />}
     <div ref={scroll} onScroll={event => { followLatest.current = isReadingLatest(event.currentTarget); if (followLatest.current) setNewMessages(false); }} className="research-room-messages min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto p-3 sm:p-5" role="log" aria-live="polite" aria-relevant="additions" aria-label={zh ? '研究对话' : 'Research conversation'}>
       {!id && !session && <div className="mx-auto max-w-lg space-y-4 py-6 text-center sm:py-10"><div className="mb-2 flex items-end justify-center gap-3" aria-hidden><CouncilMemberAvatar avatar="value" role="researcher" className="size-16 -rotate-6" /><CouncilMemberAvatar avatar="technical" role="researcher" className="size-20" /><CouncilMemberAvatar avatar="macro" role="researcher" className="size-16 rotate-6" /></div><h2 className="text-xl font-semibold">{zh ? '和 AI 股友一起把问题想清楚' : 'Think it through with your AI stock friends'}</h2><p className="text-sm leading-7 text-muted-foreground">{zh ? '直接输入问题。股友先独立研究，再围绕不同观点一起追问。' : 'Ask what’s on your mind. Each friend researches independently before comparing the evidence.'}</p>
-        <div className="flex flex-wrap justify-center gap-2">{[zh ? '我的持仓里最值得担心的是什么？' : 'What should I worry about most in my portfolio?', zh ? '如何检查一家公司的现金流质量？' : 'How can I assess cash flow quality?'].map((text, index) => <Button key={text} variant="outline" className="h-auto whitespace-normal text-left" disabled={pending} onClick={() => void submit(text, index === 0 ? { kind: 'portfolio' } : undefined)}>{text}</Button>)}</div></div>}
+        <div className="flex flex-wrap justify-center gap-2">{[zh ? '我的持仓里最值得担心的是什么？' : 'What should I worry about most in my portfolio?', zh ? '如何检查一家公司的现金流质量？' : 'How can I assess cash flow quality?'].map((text, index) => <Button key={text} variant="outline" className="h-auto whitespace-normal text-left" disabled={pending || Boolean(workspace?.request.submission)} onClick={() => workspace ? workspace.onDraftChange(text) : void submit(text, index === 0 ? { kind: 'portfolio' } : undefined)}>{text}</Button>)}</div></div>}
       {id && query.isPending && <p role="status">{zh ? '正在读取讨论…' : 'Loading discussion…'}</p>}
       {id && query.isError && <div role="alert" className="space-y-3"><p>{zh ? '讨论暂时不可用，原始消息未被替代。' : 'The discussion is unavailable. Original messages have not been replaced.'}</p><Button onClick={() => void query.refetch()}>{zh ? '重试' : 'Retry'}</Button></div>}
       {session&&conversation?.entries.map(entry => entry.report ? <CouncilRoundReport key={entry.key} report={entry.report} onAddToStrategy={versionId=>setStrategySource({kind:'report',versionId})}/> : <div key={entry.key}><CouncilChatMessage message={entry.message} task={entry.task} session={session} simple
@@ -169,7 +181,9 @@ export default function ArchivedCouncilPage({readOnly=false}:{readOnly?:boolean}
     </div>
     {newMessages && <div className="flex shrink-0 justify-center py-1"><Button size="sm" variant="secondary" onClick={() => { const element = scroll.current; if (element) element.scrollTop = element.scrollHeight; followLatest.current = true; setNewMessages(false); }}>{zh ? '有新消息 · 回到底部' : 'New messages · Jump to latest'}</Button></div>}
     {receipt && <p role="status" className="min-w-0 shrink-0 px-4 py-1 text-xs text-muted-foreground">{receipt === 'sending' ? (zh ? '正在发送问题…' : 'Sending your question…') : session?.status === 'running' ? (zh ? '问题已收到，股友正在研究。' : 'Question received. Your stock friends are researching.') : (zh ? '问题已收到，正在安排股友。' : 'Question received. Arranging your stock friends.')}</p>}
-    {!readOnly && <QuickQuestion key={id || 'new'} pending={pending} onSubmit={submit} contextLabel={contextLabel} onRemoveContext={!id ? () => setContext(undefined) : undefined}
+    {workspace?.request.submission && !pending && <p role="alert" className="px-4 py-2 text-sm text-muted-foreground">{zh ? '上一条问题尚未确认送达。再次发送会核对同一条问题，不会新建重复任务。' : 'Delivery of this question is unconfirmed. Send again to check the same request without creating a duplicate task.'}</p>}
+    {!readOnly && !embeddedSessionId && <QuickQuestion key={id || 'new'} pending={pending} onSubmit={submit} contextLabel={contextLabel} onRemoveContext={!id && !workspace?.request.submission ? () => setContext(undefined) : undefined}
+      value={workspace?.draft} onValueChange={workspace?.onDraftChange} readOnlyText={Boolean(workspace?.request.submission)}
       replyLabel={reply ? `${reply.memberName}: ${reply.content.slice(0, 140)}` : undefined} onRemoveReply={() => setReply(null)} />}
     <InvestmentStrategySourceDialog source={strategySource} onClose={()=>setStrategySource(null)}/>
     <Link className="shrink-0 border-t px-4 py-2 text-center text-xs text-primary underline" to="/analysis#report-history">{zh?'查看报告历史':'View report history'}</Link>

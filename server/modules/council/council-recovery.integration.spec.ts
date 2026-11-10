@@ -17,7 +17,7 @@ test('local reparse costs zero calls and retry is member-specific, durable and i
   const client=postgres(process.env.COUNCIL_TEST_DATABASE_URL!,{max:6,onnotice:()=>{},connection:{search_path:namespace}});
   try{
     await admin`CREATE SCHEMA ${admin(namespace)}`;
-    for(const name of readdirSync('scripts/db').filter(n=>/^\d+.*\.sql$/u.test(n)&&!n.startsWith('02_')&&Number(n.slice(0,2))<=34).sort())await client.unsafe(readFileSync(`scripts/db/${name}`,'utf8'));
+    for(const name of readdirSync('scripts/db').filter(n=>/^\d+.*\.sql$/u.test(n)&&!n.startsWith('02_')&&(Number(n.slice(0,2))<=34 || n.startsWith('49_'))).sort())await client.unsafe(readFileSync(`scripts/db/${name}`,'utf8'));
     const owner=randomUUID();await client`INSERT INTO users(id,username,password_hash) VALUES(${owner},'recovery-fixture','test')`;
     const members=[{id:'codex',name:'Codex',role:'researcher' as const,model:'fast' as const,instructions:'',executionMode:'local' as const,agentId:'native-codex'},
       {id:'opencode',name:'OpenCode',role:'manager' as const,model:'fast' as const,instructions:'',executionMode:'local' as const,agentId:'native-opencode'}];

@@ -32,6 +32,7 @@ test('section edits preserve citation ids and produce inspectable before/after c
 test('report reader tolerates an older server response without adoption history during upgrade', () => {
   const React = require('react');
   const { renderToStaticMarkup } = require('react-dom/server');
+  const navigation = require('./simple-test-loader.cjs')().load('features/navigation/workspace-navigation.ts');
   const source = fs.readFileSync(path.join(__dirname, '../pages/Analysis/ResearchDocumentPage.tsx'), 'utf8');
   const exported = {};
   const version = { id: 'v1', title: 'Saved research', kind: 'daily', version: 1, status: 'valid', sourceStatus: 'available',
@@ -41,7 +42,10 @@ test('report reader tolerates an older server response without adoption history 
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText, { exports: exported, Date, URLSearchParams, require: name => {
     if (name === 'react' || name === 'react/jsx-runtime') return require(name);
-    if (name === 'react-router-dom') return { Link: ui, useNavigate: () => () => {}, useParams: () => ({ versionId: 'v1' }), useSearchParams: () => [new URLSearchParams(), () => {}] };
+    if (name === 'react-router-dom') return { Link: ui, useNavigate: () => () => {}, useParams: () => ({ versionId: 'v1' }),
+      useLocation: () => ({ pathname: '/analysis/reports/v1', search: '', hash: '', state: { returnTo: '/analysis?date=2026-11-05' }, key: 'saved-report' }),
+      useSearchParams: () => [new URLSearchParams(), () => {}] };
+    if (name === '@/features/navigation/workspace-navigation') return navigation;
     if (name === '@tanstack/react-query') return { useQuery: () => ({ data: { version, document: { strategyVersionIds: [] }, versions: [version], drafts: [], diff: [], strategyUses: [] } }) };
     if (name === 'react-i18next') return { useTranslation: () => ({ i18n: { resolvedLanguage: 'en' } }) };
     if (name === 'sonner') return { toast: {} };

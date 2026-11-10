@@ -1,24 +1,27 @@
+import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import * as tables from '../../database/channel.schema';
-import { cashAccounts, holdings } from '../../database/schema';
+import { cashAccounts, holdings, paperAccounts, paperPositions } from '../../database/schema';
 import { councilMessages, councilSessions } from '../../database/council.schema';
-import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { investmentPolicies } from '../../database/investment-policy.schema';
+import { simulationCash } from '../../database/simulation-experiments.schema';
 import { userInvestmentStrategies } from '../../database/user-investment-strategies.schema';
 import { QuoteService } from '../quote/quote.service';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
-import { readChannelRuntime, readRuntimeInSnapshot, sumChannelDecimals } from './channel-runtime';
+import { channelAssignments, readChannelRuntime, readRuntimeInSnapshot, sumChannelDecimals } from './channel-runtime';
 import { ChannelMemoryService } from './channel-memory.service';
 import { syncChannelExecutions } from './channel-executions';
 import { builtinChannelTemplates } from './channel-templates';
 import { TemplateRegistry } from './template-registry';
 import { assertSemanticDelta, canPublish, renderApprovedFinding, sealFinding, type ChannelPublicationContext } from './channel-contract';
 import { renderRegisteredTemplate, resolveAuthoritativeSlots } from './channel-slots';
-import type { BackgroundFinding, ChannelAction, ChannelBubble, ChannelEpisode, ChannelEvent, ChannelEvidenceCard, ChannelFact, ChannelProjection, ChannelSpeaker, ChannelStance, ChannelVibe, ChannelWeight, DeferredQuestion, FindingCandidate, SupplementRequest } from '../../../shared/channel.interface';
+import type { BackgroundFinding, ChannelAction, ChannelBubble, ChannelEpisode, ChannelEvent, ChannelEvidenceCard, ChannelFact, ChannelProjection, ChannelRuntimeSnapshot, ChannelSpeaker, ChannelStance, ChannelVibe, ChannelWeight, DeferredQuestion, FindingCandidate, SupplementRequest } from '../../../shared/channel.interface';
+import type { ConfirmedInvestmentStrategy } from '../../../shared/user-investment-strategy.interface';
 
 type Tx = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 type ReadDb = Pick<PostgresJsDatabase, 'select' | 'insert' | 'update' | 'execute'>;
@@ -29,6 +32,8 @@ export interface ChannelReportInput {
   source?: Record<string, unknown>;
 }
 export interface ChannelPublicationInput {
+  accountId?: string; accountName?: string;
+  runtimeAuthority?: { accountId: string; strategyId: string; strategyRevision: number; entryId: string };
   episodeId: string; entityId: string; title: string; eventKind: ChannelEvent['kind']; semanticDeltaId: string;
   facts: Array<{ fact: ChannelFact; card: ChannelEvidenceCard }>;
   templateId: string; stance: ChannelStance; weight: ChannelWeight; layer: 2 | 3 | 4;
@@ -38,7 +43,7 @@ export interface ChannelPublicationInput {
   deliveryCause?: ChannelBubble['deliveryCause']; briefId?: string; templateRevision?: number;
 }
 const requestSchema = z.object({ message: z.string().trim().min(1).max(4000), requestKey: z.string().min(1).max(150),
-  selectedQuestionId: z.string().max(100).optional(), context: z.record(z.string(), z.unknown()).optional() }).strict();
+  accountId: z.string().uuid().optional(), selectedQuestionId: z.string().max(100).optional(), context: z.record(z.string(), z.unknown()).optional() }).strict();
 
 /** Freeze independent questions before selecting a tool; conjunctions must not hide a second fact. */
 export function splitChannelQuestions(message: string): string[] {
@@ -82,35 +87,46 @@ export class ChannelService implements OnModuleInit {
     await this.db.update(tables.channelPreferences).set({ vibe: parsed.data.vibe, updatedAt: new Date() }).where(eq(tables.channelPreferences.owner, owner));
     return { vibe: parsed.data.vibe };
   }
-  async projection(owner: string): Promise<ChannelProjection & { userMessages: Array<{ id: string; text: string; createdAt: string; requestId: string }>; notifications: Array<{ id: string; bubbleId: string }> }> {
-    await this.recoverInterruptedSupplements(owner);
+  async projection(owner: string, accountId?: string): Promise<ChannelProjection & { userMessages: Array<{ id: string; text: string; createdAt: string; requestId: string }>; notifications: Array<{ id: string; bubbleId: string }> }> {
     const [preferences, runtime, episodeRows, bubbleRows, reportRows, deferred, requests, running, findings, notifications] = await Promise.all([
-      this.preferences(owner), readChannelRuntime(this.db, owner),
+      this.db.select().from(tables.channelPreferences).where(eq(tables.channelPreferences.owner, owner))
+        .then(rows => rows[0] ?? { vibe: 'deskmate' as const, pinnedBubbleId: null }), readChannelRuntime(this.db, owner, accountId),
       this.db.select().from(tables.channelEpisodes).where(eq(tables.channelEpisodes.owner, owner)).orderBy(desc(tables.channelEpisodes.updatedAt)).limit(40),
       this.db.select().from(tables.channelBubbles).where(eq(tables.channelBubbles.owner, owner)).orderBy(desc(tables.channelBubbles.createdAt)).limit(150),
       this.db.select().from(tables.channelReports).where(eq(tables.channelReports.owner, owner)).orderBy(desc(tables.channelReports.createdAt)).limit(1),
       this.db.select().from(tables.channelDeferredQuestions).where(eq(tables.channelDeferredQuestions.owner, owner)).orderBy(desc(tables.channelDeferredQuestions.createdAt)).limit(100),
       this.db.select().from(tables.channelSupplementRequests).where(eq(tables.channelSupplementRequests.owner, owner)).orderBy(desc(tables.channelSupplementRequests.createdAt)).limit(50),
-      this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.status, 'running'))),
+      this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.status, 'running'))),
       this.db.select().from(tables.channelFindings).where(eq(tables.channelFindings.owner, owner)).limit(100),
       this.db.select().from(tables.channelOutbox).where(and(eq(tables.channelOutbox.owner, owner), eq(tables.channelOutbox.destination, 'notification'), eq(tables.channelOutbox.state, 'pending'))).orderBy(desc(tables.channelOutbox.createdAt)).limit(20),
     ]);
+    const belongs = (bubble: ChannelBubble) => bubble.episodeId.startsWith('question:')
+      ? (bubble.accountId ?? null) === runtime.accountId : !bubble.accountId || bubble.accountId === runtime.accountId;
+    const visibleRows = bubbleRows.filter(row => belongs(row.data));
+    const questionBelongs = (question: { accountId?: string }) => (question.accountId ?? null) === runtime.accountId;
     const staleReports = await this.db.select({ id: tables.channelReports.id, revision: tables.channelReports.revision }).from(tables.channelReports).where(and(eq(tables.channelReports.owner, owner), sql`${tables.channelReports.source}->>'supersededBy' IS NOT NULL`));
     const decorate = (bubble: ChannelBubble): ChannelBubble => ({ ...bubble, sourceState: bubbleRows.some(row => row.data.correctionOf === bubble.id) ? 'corrected' : bubble.anchors.primary.kind === 'report_section' && staleReports.some(r => bubble.anchors.primary.kind === 'report_section' && r.id === bubble.anchors.primary.reportId && r.revision === bubble.anchors.primary.reportRevision) ? 'superseded' : 'current' });
-    const pending = (await this.pending(owner)).items.map(decorate).filter(b => b.sourceState !== 'superseded'), pinned = pending.find(b => b.id === preferences.pinnedBubbleId) ?? pending[0];
+    const pending = (await this.pending(owner)).items.filter(belongs).map(decorate).filter(b => b.sourceState !== 'superseded'), pinned = pending.find(b => b.id === preferences.pinnedBubbleId) ?? pending[0];
     return { runtime, vibe: preferences.vibe, pinned: pinned ?? null, pendingCount: pending.length,
-      episodes: episodeRows.map(row => ({ episode: row.data, bubbles: bubbleRows.filter(b => b.episodeId === row.id && b.data.weight !== 'tap').map(b => decorate(b.data)).reverse() })).filter(e => e.bubbles.length),
-      visibleTaps: bubbleRows.filter(b => b.data.weight === 'tap').map(b => decorate(b.data)).filter(b => b.sourceState !== 'superseded').slice(0, preferences.vibe === 'chatty' ? 3 : preferences.vibe === 'quiet' ? 1 : 2).reverse(),
-      progress: { runningCount: running.length + requests.filter(r => r.data.status === 'running').length, gapCount: findings.filter(f => f.data.kind === 'material_gap' && f.data.review.state === 'approved').length },
-      report: reportRows[0] ? { id: reportRows[0].id, title: reportRows[0].title, createdAt: reportRows[0].createdAt.toISOString(), href: `/?reportId=${encodeURIComponent(reportRows[0].id)}` } : null,
-      deferredQuestions: deferred.filter(q => q.data.status === 'pending').map(q => q.data), sourcesAvailable: Boolean(reportRows.length || bubbleRows.some(b => b.data.evidence.sources.length)),
-      userMessages: requests.map(r => ({ id: r.data.userMessageId, text: r.message, createdAt: r.createdAt.toISOString(), requestId: r.id })).reverse(),
-      notifications: notifications.map(n => ({ id: n.id, bubbleId: n.bubbleId })),
+      episodes: episodeRows.map(row => ({ episode: row.data, bubbles: visibleRows.filter(b => b.episodeId === row.id && b.data.weight !== 'tap').map(b => decorate(b.data)).reverse() })).filter(e => e.bubbles.length),
+      visibleTaps: visibleRows.filter(b => b.data.weight === 'tap').map(b => decorate(b.data)).filter(b => b.sourceState !== 'superseded').slice(0, preferences.vibe === 'chatty' ? 3 : preferences.vibe === 'quiet' ? 1 : 2).reverse(),
+      progress: { runningCount: running.length + requests.filter(r => questionBelongs(r.data) && r.data.status === 'running').length, gapCount: findings.filter(f => f.data.kind === 'material_gap' && f.data.review.state === 'approved').length },
+      report: reportRows[0] ? { id: reportRows[0].id, title: reportRows[0].title, createdAt: reportRows[0].createdAt.toISOString(), href: `/analysis/reports/${encodeURIComponent(reportRows[0].id)}` } : null,
+      deferredQuestions: deferred.filter(q => questionBelongs(q.data) && q.data.status === 'pending').map(q => q.data), sourcesAvailable: Boolean(reportRows.length || bubbleRows.some(b => b.data.evidence.sources.length)),
+      userMessages: requests.filter(r => questionBelongs(r.data)).map(r => ({ id: r.data.userMessageId, text: r.message, createdAt: r.createdAt.toISOString(), requestId: r.id })).reverse(),
+      notifications: notifications.filter(n => visibleRows.some(b => b.id === n.bubbleId)).map(n => ({ id: n.id, bubbleId: n.bubbleId })),
     };
   }
-  async pending(owner: string) {
+  async pending(owner: string, accountId?: string) {
+    if (accountId) {
+      if (!z.string().uuid().safeParse(accountId).success) throw new BadRequestException('INVALID_ACCOUNT_ID');
+      const [account] = await this.db.select({ id: paperAccounts.id }).from(paperAccounts)
+        .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId)));
+      if (!account) throw new NotFoundException('ACCOUNT_NOT_FOUND');
+    }
     const rows = await this.db.select().from(tables.channelBubbles).where(and(eq(tables.channelBubbles.owner, owner), isNull(tables.channelBubbles.resolvedAt), sql`${tables.channelBubbles.data}->>'layer' = '4'`)).orderBy(desc(tables.channelBubbles.createdAt));
-    return { items: rows.map(r => r.data) };
+    return { items: rows.map(r => r.data).filter(bubble => !accountId || (bubble.episodeId.startsWith('question:')
+      ? bubble.accountId === accountId : !bubble.accountId || bubble.accountId === accountId)) };
   }
   async bubble(owner: string, id: string) {
     const [row] = await this.db.select().from(tables.channelBubbles).where(and(eq(tables.channelBubbles.owner, owner), eq(tables.channelBubbles.id, id)));
@@ -207,17 +223,30 @@ export class ChannelService implements OnModuleInit {
   async recordDecisionSnapshot(owner: string, decisionId: string) {
     return (this.memory ?? new ChannelMemoryService(this.db)).recordDecisionSnapshot(owner, decisionId);
   }
-  async syncExecutions(owner: string) { return syncChannelExecutions(this.db, this, owner); }
+  async syncExecutions(owner: string, accountId?: string) { return syncChannelExecutions(this.db, this, owner, accountId); }
 
   /** Checks quoted conditions only. It never submits orders or changes protection levels. */
   async monitorOwner(owner: string) {
-    await this.syncExecutions(owner);
-    const runtime = await readChannelRuntime(this.db, owner);
-    if (!runtime.accountId || !runtime.current.strategyId) return;
+    const accounts = await this.db.select({ id: paperAccounts.id }).from(paperAccounts)
+      .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true)));
+    for (const account of accounts) {
+      await this.syncExecutions(owner, account.id);
+      await this.monitorAccount(owner, account.id);
+    }
+  }
+  private async monitorAccount(owner: string, accountId: string) {
+    const runtime = await readChannelRuntime(this.db, owner, accountId);
+    if (!runtime.accountId || runtime.monitoringStatus !== 'running') return;
     const [policy] = await this.db.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, runtime.accountId), eq(investmentPolicies.status, 'running'))).limit(1);
-    const strategy = policy?.baseConfig.userStrategy;
-    if (!strategy) return;
-    if (Date.parse(strategy.content.startsAt) > Date.now() || Date.parse(strategy.content.endsAt) <= Date.now()) return;
+    if (!policy) return;
+    for (const assignment of channelAssignments(policy.baseConfig)) {
+      await this.monitorStrategy(owner, runtime, policy, assignment.snapshot);
+    }
+  }
+  private async monitorStrategy(owner: string, runtime: ChannelRuntimeSnapshot,
+    policy: typeof investmentPolicies.$inferSelect, strategy: ConfirmedInvestmentStrategy) {
+    const accountId = runtime.accountId;
+    if (!accountId || Date.parse(strategy.content.startsAt) > Date.now() || Date.parse(strategy.content.endsAt) <= Date.now()) return;
     for (const entry of strategy.content.entries) {
       const level = entry.directive?.stopLossPrice, ticker = entry.directive?.ticker;
       if (!ticker || !level || !runtime.current.positions.some(p => p.symbol.toUpperCase() === ticker.toUpperCase() && Number(p.quantity) > 0)) continue;
@@ -225,7 +254,7 @@ export class ChannelService implements OnModuleInit {
       if (entry.endsAt && Date.parse(entry.endsAt) <= now || entry.startsAt && Date.parse(entry.startsAt) > now) continue;
       const quote = await this.quotes.getQuote(ticker);
       if (!quote?.quoteAt || !Number.isFinite(Date.parse(quote.quoteAt)) || now - Date.parse(quote.quoteAt) > 180000 || Date.parse(quote.quoteAt) > now + 5000 || Number(quote.price) <= 0) continue;
-      const entityId = `rule:${strategy.id}:${strategy.revision}:${entry.id}`;
+      const entityId = `account:${accountId}:rule:${strategy.id}:${strategy.revision}:${entry.id}`;
       const previous = (await this.db.select().from(tables.channelEpisodes).where(and(eq(tables.channelEpisodes.owner, owner), sql`${tables.channelEpisodes.data}->>'entityId' = ${entityId}`)).orderBy(desc(tables.channelEpisodes.createdAt)).limit(1))[0];
       const price = Number(quote.price), distance = price - level;
       // Watch-zone parameters affect presentation only, never the authorized trading threshold.
@@ -239,14 +268,16 @@ export class ChannelService implements OnModuleInit {
       else if (recovered && current && current.data.phase !== 'idle') { kind = 'monitor.recovered'; templateId = current.data.userDecisionIds.length || current.data.hadBreach || current.data.executionIds.length ? 'channel.monitor.recovered_after_user' : 'channel.monitor.recovered'; stance = templateId.endsWith('after_user') ? 'plain_fact' : 'quiet_win'; posture = 'close'; }
       if (!kind) continue;
       const episodeId = current?.id ?? `${entityId}:${quote.quoteAt}`, factId = channelHash([entityId, quote.quoteAt, kind]);
-      const card: ChannelEvidenceCard = { id: `card:${factId}`, kind: 'evidence', summary: `${ticker} 行情 ${quote.price}，已确认模拟保护线 ${level}`,
+      const card: ChannelEvidenceCard = { id: `card:${factId}`, kind: 'evidence', summary: `${runtime.accountName} · ${ticker} 行情 ${quote.price}，已确认模拟保护线 ${level}`,
         sources: [{ id: `${quote.source}:${ticker}:${quote.quoteAt}`, kind: 'market_data', title: `${ticker} · ${quote.source ?? '行情'}`, uri: `/holdings?ticker=${encodeURIComponent(ticker)}`, publishedAt: quote.quoteAt, observedAt: new Date(now).toISOString(), verification: 'retrieved' },
-          { id: `${strategy.id}:${strategy.revision}:${entry.id}`, kind: 'ledger', title: '当前已确认的模拟策略规则', uri: `/?investmentStrategyId=${strategy.id}#investment-strategy`, publishedAt: policy.confirmedAt.toISOString(), observedAt: policy.updatedAt.toISOString(), verification: 'checked' }],
+          { id: `${accountId}:${strategy.id}:${strategy.revision}:${entry.id}`, kind: 'ledger', title: `${runtime.accountName} · 当前已确认的模拟策略规则`, uri: `/paper/${accountId}/strategies`, publishedAt: policy.confirmedAt.toISOString(), observedAt: policy.updatedAt.toISOString(), verification: 'checked' }],
         asOf: quote.quoteAt, gaps: ['观察区为距保护线 1% 内，恢复需离开至 1.5% 外；仅用于频道提醒，不修改策略或保证成交。'], supports: [{ factId, scope: '保护线与行情的距离及监控条件' }] };
       const facts = [{ id: factId, revision: 1, ownerId: owner, key: 'monitor.distance', value: Math.max(0, distance).toFixed(4), observedAt: quote.quoteAt, subject: 'verified_fact' as const, sourceId: card.sources[0].id },
         { id: `${factId}:symbol`, revision: 1, ownerId: owner, key: 'monitor.symbol', value: ticker.toUpperCase(), observedAt: quote.quoteAt, subject: 'verified_fact' as const, sourceId: card.sources[0].id },
         { id: `${factId}:minutes`, revision: 1, ownerId: owner, key: 'monitor.persistedMinutes', value: current ? Math.floor((now - current.createdAt.getTime()) / 60000) : 0, observedAt: quote.quoteAt, subject: 'verified_fact' as const, sourceId: card.sources[0].id }];
-      await this.publishTemplate(owner, { episodeId, entityId, title: `${ticker} · 模拟保护线`, eventKind: kind, semanticDeltaId: channelHash([entityId, episodeId, kind, kind === 'monitor.persisted' ? 'first-dwell' : price <= level ? 'breached' : near ? 'near' : 'recovered']), facts: facts.map(fact => ({ fact, card })), templateId, stance, weight, layer: weight === 'poke' ? 3 : 2, posture, evidence: card });
+      await this.publishTemplate(owner, { episodeId, entityId, accountId, accountName: runtime.accountName ?? undefined,
+        runtimeAuthority: { accountId, strategyId: strategy.id, strategyRevision: strategy.revision, entryId: entry.id },
+        title: `${runtime.accountName} · ${ticker} · 模拟保护线`, eventKind: kind, semanticDeltaId: channelHash([entityId, episodeId, kind, kind === 'monitor.persisted' ? 'first-dwell' : price <= level ? 'breached' : near ? 'near' : 'recovered']), facts: facts.map(fact => ({ fact, card })), templateId, stance, weight, layer: weight === 'poke' ? 3 : 2, posture, evidence: card });
     }
   }
   private newEpisode(id: string, entityId: string): ChannelEpisode {
@@ -308,6 +339,13 @@ export class ChannelService implements OnModuleInit {
   async publishTemplate(owner: string, input: ChannelPublicationInput): Promise<ChannelBubble | null> {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
+      if (input.runtimeAuthority) {
+        const authority = input.runtimeAuthority;
+        const runtime = await readRuntimeInSnapshot(tx, owner, authority.accountId);
+        if (runtime.monitoringStatus !== 'running' || !runtime.current.rules.some(rule => rule.effective
+          && rule.strategyId === authority.strategyId && rule.strategyRevision === authority.strategyRevision
+          && rule.entryId === authority.entryId)) return null;
+      }
       if (input.briefId) {
         const [stored] = await tx.select().from(tables.channelBriefs).where(and(eq(tables.channelBriefs.owner, owner), eq(tables.channelBriefs.id, input.briefId)));
         if (!stored || stored.data.status !== 'ready' || Date.parse(stored.data.expiresAt) <= Date.now()) return null;
@@ -317,8 +355,8 @@ export class ChannelService implements OnModuleInit {
         let invalid = !latest || latest.id !== brief.reportId || latest.revision !== brief.reportRevision
           || Boolean(brief.compilation && (brief.compilation.strategyId !== runtime.current.strategyId || brief.compilation.strategyRevision !== runtime.current.strategyRevision));
         if (z.string().uuid().safeParse(brief.reportId).success) {
-          const [source] = await tx.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, brief.reportId)));
-          invalid ||= !source || source.revokedAt !== null;
+          const source = await new ResearchDocumentsService(this.db).getVersionInTransaction(tx, owner, brief.reportId).catch(() => null);
+          invalid ||= !source || source.status !== 'valid' || source.sourceStatus !== 'available';
         }
         if (invalid) { await tx.update(tables.channelBriefs).set({ data: { ...stored.data, status: 'invalidated' } }).where(and(eq(tables.channelBriefs.owner, owner), eq(tables.channelBriefs.id, stored.id))); return null; }
       }
@@ -347,6 +385,7 @@ export class ChannelService implements OnModuleInit {
       const anchors = { primary: anchor, triggerEventId: event.id, priorOwnBubbleId: input.priorOwnBubbleId, relationshipMemoryIds: input.relationshipMemoryIds, thesis: input.thesis };
       const slots = resolveAuthoritativeSlots(template, anchors, context);
       const bubble = { id: randomUUID(), ownerId: owner, episodeId: episode.id, speaker: template.speaker ?? input.speaker ?? 'xiaoqi', posture: input.posture, anchors,
+        ...(input.accountId ? { accountId: input.accountId, accountName: input.accountName } : {}),
         text: renderRegisteredTemplate(template, slots), evidence: input.evidence, templateId: template.id, templateRevision: template.revision,
         semanticDeltaId: input.semanticDeltaId, createdAt: new Date().toISOString(), deliveryCause: input.deliveryCause ?? 'monitor',
         stance: input.stance, weight: input.weight, layer: input.layer, ...(input.action?.length ? { action: input.action } : {}), ...(input.correctionOf ? { correctionOf: input.correctionOf } : {}) } as ChannelBubble;
@@ -393,6 +432,8 @@ export class ChannelService implements OnModuleInit {
         if (prior.inputHash !== inputHash) throw new ConflictException('REQUEST_KEY_CONFLICT');
         return { prior, fresh: false };
       }
+      let accountId = input.accountId;
+      let context = input.context;
       let originalQuestions: Array<{ id: string; text: string }> = splitChannelQuestions(input.message).map(text => ({ id: randomUUID(), text }));
       let selected = originalQuestions.length === 1 ? originalQuestions[0] : undefined;
       if (input.selectedQuestionId) {
@@ -400,20 +441,27 @@ export class ChannelService implements OnModuleInit {
         if (!deferred || deferred.data.status !== 'pending') throw new ConflictException('QUESTION_UNAVAILABLE');
         const [origin] = await tx.select().from(tables.channelSupplementRequests).where(and(eq(tables.channelSupplementRequests.owner, owner), eq(tables.channelSupplementRequests.id, deferred.requestId)));
         if (!origin) throw new NotFoundException('QUESTION_SOURCE_UNAVAILABLE');
+        if (input.accountId && input.accountId !== origin.data.accountId) throw new ConflictException('QUESTION_ACCOUNT_CHANGED');
+        if (input.context && !isDeepStrictEqual(input.context, origin.data.context ?? null)) throw new ConflictException('QUESTION_CONTEXT_CHANGED');
+        accountId = origin.data.accountId;
+        context = origin.data.context;
         originalQuestions = origin.data.originalQuestions.map(q => ({ ...q })); selected = originalQuestions.find(q => q.id === deferred.id);
         await tx.update(tables.channelDeferredQuestions).set({ data: { ...deferred.data, status: 'selected' } }).where(and(eq(tables.channelDeferredQuestions.owner, owner), eq(tables.channelDeferredQuestions.id, deferred.id)));
       }
+      const [account] = accountId ? await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId))).for('share') : [];
+      if (accountId && !account) throw new NotFoundException('ACCOUNT_NOT_FOUND');
+      const questionScope = { ...(account ? { accountId: account.id, accountName: account.name } : {}), ...(context ? { context } : {}) };
       if (!originalQuestions.length || originalQuestions.length > 20) throw new BadRequestException('QUESTION_COUNT_LIMIT');
       const requestId = randomUUID(), now = new Date().toISOString();
       const deferredIds: string[] = [];
       for (const q of originalQuestions.filter(q => q.id !== selected?.id)) {
         const [existing] = await tx.select().from(tables.channelDeferredQuestions).where(and(eq(tables.channelDeferredQuestions.owner, owner), eq(tables.channelDeferredQuestions.id, q.id)));
         if (existing && existing.data.status !== 'pending') continue;
-        const question: DeferredQuestion = { id: q.id, ownerId: owner, originatingRequestId: requestId, text: q.text, status: 'pending', createdAt: now };
+        const question: DeferredQuestion = { ...questionScope, id: q.id, ownerId: owner, originatingRequestId: requestId, text: q.text, status: 'pending', createdAt: now };
         await tx.insert(tables.channelDeferredQuestions).values({ id: q.id, owner, requestId, data: question }).onConflictDoNothing();
         deferredIds.push(q.id);
       }
-      const request: SupplementRequest = { id: requestId, ownerId: owner, userMessageId: randomUUID(), requestKey: input.requestKey,
+      const request: SupplementRequest = { ...questionScope, id: requestId, ownerId: owner, userMessageId: randomUUID(), requestKey: input.requestKey,
         factQuestion: selected?.text ?? '', selectedToolId: this.selectTool(selected?.text ?? ''), maxToolCalls: 1,
         claimedToolCalls: selected ? 1 : 0, deferredQuestionIds: deferredIds, originalQuestions,
         status: selected ? 'running' : 'needs_scope' };
@@ -427,22 +475,24 @@ export class ChannelService implements OnModuleInit {
       const scopeCard = this.scopeCard(request);
       const now = new Date().toISOString(), fact = this.processFact(owner, request.id, 'supplement.scope.originalQuestionCount', request.originalQuestions.length, now);
       scopeCard.supports = [{ factId: fact.id, scope: '本次已冻结的问题与未选择范围' }];
-      const bubble = await this.publishTemplate(owner, { episodeId: `question:${request.id}`, entityId: request.id, title: '选择一个事实核查', eventKind: 'user.question', semanticDeltaId: channelHash([request.id, 'scope']),
+      const bubble = await this.publishTemplate(owner, { accountId: request.accountId, accountName: request.accountName, episodeId: `question:${request.id}`, entityId: request.id, title: '选择一个事实核查', eventKind: 'user.question', semanticDeltaId: channelHash([request.id, 'scope']),
         facts: [{ fact, card: scopeCard }], templateId: 'channel.supplement.scope_needed', stance: 'plain_fact', weight: 'nudge', layer: 3, posture: 'standalone', evidence: scopeCard,
         deliveryCause: 'user_reply' });
-      const result = { request, bubble, deferredQuestions: request.originalQuestions.map(q => ({ id: q.id, text: q.text })) };
+      const result = { request, bubble, deferredQuestions: request.originalQuestions.map(q => ({ id: q.id, text: q.text,
+        ownerId: owner, originatingRequestId: request.id, status: 'pending' as const, createdAt: now,
+        accountId: request.accountId, accountName: request.accountName, context: request.context })) };
       await this.db.update(tables.channelSupplementRequests).set({ result }).where(and(eq(tables.channelSupplementRequests.owner, owner), eq(tables.channelSupplementRequests.id, request.id)));
       return result;
     }
     let answer: Awaited<ReturnType<ChannelService['runOneTool']>>;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    try { answer = await Promise.race([this.runOneTool(owner, request, input.context), new Promise<never>((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('SINGLE_TOOL_TIMEOUT')), 30000); timeout.unref(); })]); }
+    try { answer = await Promise.race([this.runOneTool(owner, request, request.context), new Promise<never>((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('SINGLE_TOOL_TIMEOUT')), 30000); timeout.unref(); })]); }
     catch { answer = { templateId: 'channel.supplement.unverified', card: this.gapCard(request.id, '本次核查没有取得足够资料', ['本次工具查询失败；同一请求不会自动重试或换工具。']), facts: [] }; }
     finally { if (timeout) clearTimeout(timeout); }
     const now = new Date().toISOString();
     if (!answer.facts.length) answer.facts.push(this.processFact(owner, request.id, 'supplement.attempted', 1, now));
     if (answer.card.kind === 'gap') answer.card.supports = [{ factId: answer.facts[0].id, scope: '本次核查尝试及尚未核实的部分' }];
-    const bubble = await this.publishTemplate(owner, { episodeId: `question:${request.id}`, entityId: request.id, title: '单事实补充核查', eventKind: 'user.question', semanticDeltaId: channelHash([request.id, 'answer']),
+    const bubble = await this.publishTemplate(owner, { accountId: request.accountId, accountName: request.accountName, episodeId: `question:${request.id}`, entityId: request.id, title: '单事实补充核查', eventKind: 'user.question', semanticDeltaId: channelHash([request.id, 'answer']),
       facts: answer.facts.map(fact => ({ fact, card: answer.card })), templateId: answer.templateId, stance: answer.priorOwnBubbleId ? 'I_told_you' : answer.card.kind === 'gap' ? 'unsure_honest' : 'plain_fact', weight: 'nudge', layer: 3, posture: 'standalone', evidence: answer.card, deliveryCause: 'user_reply', speaker: answer.speaker, priorOwnBubbleId: answer.priorOwnBubbleId, relationshipMemoryIds: answer.relationshipMemoryIds, thesis: answer.thesis });
     const saved: SupplementRequest = { ...request, status: answer.card.kind === 'gap' ? 'not_verified' : 'answered', conclusion: bubble?.text, evidenceCardId: answer.card.id };
     const result = { request: saved, bubble, deferredQuestions: [] };
@@ -453,7 +503,7 @@ export class ChannelService implements OnModuleInit {
         this.processFact(owner, request.id, 'supplement.scope.deferredCount', request.deferredQuestionIds.length, now),
         this.processFact(owner, request.id, 'supplement.scope.originalQuestionCount', request.originalQuestions.length, now)];
       scope.supports = facts.map(fact => ({ factId: fact.id, scope: '本次核查选择与保留待办的范围' }));
-      await this.publishTemplate(owner, { episodeId: `question:${request.id}`, entityId: request.id, title: '核查范围', eventKind: 'user.question', semanticDeltaId: channelHash([request.id, 'selected-scope']), facts: facts.map(fact => ({ fact, card: scope })), templateId: 'channel.supplement.scope', stance: 'plain_fact', weight: 'nudge', layer: 3, posture: 'standalone', evidence: scope, deliveryCause: 'user_reply' });
+      await this.publishTemplate(owner, { accountId: request.accountId, accountName: request.accountName, episodeId: `question:${request.id}`, entityId: request.id, title: '核查范围', eventKind: 'user.question', semanticDeltaId: channelHash([request.id, 'selected-scope']), facts: facts.map(fact => ({ fact, card: scope })), templateId: 'channel.supplement.scope', stance: 'plain_fact', weight: 'nudge', layer: 3, posture: 'standalone', evidence: scope, deliveryCause: 'user_reply' });
     }
     return result;
   }
@@ -466,7 +516,7 @@ export class ChannelService implements OnModuleInit {
       if (!updated.length) continue;
       const fact = this.processFact(row.owner, row.id, 'supplement.interrupted', 1, new Date().toISOString()), card = this.gapCard(`recovery:${row.id}`, '上次核查中断，结果未确认', ['原调用没有被重发，也没有换工具；本次只恢复失败记录。']);
       card.supports = [{ factId: fact.id, scope: '已持久化的单次调用中断状态' }];
-      await this.publishTemplate(row.owner, { episodeId: `question:${row.id}`, entityId: row.id, title: '上次核查未确认', eventKind: 'user.question', semanticDeltaId: channelHash([row.id, 'interrupted']), facts: [{ fact, card }], templateId: 'channel.supplement.unverified', stance: 'unsure_honest', weight: 'nudge', layer: 3, posture: 'standalone', evidence: card, deliveryCause: 'user_reply' });
+      await this.publishTemplate(row.owner, { accountId: row.data.accountId, accountName: row.data.accountName, episodeId: `question:${row.id}`, entityId: row.id, title: '上次核查未确认', eventKind: 'user.question', semanticDeltaId: channelHash([row.id, 'interrupted']), facts: [{ fact, card }], templateId: 'channel.supplement.unverified', stance: 'unsure_honest', weight: 'nudge', layer: 3, posture: 'standalone', evidence: card, deliveryCause: 'user_reply' });
     }
   }
   private selectTool(question: string) {
@@ -490,10 +540,13 @@ export class ChannelService implements OnModuleInit {
     const now = new Date().toISOString(), question = request.factQuestion;
     const explicitTicker = typeof context?.ticker === 'string' ? context.ticker : question.match(/\b[A-Z][A-Z0-9.\-]{0,14}\b/u)?.[0];
     const ticker = explicitTicker?.toUpperCase().trim();
+    const [account] = request.accountId ? await this.db.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, request.accountId))) : [];
+    if (request.accountId && !account) throw new NotFoundException('ACCOUNT_NOT_FOUND');
     if (request.selectedToolId === 'history_one') {
       const [match] = await this.db.select({prior:tables.channelBubbles}).from(tables.channelBubbles)
         .innerJoin(tables.channelEpisodes,and(eq(tables.channelEpisodes.owner,owner),eq(tables.channelEpisodes.id,tables.channelBubbles.episodeId)))
         .where(and(eq(tables.channelBubbles.owner, owner), sql`${tables.channelBubbles.data}->>'speaker' = 'laozhou'`, sql`${tables.channelBubbles.data}->>'stance' = 'watchful'`,
+          request.accountId ? sql`${tables.channelBubbles.data}->>'accountId' = ${request.accountId}` : sql`${tables.channelBubbles.data}->>'accountId' IS NULL`,
           ticker?sql`(${tables.channelEpisodes.data}->>'entityId' = ${ticker} OR EXISTS(SELECT 1 FROM channel_facts cf WHERE cf.owner=${owner} AND cf.id=(${tables.channelBubbles.data}->'anchors'->'primary'->>'factId') || ':symbol' AND cf.data->>'key'='monitor.symbol' AND upper(cf.data->>'value')=${ticker}))`:undefined))
         .orderBy(desc(tables.channelBubbles.createdAt)).limit(1);
       const prior=match?.prior;
@@ -512,6 +565,19 @@ export class ChannelService implements OnModuleInit {
           sources: [{ id: fact.sourceId, kind: 'market_data', title: `${quote.source ?? '行情来源'} · ${quote.symbol}`, uri: `/holdings?ticker=${encodeURIComponent(ticker)}`, publishedAt: quote.quoteAt, observedAt: now, verification: 'retrieved' }], asOf: quote.quoteAt, gaps: quote.delayed ? ['行情可能延迟，不能据此声称实时成交。'] : [], supports: [{ factId: fact.id, scope: '该行情时点的价格' }] } };
       }
     } else if (request.selectedToolId === 'position_one' && ticker) {
+      if (account) {
+        const [position] = await this.db.select().from(paperPositions).where(and(eq(paperPositions.owner, owner),
+          eq(paperPositions.accountId, account.id), eq(paperPositions.ticker, ticker)));
+        const quantity = position?.shares ?? '0';
+        const observedAt = position?.updatedAt.toISOString() ?? now;
+        const fact = this.processFact(owner, request.id, 'supplement.quantity', quantity, observedAt);
+        return { templateId: 'channel.supplement.position', facts: [fact], card: { id: `card:${request.id}`, kind: 'evidence',
+          summary: `${account.name} 模拟账户记录：${ticker} ${quantity} 股 / Simulation account recorded shares`,
+          sources: [{ id: position?.id ?? `${account.id}:${ticker}`, kind: 'ledger', title: `${account.name} · ${ticker} 模拟持仓 / Simulation position`,
+            uri: `/paper/${account.id}`, publishedAt: null, observedAt, verification: 'checked' }], asOf: observedAt,
+          gaps: ['仅为所选模拟账户账本，不代表真实券商持仓。 / This is the selected simulation ledger, not a live broker position.'],
+          supports: [{ factId: fact.id, scope: `${account.name} 模拟账户持仓账本记录数量 / Recorded simulation shares` }] } };
+      }
       const rows = await this.db.select().from(holdings).where(and(eq(holdings.owner, owner), eq(holdings.ticker, ticker))).limit(1);
       if (rows[0]) {
         const row = rows[0], fact = this.processFact(owner, request.id, 'supplement.quantity', String(row.shares), now);
@@ -520,6 +586,24 @@ export class ChannelService implements OnModuleInit {
       }
     } else if (request.selectedToolId === 'cash_one') {
       const currency = question.match(/\b(?:USD|HKD|CNY)\b/iu)?.[0]?.toUpperCase();
+      if (account) {
+        const rows = account.ledgerMode === 'native_currency'
+          ? await this.db.select().from(simulationCash).where(and(eq(simulationCash.owner, owner), eq(simulationCash.accountId, account.id),
+            currency ? eq(simulationCash.currency, currency) : undefined)).limit(4)
+          : !currency || currency === 'USD' ? [{ id: account.id, currency: 'USD', available: account.cashBalance,
+            frozen: '0', unsettled: '0', availabilityKnown: true }] : [];
+        if (rows.length !== 1 || !rows[0].availabilityKnown) return { templateId: 'channel.supplement.unverified', facts: [],
+          card: this.gapCard(request.id, `${account.name} 模拟现金未能确认单一可用余额 / Simulation cash balance unavailable`,
+            [rows.length > 1 ? '请明确核查币种，不跨币种加总。 / Specify one currency; currencies are not added together.'
+              : '该模拟账户的币种可用现金尚未确认。 / Available cash for this account and currency is not confirmed.']) };
+        const row = rows[0], fact = this.processFact(owner, request.id, 'supplement.amount', row.available, now);
+        return { templateId: 'channel.supplement.cash', facts: [fact], card: { id: `card:${request.id}`, kind: 'evidence',
+          summary: `${account.name} 模拟账户可用现金：${row.available} ${row.currency} / Simulation available cash`,
+          sources: [{ id: row.id, kind: 'ledger', title: `${account.name} · ${row.currency} 模拟现金 / Simulation cash`,
+            uri: `/paper/${account.id}`, publishedAt: null, observedAt: now, verification: 'checked' }], asOf: now,
+          gaps: [`冻结 ${row.frozen}、未结算 ${row.unsettled} ${row.currency} 未计入可用余额。 / Frozen and unsettled amounts are excluded.`],
+          supports: [{ factId: fact.id, scope: `${account.name} 所选币种的已确认可用模拟现金 / Confirmed available simulation cash` }] } };
+      }
       const rows = await this.db.select().from(cashAccounts).where(and(eq(cashAccounts.owner, owner), currency ? eq(cashAccounts.currency, currency) : undefined)).limit(4);
       if (rows.length === 1 && rows[0].reconciliationStatus === 'confirmed') {
         const row = rows[0], fact = this.processFact(owner, request.id, 'supplement.amount', String(row.balance), now);
@@ -539,12 +623,12 @@ export class ChannelService implements OnModuleInit {
         if (unique.length === 1) {
           const located = unique[0], fact = this.processFact(owner, request.id, 'supplement.reportLocator', 1, now);
           return { templateId: 'channel.supplement.report_fact', facts: [fact], card: { id: `card:${request.id}`, kind: 'evidence', summary: `已定位报告中的“${focus}”记载`,
-            sources: [{ id: `${report.id}:${report.revision}:${located.sectionId}`, kind: 'tool_result', title: report.title, uri: `/?reportId=${encodeURIComponent(report.id)}`, publishedAt: report.createdAt.toISOString(), observedAt: now, verification: 'retrieved', locator: `段落 ${located.sectionId}：${located.sentence}` }],
+            sources: [{ id: `${report.id}:${report.revision}:${located.sectionId}`, kind: 'tool_result', title: report.title, uri: `/analysis/reports/${encodeURIComponent(report.id)}`, publishedAt: report.createdAt.toISOString(), observedAt: now, verification: 'retrieved', locator: `段落 ${located.sectionId}：${located.sentence}` }],
             asOf: report.createdAt.toISOString(), gaps: ['本次核实报告如何记载该事实，未重新核实底层外部数据。'], supports: [{ factId: fact.id, scope: located.sentence }] } };
         }
       }
       const card = this.gapCard(request.id, report ? '找到当前报告，但本次不能唯一定位所问事实' : '当前没有可核验的报告来源', ['可单次核查：证券现价、持股数量、指定币种现金、报告内某只证券的一项财务指标。请明确证券、期间或指标；本次未展开多轮研究。']);
-      if (report) card.sources.push({ id: report.id, kind: 'tool_result', title: report.title, uri: `/?reportId=${encodeURIComponent(report.id)}`, publishedAt: report.createdAt.toISOString(), observedAt: now, verification: 'retrieved' });
+      if (report) card.sources.push({ id: report.id, kind: 'tool_result', title: report.title, uri: `/analysis/reports/${encodeURIComponent(report.id)}`, publishedAt: report.createdAt.toISOString(), observedAt: now, verification: 'retrieved' });
       return { templateId: 'channel.supplement.unverified', card, facts: [] };
     }
     return { templateId: 'channel.supplement.unverified', card: this.gapCard(request.id, '本次没有取得足够依据', [ticker ? '指定证券或所需数据尚未取得；本次不自动换工具。' : '缺少明确的证券或币种；原问题保留在本次范围中。']), facts: [] };

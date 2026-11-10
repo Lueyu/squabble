@@ -8,9 +8,9 @@ import { ChannelMemoryService } from './channel-memory.service';
 @Controller('api/channel')
 export class ChannelController {
   constructor(private readonly channel: ChannelService, private readonly memory: ChannelMemoryService) {}
-  @Get() projection(@Req() req: Request) { return this.channel.projection(req.userContext.userId); }
+  @Get() projection(@Req() req: Request, @Query('accountId') accountId?: string) { return this.channel.projection(req.userContext.userId, accountId); }
   @Get('logs') logs(@Req() req: Request) { return this.channel.logs(req.userContext.userId); }
-  @Get('pending') pending(@Req() req: Request) { return this.channel.pending(req.userContext.userId); }
+  @Get('pending') pending(@Req() req: Request, @Query('accountId') accountId?: string) { return this.channel.pending(req.userContext.userId, accountId); }
   @Get('bubbles/:id') bubble(@Req() req: Request, @Param('id') id: string) { return this.channel.bubble(req.userContext.userId, id); }
   @Post('questions') ask(@Req() req: Request, @Body() body: unknown) { return this.channel.ask(req.userContext.userId, body); }
   @Post('actions') action(@Req() req: Request, @Body() body: unknown) { return this.channel.action(req.userContext.userId, body); }

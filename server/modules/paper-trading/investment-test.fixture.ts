@@ -18,6 +18,7 @@ export async function investmentFixture(run: (db: PostgresJsDatabase, client: Re
     await client.unsafe(readFileSync('scripts/db/32_autonomous_investment.sql', 'utf8'));
     await client.unsafe(readFileSync('scripts/db/32_autonomous_investment.sql', 'utf8'));
     await client.unsafe(readFileSync('scripts/db/42_user_strategy_runtime.sql', 'utf8'));
+    await client.unsafe(readFileSync('scripts/db/45_portfolio_workspace.sql', 'utf8'));
     const owner = randomUUID();
     await client`INSERT INTO users(id,username,password_hash) VALUES(${owner},${'invest-'+owner.slice(0,20)},'fixture-only')`;
     await run(drizzle(client), client, owner);

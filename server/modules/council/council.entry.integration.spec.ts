@@ -48,7 +48,7 @@ test('zero-form general discussion is owner scoped, idempotent, and persists wit
   const client = postgres(url!, { max: 8, onnotice: () => {}, connection: { search_path: namespace } });
   try {
     await admin`CREATE SCHEMA ${admin(namespace)}`;
-    for (const file of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && Number(name.slice(0, 2)) <= 34).sort()) {
+    for (const file of readdirSync('scripts/db').filter(name => /^\d+.*\.sql$/u.test(name) && !name.startsWith('02_') && (Number(name.slice(0, 2)) <= 34 || name.startsWith('49_'))).sort()) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     const owner = randomUUID();

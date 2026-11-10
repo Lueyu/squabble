@@ -1,4 +1,5 @@
-import { and, eq, gt, inArray, isNotNull } from 'drizzle-orm';
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
+import { isNull, and, eq, gt, inArray, isNotNull } from 'drizzle-orm';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { researchArchiveJobs, researchMemories, researchMemoryPreferences, researchMemoryEvidence, researchTheses, researchThesisVersions } from '../../database/research-memory.schema';
@@ -17,8 +18,8 @@ export async function lockedThesis(tx: MemoryFenceTransaction, owner: string, id
   const [pin] = await tx.select().from(researchTheses).where(and(eq(researchTheses.owner, owner), eq(researchTheses.id, id)));
   const [parent] = pin ? await tx.select().from(researchMemories).where(and(eq(researchMemories.owner, owner), eq(researchMemories.id, pin.memoryId))) : [];
   if (!parent) return null;
-  const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, parent.sessionId))).for('share');
-  const [report] = await tx.select().from(councilReports).where(and(eq(councilReports.owner, owner), eq(councilReports.id, parent.reportId))).for('share');
+  const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, parent.sessionId))).for('share');
+  const [report] = await tx.select().from(councilReports).where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), eq(councilReports.id, parent.reportId))).for('share');
   const [memory] = await tx.select().from(researchMemories).where(and(eq(researchMemories.owner, owner), eq(researchMemories.id, parent.id))).for('share');
   const [thesis] = await tx.select().from(researchTheses).where(and(eq(researchTheses.owner, owner), eq(researchTheses.id, id))).for('share');
   if (!session || !report || !memory || !thesis || memory.deletedAt || thesis.deletedAt
@@ -80,13 +81,13 @@ export async function recordReviewedReplacement(tx: MemoryFenceTransaction, owne
 
 export async function captureStrategyMemory(tx: MemoryFenceTransaction, owner: string, reportIds: string[]): Promise<StrategyMemoryInventory> {
   if (!reportIds.length) return { state: 'unknown', dependencies: [], reason: 'MEMORY_REPORT_MISSING' };
-  const reports = await tx.select().from(councilReports).where(and(eq(councilReports.owner, owner), inArray(councilReports.id, reportIds)))
+  const reports = await tx.select().from(councilReports).where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), inArray(councilReports.id, reportIds)))
     .orderBy(councilReports.id).for('share');
   if (reports.length !== new Set(reportIds).size) return { state: 'unknown', dependencies: [], reason: 'MEMORY_SOURCE_UNAVAILABLE' };
   const dependencies: StrategyThesisDependency[] = [];
   let structured = false;
   for (const report of reports) {
-    const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, report.sessionId)));
+    const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, report.sessionId)));
     if (!session) return { state: 'unknown', dependencies, reason: 'MEMORY_SOURCE_UNAVAILABLE' };
     let submitted: Awaited<ReturnType<typeof acceptedSubmitted>>;
     try { submitted = await acceptedSubmitted(tx, owner, report); }

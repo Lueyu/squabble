@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
@@ -17,6 +17,7 @@ import PortfolioDailyFactsPanel from '@/components/MultiAgent/PortfolioDailyFact
 import type { PortfolioDailyFacts } from '@shared/portfolio-report.interface';
 import { useSimpleExperience } from '@/hooks/use-simple-experience';
 import SimpleReportReader from './SimpleReportReader';
+import { safeReturnPath } from '@/features/navigation/workspace-navigation';
 
 interface Editor { draft: ResearchRevisionDraft | null; title: string; reason: string; sections: ResearchDocumentSection[] }
 function Diff({ changes, en }: { changes: ResearchSectionDiff[]; en: boolean }) {
@@ -41,6 +42,8 @@ function ResearchDocumentReader({ versionId }: { versionId: string }) {
   const query = useQuery({ queryKey: ['research-document', versionId], queryFn: () => fetchResearchDocument(versionId), enabled: Boolean(versionId) });
   const [editor, setEditor] = useState<Editor | null>(null); const [busy, setBusy] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams(); const selectedDraft = searchParams.get('draftId');
+  const location = useLocation();
+  const returnTo = safeReturnPath(location.state?.returnTo) ?? safeReturnPath(searchParams.get('returnTo')) ?? '/analysis';
   useEffect(() => {
     const draft = query.data?.drafts.find(item => item.id === selectedDraft);
     if (draft && editor?.draft?.id !== draft.id) setEditor({ draft, title: draft.title, reason: draft.changeReason, sections: (draft.sections ?? []).map(section => ({ ...section })) });
@@ -76,7 +79,7 @@ function ResearchDocumentReader({ versionId }: { versionId: string }) {
   }
   const editChanges = editor ? researchSectionChanges(version.sections, editor.sections) : [];
   return <div className="mx-auto max-w-6xl space-y-6 px-3 py-5 pb-16 sm:px-6">
-    <Button asChild size="sm" variant="ghost"><Link to="/analysis"><ArrowLeft />{label('Analysis', '分析报告')}</Link></Button>
+    <Button asChild size="sm" variant="ghost"><Link to={returnTo}><ArrowLeft />{label('Report history', '报告历史')}</Link></Button>
     <header className="space-y-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{version.kind}</Badge><Badge>v{version.version}</Badge>
       {document.adoptedVersionId === version.id && <Badge variant="secondary">{label('Adopted', '已采纳')}</Badge>}
       {invalid && <Badge variant="destructive">{version.status === 'revoked' ? label('Revoked', '已撤销') : label('Source unavailable', '来源已不可用')}</Badge>}</div>

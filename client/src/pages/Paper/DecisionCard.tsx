@@ -7,6 +7,7 @@ import type { StrategyRouteRecord } from '@shared/strategy-mandate.interface';
 import { questionPath } from '@/utils/simple-experience';
 import { Button } from '@/components/ui/button';
 import { fetchInvestmentDecision, type InvestmentDecision } from '@/api/ai-investment';
+import { simulationStrategyPath } from '@/utils/portfolio-workspace';
 
 export function DecisionEvidence({ data, ticker }: { data: InvestmentDecision; ticker: string }) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
@@ -27,7 +28,7 @@ export function DecisionEvidence({ data, ticker }: { data: InvestmentDecision; t
   </div>;
 }
 
-export default function DecisionCard({ action, decision }: { action: AiInvestmentView['actions'][number]; decision?: StrategyRouteRecord }) {
+export default function DecisionCard({ action, decision, accountId }: { action: AiInvestmentView['actions'][number]; decision?: StrategyRouteRecord; accountId?: string }) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
   const [expanded, setExpanded] = useState(false);
   const details = useQuery({ queryKey: ['investment-decision', action.id], queryFn: () => fetchInvestmentDecision(action.id), enabled: expanded, retry: false, staleTime: Infinity });
@@ -35,7 +36,7 @@ export default function DecisionCard({ action, decision }: { action: AiInvestmen
   return <article className="space-y-3 rounded-xl border bg-card p-4"><div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{action.ticker} · {action.side === 'buy' ? (zh ? '买入' : 'Buy') : (zh ? '卖出' : 'Sell')} {action.quantity}</h3><span className="text-xs text-muted-foreground">{statuses[action.status] || action.status}</span></div>
     <p className="whitespace-pre-wrap break-words text-sm leading-6">{action.reason || (zh ? '未保存当时的理由。' : 'No rationale was recorded at the time.')}</p>
     {action.filledPrice && <p className="text-xs text-muted-foreground">{zh ? '成交价' : 'Fill price'} {action.filledPrice} · {zh ? '费用（美元）' : 'Fee (USD)'} {action.fee ?? '—'}</p>}
-    {action.strategyId && <p className="break-words text-xs text-muted-foreground">{zh ? '策略条目' : 'Strategy entry'}: {action.strategyEntryId} · <Link to={`/paper?investmentStrategyId=${encodeURIComponent(action.strategyId)}#investment-strategy`} className="text-primary underline">{zh ? '查看当时策略' : 'View strategy at the time'}</Link></p>}
+    {action.strategyId && <p className="break-words text-xs text-muted-foreground">{zh ? '策略条目' : 'Strategy entry'}: {action.strategyEntryId} · <Link to={accountId ? simulationStrategyPath(accountId, action.strategyId) : `/paper?investmentStrategyId=${encodeURIComponent(action.strategyId)}#investment-strategy`} className="text-primary underline">{zh ? '查看当时策略' : 'View strategy at the time'}</Link></p>}
     <p className="text-xs text-muted-foreground">{new Date(action.createdAt).toLocaleString(i18n.language)}</p>
     <div className="flex flex-wrap gap-3"><Button asChild size="sm" variant="outline"><Link to={questionPath({ decisionId: action.id })}>{zh ? '问问原因' : 'Ask why'}</Link></Button>
       {decision?.councilSessionId && <Link className="self-center text-sm text-primary underline" to={`/council?session=${encodeURIComponent(decision.councilSessionId)}`}>{zh ? '查看实际讨论' : 'View the actual discussion'}</Link>}

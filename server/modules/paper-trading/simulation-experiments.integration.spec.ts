@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { NotFoundException } from '@nestjs/common';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -58,6 +59,9 @@ test('real snapshot creates an immutable independent opening ledger with idempot
       cashAvailable: { USD: '1000' }, sellableShares: { AAPL: '5' } };
     await assert.rejects(experiments.create(stranger, request), /Preview not found/);
     const [first, retry] = await Promise.all([experiments.create(owner, request), experiments.create(owner, request)]);
+    // Node's fake Date does not change PostgreSQL CURRENT_TIMESTAMP. Keep this
+    // opening inventory in the fixture's November 5 timeline for later splits.
+    await db.update(paperPositions).set({ openedAt: new Date(first.seed!.capturedAt) }).where(eq(paperPositions.accountId, first.id));
     assert.equal(first.id, retry.id);
     assert.notEqual(first.id, oldAccount.id);
     assert.equal((await db.select().from(paperOrders)).length, 0, 'opening balance must not fabricate buy orders');
@@ -115,8 +119,22 @@ test('real snapshot creates an immutable independent opening ledger with idempot
     t.mock.timers.setTime(new Date('2026-11-05T15:30:00Z').getTime());
     market = 'US'; currency = 'USD'; price = 100;
     await experiments.select(owner, oldAccount.id);
+    const accountLedgers = async () => Promise.all([
+      db.select().from(paperAccounts).where(eq(paperAccounts.owner, owner)).orderBy(paperAccounts.id),
+      db.select().from(simulationCash).where(eq(simulationCash.owner, owner)).orderBy(simulationCash.id),
+      db.select().from(paperPositions).where(eq(paperPositions.owner, owner)).orderBy(paperPositions.id),
+      db.select().from(paperOrders).where(eq(paperOrders.owner, owner)).orderBy(paperOrders.id),
+      db.select().from(paperTrades).where(eq(paperTrades.owner, owner)).orderBy(paperTrades.id),
+    ]);
+    const beforeStaleOrder = await accountLedgers();
     await assert.rejects(paper.placeOrder(owner, { ticker: 'AAPL', side: 'buy', quantity: 1 }, 'manual', undefined, true,
-      false, undefined, undefined, undefined, first.id), /account changed/);
+      false, undefined, undefined, undefined, first.id), (error: unknown) => {
+        assert.ok(error instanceof NotFoundException);
+        assert.equal(error.getStatus(), 404);
+        assert.equal(error.message, 'Active paper account not found');
+        return true;
+      });
+    assert.deepEqual(await accountLedgers(), beforeStaleOrder, 'an inactive account ID cannot mutate either account ledger');
     assert.equal((await paper.getOverview(owner)).positions.length, 0);
     assert.equal((await paper.getOverview(owner)).recentOrders.length, 0);
     await assert.rejects(paper.approveOrder(owner, sell.id), /active paper account/);
@@ -229,6 +247,7 @@ test('real snapshot creates an immutable independent opening ledger with idempot
     assert.equal(Number(feeSell.filledPrice), 99.9, 'sell slippage is adverse');
     const feeBuy = await paper.placeOrder(feeOwner, { ticker: 'AAPL', side: 'buy', quantity: 1 }, 'manual', undefined, true);
     assert.equal(Number(feeBuy.filledPrice), 100.1, 'buy slippage is adverse');
+    await db.update(paperTrades).set({ createdAt: new Date() }).where(eq(paperTrades.accountId, feeAccount.id));
     const feeCash = (await experiments.get(feeOwner, feeAccount.id)).cash[0];
     assert.ok(Math.abs(Number(feeCash.available) - 899.84995) < 1e-8, 'buy fee is debited in native currency');
     assert.ok(Math.abs(Number(feeCash.unsettled) - 99.85005) < 1e-8, 'sell fee reduces unsettled proceeds');

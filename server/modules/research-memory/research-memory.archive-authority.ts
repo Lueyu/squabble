@@ -6,7 +6,7 @@ import { acceptedWorkflowProvenance } from './research-memory.provenance';
 /** Unknown old outcomes need positive persisted evidence. A later completed cycle proves nothing. */
 export async function archivalEligibility(db: Pick<PostgresJsDatabase, 'select' | 'update'>, owner: string,
   report: typeof councilReports.$inferSelect, session: typeof councilSessions.$inferSelect): Promise<boolean> {
-  if (report.owner !== owner || session.owner !== owner || report.sessionId !== session.id
+  if (session.deletedAt || report.owner !== owner || session.owner !== owner || report.sessionId !== session.id
     || report.engine === 'basic' || report.publicationOutcome === 'failed') return false;
   if (report.publicationOutcome === 'succeeded') return true;
   const eligible = session.status === 'completed' && session.revision === report.revision && !session.error

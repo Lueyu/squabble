@@ -29,8 +29,18 @@ const start = z.object({ additionalVirtualCash: z.object({ USD: z.number().finit
   confirmNoCash: z.boolean().optional(), cashAvailable: z.record(z.string(), z.number().finite().nonnegative()).optional(),
   sellableShares: z.record(z.string(), z.number().finite().nonnegative()).optional(), adoptAccountId: z.string().uuid().optional() }).strict();
 export const investmentRequests = {
-  preview: z.object({ origin: z.enum(['holdings', 'cash']), cash: z.object({ amount: z.number().finite().positive(), currency: z.enum(['USD', 'HKD', 'CNY']) }).strict().optional(), requestKey }).strict()
-    .refine(value => value.origin === 'cash' ? Boolean(value.cash) : !value.cash, 'Cash start requires an explicit amount and currency'),
+  preview: z.discriminatedUnion('origin', [
+    z.object({ origin: z.literal('holdings'), requestKey }).strict(),
+    z.object({ origin: z.literal('cash'), cash: z.object({ amount: z.number().finite().positive().max(1e12), currency: z.enum(['USD', 'HKD', 'CNY']) }).strict(), requestKey }).strict(),
+    z.object({ origin: z.literal('account'), sourceAccountId: z.string().uuid(), requestKey }).strict(),
+    z.object({ origin: z.literal('custom'), requestKey,
+      holdings: z.array(z.object({ ticker, shares: z.number().finite().positive().max(1e12),
+        historicalCost: z.number().finite().nonnegative().max(1e12).optional() }).strict()).max(100),
+      cash: z.array(z.object({ currency: z.enum(['USD', 'HKD', 'CNY']), amount: z.number().finite().nonnegative().max(1e12) }).strict()).min(1).max(3),
+    }).strict().refine(value => new Set(value.holdings.map(holding => holding.ticker)).size === value.holdings.length, 'Each security can appear only once')
+      .refine(value => new Set(value.cash.map(cash => cash.currency)).size === value.cash.length, 'Each currency can appear only once')
+      .refine(value => value.holdings.length > 0 || value.cash.some(cash => cash.amount > 0), 'Add holdings or positive cash'),
+  ]),
   apply: z.object({ strategyId: z.string().uuid(), expectedRevision: z.number().int().positive(), previewHash: z.string().min(1).max(128), expectedCurrentId: z.string().uuid().nullable(), requestKey }).strict(),
   removeStrategy: z.object({ strategyId: z.string().uuid(), expectedRevision: z.number().int().positive(), expectedPolicyRevision: z.number().int().positive(), requestKey }).strict(),
   start, restart: start.extend({ expectedAccountId: z.string().uuid() }).strict(),
@@ -57,6 +67,17 @@ export function effectiveInvestmentConfig(base: InvestmentConfig, records: Inves
       case 'cash_floor': config.limits.minCashPct = c.percent; config.limits.maxGrossExposurePct = Math.min(base.limits.maxGrossExposurePct, 100 - c.percent); break;
       case 'markets': config.markets = [...new Set(c.markets)]; break;
     }
+  }
+  // Each confirmed strategy may narrow the account's authority. Combine those
+  // promises conservatively without overwriting the user's base account caps.
+  for (const assignment of base.portfolio?.filter(item => item.enabled) ?? []) {
+    const limits = assignment.snapshot.content.limits;
+    if (!limits) continue;
+    for (const key of ['maxPositionPct', 'maxDailyIncreasePct', 'maxDailyTurnoverPct', 'maxGrossExposurePct', 'maxOrderPct'] as const) {
+      if (limits[key] !== undefined) config.limits[key] = Math.min(config.limits[key], limits[key]);
+    }
+    if (limits.minCashPct !== undefined) config.limits.minCashPct = Math.max(config.limits.minCashPct, limits.minCashPct);
+    config.limits.maxGrossExposurePct = Math.min(config.limits.maxGrossExposurePct, 100 - config.limits.minCashPct);
   }
   if (!config.markets.length || config.limits.maxGrossExposurePct + config.limits.minCashPct > 100 + 1e-8) throw new Error('CONTRADICTORY_CONSTRAINTS');
   config.noBuy = [...new Set(config.noBuy)]; config.noSell = [...new Set(config.noSell)];

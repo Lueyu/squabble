@@ -47,7 +47,9 @@ test('new-stock review counts actual blind successful submissions, never selecte
       { getPortfolioContext: async () => ({ totalValue: 10000, cash: 10000, holdings: [] }) } as never, { listRuns: async () => ({ items: [] }) } as never);
     const builder = new AgentBuilderService(db, {} as never); const profile = await builder.getActiveProfile(owner);
     const input = { ticker: 'AAPL', side: 'buy' as const, quantity: 1, price: 99, reason: 'Exact confirmed entry' };
-    const candidate = { ...input, accountId: account.accountId, signalId: randomUUID(), mandateId: mandate.id, mandateVersion: mandate.version, ruleId: 'first-buy', parentPolicyId: applied.policy.id, parentPolicyRevision: applied.policy.revision, userStrategyId: draft.id, userStrategyRevision: draft.revision };
+    const candidate = { ...input, accountId: account.accountId, signalId: randomUUID(), mandateId: mandate.id, mandateVersion: mandate.version,
+      ruleId: mandate.config.rules[0].id, userEntryId: 'first-buy', parentPolicyId: applied.policy.id,
+      parentPolicyRevision: applied.policy.revision, userStrategyId: draft.id, userStrategyRevision: draft.revision };
     const check = () => db.transaction(tx => investmentExecutionFence(tx, owner, account.accountId, { ticker: 'AAPL', market: 'US', side: 'buy' }, 'agent', candidate as never));
     assert.equal((await check()).block, 'INVESTMENT_INDEPENDENT_REVIEW_REQUIRED');
     const reviewed = await council.reviewCandidate(owner, profile!, input, { subject: 'first-review', requireDeliberation: true, requireIndependentReview: true });

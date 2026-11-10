@@ -1,3 +1,4 @@
+import { PortfolioHistoryService } from '../portfolio-history/portfolio-history.service';
 import {
   BadRequestException,
   ConflictException,
@@ -42,6 +43,7 @@ export class ImportService {
     private readonly quoteService: QuoteService,
     @Optional()
     private readonly handoff?: ImportAnalysisHandoffService,
+    @Optional() private readonly portfolioHistory?: PortfolioHistoryService,
   ) {}
   async commit(
     owner: string,
@@ -98,101 +100,117 @@ export class ImportService {
       inputHash = createHash('sha256')
         .update(JSON.stringify(dto))
         .digest('hex');
-    return this.db.transaction(async (tx) => {
-      await lockMemoryOwner(tx, owner);
-      const [prior] = await tx
-        .select()
-        .from(importCommitReceipts)
-        .where(
-          and(
-            eq(importCommitReceipts.owner, owner),
-            eq(importCommitReceipts.requestKey, requestKey),
-          ),
-        );
-      if (prior) {
-        if (prior.inputHash !== inputHash)
-          throw new ConflictException('IDEMPOTENCY_CONFLICT');
+    return this.db
+      .transaction(async (tx) => {
+        await lockMemoryOwner(tx, owner);
+        const [prior] = await tx
+          .select()
+          .from(importCommitReceipts)
+          .where(
+            and(
+              eq(importCommitReceipts.owner, owner),
+              eq(importCommitReceipts.requestKey, requestKey),
+            ),
+          );
+        if (prior) {
+          if (prior.inputHash !== inputHash)
+            throw new ConflictException('IDEMPOTENCY_CONFLICT');
+          return {
+            logId: prior.id,
+            receiptId: prior.id,
+            created: prior.receipt.created,
+            updated: prior.receipt.updated,
+            skipped: 0,
+            failed: [],
+            analysisRequestId: prior.receipt.analysisRequestId,
+          };
+        }
+        const positions = await tx
+          .select()
+          .from(holdings)
+          .where(eq(holdings.owner, owner))
+          .for('update');
+        const receipt: ImportCommitReceipt = {
+          id: randomUUID(),
+          requestKey,
+          rowIds: [],
+          created: 0,
+          updated: 0,
+          createdAt: new Date().toISOString(),
+        };
+        for (const { row, identity, shares, cost } of rows) {
+          const existing = positions.find(
+            (position) =>
+              securityIdentity(position.ticker, position.market ?? undefined)
+                ?.key === identity.key,
+          );
+          const value = {
+            ticker: identity.ticker,
+            company: row.company?.trim() || null,
+            shares: String(shares),
+            buyPrice: cost === null ? null : String(cost),
+            market: identity.market,
+            currency: row.currency ?? identity.currency,
+            buyDate: dto.buyDate || null,
+            updatedAt: new Date(),
+          };
+          value.ticker = await recordPositionCheckpoint(
+            tx,
+            owner,
+            value,
+            existing,
+            dto.source,
+            receipt.id,
+          );
+          if (existing) {
+            await tx
+              .update(holdings)
+              .set(value)
+              .where(
+                and(eq(holdings.owner, owner), eq(holdings.id, existing.id)),
+              );
+            receipt.updated++;
+          } else {
+            await tx.insert(holdings).values({ owner, ...value });
+            receipt.created++;
+          }
+        }
+        await tx.insert(importLogs).values({
+          id: receipt.id,
+          owner,
+          source: dto.source,
+          filename: dto.filename?.slice(0, 255) ?? null,
+          rowsTotal: rows.length,
+          rowsImported: rows.length,
+          errors: [],
+        });
+        if (dto.analyze) {
+          if (!this.handoff)
+            throw new ConflictException('ANALYSIS_UNAVAILABLE');
+          receipt.analysisRequestId = (
+            await this.handoff.enqueueInTransaction(tx, owner, receipt.id)
+          ).id;
+        }
+        await tx
+          .insert(importCommitReceipts)
+          .values({ id: receipt.id, owner, requestKey, inputHash, receipt });
         return {
-          logId: prior.id,
-          receiptId: prior.id,
-          created: prior.receipt.created,
-          updated: prior.receipt.updated,
+          logId: receipt.id,
+          receiptId: receipt.id,
+          created: receipt.created,
+          updated: receipt.updated,
           skipped: 0,
           failed: [],
-          analysisRequestId: prior.receipt.analysisRequestId,
+          analysisRequestId: receipt.analysisRequestId,
         };
-      }
-      const positions = await tx
-        .select()
-        .from(holdings)
-        .where(eq(holdings.owner, owner))
-        .for('update');
-      const receipt: ImportCommitReceipt = {
-        id: randomUUID(),
-        requestKey,
-        rowIds: [],
-        created: 0,
-        updated: 0,
-        createdAt: new Date().toISOString(),
-      };
-      for (const { row, identity, shares, cost } of rows) {
-        const existing = positions.find(
-          (position) =>
-            securityIdentity(position.ticker, position.market ?? undefined)
-              ?.key === identity.key,
-        );
-        const value = {
-          ticker: identity.ticker,
-          company: row.company?.trim() || null,
-          shares: String(shares),
-          buyPrice: cost === null ? null : String(cost),
-          market: identity.market,
-          currency: row.currency ?? identity.currency,
-          buyDate: dto.buyDate || null,
-          updatedAt: new Date(),
-        };
-        value.ticker = await recordPositionCheckpoint(tx, owner, value, existing, dto.source, receipt.id);
-        if (existing) {
-          await tx
-            .update(holdings)
-            .set(value)
-            .where(
-              and(eq(holdings.owner, owner), eq(holdings.id, existing.id)),
-            );
-          receipt.updated++;
-        } else {
-          await tx.insert(holdings).values({ owner, ...value });
-          receipt.created++;
-        }
-      }
-      await tx.insert(importLogs).values({
-        id: receipt.id,
-        owner,
-        source: dto.source,
-        filename: dto.filename?.slice(0, 255) ?? null,
-        rowsTotal: rows.length,
-        rowsImported: rows.length,
-        errors: [],
+      })
+      .then((receipt) => {
+        // Only committed positions enter asynchronous market-data preparation.
+        void Promise.resolve()
+          .then(() => this.portfolioHistory?.prefetch(owner))
+          .catch(() => undefined);
+        return receipt;
       });
-      if (dto.analyze) {
-        if (!this.handoff) throw new ConflictException('ANALYSIS_UNAVAILABLE');
-        receipt.analysisRequestId = (
-          await this.handoff.enqueueInTransaction(tx, owner, receipt.id)
-        ).id;
-      }
-      await tx
-        .insert(importCommitReceipts)
-        .values({ id: receipt.id, owner, requestKey, inputHash, receipt });
-      return {
-        logId: receipt.id,
-        receiptId: receipt.id,
-        created: receipt.created,
-        updated: receipt.updated,
-        skipped: 0,
-        failed: [],
-        analysisRequestId: receipt.analysisRequestId,
-      };
-    });
   }
   async history(owner: string, limit = 20): Promise<ImportHistoryItem[]> {
     const rows = await this.db

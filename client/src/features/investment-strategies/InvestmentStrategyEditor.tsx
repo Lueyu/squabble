@@ -22,6 +22,7 @@ interface InvestmentStrategyEditorProps {
   investment?: AiInvestmentView;
   onClose: () => void;
   onChanged: () => void;
+  onReviewed?: (strategy: UserInvestmentStrategy) => Promise<void>;
 }
 
 export default function InvestmentStrategyEditor({
@@ -31,6 +32,7 @@ export default function InvestmentStrategyEditor({
   investment,
   onClose,
   onChanged,
+  onReviewed,
 }: InvestmentStrategyEditorProps) {
   const {
     zh,
@@ -58,6 +60,7 @@ export default function InvestmentStrategyEditor({
     investment,
     onClose,
     onChanged,
+    onReviewed,
   });
   const [editingExpanded, setEditingExpanded] = useState(
     () => !(item?.status === 'draft' && item.preview?.canConfirm),
@@ -74,26 +77,34 @@ export default function InvestmentStrategyEditor({
       <DialogContent className="flex max-h-[90dvh] min-w-0 flex-col overflow-hidden p-4 sm:max-w-3xl sm:p-6">
         <DialogHeader className="shrink-0 pr-6">
           <DialogTitle>
-            {readyToApply
+            {onReviewed
               ? zh
-                ? '核对并启用策略'
-                : 'Review and enable strategy'
-              : zh
-                ? '写下你的投资策略'
-                : 'Write your investment strategy'}
-          </DialogTitle>
-          <DialogDescription>
-            {currentId
-              ? zh
-                ? '编辑期间旧策略继续运行。点击应用才会整体切换。'
-                : 'The applied strategy keeps running while you edit. Apply explicitly to switch it.'
+                ? '核对策略草稿'
+                : 'Review strategy draft'
               : readyToApply
                 ? zh
-                  ? '核对以下执行说明和风险边界，确认后交给模拟盘。'
-                  : 'Review the execution details and risk limits below, then confirm to enable this strategy in your simulation.'
+                  ? '核对并启用策略'
+                  : 'Review and enable strategy'
                 : zh
-                  ? '先保存想法，再核对执行说明，最后交给模拟盘。'
-                  : 'Save your intent, review execution details, then apply it to your simulation.'}
+                  ? '写下你的投资策略'
+                  : 'Write your investment strategy'}
+          </DialogTitle>
+          <DialogDescription>
+            {onReviewed
+              ? zh
+                ? '保存并核对这份策略后，将其加入当前账户的组合草稿。只有应用组合才会改变运行策略。'
+                : 'Review and save this strategy to the account’s combination draft. Running strategies change only when you apply the combination.'
+              : currentId
+                ? zh
+                  ? '编辑期间旧策略继续运行。点击应用才会整体切换。'
+                  : 'The applied strategy keeps running while you edit. Apply explicitly to switch it.'
+                : readyToApply
+                  ? zh
+                    ? '核对以下执行说明和风险边界，确认后交给模拟盘。'
+                    : 'Review the execution details and risk limits below, then confirm to enable this strategy in your simulation.'
+                  : zh
+                    ? '先保存想法，再核对执行说明，最后交给模拟盘。'
+                    : 'Save your intent, review execution details, then apply it to your simulation.'}
           </DialogDescription>
         </DialogHeader>
         <div
@@ -264,17 +275,21 @@ export default function InvestmentStrategyEditor({
             </p>
           )}
           <p role="status" className="text-xs leading-6 text-muted-foreground">
-            {readyToApply
+            {readyToApply && onReviewed
               ? zh
-                ? '执行说明已就绪。核对无误后，点击确认才会应用到模拟盘。'
-                : 'Execution details are ready. Review them, then confirm to apply to your simulation.'
-              : prepared && !dirty
+                ? '说明已就绪，可保存到组合草稿。应用组合前不会执行。'
+                : 'Ready to save to the combination draft. Execution starts only after applying the combination.'
+              : readyToApply
                 ? zh
-                  ? '请先处理上方执行说明中的问题，再重新核对；当前尚未应用到模拟盘。'
-                  : 'Resolve the issues above, then review again. This strategy has not been applied to your simulation.'
-                : zh
-                  ? '下一步先整理执行说明供你核对，这一步只保存和整理，不会应用到模拟盘。'
-                  : 'Next, prepare the execution details for review. This step saves and prepares only; it does not apply to your simulation.'}
+                  ? '执行说明已就绪。核对无误后，点击确认才会应用到模拟盘。'
+                  : 'Execution details are ready. Review them, then confirm to apply to your simulation.'
+                : prepared && !dirty
+                  ? zh
+                    ? '请先处理上方执行说明中的问题，再重新核对；当前尚未应用到模拟盘。'
+                    : 'Resolve the issues above, then review again. This strategy has not been applied to your simulation.'
+                  : zh
+                    ? '下一步先整理执行说明供你核对，这一步只保存和整理，不会应用到模拟盘。'
+                    : 'Next, prepare the execution details for review. This step saves and prepares only; it does not apply to your simulation.'}
           </p>
           {!readyToApply && preparation.status !== 'pending' && (
             <div className="space-y-2 rounded-xl bg-muted/30 p-3 text-sm">
@@ -347,9 +362,13 @@ export default function InvestmentStrategyEditor({
                       ? '正在整理说明…'
                       : 'Preparing details…'
                     : readyToApply
-                      ? zh
-                        ? '确认说明并应用'
-                        : 'Review and apply to simulation'
+                      ? onReviewed
+                        ? zh
+                          ? '保存到组合草稿'
+                          : 'Save to combination draft'
+                        : zh
+                          ? '确认说明并应用'
+                          : 'Review and apply to simulation'
                       : preparation.status === 'succeeded'
                         ? zh
                           ? '读取已整理说明'

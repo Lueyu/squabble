@@ -9,6 +9,8 @@
   "updateLoadFailed": "暂时无法获取更新状态，请重试。",
   "groups": { "research": "研究配置", "personal": "个人与系统", "help": "帮助" },
   "sections": {
+    "notifications": { "title": "提醒与通知渠道", "description": "管理交易和研究提醒的接收渠道，检查测试投递结果。" },
+    "mcp": { "title": "MCP 连接", "description": "管理外部 Agent 的访问连接，撤销不再使用的授权。" },
     "models": { "title": "模型与 API", "description": "连接你的 AI 模型，配置快速分析与深度推理，让研究各有所长。" },
     "agents": { "title": "本地 Agent", "description": "连接这台设备上的 Agent，管理登录状态与研究执行方式。" },
     "data": { "title": "行情与数据", "description": "管理金融数据来源，为行情、新闻与基本面研究补充信息。" },

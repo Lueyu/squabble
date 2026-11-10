@@ -22,16 +22,15 @@ export class UserInvestmentStrategyController {
   @NeedLogin() @Get(':id')
   get(@Req() req: Request, @Param('id') id: string) { return this.service.get(req.userContext.userId, id); }
   @NeedLogin() @Delete(':id')
-  remove(@Req() req: Request, @Param('id') id: string) { return this.service.remove(req.userContext.userId, id); }
+  remove(@Req() req: Request, @Param('id') id: string, @Body() body?: { expectedRevision?: number }) {
+    return body?.expectedRevision === undefined ? this.service.remove(req.userContext.userId, id)
+      : this.service.deleteDraft(req.userContext.userId, id, body.expectedRevision);
+  }
   @NeedLogin() @Get(':id/revisions')
   revisions(@Req() req: Request, @Param('id') id: string, @Query('before') before?: string) { return this.service.revisions(req.userContext.userId, id, before === undefined ? undefined : Number(before)); }
   @NeedLogin() @Patch(':id')
   update(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number; content: StrategyDraftInput }) {
     return this.service.update(req.userContext.userId, id, body.expectedRevision, body.content);
-  }
-  @NeedLogin() @Delete(':id')
-  deleteDraft(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number }) {
-    return this.service.deleteDraft(req.userContext.userId, id, body.expectedRevision);
   }
   @NeedLogin() @Post(':id/add-source')
   addSource(@Req() req: Request, @Param('id') id: string, @Body() body: { expectedRevision: number; source: StrategySourceInput }) {

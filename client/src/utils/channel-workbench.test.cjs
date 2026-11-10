@@ -107,6 +107,29 @@ test('an applied observation plan clearly says it will not trade',()=>{
   assert.doesNotMatch(current,/Current protection line|规则已生效/);
  }
 });
+test('a combination with several confirmed snapshots remains an applied strategy in the channel',()=>{
+ const Board=load('pages/Channel/ChannelWorkbench.tsx').RuntimeBoard;
+ const snapshot=worstLegalFixture().runtime;
+ snapshot.current.strategyId=null;
+ snapshot.current.strategies=[{id:'one',revision:2,title:'One',allocationPct:60},{id:'two',revision:3,title:'Two',allocationPct:40}];
+ snapshot.current.rules[0].effective=true;
+ snapshot.monitoringStatus='running';
+ const current=render(Board,{snapshot,language:'en'}).match(/data-runtime-cell="current"[\s\S]*?<\/button>/)[0];
+ assert.match(current,/Current protection line/);
+ assert.doesNotMatch(current,/No strategy applied/);
+});
+test('channel runtime asks for account selection instead of claiming no strategy is applied',()=>{
+ const snapshot=structuredClone(empty.runtime);
+ snapshot.accountId=null;snapshot.selectionRequired=true;snapshot.monitoringReason='ACCOUNT_SELECTION_REQUIRED';
+ const html=render(load('pages/Channel/ChannelWorkbench.tsx').RuntimeBoard,{snapshot,language:'en'});
+ assert.match(html,/Choose a simulation account/);
+ assert.doesNotMatch(html,/No strategy applied/);
+});
+test('channel API passes explicit account identity in the read request',async()=>{
+ const local=fixture();
+ await local.load('api/channel.ts').fetchChannel('account-a');
+ assert.equal(local.state.requests[0].args[1]?.params?.accountId,'account-a');
+});
 test('historical bubbles label superseded or corrected sources without removing the original finding',()=>{
  const Card=load('pages/Channel/ChannelWorkbench.tsx').ChannelBubbleCard;
  const bubble=worstLegalFixture().episodes[0].bubbles[0];bubble.evidence.gaps=['UNRESOLVED_GAP'];

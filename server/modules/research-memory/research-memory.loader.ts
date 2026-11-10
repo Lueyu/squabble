@@ -1,4 +1,5 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
+import { isNull, and, eq, inArray } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { researchMemories, researchMemoryEvidence } from '../../database/research-memory.schema';
@@ -17,8 +18,8 @@ export async function loadMemorySources(db: Pick<PostgresJsDatabase, 'select'>, 
   const result: MemorySources = { reports: new Map(), evidence: new Map(), peers: [] };
   if (!memories.length) return result;
   const sources = await db.select({ report: councilReports, ticker: councilSessions.ticker }).from(councilReports)
-    .innerJoin(councilSessions, and(eq(councilReports.sessionId, councilSessions.id), eq(councilSessions.owner, owner)))
-    .where(and(eq(councilReports.owner, owner), inArray(councilReports.id, memories.map(row => row.reportId))));
+    .innerJoin(councilSessions, and(eq(councilReports.sessionId, councilSessions.id), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner)))
+    .where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), inArray(councilReports.id, memories.map(row => row.reportId))));
   const byId = new Map(sources.map(row => [row.report.id, row]));
   for (const memory of memories) {
     const source = byId.get(memory.reportId);

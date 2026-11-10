@@ -1,5 +1,6 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperAccounts, paperPositions } from '../../database/schema';
 import { strategyOutbox, strategyPlans, strategyProtections, strategyRuntime, strategySignals, strategyTasks } from '../../database/strategy.schema';
@@ -74,13 +75,13 @@ export class StrategyStore {
     return this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, task.owner);
       if (researchFence.length) {
-        const sessions = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, task.owner),
+        const sessions = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, task.owner),
           inArray(councilSessions.id, researchFence.map(f => f.sessionId)))).orderBy(councilSessions.id).for('update');
         for (const fence of researchFence) {
           const session = sessions.find(s => s.id === fence.sessionId);
           if (!session || session.status !== 'completed' || session.revision !== fence.revision
             || session.checkpoint?.cycleId !== fence.cycleId || !task.sessionIds.includes(session.id) || !reportIds.includes(fence.reportId)) throw new Error('Research changed; plan discarded');
-          const [report] = await tx.select().from(councilReports).where(and(eq(councilReports.owner, task.owner),
+          const [report] = await tx.select().from(councilReports).where(and(councilReportSourceVisible(), eq(councilReports.owner, task.owner),
             eq(councilReports.id, fence.reportId), eq(councilReports.sessionId, fence.sessionId), eq(councilReports.revision, fence.revision)));
           const tasks = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, task.owner),
             eq(councilResearchTasks.sessionId, fence.sessionId), eq(councilResearchTasks.cycleId, fence.cycleId)));
@@ -106,7 +107,7 @@ export class StrategyStore {
         profileVersion: task.profileVersion, taskId: task.id, version: task.attempt + 1,
         market: task.market, marketDate: task.marketDate, rules, sessionIds: task.sessionIds,
         reportIds, summary: summary.slice(0, 2000), expiresAt, memoryInventory }).returning();
-      const account = await requireActivePaperAccount(tx, task.owner);
+      const account = await requireActivePaperAccount(tx, task.owner, profile.accountId ?? undefined);
       if (!account?.botEnabled) throw new Error('Paper account stopped; plan discarded');
       const positions = await tx.select().from(paperPositions).where(eq(paperPositions.accountId, account.id));
       for (const rule of rules) if (rule.stopLossPrice > 0 && positions.some((position) => position.ticker === rule.ticker && Number(position.shares) > 0)) {
@@ -127,7 +128,8 @@ export class StrategyStore {
   async claimSignal(owner: string, profile: BuilderProfile, candidate: StrategyCandidate): Promise<boolean> {
     return this.db.transaction(async tx => {
     await lockMemoryOwner(tx, owner);
-    const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.isActive, true))).for('update');
+    const selected = await requireActivePaperAccount(tx, owner, candidate.accountId);
+    const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, selected.id), eq(paperAccounts.isActive, true))).for('update');
     if (!account || candidate.accountId && candidate.accountId !== account.id) return false;
     const investment = await investmentExecutionFence(tx, owner, account.id, candidate, 'agent', candidate, new Date(), false);
     if (investment.block) return false;
@@ -159,8 +161,8 @@ export class StrategyStore {
       || Date.parse(quoteAt) <= Date.parse(previous.candidate.quoteAt)) return null;
     return rows.length + 1;
   }
-  async protections(owner: string) {
-    return this.db.select().from(strategyProtections).where(eq(strategyProtections.owner, owner));
+  async protections(owner: string, accountId?: string) {
+    return this.db.select().from(strategyProtections).where(and(eq(strategyProtections.owner, owner), accountId ? eq(strategyProtections.accountId, accountId) : undefined));
   }
   async finishSignal(id: string, state: string, reason: string): Promise<void> {
     const [current] = await this.db.select({ owner: strategySignals.owner }).from(strategySignals).where(eq(strategySignals.id, id));

@@ -18,10 +18,12 @@ import { paperRiskDay, paperRiskTimezone } from './paper-risk-day';
 import { adjacentSimulationDate, observedDrawdown, simulationDayStart } from './simulation-review.rules';
 import { TradingMarketService } from './trading-market.service';
 import { usableValuationQuote } from './strategy-portfolio-risk';
-import { buildOpeningSeed, executionEconomics, seedRevision, sourceLedgerRevision, validateCashTransfer } from './simulation-experiments.rules';
+import { buildOpeningSeed, executionEconomics, seedRevision, sourceLedgerRevision, validateCashTransfer, type SeedSource } from './simulation-experiments.rules';
 import type { CreateSimulationExperiment, SimulationCash, SimulationExperiment, SimulationPreview,
   SimulationReview, SimulationSeed } from '../../../shared/simulation-experiment.interface';
 import { isSimulationReviewModelNote } from '../../../shared/simulation-experiment.interface';
+import type { CustomSimulationHolding, CustomSimulationCash } from '../../../shared/investment-policy.interface';
+import { resolveTradingTicker } from '../../../shared/trading-market.interface';
 
 type Tx = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 @Injectable()
@@ -41,8 +43,7 @@ export class SimulationExperimentsService {
     cash: cash.map((c) => ({ currency: c.currency, balance: String(c.balance), updatedAt: c.updatedAt, reconciliationStatus: c.reconciliationStatus })) };
   }
 
-  async preview(owner: string): Promise<SimulationPreview> {
-    const source = await this.source(owner);
+  private async valueSource(source: SeedSource): Promise<SimulationSeed> {
     const quotes: Array<{ ticker: string; price: string; at: string } | undefined> = [];
     const benchmarkOptions: SimulationSeed['benchmarkOptions'] = (['SPY', 'QQQ'] as const).map((ticker) =>
       ({ ticker, currency: 'USD', initialPrice: null, quoteAt: null }));
@@ -84,9 +85,60 @@ export class SimulationExperimentsService {
     await Promise.all([quoteWork, fxWork]);
     const seed = buildOpeningSeed(source, quotes.filter((quote) => quote !== undefined), fx, new Date().toISOString());
     seed.benchmarkOptions = benchmarkOptions;
+    return seed;
+  }
+
+  async preview(owner: string): Promise<SimulationPreview> {
+    const seed = await this.valueSource(await this.source(owner));
+    seed.origin = { kind: 'real_holdings' };
     const expiresAt = new Date(Date.now() + 5 * 60_000);
     const [preview] = await this.db.insert(simulationPreviews).values({ owner, seed, expiresAt }).returning();
     return { id: preview.id, expiresAt: expiresAt.toISOString(), seed };
+  }
+
+  /** Freeze an owned account's current ledger before any market/network reads. */
+  async previewAccount(owner: string, accountId: string): Promise<SimulationSeed> {
+    const { source, accountName } = await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      const [account] = await tx.select().from(paperAccounts)
+        .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId))).for('update');
+      if (!account) throw new NotFoundException('ACCOUNT_NOT_FOUND');
+      const positions = await tx.select().from(paperPositions)
+        .where(and(eq(paperPositions.owner, owner), eq(paperPositions.accountId, accountId))).for('update');
+      const cash = await tx.select().from(simulationCash)
+        .where(and(eq(simulationCash.owner, owner), eq(simulationCash.accountId, accountId))).for('update');
+      const source: SeedSource = {
+        holdings: positions.map(position => ({ id: position.id, ticker: position.ticker, market: position.market,
+          currency: position.currency, company: position.company, shares: position.shares,
+          buyPrice: position.avgCost, currentPrice: null, updatedAt: position.updatedAt })),
+        cash: account.ledgerMode === 'native_currency'
+          ? cash.map(item => ({ currency: item.currency, balance: String(Number(item.available) + Number(item.frozen) + Number(item.unsettled)),
+            updatedAt: new Date(), reconciliationStatus: item.availabilityKnown ? 'confirmed' : 'unconfirmed' }))
+          : [{ currency: 'USD', balance: account.cashBalance, updatedAt: account.updatedAt, reconciliationStatus: 'confirmed' }],
+      };
+      return { source, accountName: account.name };
+    });
+    const seed = await this.valueSource(source);
+    seed.origin = { kind: 'simulation_account', accountId, accountName };
+    return seed;
+  }
+
+  /** User costs are references, never substituted for current market quotes. */
+  async previewCustom(positions: CustomSimulationHolding[], cash: CustomSimulationCash[]): Promise<SimulationSeed> {
+    const timestamp = new Date();
+    const source: SeedSource = {
+      holdings: positions.map(position => {
+        const security = resolveTradingTicker(position.ticker);
+        if (!security) throw new BadRequestException('INSTRUMENT_UNKNOWN');
+        return { id: `custom:${security.ticker}`, ticker: security.ticker, market: security.market, currency: security.currency,
+          company: null, shares: String(position.shares), buyPrice: position.historicalCost === undefined ? null : String(position.historicalCost),
+          currentPrice: null, updatedAt: timestamp };
+      }),
+      cash: cash.map(item => ({ currency: item.currency, balance: String(item.amount), updatedAt: timestamp, reconciliationStatus: 'confirmed' })),
+    };
+    const seed = await this.valueSource(source);
+    seed.origin = { kind: 'custom_holdings' };
+    return seed;
   }
 
   /** Explicit simulated cash does not depend on the real account owning this currency. */
@@ -100,7 +152,7 @@ export class SimulationExperimentsService {
         if (dated && Number.isFinite(rate) && rate > 0) fx.push({ currency, rate: String(rate), at: String(dated.rateDate) });
       } catch { /* A missing dated FX observation remains a visible blocker. */ }
     }
-    return { sourceRevision: createHash('sha256').update(JSON.stringify({ currency, amount })).digest('hex'), capturedAt, positions: [],
+    return { origin: { kind: 'cash' }, sourceRevision: createHash('sha256').update(JSON.stringify({ currency, amount })).digest('hex'), capturedAt, positions: [],
       cash: [{ currency, total: String(amount), available: String(amount), frozen: '0', unsettled: '0', availabilityKnown: true }],
       fx, initialEquityUsd: fx.length ? String(amount * Number(fx[0].rate)) : null, gaps: fx.length ? [] : [`FX_MISSING:${currency}`],
       model: { version: 'paper-v1', feeBps: 5, slippageBps: 10, corporateActions: 'unsupported' } };

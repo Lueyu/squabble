@@ -23,6 +23,8 @@ import ResearchParticipantsPanel from './ResearchParticipantsPanel';
 import { useSimpleExperience } from '@/hooks/use-simple-experience';
 import { resolveSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from './settings-navigation';
 import './settings.css';
+import { NotificationChannelsCard, AgentSessionsCard } from '@/features/integrations/PaperIntegrationPanels';
+import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navigation';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -34,6 +36,7 @@ export default function SettingsPage() {
   const sections = SETTINGS_SECTIONS.filter(section => !localWorkspace || section.id !== 'security');
   const [visited, setVisited] = useState<SettingsSection[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  useWorkspaceNavigation(scrollRef);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const previousSection = useRef(active);
 
@@ -47,7 +50,6 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!active) return;
     setVisited(current => current.includes(active) ? current : [...current, active]);
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
     if (previousSection.current !== active) titleRef.current?.focus({ preventScroll: true });
     previousSection.current = active;
   }, [active]);
@@ -85,6 +87,8 @@ function SettingsSectionContent({ section, active }: { section: SettingsSection;
   const { t } = useTranslation();
   const { enabled: simple } = useSimpleExperience();
   switch (section) {
+    case 'notifications': return <NotificationChannelsCard active={active} />;
+    case 'mcp': return <AgentSessionsCard active={active} />;
     case 'models': return <div className="space-y-6">
       <ModelConnectionsPanel active={active} />
       <IntegrationSettingsPanel section="models" active={active} />

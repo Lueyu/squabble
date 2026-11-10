@@ -72,6 +72,9 @@ export interface ResearchThesisVersion {
 export interface ResearchMemoryList {
   memories: ResearchMemoryItem[]; theses: ResearchThesis[]; preferences: ResearchMemoryPreferences;
 }
+export interface ResearchMemoryInventory extends ResearchMemoryList {
+  total: number; offset: number; limit: number;
+}
 export interface ResearchMemoryRecallItem {
   asOf?: string;
   freshness?: ThesisFreshness;

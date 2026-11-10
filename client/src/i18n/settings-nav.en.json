@@ -9,6 +9,8 @@
   "updateLoadFailed": "Unable to load update status. Please try again.",
   "groups": { "research": "Research", "personal": "Personal & system", "help": "Help" },
   "sections": {
+    "notifications": { "title": "Alerts & channels", "description": "Choose where to receive trade and research notifications, and verify delivery." },
+    "mcp": { "title": "MCP connections", "description": "Manage external agent access and revoke connections you no longer use." },
     "models": { "title": "Models & API", "description": "Connect your AI models and choose the right tools for quick analysis and deeper reasoning." },
     "agents": { "title": "Local agents", "description": "Connect agents on this device and manage their sign-in and execution status." },
     "data": { "title": "Market data", "description": "Manage data sources for market quotes, news and fundamental research." },

@@ -18,6 +18,19 @@ test('concrete investor prices trigger without history or invented investment bo
   assert.equal(strategyTriggerMatches(rule, 99, null, new Date('2026-11-08T00:00:00Z')), false);
   assert.equal(rule.stopLossPrice, 0);
 });
+test('strict price comparisons reject equality without changing inclusive legacy comparisons', () => {
+  const at = new Date('2026-11-06T12:00:00Z');
+  for (const kind of ['price_lt', 'price_lte', 'price_gt', 'price_gte'] as const) {
+    const snapshot = { id: 'strategy', revision: 1, sources: [], preview: { directives: [{
+      entryId: 'entry', ticker: 'AAPL', side: kind.startsWith('price_l') ? 'buy' : 'sell',
+      trigger: { kind, price: 100 }, quantity: 1, startsAt: '2026-11-06T00:00:00Z', endsAt: '2026-11-07T00:00:00Z',
+      timezone: 'UTC', sourceKeys: [], route: 'direct', reviewedText: 'AAPL', numericEvidence: [],
+    }] } } as unknown as ConfirmedInvestmentStrategy;
+    const [rule] = compileInvestorRules(snapshot, DEFAULT_INVESTMENT_CONFIG);
+    assert.equal(strategyTriggerMatches(rule, 100, null, at), kind.endsWith('e'), kind);
+    assert.equal(strategyTriggerMatches(rule, kind.startsWith('price_l') ? 99 : 101, null, at), true, kind);
+  }
+});
 
 test('target total exposure uses existing shares, costs and market lot rounding without repeating an increase', () => {
   const size = runtime.investorTargetQuantity;
@@ -29,4 +42,13 @@ test('target total exposure uses existing shares, costs and market lot rounding 
   assert.equal(size({ ...base, feeBps: 5, slippageBps: 10 }), 7, 'fees cannot push the resulting exposure above the confirmed total target');
   assert.equal(size({ ...base, ticker: '0700.HK', market: 'HK', equityUsd: 100000, heldShares: 200, positionPct: 50, lotSize: 200 }), 200);
   assert.equal(size({ ...base, ticker: '0700.HK', market: 'HK', equityUsd: 100000, heldShares: 1000, positionPct: 50, lotSize: 200, side: 'sell' }), 400, 'round toward the target without selling below it');
+});
+
+test('combination rule identities are namespaced but entry consumption survives rebuilds and legacy IDs', () => {
+  const identity = { accountId: 'account-a', userStrategyId: 'strategy-a', userEntryId: 'entry-1', ruleId: 'strategy-a:entry-1' };
+  assert.notEqual(runtime.investorRuleId('strategy-a', 'entry-1'), runtime.investorRuleId('strategy-b', 'entry-1'));
+  assert.equal(runtime.isSameInvestorEntry(identity, 'account-a', 'strategy-a', 'entry-1'), true);
+  assert.equal(runtime.isSameInvestorEntry({ ...identity, userEntryId: undefined, ruleId: 'entry-1' }, 'account-a', 'strategy-a', 'entry-1'), true);
+  assert.equal(runtime.isSameInvestorEntry(identity, 'account-b', 'strategy-a', 'entry-1'), false);
+  assert.equal(runtime.isSameInvestorEntry(identity, 'account-a', 'strategy-b', 'entry-1'), false);
 });

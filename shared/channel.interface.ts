@@ -32,6 +32,8 @@ export interface ChannelAction {
   targetId: string; expectedRevision: number; expiresAt?: string;
 }
 interface ChannelBubbleBase {
+  /** Account context for simulation-specific observations; absent for owner-wide research. */
+  accountId?: string; accountName?: string;
   id: string; ownerId: string; speaker: ChannelSpeaker; episodeId: string; posture: ChannelPosture;
   anchors: ChannelAnchors; text: string; evidence: ChannelEvidenceCard;
   templateId: string; templateRevision: number; semanticDeltaId: string; createdAt: string;
@@ -104,16 +106,21 @@ export interface ChannelBrief {
   requiredChecks: string[]; validFrom: string; expiresAt: string; status: 'ready' | 'invalidated' | 'expired';
 }
 export interface ChannelRuntimeSnapshot {
+  accounts?: Array<{ id: string; name: string; status: 'running' | 'paused' | 'archived' }>;
+  accountName?: string | null; selectionRequired?: boolean;
   accountId: string | null; accountKind: 'paper'; revision: number; confirmedAt: string;
   monitoringStatus: 'observing' | 'running' | 'paused' | 'stopped';
   monitoringReason: string | null;
   current: { strategyId: string | null; strategyRevision: number | null;
+    strategies?: Array<{ id: string; revision: number; title: string; allocationPct: number }>;
     rules: Array<{ id: string; label: string; status: Exclude<RuleStatus, 'partially_filled'>; value: string;
+      strategyId?: string; strategyRevision?: number; entryId?: string; accountId?: string; accountName?: string;
       effective: boolean; effectiveReason: 'paused' | 'expired' | 'not_started' | 'stopped' | 'observation_only' | null }>;
     positions: Array<{ symbol: string; quantity: string }>; cash: Array<{ currency: string; amount: string }>;
     valuationAsOf: string | null };
   proposals: Array<{ id: string; revision: number; status: Exclude<RuleStatus, 'partially_filled'>; before: string; after: string; reasonCardId: string }>;
   executions: Array<{ id: string; symbol: string; strategyId: string | null; strategyRevision: number; status: 'queued' | 'working' | 'partially_filled' | 'filled' | 'failed' | 'cancelled';
+    accountId?: string; accountName?: string; entryId?: string | null;
     requestedQuantity: string; filledQuantity: string; remainingQuantity: string; updatedAt: string }>;
 }
 export interface ChannelProjection {
@@ -124,6 +131,8 @@ export interface ChannelProjection {
   deferredQuestions: DeferredQuestion[]; sourcesAvailable: boolean;
 }
 export interface SupplementRequest {
+  /** Frozen question scope. Absent means the owner's real ledger, never an arbitrary simulation. */
+  accountId?: string; accountName?: string; context?: Record<string, unknown>;
   id: string; ownerId: string; userMessageId: string; requestKey: string; factQuestion: string; selectedToolId: string;
   maxToolCalls: 1; claimedToolCalls: 0 | 1; deferredQuestionIds: string[];
   /** Frozen once before selection; counts and indexes are derived from this list. */
@@ -131,8 +140,13 @@ export interface SupplementRequest {
   status: 'needs_scope' | 'running' | 'answered' | 'not_verified' | 'failed'; conclusion?: string; evidenceCardId?: string;
 }
 export interface DeferredQuestion {
+  accountId?: string; accountName?: string; context?: Record<string, unknown>;
   id: string; ownerId: string; originatingRequestId: string; text: string;
   status: 'pending' | 'selected' | 'dismissed'; createdAt: string;
+}
+export interface ChannelQuestionInput {
+  message: string; requestKey: string; selectedQuestionId?: string; accountId?: string;
+  context?: Record<string, unknown>;
 }
 interface DecisionReflectionBase { id: string; decisionId: string; recordedAt: string }
 export type DecisionReflection =

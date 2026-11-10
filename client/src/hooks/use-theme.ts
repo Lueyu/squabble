@@ -13,7 +13,7 @@ interface AppearanceState {
 
 const THEME_KEY = 'pt-theme';
 const DESIGN_THEME_KEY = 'sq-design-theme';
-const DEFAULT_APPEARANCE: AppearanceState = { theme: 'dark', designTheme: 'classic' };
+const DEFAULT_APPEARANCE: AppearanceState = { theme: 'light', designTheme: 'classic' };
 const listeners = new Set<() => void>();
 
 function readPreference(key: string): string | null {
@@ -26,7 +26,7 @@ function readPreference(key: string): string | null {
 }
 
 function resolveTheme(value: string | null): Theme {
-  return value === 'light' ? 'light' : 'dark';
+  return value === 'dark' ? 'dark' : 'light';
 }
 
 export function isDesignTheme(value: string | null): value is DesignTheme {

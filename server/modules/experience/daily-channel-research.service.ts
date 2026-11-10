@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SimpleCouncilService } from '../council/simple-council.service';
 import { DRIZZLE_DATABASE,type PostgresJsDatabase } from '../../common/platform';
-import { and,desc,eq,sql } from 'drizzle-orm';
+import { isNull, and,desc,eq,sql } from 'drizzle-orm';
 import { councilReports,councilSessions } from '../../database/council.schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { ChannelService } from '../channel/channel.service';
@@ -37,12 +37,15 @@ export class DailyChannelResearchService {
   async stop(owner:string,id:string){await this.research.stop(owner,id);}
   async syncPublished():Promise<void>{
     const rows=await this.db.select({report:councilReports,session:councilSessions,version:researchDocumentVersions}).from(councilReports)
-      .innerJoin(councilSessions,and(eq(councilSessions.owner,councilReports.owner),eq(councilSessions.id,councilReports.sessionId)))
+      .innerJoin(councilSessions,and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,councilReports.owner),eq(councilSessions.id,councilReports.sessionId)))
       .innerJoin(researchDocumentVersions,and(eq(researchDocumentVersions.owner,councilReports.owner),eq(researchDocumentVersions.id,councilReports.researchVersionId)))
-      .where(and(eq(councilReports.publicationOutcome,'succeeded'),sql`${councilSessions.checkpoint}->'simple'->>'researchOnly'='true'`))
+      .where(and(isNull(councilSessions.deletedAt), isNull(researchDocumentVersions.deletedAt), eq(councilReports.publicationOutcome,'succeeded'),sql`${councilSessions.checkpoint}->'simple'->>'researchOnly'='true'`,
+        sql`${councilSessions.checkpoint}->'simple'->'overallDaily' IS NULL AND ${researchDocumentVersions.snapshot}->'overallDaily' IS NULL`))
       .orderBy(desc(councilReports.createdAt)).limit(40);
     const publishedOwners=new Set<string>();
     for(const {report,session,version} of rows){
+      // Overall account comparisons are separate reports, never personal strategy inputs or automatic alerts.
+      if(session.checkpoint?.simple?.overallDaily || version.snapshot?.overallDaily)continue;
       const owner=report.owner;
       await this.channel.ingestReport(owner,{id:version.id,revision:version.version,title:version.title,content:report.summary,createdAt:report.createdAt.toISOString(),sections:version.sections,
         source:{type:'council',id:report.id,documentId:version.reportId,researchOnly:true}});

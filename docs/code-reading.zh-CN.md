@@ -8,12 +8,16 @@ Squabble 的主线是一款智能投资助手：理解持仓，多位研究者�
 [体验开关](../server/common/platform/simple-experience.ts)；旧分析、投委会 API 和历史报告读取仍可达。
 环境搭建与命令以[开发指南](development.md)为准，完整数据流见[架构图](architecture.md)。
 
-## 跟随“报告 → 策略 → 频道”
+## 跟随“账户总览 → 报告 → 账户组合 → 频道”
 
-1. **今日读取持仓与报告。** 从 [TodayPage](../client/src/pages/Today/TodayPage.tsx) 和
-   [CurrentAnalysisPanel](../client/src/pages/Today/CurrentAnalysisPanel.tsx) 看页面如何组合信息，
-   再看 [TodayService](../server/modules/experience/today.service.ts) 如何返回资产概况，
-   [CurrentResearchService](../server/modules/experience/current-research.service.ts) 如何选择当前报告。
+1. **总览先读取已保存表现，再进入研究。** 从
+   [PortfolioOverviewPage](../client/src/pages/Overview/PortfolioOverviewPage.tsx) 和
+   [PortfolioComparisonService](../server/modules/paper-trading/portfolio-comparison.service.ts)
+   看真实资产与多个模拟仓如何只读比较；缺失值、资金流和基线变化由
+   [portfolio-comparison.rules.ts](../server/modules/paper-trading/portfolio-comparison.rules.ts) 保持未知。
+   `/analysis` 的 [SimpleAnalysisPage](../client/src/pages/Analysis/SimpleAnalysisPage.tsx) 组合
+   [CurrentAnalysisPanel](../client/src/pages/Today/CurrentAnalysisPanel.tsx)，
+   [CurrentResearchService](../server/modules/experience/current-research.service.ts) 选择当前报告。
    当前展示是可变投影，报告历史是独立版本；不能用“最新”替换用户打开的历史 ID。
 2. **研究者开展研究，系统验收结果。**
    [daily-channel-research.service.ts](../server/modules/experience/daily-channel-research.service.ts)
@@ -32,32 +36,35 @@ Squabble 的主线是一款智能投资助手：理解持仓，多位研究者�
    [ReportExecutionPlan](../client/src/components/ReportExecutionPlan.tsx) 提供报告入口，
    [InvestmentStrategySourceDialog](../client/src/features/investment-strategies/InvestmentStrategySourceDialog.tsx)
    选择来源，[UserInvestmentStrategyService](../server/modules/paper-trading/user-investment-strategy.service.ts)
-   保存草稿。结构化计划保留原条件，普通研究文字作为观察材料；导入不会自动授予执行权限。
-5. **审阅后应用到模拟盘。**
-   [AiInvestmentPage](../client/src/pages/Paper/AiInvestmentPage.tsx) 组合建盘与策略功能，
-   [InvestmentStrategySection](../client/src/features/investment-strategies/InvestmentStrategySection.tsx)
-   管理列表，[InvestmentStrategyEditor](../client/src/features/investment-strategies/InvestmentStrategyEditor.tsx)
-   组织编辑和审阅。服务端的 [applyStrategy](../server/modules/paper-trading/investment-policy.service.ts)
-   在事务中复核草稿修订、预览哈希、当前策略和来源；
-   [user-strategy-runtime.ts](../server/modules/paper-trading/user-strategy-runtime.ts)
-   把确认结果安装成运行规则。保存草稿与切换当前策略是不同操作。
+   保存策略库草稿。[ReportStrategyTarget](../client/src/features/investment-strategies/ReportStrategyTarget.tsx)
+   将其加入明确选择的账户组合草稿，新增项默认停用。结构化计划保留原条件，普通正文作为观察材料；导入不授予执行权限。
+5. **审阅后应用到账户组合。**
+   [SimulationAccountsPage](../client/src/pages/Paper/SimulationAccountsPage.tsx) 创建互不替换的独立账户，
+   [SimulationAccountPage](../client/src/pages/Paper/SimulationAccountPage.tsx) 展示该仓状态，
+   [AccountStrategyCombinationPage](../client/src/features/investment-strategies/AccountStrategyCombinationPage.tsx)
+   管理启用项、预算与预览。[PortfolioWorkspaceService](../server/modules/paper-trading/portfolio-workspace.service.ts)
+   在事务内复核账户、policy 修订、组合哈希和来源，保存不可变组合修订；
+   [user-strategy-runtime.ts](../server/modules/paper-trading/user-strategy-runtime.ts) 为每仓安装一个 profile/mandate，
+   [strategy-allocation.ts](../server/modules/paper-trading/strategy-allocation.ts) 在共享现金与风控之外检查策略预算。
+   保存草稿不影响运行；明确应用或暂停只影响选定账户。旧 `AiInvestmentPage` 和全局单策略 API 是兼容代码。
 6. **频道解释变化，模拟账本记录结果。**
    [SimpleCouncilPage](../client/src/pages/Council/SimpleCouncilPage.tsx) 进入
    [ChannelWorkbench](../client/src/pages/Channel/ChannelWorkbench.tsx)。
    [channel-contract.ts](../server/modules/channel/channel-contract.ts) 定义发布契约，
-   [channel-runtime.ts](../server/modules/channel/channel-runtime.ts) 读取策略和成交状态。
+   [channel-runtime.ts](../server/modules/channel/channel-runtime.ts) 只读所选账户全部启用策略及成交状态。
+   监控、发布与成交保留账户/策略/条目标识，未选择多账户中的一个时不任选当前仓。
    研究观点、待应用建议与实际成交分开显示；一条频道文案不能取代订单记录或授权校验。
 
 ## 模块各自负责什么
 
 | 目录 | 责任与边界 |
 |---|---|
-| `server/modules/experience/` | 组合当前 Web 的今日、资产和研究入口；不拥有通用模型执行器选择。 |
+| `server/modules/experience/` | 组合资产和当前研究入口，并保留 Today API；新总览比较由 paper-trading 模块负责，不拥有通用模型执行器选择。 |
 | `server/modules/council/` | 多 Agent 会话、研究步骤、结果验收和恢复；不是通用数据源适配层。 |
 | `server/modules/research-core/` | 共用模型调用、证据收集、财务来源适配与组合上下文；供当前和保留研究流程使用，不依赖它们的编排。 |
-| `server/modules/research-routing/` | 选择可用的研究执行器，由独立 Nest 模块导出；今日和模拟投资共用。 |
+| `server/modules/research-routing/` | 选择可用的研究执行器，由独立 Nest 模块导出；当前研究和模拟投资共用。 |
 | `server/modules/research-documents/` | 报告版本、引用和发布记录；与页面当前选中的报告区分。 |
-| `server/modules/paper-trading/` | 策略确认、执行条件、模拟账户和订单；真实资产账本仍由导入、交易等模块负责。 |
+| `server/modules/paper-trading/` | 账户策略组合、执行条件、模拟账本和已保存表现比较；真实资产账本仍由导入、交易等模块负责。 |
 | `server/modules/channel/` | 把研究发现、待决定事项和运行状态编译成频道内容。 |
 | `client/src/features/investment-strategies/` | 跨页面的策略来源、编辑、审阅和管理；页面组合功能，功能不反向依赖页面。 |
 | `shared/` | 前后端共享的接口与纯规则，不导入客户端或服务端实现。 |
@@ -89,12 +96,20 @@ Squabble 的主线是一款智能投资助手：理解持仓，多位研究者�
 
 ## 改动时怎样验证
 
-先声明要保留的用户行为，再选对应测试。例如
-[holdings-copy-journey.test.cjs](../client/src/utils/holdings-copy-journey.test.cjs)
-覆盖持仓复制、显式确认、重试和迟到响应；
-[strategy-management.test.cjs](../client/src/utils/strategy-management.test.cjs)
-覆盖策略管理交互；[council-report-resume.integration.spec.ts](../server/modules/council/council-report-resume.integration.spec.ts)
-覆盖保存结果的恢复边界。完整选择表见[测试参考](../.agents/skills/squabble-contributor/references/development-and-tests.md)。
+先声明要保留的用户行为，再选对应测试。
+[portfolio-workspace.integration.spec.ts](../server/modules/paper-trading/portfolio-workspace.integration.spec.ts)
+覆盖升级、独立账户和完整重复启动；
+[portfolio-runtime.integration.spec.ts](../server/modules/paper-trading/portfolio-runtime.integration.spec.ts)
+覆盖两仓运行及暂停隔离；
+[portfolio-capacity.integration.spec.ts](../server/modules/paper-trading/portfolio-capacity.integration.spec.ts)
+区分 100 个组合执行标的与每市场 20 个非固定 AI 讨论标的上限；
+[portfolio-comparison.integration.spec.ts](../server/modules/paper-trading/portfolio-comparison.integration.spec.ts)
+验证保存估值只读投影；
+[portfolio-combination-flow.test.cjs](../client/src/utils/portfolio-combination-flow.test.cjs)
+覆盖组合界面；
+[channel-workspace.integration.spec.ts](../server/modules/channel/channel-workspace.integration.spec.ts)
+覆盖频道账户来源边界。原有研究恢复与最终下单测试继续保留。
+完整选择表见[测试参考](../.agents/skills/squabble-contributor/references/development-and-tests.md)。
 
 `npm run test:server` 包含需要 PostgreSQL 的集成测试；它不是纯离线单元测试命令。
 数据库必须是一次性隔离实例，缺前置条件的跳过不算集成验证通过。
@@ -110,7 +125,7 @@ Squabble 的主线是一款智能投资助手：理解持仓，多位研究者�
 | 状态 | 内容 |
 |---|---|
 | 已有实现 | 持仓上下文、多 Agent 研究和反向核查、可阅读报告、股友频道、策略审阅应用、模拟执行和保留历史。具体可用能力仍取决于模型连接、资料和账户配置。 |
-| 本次结构整理 | 共用研究基础层、独立路由模块、策略功能目录，以及对应依赖边界检查和文档入口。业务权限与数据格式保持原有契约。 |
+| 本次账户工作区 | 多模拟仓独立组合、预算、暂停与按账户频道；只读表现比较。迁移 45 与历史迁移 42 的兼容修改支持完整重复启动。研究不可变档案与真实账本写入边界保持。 |
 | 可独立实施的后续工作 | 增加使用虚构数据和受控研究执行器的浏览器到后端演示旅程；按实际问题继续拆分大服务；在核对调用者、历史读取与迁移后逐步退出旧流程。 |
 | 需要另行设计和验证 | 更丰富的 Agent 协作、个性化观点质量、对话体验和自动化范围。应先定义用户可见结果和评价方法，再扩展编排。 |
 

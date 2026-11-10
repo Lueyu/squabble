@@ -1,3 +1,4 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 /**
  * @file server/modules/paper-trading/paper-trading.service.ts
  * @description AI paper-trading engine.
@@ -26,7 +27,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, desc, eq, gt, gte, or, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, gt, gte, or, sql } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import {
@@ -52,7 +53,7 @@ import { simulationLotRejection } from './simulation-order.rules';
 import { requireActivePaperAccount } from './simulation-account';
 import { assertMandateExecution } from './strategy-mandate.fence';
 import { investmentExecutionFence, assertLegacyInvestmentWrite } from './investment-policy.fence';
-import { evaluatePortfolioRisk, preparePortfolioRiskInputs, readPortfolioRiskSnapshot } from './strategy-portfolio-risk';
+import { evaluatePortfolioRisk, preparePortfolioRiskInputs, readPortfolioRiskSnapshot, type PortfolioRiskSnapshot } from './strategy-portfolio-risk';
 import { simulationCash, simulationSeeds } from '../../database/simulation-experiments.schema';
 import { recordSimulationCashFill, settleSimulationCash } from './simulation-ledger';
 import { persistCorporateActionGaps, readCorporateActionGaps } from './simulation-corporate-actions';
@@ -140,7 +141,9 @@ export class PaperTradingService {
   async ensureAccount(userId: string): Promise<PaperAccount> {
     return this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
-      const [current] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, userId), eq(paperAccounts.isActive, true)));
+      const accounts = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, userId), eq(paperAccounts.isActive, true)));
+      if (accounts.length > 1) throw new BadRequestException('ACCOUNT_SELECTION_REQUIRED');
+      const [current] = accounts;
       if (current) return this.mapAccount(current);
       const [created] = await tx.insert(paperAccounts).values({ owner: userId, guardrails: DEFAULT_GUARDRAILS }).returning();
       return this.mapAccount(created);
@@ -177,8 +180,8 @@ export class PaperTradingService {
   }
 
   /** Full overview for the paper page: account, positions, curve, feeds. */
-  async getOverview(userId: string): Promise<PaperOverview> {
-    const account = await this.requireAccount(userId);
+  async getOverview(userId: string, accountId?: string): Promise<PaperOverview> {
+    const account = await this.requireAccount(userId, accountId);
     if (account.ledgerMode === 'native_currency') await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       await tx.select({ id: paperAccounts.id }).from(paperAccounts).where(eq(paperAccounts.id, account.id)).for('update');
@@ -302,7 +305,7 @@ export class PaperTradingService {
     expectedAccountId?: string,
     approvedPendingOrderId?: string,
   ): Promise<PaperOrder> {
-    const initialAccount = await this.requireAccount(userId);
+    const initialAccount = await this.requireAccount(userId, expectedAccountId);
     if (expectedAccountId && expectedAccountId !== initialAccount.id) throw new BadRequestException('Paper account changed');
     if (typeof dto.ticker !== 'string' || !/^[A-Za-z0-9.^-]{1,20}$/.test(dto.ticker.trim())) throw new BadRequestException('Invalid ticker');
     dto = { ...dto, ticker: dto.ticker.trim() };
@@ -378,14 +381,14 @@ export class PaperTradingService {
         if (configured) throw new BadRequestException('Use the active Builder scan to review this order');
       }
       if (builderProfile) {
-        const [active] = await tx.select({ version: builderProfiles.version })
+        const [active] = await tx.select({ version: builderProfiles.version, accountId: builderProfiles.accountId })
           .from(builderProfiles)
           .where(and(
             eq(builderProfiles.id, builderProfile.id),
             eq(builderProfiles.owner, userId),
             eq(builderProfiles.status, 'active'),
           )).for('update');
-        if (!active || active.version !== builderProfile.version) {
+        if (!active || active.version !== builderProfile.version || active.accountId && active.accountId !== lockedAccount.id) {
           throw new BadRequestException('Agent configuration changed during the scan');
         }
       }
@@ -422,19 +425,21 @@ export class PaperTradingService {
           throw new BadRequestException('Slippage-adjusted fill price exceeds the authorized strategy band');
         }
         let portfolioRisk: ReturnType<typeof evaluatePortfolioRisk> | undefined;
+        let allocationPortfolio: PortfolioRiskSnapshot | undefined;
         if (candidate.mandateId && !candidate.protectiveStop) {
           if (!portfolioInputs) throw new BadRequestException('Portfolio inputs changed; create a new candidate');
           const [mandate] = await tx.select().from(strategyMandates).where(and(eq(strategyMandates.id, candidate.mandateId), eq(strategyMandates.owner, userId))).for('share');
           if (!mandate) throw new BadRequestException('Published strategy unavailable');
           const portfolio = await readPortfolioRiskSnapshot(tx, userId, lockedAccount.id, this.tradingMarket!, this.fxService,
             new Date(), portfolioInputs);
+          allocationPortfolio = portfolio;
           lockedPortfolioEquity = portfolio.equityUsd;
           portfolioRisk = evaluatePortfolioRisk(portfolio, mandate.config, candidate, execution.price * price.fxToUsd,
             execution.fee * price.fxToUsd, new Date());
         }
         await assertMandateExecution(tx, userId, lockedAccount.id, candidate, strategyRule,
           lockedPortfolioEquity ?? Math.min(equityBeforeLock, equityBeforeLock + Number(lockedAccount.cashBalance) - Number(initialAccount.cashBalance)),
-          execution.price * price.fxToUsd, new Date(), strategySnapshot ?? undefined, portfolioRisk);
+          execution.price * price.fxToUsd, new Date(), strategySnapshot ?? undefined, portfolioRisk, allocationPortfolio);
         strategyPlanId = plan.id;
         if (candidate.protectiveStop) {
           const [protection] = candidate.protectionId ? await tx.select().from(strategyProtections).where(and(
@@ -449,7 +454,8 @@ export class PaperTradingService {
         } else if (plan.profileId !== builderProfile.id || plan.profileVersion !== builderProfile.version
           || plan.status !== 'active' || plan.expiresAt.getTime() <= now || Date.parse(strategyRule.expiresAt) <= now
           || strategySnapshot.schedule.tradingDate !== plan.marketDate || Math.abs(price.price / candidate.price - 1) > 0.005
-          || strategyRule.side !== dto.side || !strategyTriggerMatches(strategyRule, price.price, strategySnapshot.indicators)) {
+          || strategyRule.side !== dto.side || !strategyTriggerMatches(strategyRule, price.price, strategySnapshot.indicators)
+          || strategyRule.userDirective && !strategyTriggerMatches(strategyRule, execution.price, strategySnapshot.indicators)) {
           throw new BadRequestException('Entry plan is expired, superseded or price moved');
         }
         if (!protectiveStrategyStop) {
@@ -478,10 +484,10 @@ export class PaperTradingService {
       if (councilApproval) {
         // Serialize with user steering/pause and consume approval with the fill.
         const [session] = await tx.select().from(councilSessions).where(and(
-          eq(councilSessions.id, councilApproval.sessionId), eq(councilSessions.owner, userId),
+          eq(councilSessions.id, councilApproval.sessionId), isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId),
         )).for('update');
         const [report] = await tx.select().from(councilReports).where(and(
-          eq(councilReports.id, councilApproval.reportId), eq(councilReports.owner, userId),
+          eq(councilReports.id, councilApproval.reportId), councilReportSourceVisible(), eq(councilReports.owner, userId),
         )).for('update');
         const candidate = report?.candidate;
         if (!session || !report || !builderProfile || session.profileId !== builderProfile.id
@@ -1328,8 +1334,8 @@ export class PaperTradingService {
   // ------------------------------------------------------------------
 
   /** Throw 404 unless the caller has a paper account. */
-  private async requireAccount(userId: string) {
-    return requireActivePaperAccount(this.db, userId);
+  private async requireAccount(userId: string, accountId?: string) {
+    return requireActivePaperAccount(this.db, userId, accountId);
   }
 
   /**

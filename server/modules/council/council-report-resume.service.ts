@@ -1,10 +1,10 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { and, eq } from 'drizzle-orm';
+import { isNull, and, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilMessages, councilSessions } from '../../database/council.schema';
-import { councilIndependentSubmissions, simpleCouncilRequests } from '../../database/simple-council.schema';
+import { councilIndependentSubmissions, councilMemberAttempts, simpleCouncilRequests } from '../../database/simple-council.schema';
 import { experiencePreferences, researchCurrentViews } from '../../database/simple-experience.schema';
 import { automaticResearchTasks } from '../../database/investment-policy.schema';
 import { llmBudgetSettings } from '../../database/llm-budget.schema';
@@ -66,7 +66,7 @@ export class CouncilReportResumeService {
       requestKey: input.requestKey, expectedRevision: input.expectedRevision })).digest('hex');
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
-      const [row] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).for('update');
+      const [row] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).for('update');
       if (!row) throw new NotFoundException('Research conversation not found');
       const [prior] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, input.requestKey)));
       if (prior) {
@@ -75,6 +75,68 @@ export class CouncilReportResumeService {
       }
       if (row.revision !== input.expectedRevision) throw new ConflictException('RESEARCH_REVISION_CHANGED');
       const checkpoint = row.checkpoint, simple = checkpoint?.simple, remote = checkpoint?.remote;
+      // The create receipt and frozen context can commit before the first dispatch. Only an explicit command starts it.
+      if (simple?.overallDaily && simple.researchOnly && !simple.stopped && !simple.initializing
+        && ['idle', 'paused', 'failed'].includes(row.status) && checkpoint && !checkpoint.inflight && !remote
+        && simple.stage === 'independent' && checkpoint.nextTurn === 0 && (simple.calls ?? 0) === 0
+        && checkpoint.turns.length > 0 && checkpoint.turns.every(turn => turn.phase === 'opening')) {
+        const [preferences] = await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
+        if (preferences?.enabled === false) throw new BadRequestException('RESEARCH_PAUSED');
+        const attempts = await tx.select({ id: councilMemberAttempts.id }).from(councilMemberAttempts).where(and(
+          eq(councilMemberAttempts.owner, owner), eq(councilMemberAttempts.sessionId, id), eq(councilMemberAttempts.cycleId, checkpoint.cycleId)));
+        const submissions = await tx.select({ id: councilIndependentSubmissions.id }).from(councilIndependentSubmissions).where(and(
+          eq(councilIndependentSubmissions.owner, owner), eq(councilIndependentSubmissions.sessionId, id), eq(councilIndependentSubmissions.cycleId, checkpoint.cycleId)));
+        if (attempts.length || submissions.length) throw new ConflictException('ORIGINAL_TASK_NOT_TERMINATED');
+        if (!(simple.commonEvidence ?? row.evidenceSnapshot).some(fact => fact.sourceName === 'Frozen owner context')) throw new BadRequestException('SAVED_OWNER_CONTEXT_UNAVAILABLE');
+        await this.refreshReferences?.(row);
+        const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint, error: null, updatedAt: new Date() })
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+        await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });
+        return { created: true, row: active };
+      }
+      // After all openings initially fail, explicit per-member recovery can fill the original sealed barrier.
+      // Releasing that completed barrier is bookkeeping; it must not dispatch the openings a second time.
+      if (simple?.overallDaily && simple.researchOnly && !simple.stopped && ['failed', 'paused'].includes(row.status)
+        && simple.stage === 'waiting' && checkpoint && !checkpoint.inflight && !remote?.taskId
+        && checkpoint.turns.length > 0 && checkpoint.turns.every(turn => turn.phase === 'opening')
+        && checkpoint.nextTurn >= checkpoint.turns.length) {
+        const [preferences] = await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
+        if (preferences?.enabled === false) throw new BadRequestException('RESEARCH_PAUSED');
+        const outstanding = await tx.select({ id: councilMemberAttempts.id }).from(councilMemberAttempts).where(and(
+          eq(councilMemberAttempts.owner, owner), eq(councilMemberAttempts.sessionId, id), eq(councilMemberAttempts.cycleId, checkpoint.cycleId),
+          sql`${councilMemberAttempts.status} IN ('queued','running','unknown')`));
+        if (outstanding.length) throw new ConflictException('ORIGINAL_TASK_NOT_TERMINATED');
+        const accepted = await tx.select({ memberId: councilIndependentSubmissions.memberId }).from(councilIndependentSubmissions).where(and(
+          eq(councilIndependentSubmissions.owner, owner), eq(councilIndependentSubmissions.sessionId, id), eq(councilIndependentSubmissions.cycleId, checkpoint.cycleId)));
+        const members = row.profileSnapshot.council?.members ?? [];
+        if (!accepted.length || members.some(member => !accepted.some(item => item.memberId === member.id) && !simple.unavailable.some(item => item.memberId === member.id))) {
+          throw new BadRequestException('SAVED_DAILY_REPORT_NOT_RESUMABLE');
+        }
+        if ((simple.calls ?? 0) + 2 > 12) throw new BadRequestException('AUTOMATIC_TASK_CALL_LIMIT');
+        if (!(simple.commonEvidence ?? row.evidenceSnapshot).some(fact => fact.sourceName === 'Frozen owner context')) throw new BadRequestException('SAVED_OWNER_CONTEXT_UNAVAILABLE');
+        await this.refreshReferences?.(row);
+        const next: CouncilCheckpoint = { ...checkpoint, simple: { ...simple, stage: 'independent' } };
+        const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint: next, error: null, updatedAt: new Date() })
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+        await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });
+        return { created: true, row: active };
+      }
+      const pendingApi = checkpoint?.turns[checkpoint.nextTurn];
+      const apiMember = row.profileSnapshot.council?.members.find(member => member.id === pendingApi?.memberId);
+      // An explicitly retried API gate resumes only its retained turn, never the independent barrier or a new cycle.
+      if (simple?.overallDaily && simple.researchOnly && !simple.stopped && ['failed', 'paused'].includes(row.status)
+        && checkpoint && !checkpoint.inflight && !remote?.taskId && pendingApi && ['challenge', 'summary'].includes(pendingApi.phase)
+        && apiMember && apiMember.executionMode !== 'local') {
+        const [preferences] = await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
+        if (preferences?.enabled === false) throw new BadRequestException('RESEARCH_PAUSED');
+        if ((simple.calls ?? 0) >= 12) throw new BadRequestException('AUTOMATIC_TASK_CALL_LIMIT');
+        if (!(simple.commonEvidence ?? row.evidenceSnapshot).some(fact => fact.sourceName === 'Frozen owner context')) throw new BadRequestException('SAVED_OWNER_CONTEXT_UNAVAILABLE');
+        await this.refreshReferences?.(row);
+        const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint, error: null, updatedAt: new Date() })
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+        await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });
+        return { created: true, row: active };
+      }
       if (row.status !== 'paused' || row.scene !== 'portfolio_daily' || !simple?.researchOnly || simple.stopped || !checkpoint || !remote?.taskId) {
         throw new BadRequestException('SAVED_DAILY_REPORT_NOT_RESUMABLE');
       }
@@ -96,7 +158,7 @@ export class CouncilReportResumeService {
       const digest = dailyReportContextHash(frozen, row);
       const activate = async (next: CouncilCheckpoint) => {
         const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint: next, error: null, updatedAt: new Date() })
-          .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
         await tx.update(researchCurrentViews).set({ state: 'generating', error: null, updatedAt: new Date() }).where(and(
           eq(researchCurrentViews.owner, owner), eq(researchCurrentViews.taskId, id), eq(researchCurrentViews.taskKind, 'daily_research')));
         await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });

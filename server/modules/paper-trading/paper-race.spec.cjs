@@ -8,6 +8,7 @@ const PaperTradingService = loadService('server/modules/paper-trading/paper-trad
   'node:crypto': require('node:crypto'),
   '../../database/schema': tables,
   '../../database/council.schema': {},
+  '../../database/research-source-visibility': { councilReportSourceVisible: unexpectedStrategyMemory },
   '../../database/strategy.schema': {},
   '../notifications/notification.service': { NotificationService: class {} },
   '../../common/market-clock': { isMarketOpen: () => true },

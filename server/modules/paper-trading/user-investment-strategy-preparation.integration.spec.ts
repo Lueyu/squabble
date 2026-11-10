@@ -15,12 +15,37 @@ import { LocalAgentError } from '../local-agents/local-agents.types';
 import { userInvestmentStrategyPreparations } from '../../database/user-investment-strategies.schema';
 import { compileInvestorRules } from './user-strategy-runtime';
 import { strategyContentHash } from './user-investment-strategy.rules';
+import { investmentFixture } from './investment-test.fixture';
 
 test('preparation state rejects invalid revision cursors before any database access', async () => {
   const service = new UserInvestmentStrategyService({} as never, {} as never, {} as never);
   for (const revision of [0, -1, 1.5, Number.NaN]) {
     await assert.rejects(async () => service.preparation('fixture-owner', randomUUID(), revision), /revision/iu);
   }
+});
+test('a model cannot add recurring execution authority and changed text cannot inherit an old frequency', async () => {
+  await investmentFixture(async (db, _client, owner) => {
+    const text = 'Buy 1 AAPL below 100';
+    const proposal = { ticker: 'AAPL', side: 'buy', trigger: { kind: 'price_lt', price: 100 }, quantity: 1,
+      executionFrequency: { kind: 'per_trading_day', maxExecutions: 1 }, reviewedText: text,
+      numericEvidence: [{ field: 'quantity', value: 1, quote: '1' }, { field: 'trigger.price', value: 100, quote: '100' }] };
+    const service = new UserInvestmentStrategyService(db, new ResearchDocumentsService(db), {
+      json: async () => ({ entries: [{ id: 'entry', directive: proposal }] }),
+    } as never);
+    const draft = await service.create(owner, { title: 'Fixture intent', body: text, timezone: 'UTC',
+      startsAt: new Date().toISOString(), endsAt: new Date(Date.now() + 86400000).toISOString(),
+      limits: { maxPositionPct: 10, maxDailyIncreasePct: 5, maxDailyTurnoverPct: 20 },
+      entries: [{ id: 'entry', text, sourceKeys: [] }] });
+    const prepared = await service.prepare(owner, draft.id, draft.revision, randomUUID());
+    assert.equal(prepared.content.entries[0].directive?.executionFrequency, undefined);
+    const changed = await service.create(owner, { ...draft.content, entries: [{ ...draft.content.entries[0],
+      directive: { ...proposal, reviewedText: 'Different earlier answer' } as never }] });
+    const reprepared = await service.prepare(owner, changed.id, changed.revision, randomUUID());
+    assert.equal(reprepared.content.entries[0].directive?.executionFrequency, undefined);
+    const explicit = await service.create(owner, { ...draft.content, entries: [{ ...draft.content.entries[0], directive: proposal as never }] });
+    const preserved = await service.prepare(owner, explicit.id, explicit.revision, randomUUID());
+    assert.equal(preserved.content.entries[0].directive?.executionFrequency?.kind, 'per_trading_day');
+  });
 });
 
 test('a claim appearing during status lookup is still reported as pending', async () => {

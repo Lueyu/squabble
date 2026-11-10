@@ -22,7 +22,7 @@ test('report lifecycle: owned immutable versions, retry conflicts, draft CAS, ad
   const client = postgres(url, { max: 6, onnotice: () => {}, connection: { search_path: namespace } });
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
-    for (const file of readdirSync('scripts/db').filter(f => /^\d\d_.*\.sql$/u.test(f) && Number(f.slice(0, 2)) !== 2 && Number(f.slice(0, 2)) <= 26).sort()) {
+    for (const file of readdirSync('scripts/db').filter(f => /^\d\d_.*\.sql$/u.test(f) && Number(f.slice(0, 2)) !== 2 && (Number(f.slice(0, 2)) <= 26 || f.startsWith('49_'))).sort()) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     await client.unsafe(readFileSync('scripts/db/26_research_documents.sql', 'utf8'));

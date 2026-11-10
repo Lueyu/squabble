@@ -10,6 +10,7 @@ export interface CouncilCheckpoint {
   simple?: {
     /** Hidden daily research: sealed independent work, one reverse-check gate, then report. */
     researchOnly?: boolean;
+    overallDaily?: { date: string; timezone: 'Asia/Shanghai'; readAt: string; factsHash: string };
     inputCorrection?: import('../../../shared/simple-conversation.interface').DailyReportInputCorrection;
     initializing?: boolean;
     stopped?: boolean;

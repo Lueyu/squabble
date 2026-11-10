@@ -8,7 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { useResearchMemory, useResearchMemoryActions, useResearchMemoryPreferences } from '@/hooks/use-research-memory';
+import { useResearchMemory, useResearchMemoryActions, useResearchMemoryPreferences, useResearchMemoryById, useResearchThesis } from '@/hooks/use-research-memory';
 import { memoryCopy } from './memory-copy';
 import { formatMemoryDate, memoryErrorText } from './memory-presentation';
 import { MemoryThesisDetails } from './MemoryThesisDetails';
@@ -19,15 +19,24 @@ import { MemoryMonitorSession } from './MemoryMonitorSession';
 
 interface CouncilMemoryPanelProps {
   ticker: string; market?: Market; topic?: string; language?: 'zh-CN' | 'en'; onChange?: () => void;
+  selection?: { kind: 'memory' | 'thesis'; id: string };
 }
 export function CouncilMemoryPanel(props: CouncilMemoryPanelProps) {
-  return <MemoryPanel key={`${props.ticker}:${props.market ?? ''}:${props.topic ?? ''}`} {...props} />;
+  return <MemoryPanel key={`${props.ticker}:${props.market ?? ''}:${props.topic ?? ''}:${props.selection?.id ?? ''}`} {...props} />;
 }
-function MemoryPanel({ ticker, market, topic, language, onChange }: CouncilMemoryPanelProps) {
+function MemoryPanel({ ticker, market, topic, language, onChange, selection }: CouncilMemoryPanelProps) {
   const { i18n } = useTranslation();
   const locale = language ?? (i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en');
   const copy = memoryCopy[locale];
-  const listing = useResearchMemory({ ticker, market, topic });
+  const candidates = useResearchMemory({ ticker: selection ? '' : ticker, market, topic });
+  const exactThesis = useResearchThesis(selection?.kind === 'thesis' ? selection.id : null);
+  const exactMemory = useResearchMemoryById(selection?.kind === 'memory' ? selection.id : null);
+  const exact = selection?.kind === 'thesis' ? exactThesis : exactMemory;
+  // A paginated selection must never be substituted by the recent ticker listing or a stale cache on access failure.
+  const listing = selection ? { ...exact, data: exact.data && !exact.error ? {
+    theses: selection.kind === 'thesis' ? [exactThesis.data!] : [],
+    memories: selection.kind === 'memory' ? [exactMemory.data!] : [],
+  } : undefined } : candidates;
   const preferences = useResearchMemoryPreferences();
   const actions = useResearchMemoryActions();
   const [editing, setEditing] = useState<{ thesis: ResearchThesis; mode: 'edit' | 'confirm' } | null>(null);
@@ -68,7 +77,7 @@ function MemoryPanel({ ticker, market, topic, language, onChange }: CouncilMemor
     {listing.data && !listing.error && <>
       <div className="space-y-3"><h3 className="text-sm font-semibold">{copy.active}</h3>
         {!theses.some(active) && <p className="text-sm text-muted-foreground">{copy.noActive}</p>}{cards(theses.filter(active))}</div>
-      {!!theses.filter(thesis => !active(thesis)).length && <details><summary className="cursor-pointer text-sm font-medium">{copy.otherTheses} ({theses.filter(thesis => !active(thesis)).length})</summary>
+      {!!theses.filter(thesis => !active(thesis)).length && <details open={selection?.kind === 'thesis' || undefined}><summary className="cursor-pointer text-sm font-medium">{copy.otherTheses} ({theses.filter(thesis => !active(thesis)).length})</summary>
         <div className="mt-3 space-y-3">{cards(theses.filter(thesis => !active(thesis)))}</div></details>}
     </>}
     {preferences.data && <div className="flex flex-wrap gap-4 border-t pt-3">
@@ -78,7 +87,7 @@ function MemoryPanel({ ticker, market, topic, language, onChange }: CouncilMemor
         {key === 'autoArchive' ? copy.archive : copy.recall}</Label>)}
     </div>}
     {ticker && <MemoryOperations ticker={ticker} market={market} copy={copy} locale={locale} />}
-    {listing.data && !listing.error && <details className="min-w-0 border-t pt-3 [overflow-wrap:anywhere]">
+    {listing.data && !listing.error && <details open={selection?.kind === 'memory' || undefined} className="min-w-0 border-t pt-3 [overflow-wrap:anywhere]">
       <summary className="cursor-pointer text-sm font-medium">{copy.history} ({listing.data.memories.length})</summary>
       {!listing.data.memories.length && <p className="mt-2 text-sm text-muted-foreground">{copy.empty}</p>}
       <div className="space-y-3 pt-3">{listing.data.memories.map(memory => <article key={memory.id} className="space-y-2 rounded-md border p-3 text-sm">

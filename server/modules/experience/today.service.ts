@@ -1,7 +1,8 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { PortfolioResearchRouteService } from '../research-routing/portfolio-research-route.service';
 import { currencyBreakdown } from './research-presentation';
-import { and, desc, eq } from 'drizzle-orm';
+import { isNull, and, desc, eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE,type PostgresJsDatabase,simpleExperienceEnabled } from '../../common/platform';
 import { holdings,cashAccounts,fxRates,paperOrders,paperAccounts,transactions } from '../../database/schema';
 import { councilReports,councilSessions } from '../../database/council.schema';
@@ -53,7 +54,7 @@ export class TodayService {
     if(gaps.length) attention.push({id:'data-gap',kind:'data_gap',title:'数据需要核对 / Check data',detail:gaps[0]});
     const aiAvailable=this.routes?Boolean(await this.routes.resolve(owner).catch(()=>null)):await this.llm.isConfigured(owner).catch(()=>false);
     const reports=await this.db.select({id:councilReports.id,sessionId:councilReports.sessionId,title:councilSessions.title,summary:councilReports.summary,dissent:councilReports.dissent,createdAt:councilReports.createdAt}).from(councilReports)
-      .innerJoin(councilSessions,and(eq(councilSessions.id,councilReports.sessionId),eq(councilSessions.owner,owner))).where(eq(councilReports.owner,owner)).orderBy(desc(councilReports.createdAt)).limit(10);
+      .innerJoin(councilSessions,and(eq(councilSessions.id,councilReports.sessionId),isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner))).where(and(councilReportSourceVisible(),eq(councilReports.owner,owner))).orderBy(desc(councilReports.createdAt)).limit(10);
     const orders=await this.db.select({id:paperOrders.id,ticker:paperOrders.ticker,side:paperOrders.side,status:paperOrders.status,reason:paperOrders.reason,createdAt:paperOrders.createdAt}).from(paperOrders)
       .innerJoin(paperAccounts,and(eq(paperAccounts.id,paperOrders.accountId),eq(paperAccounts.owner,owner),eq(paperAccounts.isActive,true))).where(eq(paperOrders.owner,owner)).orderBy(desc(paperOrders.createdAt)).limit(10);
     return {

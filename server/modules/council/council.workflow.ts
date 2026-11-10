@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { isNull, and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilSessions } from '../../database/council.schema';
 import type { CouncilMember } from '../../../shared/council.interface';
@@ -43,7 +43,7 @@ export class CouncilWorkflow {
     if (!row.evidenceSnapshot.length && members.some(m => m.executionMode !== 'local')) {
       const snapshot = await this.callbacks.snapshot(row);
       await this.db.update(councilSessions).set({ evidenceSnapshot: snapshot.evidence, sourceRunId: snapshot.sourceRunId }).where(and(
-        eq(councilSessions.owner, owner), eq(councilSessions.id, id), eq(councilSessions.revision, revision), eq(councilSessions.status, 'running')));
+        isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id), eq(councilSessions.revision, revision), eq(councilSessions.status, 'running')));
       row = await this.callbacks.get(owner, id);
     }
     if (row.revision !== revision || row.status !== 'running') return;
@@ -167,10 +167,10 @@ export class CouncilWorkflow {
         ? 'Research is paused. Completed deliverables are retained; review the tasks and retry explicitly. No automatic retry was started.'
         : '研究已暂停，已完成的交付会保留。请检查任务后手动重试，系统没有自动重发。');
       await this.db.update(councilSessions).set({ status: 'paused', error: reason, updatedAt: new Date() }).where(and(
-        eq(councilSessions.owner, owner), eq(councilSessions.id, id), eq(councilSessions.revision, revision), eq(councilSessions.status, 'running')));
+        isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id), eq(councilSessions.revision, revision), eq(councilSessions.status, 'running')));
       return;
     }
     await this.db.update(councilSessions).set({ status: 'paused', error: 'WORKFLOW_STEP_LIMIT', updatedAt: new Date() }).where(and(
-      eq(councilSessions.owner, owner), eq(councilSessions.id, id), eq(councilSessions.revision, revision), eq(councilSessions.status, 'running')));
+      isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id), eq(councilSessions.revision, revision), eq(councilSessions.status, 'running')));
   }
 }
