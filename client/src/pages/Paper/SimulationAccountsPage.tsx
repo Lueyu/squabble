@@ -21,6 +21,7 @@ import { accountColor } from '@/features/portfolio-comparison/comparison-chart-o
 import type { PortfolioCompanionId } from '@shared/portfolio-workspace.interface';
 import CompanionIdentity from '@/features/companions/CompanionIdentity';
 import CompanionPicker from '@/features/companions/CompanionPicker';
+import DeleteCompanionAccount from '@/features/companions/DeleteCompanionAccount';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 export default function SimulationAccountsPage() {
@@ -265,6 +266,7 @@ export default function SimulationAccountsPage() {
                   </Link>
                 </Button>
                 <AccountStatusControl account={account} compact />
+                <DeleteCompanionAccount account={account} />
               </div>
             </footer>
           </article>

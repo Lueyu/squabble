@@ -51,6 +51,15 @@ export interface PortfolioAccountMutationRequest {
   expectedPolicyRevision: number;
   requestKey: string;
 }
+export interface ArchivePortfolioAccountRequest {
+  expectedPolicyRevision: number | null;
+  requestKey: string;
+}
+export interface ArchivePortfolioAccountResult {
+  accountId: string;
+  status: 'archived';
+  policyRevision: number | null;
+}
 export interface RenamePortfolioAccountRequest extends PortfolioAccountMutationRequest {
   name: string;
 }

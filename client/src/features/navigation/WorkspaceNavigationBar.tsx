@@ -88,7 +88,7 @@ export function WorkspaceSectionTabs() {
           ['/daily', '/analysis', '/journal'].includes(pathname)
         ? [
             ['/daily', zh ? '总体日报' : 'Daily overview'],
-            ['/analysis', zh ? '报告与历史' : 'Reports & history'],
+            ['/analysis', zh ? '报告历史' : 'Report history'],
             ['/journal', zh ? '个人复盘' : 'Personal journal'],
           ]
         : [];

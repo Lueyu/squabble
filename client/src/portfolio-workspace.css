@@ -1235,3 +1235,16 @@
     justify-self: end;
   }
 }
+
+.portfolio-reference-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-block: 12px;
+}
+
+.portfolio-reference-controls > div {
+  display: flex;
+  gap: 4px;
+}

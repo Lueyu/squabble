@@ -1,3 +1,4 @@
+import { PortfolioHistoryService } from '../portfolio-history/portfolio-history.service';
 import {
   BadRequestException,
   ConflictException,
@@ -46,8 +47,13 @@ const terminationConfirmed = (task: {
   error?: string;
   runtimeEntered?: boolean;
   commandEmitted?: boolean;
-}) => terminal(task.state) && task.error !== 'LOCAL_DISPATCH_UNCERTAIN' &&
-  !(task.error === 'LOCAL_INTERRUPTED' && (task.runtimeEntered || task.commandEmitted));
+}) =>
+  terminal(task.state) &&
+  task.error !== 'LOCAL_DISPATCH_UNCERTAIN' &&
+  !(
+    task.error === 'LOCAL_INTERRUPTED' &&
+    (task.runtimeEntered || task.commandEmitted)
+  );
 const globalFailure = (code: string) =>
   /AUTH|LOGIN|USAGE_LIMIT|RATE_LIMIT|UNSUPPORTED|CONFIGURATION|UNAVAILABLE|TOOL_ISOLATION|AGENT_NOT_FOUND|BUSY|CREDENTIALS|PAUSED|COMPANION_OFFLINE/.test(
     code,
@@ -93,6 +99,7 @@ export class ImportBatchesService implements OnModuleInit, OnModuleDestroy {
     private readonly files: ImportBatchFiles,
     @Optional()
     private readonly handoff?: ImportAnalysisHandoffService,
+    @Optional() private readonly portfolioHistory?: PortfolioHistoryService,
   ) {}
   async onModuleInit() {
     await this.recover();
@@ -390,7 +397,8 @@ export class ImportBatchesService implements OnModuleInit, OnModuleDestroy {
       const next = batch.images.find((image) => image.status === 'queued');
       if (!next) {
         await this.mutate(owner, id, (current) => {
-          if (['queued', 'running'].includes(current.status)) current.status = 'completed';
+          if (['queued', 'running'].includes(current.status))
+            current.status = 'completed';
         });
         return;
       }
@@ -421,7 +429,11 @@ export class ImportBatchesService implements OnModuleInit, OnModuleDestroy {
       let claimed = false;
       await this.mutate(owner, id, (current) => {
         const image = current.images.find((image) => image.id === next.id)!;
-        if (!['queued', 'running'].includes(current.status) || image.status !== 'queued') return;
+        if (
+          !['queued', 'running'].includes(current.status) ||
+          image.status !== 'queued'
+        )
+          return;
         if (!image.fileAvailable || Date.parse(image.expiresAt) <= Date.now()) {
           image.status = 'cancelled';
           image.error = 'IMAGE_EXPIRED';
@@ -714,155 +726,177 @@ export class ImportBatchesService implements OnModuleInit, OnModuleDestroy {
     )
       throw new BadRequestException('INVALID_REQUEST');
     const inputHash = hash({ id, ...input });
-    return this.db.transaction(async (tx) => {
-      await lockMemoryOwner(tx, owner);
-      const [prior] = await tx
-        .select()
-        .from(importCommitReceipts)
-        .where(
-          and(
-            eq(importCommitReceipts.owner, owner),
-            eq(importCommitReceipts.requestKey, input.requestKey),
-          ),
-        );
-      if (prior) {
-        if (prior.inputHash !== inputHash)
-          throw new ConflictException('IDEMPOTENCY_CONFLICT');
-        return prior.receipt;
-      }
-      const [record] = await tx
-        .select()
-        .from(importBatches)
-        .where(and(eq(importBatches.id, id), eq(importBatches.owner, owner)))
-        .for('update');
-      if (!record) throw new NotFoundException('BATCH_NOT_FOUND');
-      const batch = structuredClone(record.state);
-      if (batch.revision !== input.expectedRevision)
-        throw new ConflictException('BATCH_CHANGED');
-      const positions = await tx
-        .select()
-        .from(holdings)
-        .where(eq(holdings.owner, owner))
-        .orderBy(holdings.id)
-        .for('update');
-      if (this.holdingsRevision(positions) !== input.holdingsRevision)
-        throw new ConflictException('HOLDINGS_CHANGED');
-      const selected = input.rowIds.map((rowId) => {
-        const row = batch.rows.find((row) => row.id === rowId);
-        if (
-          !row ||
-          !row.confirmed ||
-          row.conflicts?.length ||
-          row.issues?.length
-        )
-          throw new BadRequestException('ROWS_REQUIRE_REVIEW');
-        if (row.committedRevision === row.revision)
-          throw new ConflictException('ROW_ALREADY_SAVED');
-        this.validateRow(row);
-        return row;
-      });
-      if (
-        new Set(input.rowIds).size !== input.rowIds.length ||
-        new Set(
-          selected.map((row) => securityIdentity(row.ticker, row.market)!.key),
-        ).size !== selected.length
-      )
-        throw new BadRequestException('DUPLICATE_TICKER');
-      const receipt: ImportCommitReceipt = {
-        id: randomUUID(),
-        requestKey: input.requestKey,
-        rowIds: input.rowIds,
-        created: 0,
-        updated: 0,
-        createdAt: new Date().toISOString(),
-      };
-      for (const row of selected) {
-        const { identity, quantity, cost, price } = this.validateRow(row);
-        const existing = positions.find(
-          (position) =>
-            securityIdentity(position.ticker, position.market ?? undefined)
-              ?.key === identity.key,
-        );
-        const values = {
-          ticker: identity.ticker,
-          market: identity.market,
-          currency: row.currency,
-          company: row.company?.trim() || null,
-          shares: String(quantity),
-          buyPrice: cost === null ? null : String(cost),
-          ...(price !== null ? { currentPrice: String(price) } : {}),
-          updatedAt: new Date(),
-        };
-        values.ticker = await recordPositionCheckpoint(tx, owner, { ...values, currency: row.currency! }, existing, 'screenshot', receipt.id);
-        if (existing) {
-          await tx
-            .update(holdings)
-            .set(values)
-            .where(
-              and(eq(holdings.owner, owner), eq(holdings.id, existing.id)),
-            );
-          receipt.updated++;
-        } else {
-          await tx.insert(holdings).values({ owner, ...values });
-          receipt.created++;
+    return this.db
+      .transaction(async (tx) => {
+        await lockMemoryOwner(tx, owner);
+        const [prior] = await tx
+          .select()
+          .from(importCommitReceipts)
+          .where(
+            and(
+              eq(importCommitReceipts.owner, owner),
+              eq(importCommitReceipts.requestKey, input.requestKey),
+            ),
+          );
+        if (prior) {
+          if (prior.inputHash !== inputHash)
+            throw new ConflictException('IDEMPOTENCY_CONFLICT');
+          return prior.receipt;
         }
-        row.committedRevision = row.revision;
-      }
-      await tx.insert(importLogs).values({
-        owner,
-        source: 'ocr',
-        filename: batch.images
-          .map((image) => image.filename)
-          .join(', ')
-          .slice(0, 255),
-        rowsTotal: selected.length,
-        rowsImported: receipt.created + receipt.updated,
-        errors: [],
-      });
-      if (input.analyze) {
-        if (!this.handoff) throw new ConflictException('ANALYSIS_UNAVAILABLE');
-        const request = await this.handoff.enqueueInTransaction(
-          tx,
+        const [record] = await tx
+          .select()
+          .from(importBatches)
+          .where(and(eq(importBatches.id, id), eq(importBatches.owner, owner)))
+          .for('update');
+        if (!record) throw new NotFoundException('BATCH_NOT_FOUND');
+        const batch = structuredClone(record.state);
+        if (batch.revision !== input.expectedRevision)
+          throw new ConflictException('BATCH_CHANGED');
+        const positions = await tx
+          .select()
+          .from(holdings)
+          .where(eq(holdings.owner, owner))
+          .orderBy(holdings.id)
+          .for('update');
+        if (this.holdingsRevision(positions) !== input.holdingsRevision)
+          throw new ConflictException('HOLDINGS_CHANGED');
+        const selected = input.rowIds.map((rowId) => {
+          const row = batch.rows.find((row) => row.id === rowId);
+          if (
+            !row ||
+            !row.confirmed ||
+            row.conflicts?.length ||
+            row.issues?.length
+          )
+            throw new BadRequestException('ROWS_REQUIRE_REVIEW');
+          if (row.committedRevision === row.revision)
+            throw new ConflictException('ROW_ALREADY_SAVED');
+          this.validateRow(row);
+          return row;
+        });
+        if (
+          new Set(input.rowIds).size !== input.rowIds.length ||
+          new Set(
+            selected.map(
+              (row) => securityIdentity(row.ticker, row.market)!.key,
+            ),
+          ).size !== selected.length
+        )
+          throw new BadRequestException('DUPLICATE_TICKER');
+        const receipt: ImportCommitReceipt = {
+          id: randomUUID(),
+          requestKey: input.requestKey,
+          rowIds: input.rowIds,
+          created: 0,
+          updated: 0,
+          createdAt: new Date().toISOString(),
+        };
+        for (const row of selected) {
+          const { identity, quantity, cost, price } = this.validateRow(row);
+          const existing = positions.find(
+            (position) =>
+              securityIdentity(position.ticker, position.market ?? undefined)
+                ?.key === identity.key,
+          );
+          const values = {
+            ticker: identity.ticker,
+            market: identity.market,
+            currency: row.currency,
+            company: row.company?.trim() || null,
+            shares: String(quantity),
+            buyPrice: cost === null ? null : String(cost),
+            ...(price !== null ? { currentPrice: String(price) } : {}),
+            updatedAt: new Date(),
+          };
+          values.ticker = await recordPositionCheckpoint(
+            tx,
+            owner,
+            { ...values, currency: row.currency! },
+            existing,
+            'screenshot',
+            receipt.id,
+          );
+          if (existing) {
+            await tx
+              .update(holdings)
+              .set(values)
+              .where(
+                and(eq(holdings.owner, owner), eq(holdings.id, existing.id)),
+              );
+            receipt.updated++;
+          } else {
+            await tx.insert(holdings).values({ owner, ...values });
+            receipt.created++;
+          }
+          row.committedRevision = row.revision;
+        }
+        await tx.insert(importLogs).values({
           owner,
-          receipt.id,
-          {
-            coverage: {
-              totalImages: batch.images.length,
-              includedImages: new Set(
-                batch.rows
-                  .filter(
-                    (row) =>
-                      row.committedRevision !== undefined &&
-                      row.committedRevision === row.revision,
-                  )
-                  .flatMap((row) => row.sourceImageIds),
-              ).size,
-              unresolvedRows: batch.rows.filter(
-                (row) =>
-                  !row.confirmed || row.committedRevision !== row.revision,
-              ).length,
+          source: 'ocr',
+          filename: batch.images
+            .map((image) => image.filename)
+            .join(', ')
+            .slice(0, 255),
+          rowsTotal: selected.length,
+          rowsImported: receipt.created + receipt.updated,
+          errors: [],
+        });
+        if (input.analyze) {
+          if (!this.handoff)
+            throw new ConflictException('ANALYSIS_UNAVAILABLE');
+          const request = await this.handoff.enqueueInTransaction(
+            tx,
+            owner,
+            receipt.id,
+            {
+              coverage: {
+                totalImages: batch.images.length,
+                includedImages: new Set(
+                  batch.rows
+                    .filter(
+                      (row) =>
+                        row.committedRevision !== undefined &&
+                        row.committedRevision === row.revision,
+                    )
+                    .flatMap((row) => row.sourceImageIds),
+                ).size,
+                unresolvedRows: batch.rows.filter(
+                  (row) =>
+                    !row.confirmed || row.committedRevision !== row.revision,
+                ).length,
+              },
             },
-          },
-        );
-        receipt.analysisRequestId = request.id;
-      }
-      batch.receipts.push(receipt);
-      batch.revision++;
-      batch.updatedAt = new Date().toISOString();
-      await tx
-        .update(importBatches)
-        .set({ state: batch, revision: batch.revision, updatedAt: new Date() })
-        .where(eq(importBatches.id, id));
-      await tx.insert(importCommitReceipts).values({
-        id: receipt.id,
-        owner,
-        batchId: id,
-        requestKey: input.requestKey,
-        inputHash,
-        receipt,
+          );
+          receipt.analysisRequestId = request.id;
+        }
+        batch.receipts.push(receipt);
+        batch.revision++;
+        batch.updatedAt = new Date().toISOString();
+        await tx
+          .update(importBatches)
+          .set({
+            state: batch,
+            revision: batch.revision,
+            updatedAt: new Date(),
+          })
+          .where(eq(importBatches.id, id));
+        await tx.insert(importCommitReceipts).values({
+          id: receipt.id,
+          owner,
+          batchId: id,
+          requestKey: input.requestKey,
+          inputHash,
+          receipt,
+        });
+        return receipt;
+      })
+      .then((receipt) => {
+        // Only committed positions enter asynchronous market-data preparation.
+        void Promise.resolve()
+          .then(() => this.portfolioHistory?.prefetch(owner))
+          .catch(() => undefined);
+        return receipt;
       });
-      return receipt;
-    });
   }
   async retry(owner: string, id: string, imageId: string) {
     const batch = await this.mutate(owner, id, (current) => {

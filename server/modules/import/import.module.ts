@@ -1,3 +1,4 @@
+import { PortfolioHistoryModule } from '../portfolio-history/portfolio-history.module';
 /**
  * @file server/modules/import/import.module.ts
  * @description Import wiring: commit engine + OCR proxy.
@@ -17,9 +18,23 @@ import { TransactionsModule } from '../transactions/transactions.module';
 import { TransactionImportsService } from './transaction-imports.service';
 
 @Module({
-  imports: [HttpModule, QuoteModule, LocalAgentsModule, ExperienceModule, TransactionsModule],
+  imports: [
+    PortfolioHistoryModule,
+    HttpModule,
+    QuoteModule,
+    LocalAgentsModule,
+    ExperienceModule,
+    TransactionsModule,
+  ],
   controllers: [ImportController],
-  providers: [ImportService, OcrService, ScreenshotJobsService, ImportBatchesService, ImportBatchFiles, TransactionImportsService],
+  providers: [
+    ImportService,
+    OcrService,
+    ScreenshotJobsService,
+    ImportBatchesService,
+    ImportBatchFiles,
+    TransactionImportsService,
+  ],
   exports: [ImportService],
 })
 export class ImportModule {}

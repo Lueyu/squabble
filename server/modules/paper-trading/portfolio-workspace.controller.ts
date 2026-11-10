@@ -20,6 +20,8 @@ export class PortfolioWorkspaceController {
   pause(@Req() req: Request, @Param('accountId') id: string, @Body() input: unknown) { return this.workspace.switchStatus(req.userContext.userId, id, input, false); }
   @NeedLogin() @Post(':accountId/resume')
   resume(@Req() req: Request, @Param('accountId') id: string, @Body() input: unknown) { return this.workspace.switchStatus(req.userContext.userId, id, input, true); }
+  @NeedLogin() @Post(':accountId/archive')
+  archive(@Req() req: Request, @Param('accountId') id: string, @Body() input: unknown) { return this.workspace.archive(req.userContext.userId, id, input); }
   @NeedLogin() @Get(':accountId/strategies')
   strategies(@Req() req: Request, @Param('accountId') id: string) { return this.workspace.combination(req.userContext.userId, id); }
   @NeedLogin() @Post(':accountId/strategies/draft')

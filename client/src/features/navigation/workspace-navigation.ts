@@ -165,14 +165,21 @@ export function resolveWorkspaceRoute(
       parent: '/daily',
       kind: 'detail',
     };
+  if (pathname === '/research/portfolio')
+    return {
+      section: 'research',
+      title: zh ? '持仓研究' : 'Portfolio research',
+      parent: '/research',
+      kind: 'detail',
+    };
   if (pathname.startsWith('/analysis'))
     return {
       section: 'daily',
       title:
         pathname === '/analysis'
           ? zh
-            ? '报告与历史'
-            : 'Reports & history'
+            ? '报告历史'
+            : 'Report history'
           : zh
             ? '报告详情'
             : 'Report details',
@@ -299,6 +306,10 @@ export function workspaceDestinations(language: string) {
     { path: '/watchlist', label: zh ? '关注列表' : 'Watchlist' },
     { path: '/journal', label: zh ? '个人复盘笔记' : 'Personal journal' },
     { path: '/analysis', label: zh ? '报告历史' : 'Report history' },
+    {
+      path: '/research/portfolio',
+      label: zh ? '持仓研究' : 'Portfolio research',
+    },
     { path: '/council', label: zh ? '股友讨论频道' : 'Research channel' },
     {
       path: '/settings/notifications',

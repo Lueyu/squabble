@@ -15,7 +15,7 @@ Structure reviewed on **2026-11-10** against `98f073e` plus the V4 working tree.
 | `/strategies`, `/strategies/new`, `/strategies/interviews/:interviewId` | `features/strategy-interview/` | Persisted clarification; existing combination confirmation remains execution authority |
 | `/settings/notifications`, `/settings/mcp` | `features/integrations/PaperIntegrationPanels.tsx` | Shared with retained Paper page; hidden Settings panels close portals |
 | `/` | `client/src/pages/Overview/PortfolioOverviewPage.tsx`: saved real/simulation comparison and research entry | `client/src/pages/Dashboard/DashboardPage.tsx` |
-| `/analysis` | `client/src/pages/Analysis/SimpleAnalysisPage.tsx` | `client/src/pages/Analysis/AnalysisPage.tsx` |
+| `/analysis` | `client/src/pages/Analysis/ReportHistoryPage.tsx` | `client/src/pages/Analysis/AnalysisPage.tsx` |
 | `/analysis/reports/:versionId` | `client/src/pages/Analysis/ResearchDocumentPage.tsx`, `SimpleReportReader.tsx`: exact immutable version and archived simulation-review reading | Shared; never replace requested ID with the latest report |
 | `/council` | `client/src/pages/Council/SimpleCouncilPage.tsx`, `client/src/pages/Channel/ChannelWorkbench.tsx`: channel projection, fact checks and actions | `client/src/pages/Council/CouncilPage.tsx`: retained research room |
 | `/paper` | `client/src/pages/Paper/SimulationAccountsPage.tsx`: independent accounts and explicit creation | `client/src/pages/Paper/PaperPage.tsx`; `AiInvestmentPage.tsx` is retained code, not the current route |
@@ -33,7 +33,7 @@ In the table, abbreviated filenames are siblings of the fully qualified director
 
 | Area | Client/API | Authoritative server and shared contracts |
 |---|---|---|
-| Current research (mounted by `/analysis`) | `client/src/pages/Today/CurrentAnalysisPanel.tsx`; `client/src/api/simple-experience.ts` | `server/modules/experience/experience.controller.ts`, `today.service.ts`, `current-research.service.ts`, `experience.scheduler.ts`; `shared/simple-experience.interface.ts` |
+| Current research (mounted by `/research/portfolio`) | `client/src/pages/Today/CurrentAnalysisPanel.tsx`; `client/src/api/simple-experience.ts` | `server/modules/experience/experience.controller.ts`, `today.service.ts`, `current-research.service.ts`, `experience.scheduler.ts`; `shared/simple-experience.interface.ts` |
 | Saved report reading and formatting recovery | `client/src/pages/Today/CurrentAnalysisPanel.tsx`; `POST /api/research/current/reformat` | `server/modules/experience/current-research.service.ts` (`completedSource`, `reformat`, `reconcile`); `shared/simple-experience.interface.ts` (`returnedDocumentId`); `server/modules/experience/report-recovery.integration.spec.ts` |
 | Daily research/report handoff | `/api/research/current/refresh` | `server/modules/experience/daily-channel-research.service.ts`; `server/modules/council/simple-council.service.ts`, `council.service.ts`, `council.daily.ts`, `council.dialogue.ts`; `shared/council.interface.ts`, `shared/report-execution-plan.interface.ts` |
 | Complete frozen account input | Native/API work and review prompts | `server/modules/council/council.rules.ts` (`frozenOwnerEvidence`, `evidenceExcerpts`), `council.native.ts`, `council.context.ts`, `council.workflow-executor.ts`; `council.owner-context.spec.ts` |
@@ -84,3 +84,5 @@ In the table, abbreviated filenames are siblings of the fully qualified director
 - Documentation impact and synchronization: [maintenance.md](maintenance.md).
 
 Portfolio workspace review: current report actions select an account and save a disabled strategy allocation without applying it. `/paper?seedReal=1` opens a creation preview; it does not restart another account. Account CRUD/combination endpoints use `/api/ai-investment/accounts`; comparison uses `/api/ai-investment/comparison`; channel reads accept `accountId`. Legacy global-current operations fail on multi-account ambiguity and managed-account guards remain. Confirmed histories are immutable; deleting a draft keeps its tombstone. See the execution reference for exact transaction, budget, capacity and return-coverage contracts.
+
+V4 imported-portfolio refinement: `server/modules/portfolio-history/` owns current marks and public historical-price/FX caches (migration48), consumed by imports and saved comparison. `shared/portfolio-history.interface.ts` and `docs/portfolio-history-reference.md` define separate reference semantics. `HoldingsPage` renders saved rows before dashboard work. `/analysis` is only `ReportHistoryPage`; explicit current analysis is at `/research/portfolio`. Companion removal is `POST /api/ai-investment/accounts/:id/archive` and retains ledger/history.

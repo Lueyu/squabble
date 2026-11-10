@@ -953,3 +953,4 @@ export * from './user-investment-strategies.schema';
 export * from './portfolio-value-points.schema';
 export * from './user-strategy-runtime.schema';
 export * from './strategy-interviews.schema';
+export * from './portfolio-history.schema';

@@ -7,7 +7,7 @@
  * `useMarketQuotes`, enriches each row with derived market value / P/L, and
  * supports search, group filter, multi-market filter, and column sorting.
  */
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
 import {
   Briefcase,
@@ -108,6 +108,8 @@ export default function HoldingsPage() {
   const [holdings, setHoldings] = useState<DerivedHolding[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedHoldings, setHasLoadedHoldings] = useState(false);
+  const loadRevision = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [groupId, setGroupId] = useState('');
@@ -166,26 +168,35 @@ export default function HoldingsPage() {
     }
   };
 
-  /** Parallel-fetch holdings, groups, cash accounts and the dashboard overview. */
+  /** Show saved positions immediately; quotes, FX totals and labels load independently. */
   const loadData = async () => {
+    const revision = ++loadRevision.current;
+    const isCurrent = () => revision === loadRevision.current;
     setLoading(true);
     setError(null);
+
+    // Supplemental failures keep the last successful values and never block rows.
+    void fetchGroups().then((groups) => {
+      if (isCurrent()) setGroups(groups);
+    }).catch(() => {});
+    void fetchCashAccounts().then((cash) => {
+      if (isCurrent()) setCashAccounts(cash);
+    }).catch(() => {});
+    void fetchDashboard('USD').then((dashboard) => {
+      if (isCurrent()) setOverview(dashboard);
+    }).catch(() => {});
+
     try {
-      const [h, g, cash, dash] = await Promise.all([
-        fetchHoldings(),
-        fetchGroups(),
-        fetchCashAccounts().catch(() => []),
-        fetchDashboard('USD').catch(() => null),
-      ]);
-      setHoldings((h as Holding[]).map(computeDerived));
-      setGroups(g as Group[]);
-      setCashAccounts(cash as CashAccount[]);
-      setOverview(dash as DashboardOverview | null);
+      const savedHoldings = await fetchHoldings();
+      if (!isCurrent()) return;
+      setHoldings(savedHoldings.map(computeDerived));
+      setHasLoadedHoldings(true);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(t('common.failed'));
       toast.error(t('common.failed'));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
@@ -211,7 +222,10 @@ export default function HoldingsPage() {
       loadAwaitingHuman();
     };
     window.addEventListener('portfolio-updated', handleUpdate);
-    return () => window.removeEventListener('portfolio-updated', handleUpdate);
+    return () => {
+      ++loadRevision.current;
+      window.removeEventListener('portfolio-updated', handleUpdate);
+    };
   }, []);
 
   /** Toggle sort on a column; switches direction when clicking the same column. */
@@ -318,16 +332,16 @@ export default function HoldingsPage() {
             <span className="mx-1">·</span>
             {t('ui.holdings.summaryCount', { count: filtered.length })}{' '}
             <span className="font-mono-nums">
-              {formatCurrencyWithCode(totalMv, displayCurrency)}
+              {overview ? formatCurrencyWithCode(totalMv, displayCurrency) : '—'}
             </span>{' '}
             · {t('ui.holdings.floatingPl')}{' '}
             <span
               className={cn(
                 'font-mono-nums font-medium',
-                plClass(totalPl)
+                overview && plClass(totalPl)
               )}
             >
-              {formatCurrencyWithCode(totalPl, displayCurrency)}
+              {overview ? formatCurrencyWithCode(totalPl, displayCurrency) : '—'}
             </span>
           </div>
         </div>
@@ -444,10 +458,17 @@ export default function HoldingsPage() {
         </div>
       </div>
 
+      {hasLoadedHoldings && error && (
+        <Alert variant="destructive">
+          <AlertTriangle className="size-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
       {/* Desktop Table */}
       <HoldingsTable
-        loading={loading}
-        error={error}
+        loading={loading && !hasLoadedHoldings}
+        error={hasLoadedHoldings ? null : error}
         holdings={filtered}
         groups={groups}
         sortKey={sortKey}
@@ -462,8 +483,8 @@ export default function HoldingsPage() {
 
       {/* Mobile Cards */}
       <HoldingsMobileList
-        loading={loading}
-        error={error}
+        loading={loading && !hasLoadedHoldings}
+        error={hasLoadedHoldings ? null : error}
         holdings={filtered}
         groups={groups}
         onAdd={() => setAddOpen(true)}

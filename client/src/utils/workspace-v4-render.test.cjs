@@ -57,7 +57,7 @@ test('research entry transfers a question for explicit sending and preserves old
   const { load, render } = fixture();
   const html = render(load('pages/Analysis/ResearchWorkspacePage.tsx').default);
   assert.match(html, /without calling a model/);
-  for (const route of ['/analysis', '/watchlist', '/settings/agents', '/analysis#report-history']) {
+  for (const route of ['/research/portfolio', '/watchlist', '/settings/agents', '/analysis']) {
     assert.ok(html.includes(`href="${route}"`));
   }
   assert.match(html, /maxLength="2000"/i);

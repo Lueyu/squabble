@@ -1,6 +1,8 @@
 import http from './http';
 import type {
   ApplyPortfolioCombinationRequest,
+  ArchivePortfolioAccountRequest,
+  ArchivePortfolioAccountResult,
   CreatePortfolioAccountRequest,
   PortfolioAccountDetail,
   PortfolioAccountMutationRequest,
@@ -35,6 +37,8 @@ export const portfolioWorkspaceApi = {
     (await http.get<PortfolioAccountDetail>(accountPath(accountId))).data,
   create: async (input: CreatePortfolioAccountRequest) =>
     (await http.post<PortfolioAccountMutationResult>(base, input)).data,
+  archive: async (accountId: string, input: ArchivePortfolioAccountRequest) =>
+    (await http.post<ArchivePortfolioAccountResult>(`${accountPath(accountId)}/archive`, input)).data,
   setCompanion: async (accountId: string, input: PortfolioCompanionRequest) =>
     (await http.patch<PortfolioCompanionResult>(`${accountPath(accountId)}/companion`, input)).data,
   rename: async (

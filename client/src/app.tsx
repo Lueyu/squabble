@@ -36,6 +36,7 @@ import NotFound from './pages/NotFound/NotFound';
 import ResearchDocumentPage from './pages/Analysis/ResearchDocumentPage';
 import PortfolioOverviewPage from './pages/Overview/PortfolioOverviewPage';
 import SimpleAnalysisPage from './pages/Analysis/SimpleAnalysisPage';
+import ReportHistoryPage from './pages/Analysis/ReportHistoryPage';
 import SimpleCouncilPage from './pages/Council/SimpleCouncilPage';
 import SimulationAccountsPage from './pages/Paper/SimulationAccountsPage';
 import SimulationAccountPage from './pages/Paper/SimulationAccountPage';
@@ -49,15 +50,61 @@ import NewStrategyInterviewPage from './features/strategy-interview/NewStrategyI
 import StrategyInterviewPage from './features/strategy-interview/StrategyInterviewPage';
 import { useSimpleExperience } from './hooks/use-simple-experience';
 
-function ExperienceRoute({ current, legacy }: { current: React.ReactNode; legacy: React.ReactNode }) {
+function ExperienceRoute({
+  current,
+  legacy,
+}: {
+  current: React.ReactNode;
+  legacy: React.ReactNode;
+}) {
   const { enabled, isPending } = useSimpleExperience();
-  if (isPending) return <div role="status" className="p-6">Squabble…</div>;
+  if (isPending)
+    return (
+      <div role="status" className="p-6">
+        Squabble…
+      </div>
+    );
   return <>{enabled ? current : legacy}</>;
 }
 
 function SimulationsRoute() {
   const { hash } = useLocation();
-  return <ExperienceRoute current={hash === '#notifications' ? <Navigate to="/settings/notifications" replace /> : <SimulationAccountsPage />} legacy={<PaperPage />} />;
+  return (
+    <ExperienceRoute
+      current={
+        hash === '#notifications' ? (
+          <Navigate to="/settings/notifications" replace />
+        ) : (
+          <SimulationAccountsPage />
+        )
+      }
+      legacy={<PaperPage />}
+    />
+  );
+}
+
+function ReportsRoute() {
+  const location = useLocation();
+  const ticker = new URLSearchParams(location.search).get('ticker');
+  return (
+    <ExperienceRoute
+      current={
+        ticker ? (
+          <Navigate
+            to={{
+              pathname: '/research/portfolio',
+              search: location.search,
+              hash: location.hash,
+            }}
+            replace
+          />
+        ) : (
+          <ReportHistoryPage />
+        )
+      }
+      legacy={<AnalysisPage />}
+    />
+  );
 }
 
 /**
@@ -79,31 +126,82 @@ const RoutesComponent = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={localWorkspace ? <Navigate to="/" replace /> : <LoginPage />} />
-      <Route path="/register" element={localWorkspace ? <Navigate to="/" replace /> : <RegisterPage />} />
-      <Route path="/recover" element={localWorkspace ? <Navigate to="/" replace /> : <RecoverPage />} />
+      <Route
+        path="/login"
+        element={localWorkspace ? <Navigate to="/" replace /> : <LoginPage />}
+      />
+      <Route
+        path="/register"
+        element={
+          localWorkspace ? <Navigate to="/" replace /> : <RegisterPage />
+        }
+      />
+      <Route
+        path="/recover"
+        element={localWorkspace ? <Navigate to="/" replace /> : <RecoverPage />}
+      />
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route element={<Layout />}>
-        <Route index element={<ExperienceRoute current={<PortfolioOverviewPage />} legacy={<DashboardPage />} />} />
+        <Route
+          index
+          element={
+            <ExperienceRoute
+              current={<PortfolioOverviewPage />}
+              legacy={<DashboardPage />}
+            />
+          }
+        />
         <Route path="holdings" element={<HoldingsPage />} />
         <Route path="daily" element={<DailyReportPage />} />
         <Route path="research" element={<ResearchWorkspacePage />} />
+        <Route path="research/portfolio" element={<SimpleAnalysisPage />} />
         <Route path="data" element={<DataCenterPage />} />
         <Route path="memory" element={<MemoryWorkspacePage />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="watchlist" element={<WatchlistPage />} />
-        <Route path="analysis" element={<ExperienceRoute current={<SimpleAnalysisPage />} legacy={<AnalysisPage />} />} />
-        <Route path="analysis/reports/:versionId" element={<ResearchDocumentPage />} />
+        <Route path="analysis" element={<ReportsRoute />} />
+        <Route
+          path="analysis/reports/:versionId"
+          element={<ResearchDocumentPage />}
+        />
         <Route path="paper" element={<SimulationsRoute />} />
         <Route path="strategies" element={<StrategyLibraryPage />} />
         <Route path="strategies/new" element={<NewStrategyInterviewPage />} />
-        <Route path="strategies/interviews/:interviewId" element={<StrategyInterviewPage />} />
+        <Route
+          path="strategies/interviews/:interviewId"
+          element={<StrategyInterviewPage />}
+        />
         <Route path="paper/:accountId" element={<SimulationAccountPage />} />
-        <Route path="paper/:accountId/strategies" element={<AccountStrategyCombinationPage />} />
-        <Route path="agent-builder" element={<ExperienceRoute current={<Navigate to="/settings/agents" replace />} legacy={<AgentBuilderPage />} />} />
-        <Route path="council" element={<ExperienceRoute current={<SimpleCouncilPage />} legacy={<CouncilPage />} />} />
-        <Route path="analysis/deep-report/:runId" element={<DeepReportPage />} />
-        <Route path="analysis/portfolio-report/:runId" element={<PortfolioReportPage />} />
+        <Route
+          path="paper/:accountId/strategies"
+          element={<AccountStrategyCombinationPage />}
+        />
+        <Route
+          path="agent-builder"
+          element={
+            <ExperienceRoute
+              current={<Navigate to="/settings/agents" replace />}
+              legacy={<AgentBuilderPage />}
+            />
+          }
+        />
+        <Route
+          path="council"
+          element={
+            <ExperienceRoute
+              current={<SimpleCouncilPage />}
+              legacy={<CouncilPage />}
+            />
+          }
+        />
+        <Route
+          path="analysis/deep-report/:runId"
+          element={<DeepReportPage />}
+        />
+        <Route
+          path="analysis/portfolio-report/:runId"
+          element={<PortfolioReportPage />}
+        />
         <Route path="journal" element={<JournalPage />} />
         <Route path="transactions" element={<TransactionsPage />} />
         <Route path="settings/*" element={<SettingsPage />} />

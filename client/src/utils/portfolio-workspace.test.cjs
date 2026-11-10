@@ -51,6 +51,17 @@ test('every account read and write requires explicit identity and preserves it i
   await assert.rejects(api.pause(' ', payload), /explicit simulation account/);
 });
 
+test('archiving targets one explicit account and preserves a legacy null revision in its receipt', async () => {
+  const f = fixture();
+  const { portfolioWorkspaceApi: api } = f.load('api/portfolio-workspace.ts');
+  const input = { expectedPolicyRevision: null, requestKey: 'archive-one-book' };
+  await api.archive('account/a', input);
+  assert.equal(f.state.requests[0].args[0], '/api/ai-investment/accounts/account%2Fa/archive');
+  assert.deepEqual(f.state.requests[0].args[1], input);
+  await assert.rejects(api.archive(' ', input), /explicit simulation account/);
+  assert.equal(f.state.requests.length, 1);
+});
+
 test('reviewed combination identity rejects account, revision, strategy, budget, enablement and expiry changes', () => {
   const { load } = fixture();
   const { canApplyCombination, combinationIdentity } = load(

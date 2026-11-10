@@ -165,3 +165,5 @@ node --test --test-concurrency=1 client/src/utils/portfolio-workspace.test.cjs c
 ```
 
 These focused commands complement required `npm run lint`, server/client/local-agent suites, `npm run test:architecture`, `npm run test:wiring` with `WIRING_TEST_DATABASE_URL`, `npm run build:web`, `npm run test:context` and `npm run check:context`. Record actual outcomes and database skips; source documentation is not evidence these suites were run.
+
+Imported-portfolio refinement tests: `client/src/utils/holdings-loading.test.cjs`, `portfolio-reference-display.test.cjs`, `portfolio-history-flow.test.cjs` (see actual test inventory); `server/modules/portfolio-history/*.spec.ts` requires `HISTORY_TEST_DATABASE_URL` pointing to a disposable PostgreSQL database. Migration48 must be present in upgrade/fresh catalog parity checks. Public-provider smoke tests are separate from offline financial fixtures and never invoke models. Browser checks include immediate saved rows, background month lookback and current amounts, failed-reference recovery to saved records, UTC reference dates, list deletion and compact immutable report reading.

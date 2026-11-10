@@ -29,6 +29,14 @@ Migration `47_portfolio_companions.sql` adds owner/account-scoped `portfolio_acc
 
 If the creation response itself is lost, the UI freezes the submitted name, seed and request key, then retries that exact receipt before allowing further edits. An explicit server rejection permits a fresh preview. This avoids turning a connection failure into an accidental second creation.
 
+## Delete from the account list / 从列表删除股友
+
+The small **Delete** action on each current companion card asks for one confirmation. It stops that account and removes it from the current list; its ledger, holdings, snapshots and reports remain readable under **Archived**. It does not create a replacement account or affect another account.
+
+股友卡片的“删除”入口只确认一次。确认后停止该仓并移出当前列表；历史账本、持仓、估值与报告保留，可从“已归档”回看，不会创建新仓，也不影响其他账户。
+
+`POST /api/ai-investment/accounts/:accountId/archive` requires `expectedPolicyRevision` and `requestKey`. Legacy accounts without a policy use an explicit `null` revision. Owner/account locks serialize archiving with the existing final execution fence; active automation, pending approvals and reservations for that account are stopped together. Replaying a committed receipt returns the same result. A failed or unconfirmed browser request keeps the card visible and retries the same intent until acknowledged.
+
 ## Integrations / 集成入口
 
 `features/integrations/PaperIntegrationPanels.tsx` exports notification and MCP cards for Settings and the legacy paper terminal. `active` gates hidden settings queries and portal dialogs. No provider config value is used as a channel display label. Secret inputs are masked; the one-time MCP token displays only a suffix and an explicit copy button. Provider errors are not echoed where they might include credentials.
@@ -37,5 +45,5 @@ If the creation response itself is lost, the UI freezes the submitted name, seed
 
 Behavior tests cover four-origin request transport and validation, URL restoration after account navigation, companion retries after partial success/expiry, and secret masking. Disposable-Postgres integration tests cover account ownership, frozen copy independence, multi-currency valuation, request conflicts/replay, missing quote/FX/cash handling, and metadata independence from ledger/policy authority.
 
-- Client: `account-starting-points.test.cjs`, `companion-creation-flow.test.cjs`, `portfolio-comparison.test.cjs`, `portfolio-workspace.test.cjs`, `integrations-reachability.test.cjs`.
-- Server: `portfolio-seeds.integration.spec.ts`, `portfolio-companions.integration.spec.ts`, plus existing investment-policy, simulation-experiments and portfolio-workspace regression suites. Set `STRATEGY_TEST_DATABASE_URL` to a dedicated disposable test database; skipped integration tests are not a pass.
+- Client: `account-starting-points.test.cjs`, `companion-creation-flow.test.cjs`, `portfolio-comparison.test.cjs`, `portfolio-workspace.test.cjs`, `portfolio-history-flow.test.cjs`, `integrations-reachability.test.cjs`. Deletion tests cover cancellation, retry without optimistic removal, legacy revisions and archived-list recovery.
+- Server: `portfolio-seeds.integration.spec.ts`, `portfolio-companions.integration.spec.ts`, `portfolio-archive.integration.spec.ts`, plus existing investment-policy, simulation-experiments and portfolio-workspace regression suites. Archive coverage includes owner isolation, preserved ledger/report data, idempotency and both final-execution lock orders. Set `STRATEGY_TEST_DATABASE_URL` to a dedicated disposable test database; skipped integration tests are not a pass.

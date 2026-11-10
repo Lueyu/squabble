@@ -63,6 +63,7 @@ jobs:
           MEMORY_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
           RESEARCH_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
           EXPERIENCE_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
+          HISTORY_TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/squabble_test
         run: npm run test:server
 
       - name: Resolve compiled application providers without starting jobs

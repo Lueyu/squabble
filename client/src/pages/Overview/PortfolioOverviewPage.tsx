@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import PortfolioComparisonPanel from '@/features/portfolio-comparison/PortfolioComparisonPanel';
 import CouncilMemberAvatar from '@/pages/Council/CouncilMemberAvatar';
 
-/** Opening overview only reads saved observations and never schedules research. */
+/** Opening overview reads current marks and saved NAV; public history warms asynchronously without research. */
 export default function PortfolioOverviewPage() {
   const { i18n } = useTranslation();
   const [params] = useSearchParams();

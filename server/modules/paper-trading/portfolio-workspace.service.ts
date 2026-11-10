@@ -15,7 +15,7 @@ import { UserInvestmentStrategyService } from './user-investment-strategy.servic
 import { effectiveInvestmentConfig } from './investment-policy.rules';
 import { installInvestorCombinationMandate } from './user-strategy-runtime';
 import { combinationHash, combinationIssues, workspaceCombinationSchema, workspaceCompanionSchema, workspaceHash, workspaceMutationSchema } from './portfolio-workspace.rules';
-import type { PortfolioAccountDetail, PortfolioAccountSummary, PortfolioAllocationInput, PortfolioCombination,
+import type { ArchivePortfolioAccountResult, PortfolioAccountDetail, PortfolioAccountSummary, PortfolioAllocationInput, PortfolioCombination,
   PortfolioCombinationPreview, PortfolioCompanionResult, PortfolioStrategyAssignment } from '../../../shared/portfolio-workspace.interface';
 
 @Injectable()
@@ -237,6 +237,29 @@ export class PortfolioWorkspaceService {
         .where(eq(investmentPolicies.id, policy.id)).returning();
       await this.setRuntime(tx, owner, saved, running);
       return { accountId, status: saved.status as 'running' | 'paused', policy: policyView(saved) };
+    });
+  }
+  /** Remove one book from the active workspace without deleting its financial history. */
+  async archive(owner: string, accountId: string, input: unknown): Promise<ArchivePortfolioAccountResult> {
+    const request = this.parse(workspaceMutationSchema.extend({ expectedPolicyRevision: z.number().int().positive().nullable() }).strict(), input);
+    return this.mutate(owner, accountId, 'archive', request, async tx => {
+      const [account] = await tx.select().from(paperAccounts)
+        .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId))).for('update');
+      if (!account) throw new NotFoundException('ACCOUNT_NOT_FOUND');
+      const [policy] = await tx.select().from(investmentPolicies)
+        .where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, accountId))).for('update');
+      if ((policy?.revision ?? null) !== request.expectedPolicyRevision) throw new ConflictException('POLICY_REVISION_CHANGED');
+      await cancelInvestmentCandidates(tx, owner, accountId, 'User archived this simulation account');
+      await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() })
+        .where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.accountId, accountId), eq(builderProfiles.status, 'active')));
+      await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() })
+        .where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, accountId), eq(strategyMandates.status, 'published')));
+      const revision = policy ? policy.revision + Number(policy.status !== 'archived') : null;
+      if (policy && policy.status !== 'archived') await tx.update(investmentPolicies)
+        .set({ status: 'archived', revision: revision!, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id));
+      await tx.update(paperAccounts).set({ isActive: false, botEnabled: false, updatedAt: new Date() })
+        .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId)));
+      return { accountId, status: 'archived', policyRevision: revision };
     });
   }
   async rename(owner: string, accountId: string, input: unknown) {

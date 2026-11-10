@@ -2,7 +2,7 @@
 
 Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent investing assistant: portfolio-aware research, coordinated agents, readable reports, a stock-friend channel and explicitly applied simulated strategies.
 
-**Structural review — 2026-11-10:** inspected `98f073e` plus the V4 working tree. All five diagrams were checked: new workspace routes, read-only daily/memory projections, persistent interviews, companion metadata and explicit execution frequency affect the system and strategy flows. Daily reading adds real/fill ledger consumers and exact-version research reading; notification configuration moves into Settings while channel publication remains source-fenced. Research independent submissions, saved-result recovery, immutable publication and real-ledger writer boundaries remain authoritative. This is a source review, not a release or deployed-instance certification.
+**Structural review — 2026-11-10:** inspected `b7604b8` plus the imported-portfolio refinement working tree. All five diagrams were checked: new workspace routes, read-only daily/memory projections, persistent interviews, companion metadata and explicit execution frequency affect the system and strategy flows. Daily reading adds real/fill ledger consumers and exact-version research reading; notification configuration moves into Settings while channel publication remains source-fenced. Research independent submissions, saved-result recovery, immutable publication and real-ledger writer boundaries remain authoritative. This is a source review, not a release or deployed-instance certification.
 
 The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
@@ -13,6 +13,7 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 | `research-core` | Model calls, financial evidence/source adapters and portfolio context | Shared infrastructure; never imports current or retained orchestration |
 | `research-routing` | Select a usable configured research executor | Uses research-core and local-agent readiness; starts no task itself |
 | `council`, `experience` | Research workflow, current-report projection and scheduling | Consume shared research services and retained history where required |
+| `portfolio-history` | Current marks and current-position historical references with public price/FX cache | Reads owned ledger inputs; writes only market-data caches; never imports research orchestration |
 | `paper-trading` | Account combinations, simulated policy/runtime, ledger and saved comparison projection | Uses research-routing; never imports experience |
 | `channel` | Source-based conversation, decisions and execution receipts | Projects authoritative research and simulated results |
 | Client `features/investment-strategies` | Strategy import, editing, review and management | Composed by pages; never imports pages |
@@ -28,7 +29,12 @@ flowchart LR
     user["User"] --> web["React web client"]
     web -->|"HTTP API and polling"| auth["Nest auth and owner context"]
     auth --> experience["Research reports and current research"]
-    auth --> comparison["Read-only real and simulation comparison"]
+    auth --> comparison["Saved NAV and separate current account marks"]
+    auth --> lookback["Current-position historical reference"]
+    comparison --> lookback
+    lookback --> cache["Dated public prices and FX; bounded background leases"]
+    cache --> data
+    cache --> db
     auth --> channel["Channel projection and actions"]
     auth --> strategy["Independent simulation accounts and strategy combinations"]
     auth --> ledger["Recorded real assets and imports"]
@@ -62,12 +68,12 @@ flowchart LR
     channel --> db
     strategy --> db
     ledger --> db
-    db -->|"Saved observations only"| comparison
+    db -->|"Actual saved NAV remains unchanged"| comparison
     strategy --> notify["Configured notifications"]
     mcp["External MCP client"] -->|"Scoped session"| auth
 ```
 
-- `client/src/app.tsx` routes `/` to `PortfolioOverviewPage`, `/analysis` to `SimpleAnalysisPage`, `/council` to `SimpleCouncilPage`, and `/paper` to `SimulationAccountsPage` in the current experience. `/paper/:accountId` opens one simulation and `/paper/:accountId/strategies` edits its combination. `ExperienceRoute` retains older index/analysis/paper/council pages when disabled. `/analysis/reports/:versionId` always identifies an exact report version. `/agent-builder` redirects to `/settings/agents` in the current experience. Old report/strategy/order query links are resolved to the relevant current destination without changing execution authority.
+- `client/src/app.tsx` routes `/` to `PortfolioOverviewPage`, `/analysis` to `ReportHistoryPage`, `/research/portfolio` to `SimpleAnalysisPage`, `/council` to `SimpleCouncilPage`, and `/paper` to `SimulationAccountsPage` in the current experience. `/paper/:accountId` opens one simulation and `/paper/:accountId/strategies` edits its combination. `ExperienceRoute` retains older index/analysis/paper/council pages when disabled. `/analysis/reports/:versionId` always identifies an exact report version. `/agent-builder` redirects to `/settings/agents` in the current experience. Old report/strategy/order query links are resolved to the relevant current destination without changing execution authority.
 - `server/app.module.ts` composes Nest modules; `ViewModule` stays last for the SPA fallback. Development runs Vite/Nest separately. The production web build serves the client through Nest. Clean Docker uses a separate PostgreSQL container; optional demo Compose uses fictional seed data.
 - `server/common/platform/database.provider.ts` owns the direct postgres.js/Drizzle connection and registered startup migrations. This is a local compatibility layer, not a hosted aPaaS dependency. Fresh installations need `scripts/db/01_schema.sql`; startup additions do not initialize the base schema. Read the actual registration list rather than assuming every migration number exists.
 - `server/modules/local-agents/` owns connections, pairing, research receipts and durable task identity. `server/local-agents/native.ts` executes supported provider CLIs with bounded output. Native execution can still contact external inference/research providers. Restart recovery does not replay unfinished native calls; completed artifacts remain available. Docker's retained companion path polls outbound from the host helper.
@@ -88,6 +94,7 @@ flowchart TD
     today["Research reports: facts and current report"] --> request["Owner, business date and request receipt"]
     dailyWorkspace["Daily workspace"] --> dailyFacts["Current saved ledger facts; read-only, not an archive"]
     dailyWorkspace --> reading
+    historyList["Compact history list; exact saved version links"] --> reading
     dailyWorkspace -->|"Explicit generation request"| overallFacts["Freeze all account facts, gaps and bounded historical personal inputs"]
     overallFacts --> request
     request --> frozen["Complete frozen holdings, cash, limits and source times"]
@@ -178,6 +185,8 @@ flowchart TD
     frequency["Explicit once or per-exchange-trading-day frequency"] --> schedule
     frequency --> order
     order --> ledger["Paper positions, orders and fills"]
+    archive["Delete from companion list: owner/revision/receipt-fenced archive"] --> stop
+    archive --> retained["Retain ledger and immutable reports; remove from active list"]
     pause["Pause selected account"] --> stop["Stop all its automation including protective exits"]
     stop --> history["Preserve snapshots, strategies and fills; other accounts continue"]
     ledger --> valuation["Saved timestamped valuations, also while paused"]
@@ -186,7 +195,7 @@ flowchart TD
     ledger --> channel["Account-labelled execution receipts"]
 ```
 
-`PortfolioWorkspaceService` and `portfolio-workspace.controller.ts` in `server/modules/paper-trading/` own `/api/ai-investment/accounts`: list/create, account detail/rename, pause/resume, and `:accountId/strategies` draft/preview/apply. Contracts live in `shared/portfolio-workspace.interface.ts`. The client composes `SimulationAccountsPage`, `SimulationAccountPage` and `features/investment-strategies/AccountStrategyCombinationPage`; queries and writes carry account identity. Viewing or selecting an account does not select a global trading account. New accounts use the existing opening preview but do not stop other accounts. Archived accounts remain read-only.
+`PortfolioWorkspaceService` and `portfolio-workspace.controller.ts` in `server/modules/paper-trading/` own `/api/ai-investment/accounts`: list/create, account detail/rename, pause/resume/archive, and `:accountId/strategies` draft/preview/apply. Contracts live in `shared/portfolio-workspace.interface.ts`. The client composes `SimulationAccountsPage`, `SimulationAccountPage` and `features/investment-strategies/AccountStrategyCombinationPage`; queries and writes carry account identity. Viewing or selecting an account does not select a global trading account. New accounts use the existing opening preview but do not stop other accounts. Archived accounts remain read-only.
 
 `ReportExecutionPlan` and `ReportStrategyTarget` import an exact saved report into the strategy library and stage it as a **disabled** allocation in a chosen account draft. Import/navigation does not apply it. `shared/strategy-source-reading.ts` excludes missing-plan placeholders and metadata, retains public links and caps raw/readable source text at 200000 characters. Ordinary research splits losslessly into observation entries of at most 12000 characters; the existing twenty-source/twenty-entry strategy limits remain. Typed proposals retain periods, limits and evidence. Source import does not invoke AI or infer an executable rule from prose.
 
@@ -278,6 +287,18 @@ flowchart TD
     metrics --> points["Saved real portfolio value points and continuity fingerprints"]
     paper["Saved paper snapshots and trusted opening seeds"] --> compare["Pure read account comparison"]
     points --> compare
+    positionImport --> warm["After commit: asynchronous public-history prefetch"]
+    confirm --> warm
+    warm --> marketCache["Dated public closes and FX cache; no ledger writes"]
+    holdings --> quickUI["Saved holdings first; quotes and dashboard follow in background"]
+    holdings --> currentPositions["Current owned quantities"]
+    currentPaper["Current owned paper positions and cash"] --> currentPositions
+    currentPositions --> currentMarks["Current values with total, holdings-only or partial basis"]
+    currentPositions --> reference["Historical reference for current quantities; not actual NAV"]
+    marketCache --> currentMarks
+    marketCache --> reference
+    currentMarks --> overview
+    reference --> overview
     compare --> overview["Portfolio overview; equity and qualified returns"]
     transactions --> dailyRead["Daily saved-ledger projection; separate real and simulated accounts"]
     paper --> dailyRead
@@ -291,10 +312,20 @@ The real ledger is owned by `server/modules/transactions/transactions.service.ts
 
 Cash confirmation is an explicit request with expected timestamps and an idempotency key. Its receipt records covered transactions; subsequent edits to checkpoint-covered history require reconciliation. Position reconstruction respects baseline coverage. The retained paired cash-top-up endpoint is a separate explicit action; it must not become an implicit fallback for normal imports or transactions.
 
-`server/modules/experience/portfolio-metrics.service.ts` combines recorded holdings/cash, quote/FX data and value points. UI coverage and dates matter: recorded balances are not broker synchronization, quote retrieval does not establish exchange-live execution, and missing data is not zero. Preserve these distinctions when changing asset totals or returns. The new comparison reader consumes saved value points and their flow/cash/position fingerprints; it does not call the valuation writer or mutate this ledger. Flow or baseline changes can preserve visible equity while invalidating a comparable return.
+`server/modules/experience/portfolio-metrics.service.ts` combines recorded holdings/cash, quote/FX data and value points. UI coverage and dates matter: recorded balances are not broker synchronization, quote retrieval does not establish exchange-live execution, and missing data is not zero. Preserve these distinctions when changing asset totals or returns. The actual-NAV comparison reader consumes saved value points and their flow/cash/position fingerprints without calling the valuation writer. Separate current marks and historical references can populate only public market-data caches, never NAV, holdings, cash or trade rows. Flow or baseline changes can preserve visible equity while invalidating a comparable return.
 
 ## Maintaining this architecture
 
 A change to an entrypoint, owner/source contract, persistent state, publication gate or execution boundary reviews the corresponding diagram and the contributor skill references in the same PR. If structure is unchanged, record the reviewed scope and a concrete no-impact reason. Verify source paths and Mermaid syntax; do not edit diagrams merely to update a timestamp. Changes to desktop recovery do not by themselves resume desktop development.
 
 Schema changes keep Drizzle definitions, fresh-install SQL and registered additive migrations aligned; see [development](development.md). Test new/upgraded disposable databases and relevant owner, revision, revocation, replay and ledger boundaries. Documentation validation must not run personal research, apply strategies or alter an existing installation.
+
+## Imported positions and responsive reading
+
+`HoldingsPage` publishes saved holdings independently of the slower dashboard/quote/FX work and keeps visible rows during refresh or auxiliary failure. Older responses cannot overwrite a later request. `/daily` reads the current daily content without a history panel. `/analysis` is a compact historical list linking exact immutable versions; `/research/portfolio` retains explicit current research, and report readers preserve their originating list filters and date. No model work is added to historical list rendering.
+
+`PortfolioHistoryModule` is consumed by imports and account comparison. Completed import transactions enqueue `PortfolioHistoryService.prefetch` asynchronously; opening an existing portfolio also schedules missing public data. Additive migration48 stores shared dated public closes, historical FX and per-resource leases/backoff. Current marks expose total-assets, holdings-only or partially-known-assets coverage. A known null cannot fall back to an older NAV value or date.
+
+The independent lookback uses current quantities and dated closes/FX, excluding cash, trades and dividends. It never writes or extends actual historical NAV or return chains. The client automatically uses this explicitly labelled reference when there are not enough saved observations; it replaces whole series, keeps missing data as gaps, and always permits returning to actual account records even if history fails. Reference dates use UTC calendar-day labels, not fabricated observation times; the table retains exact provider price and FX source dates. See [historical reference contracts](portfolio-history-reference.md).
+
+All five diagrams were rechecked for this refinement: system/cache and ledger-reading flows change; strategy gains explicit archive/stop authority; historical-list consumers change the report reading flow without changing sealed research, saved-result recovery or publication; channel publication/source fences remain unchanged when an account is archived.

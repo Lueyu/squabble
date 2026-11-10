@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -11,15 +11,17 @@ import type { PortfolioComparisonPeriod, PortfolioComparisonSeries, PortfolioCom
 import { comparisonObservations, comparisonPeriodStart, type SavedComparisonObservation } from './portfolio-comparison.rules';
 import { paperRiskDay } from './paper-risk-day';
 import { isSimulationReviewModelNote } from '../../../shared/simulation-experiment.interface';
+import { PortfolioCurrentMarksService } from '../portfolio-history/portfolio-current-marks.service';
 
 const periods: PortfolioComparisonPeriod[] = ['1D', '1W', '1M', '3M', 'YTD', 'ALL'];
 const finite = (value: string | null): number | null => value !== null && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
 
 @Injectable()
 export class PortfolioComparisonService {
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    @Optional() private readonly currentMarks?: PortfolioCurrentMarksService) {}
 
-  /** No quote refresh, baseline capture, research dispatch, or account selection writes. */
+  /** Saved NAV stays read-only; separate present marks may enqueue shared market-cache refreshes. */
   async read(owner: string, periodInput = '1M', accountIds?: string, at = new Date()): Promise<PortfolioComparisonView> {
     if (!periods.includes(periodInput as PortfolioComparisonPeriod)) throw new BadRequestException('COMPARISON_PERIOD_INVALID');
     const period = periodInput as PortfolioComparisonPeriod;
@@ -29,6 +31,7 @@ export class PortfolioComparisonService {
       throw new BadRequestException('COMPARISON_ACCOUNTS_INVALID');
     }
     const granularity = period === '1D' ? 'observations' : 'daily';
+    const marks = await this.currentMarks?.read(owner, requested ?? undefined, at);
     return this.db.transaction(async tx => {
       const accounts = await tx.select().from(paperAccounts).where(eq(paperAccounts.owner, owner)).orderBy(asc(paperAccounts.createdAt), asc(paperAccounts.id));
       if (requested?.some(id => id !== 'real' && !accounts.some(account => account.id === id))) throw new NotFoundException('COMPARISON_ACCOUNT_NOT_FOUND');
@@ -89,7 +92,8 @@ export class PortfolioComparisonService {
           strategyCount: policy?.baseConfig.portfolio?.filter(item => item.enabled).length ?? (policy?.baseConfig.userStrategy ? 1 : 0),
           points, gaps: latest?.gaps ?? ['NO_OBSERVATIONS'] }));
       }
-      return { currency: 'USD', period, from: from.toISOString(), to: at.toISOString(), granularity, methodology: 'saved_valuations_no_external_flows', series };
+      return { currency: 'USD', period, from: from.toISOString(), to: at.toISOString(), granularity, methodology: 'saved_valuations_no_external_flows',
+        series: series.map(item => ({ ...item, ...(marks?.[item.accountId] ? { currentMark: marks[item.accountId] } : {}) })) };
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' });
   }
 

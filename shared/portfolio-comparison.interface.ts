@@ -1,6 +1,21 @@
 export type PortfolioComparisonPeriod = '1D' | '1W' | '1M' | '3M' | 'YTD' | 'ALL';
 export type PortfolioComparisonMetric = 'equity' | 'return';
 
+/** A present reading, separate from saved NAV and its verified return chain. */
+export interface PortfolioCurrentMark {
+  valueUsd: number | null;
+  basis: 'total_assets' | 'holdings_market_value' | 'known_assets';
+  holdingsValueUsd: number | null;
+  cashValueUsd: number | null;
+  complete: boolean;
+  asOf: string | null;
+  readAt: string;
+  pricing: 'saved_prices' | 'cached_close' | 'mixed' | 'none';
+  coveredPositions: number;
+  totalPositions: number;
+  gaps: string[];
+}
+
 /** Saved observations only: null is an unknown value, never a zero balance. */
 export interface PortfolioComparisonPoint {
   timestamp: string;
@@ -23,6 +38,7 @@ export interface PortfolioComparisonSeries {
   strategyCount: number;
   points: PortfolioComparisonPoint[];
   gaps: string[];
+  currentMark?: PortfolioCurrentMark;
 }
 export interface PortfolioComparisonView {
   currency: 'USD';

@@ -17,7 +17,6 @@ import ResearchMarkdown from '@/components/ResearchMarkdown';
 import CouncilMemberAvatar from '@/pages/Council/CouncilMemberAvatar';
 import { readableResearchSections } from '@shared/research-reading';
 import type { DailyAccountFacts } from '@shared/daily-workspace.interface';
-import ReportHistory from './ReportHistory';
 import OverallDailyResearch from './OverallDailyResearch';
 import '../Workspace/workspace-v4.css';
 
@@ -103,8 +102,8 @@ export default function DailyReportPage() {
         <div role="alert" className="workspace-v4-card">
           <p>
             {zh
-              ? '日报暂时无法读取。已保存报告仍可从下方历史查看。'
-              : 'Daily facts are unavailable. Saved reports remain in history below.'}
+              ? '日报暂时无法读取。已保存报告仍可从“报告历史”查看。'
+              : 'Daily facts are unavailable. Saved reports remain in Report history.'}
           </p>
           <Button onClick={() => void query.refetch()}>
             {zh ? '重试' : 'Retry'}
@@ -241,7 +240,7 @@ export default function DailyReportPage() {
                 </Button>
               )}
               <Button variant="ghost" asChild>
-                <Link to="/analysis">
+                <Link to={`/research/portfolio${date ? `?date=${encodeURIComponent(date)}` : ''}`}>
                   {zh ? '持仓研究' : 'Portfolio research'}
                 </Link>
               </Button>
@@ -309,7 +308,6 @@ export default function DailyReportPage() {
           </section>
         </>
       )}
-      <ReportHistory key={date ?? 'all'} date={date} />
       <Dialog
         open={Boolean(layer)}
         onOpenChange={(open) => {

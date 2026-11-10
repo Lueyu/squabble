@@ -28,7 +28,7 @@ module.exports = function fixture({ realQuery = false } = {}) {
       if (id.startsWith('@/') || id.startsWith('@shared/') || id.startsWith('.')) {
         const target = id.startsWith('@/') ? path.resolve(__dirname, '..', id.slice(2))
           : id.startsWith('@shared/') ? path.resolve(__dirname, '../../../shared', id.slice(8)) : path.resolve(path.dirname(filename), id);
-        const found = [target, `${target}.tsx`, `${target}.ts`].find(file => fs.existsSync(file) && fs.statSync(file).isFile());
+        const found = [target, `${target}.tsx`, `${target}.ts`, path.join(target, 'index.tsx'), path.join(target, 'index.ts')].find(file => fs.existsSync(file) && fs.statSync(file).isFile());
         if (found) return load(found);
       }
       return require(id);

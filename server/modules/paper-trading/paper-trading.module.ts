@@ -1,3 +1,4 @@
+import { PortfolioHistoryModule } from '../portfolio-history/portfolio-history.module';
 /**
  * @file server/modules/paper-trading/paper-trading.module.ts
  * @description Paper-trading wiring: engine + controller + the around-the-
@@ -50,6 +51,7 @@ import { StrategyInterviewService } from './strategy-interview.service';
 
 @Module({
   imports: [
+    PortfolioHistoryModule,
     HttpModule,
     QuoteModule,
     FxModule,

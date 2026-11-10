@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import ResearchMarkdown from '@/components/ResearchMarkdown';
@@ -11,10 +11,13 @@ import InvestmentStrategySourceDialog from '@/features/investment-strategies/Inv
 import {readableResearchSection,researchSectionsRecord,researchReferences} from '@shared/research-reading';
 import ReportExecutionPlan from '@/components/ReportExecutionPlan';
 import { simulationReviewSections } from '@shared/simulation-review-reading';
+import { safeReturnPath } from '@/features/navigation/workspace-navigation';
 
 /** Always reads the requested immutable document. No lookup or redirect to current research. */
 export default function SimpleReportReader({ versionId }: { versionId: string }) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
+  const location = useLocation(); const [params] = useSearchParams();
+  const returnTo = safeReturnPath(location.state?.returnTo) ?? safeReturnPath(params.get('returnTo')) ?? '/analysis';
   const [strategySource,setStrategySource]=useState<StrategySourceInput|null>(null);
   const query = useQuery({ queryKey: ['research-document', versionId], queryFn: () => fetchResearchDocument(versionId), enabled: Boolean(versionId) });
   if (query.isPending) return <p role="status" className="p-6">{zh ? '正在读取原始材料…' : 'Loading original material…'}</p>;
@@ -25,7 +28,7 @@ export default function SimpleReportReader({ versionId }: { versionId: string })
   const simulationSections=simulationReviewSections(version,i18n.language);
   const sections=simulationSections??version.sections.filter(section=>!(version.snapshot?.executionPlan&&section.id==='execution-strategy')).map(section=>({...section,content:readableResearchSection(section)})).filter(section=>section.content);
   return <article className="portfolio-workspace report-workspace">
-    <Link to="/analysis#report-history" className="report-back-link">← {zh ? '研究报告' : 'Research reports'}</Link>
+    <Link to={returnTo} className="report-back-link">← {zh ? '报告历史' : 'Report history'}</Link>
     <header className="report-heading"><p className="portfolio-eyebrow">{simulationSections ? (zh?'模拟盘账本复盘 · 只读':'Simulation ledger review · Read only') : (zh ? '当时的研究依据 · 只读' : 'Research at the time · Read only')}</p>
     {simulationSections && <div className="space-y-2 rounded-xl bg-muted/40 p-3 text-sm"><p>{zh?'这里记录模拟账户的估值和执行情况。持仓判断、事件与后续关注请查看每日研究。':'This records simulated account valuations and execution. Holdings findings are in the daily research reports.'}</p><Link className="text-primary underline" to="/analysis#report-history">{zh?'查看持仓研究':'View holdings research'}</Link></div>}
     <h1 className="break-words text-2xl font-semibold">{version.title}</h1><p className="text-sm text-muted-foreground">{new Date(typeof version.snapshot?.generatedAt === "string" ? version.snapshot.generatedAt : version.createdAt).toLocaleString(i18n.language)}{version.dataAsOf && <> · {zh ? '数据截至：' : 'Data as of: '}{version.dataAsOf}</>}</p>
