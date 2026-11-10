@@ -251,8 +251,13 @@ export class CouncilWorkflowExecutor {
     if (member.executionMode === 'local') {
       if (!this.deps.localAgents || !member.agentId) throw new Error('LOCAL_UNAVAILABLE');
       await this.deps.store.markRemote(row, task, attempt.id, { externalAgent: true, externalUsageUnknown: true });
+      // claim() returns the new attempt without mutating the pre-claim task snapshot.
+      const savedPosition = task.attempts.findIndex(item => item.id === attempt.id);
       const result = await this.deps.localAgents.execute(row.owner, {
         agentId: member.agentId, agentSettings: member.agentSettings, messageId: attempt.messageId,
+        activityContext: { sessionId: row.id, revision: row.revision, cycleId: task.cycleId,
+          memberId: member.id, memberName: member.name, turn: task.position,
+          language: row.language, attempt: savedPosition >= 0 ? savedPosition + 1 : task.attempts.length + 1 },
         prompt: `${promptContext.system}\n${JSON.stringify(promptContext.input)}`,
         researchScope: isPortfolioThread(row) ? undefined : { ...scope, memoryReferences: inventory.prepared },
         onDispatch,
@@ -282,6 +287,8 @@ export class CouncilWorkflowExecutor {
       if (!value) { try { value = JSON.parse(result.text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')); } catch { throw new Error('DELIVERY_INVALID'); } }
     } else {
       const options = { taskId: row.taskId, purpose: `council:${task.key}:${attempt.kind}:${member.id}`, maxOutputTokens: review ? batch.length ? 1000 : 600 : 2400,
+        telemetryContext: { sessionId: row.id, revision: row.revision, cycleId: row.checkpoint!.cycleId,
+          memberId: member.id, parentId: `workflow:${attempt.id}` },
         retryPolicy: 'none' as const, timeoutMs: 120_000, connectionId: member.connectionId, route: { mode: 'api' as const }, shouldContinue: () => this.active(row), onDispatch };
       const result = member.model === 'slow' ? await this.deps.llm.chatSlowJSON(prompt, row.owner, options)
         : await this.deps.llm.chatFastJSON(prompt, row.owner, options);

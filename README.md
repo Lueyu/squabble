@@ -14,7 +14,7 @@ A sourced channel follows meaningful changes and keeps decisions in your hands.
 
 The [AI companion workspace](docs/ai-friend-v4.md) adds independent animal companions, a large multi-account chart, persistent strategy clarification and clear navigation across reports, data and memory.
 
-**US · HK · China A-shares** · **English / Chinese** · **Self-hosted** · **Zero telemetry**
+**US · HK · China A-shares** · **English / Chinese** · **Self-hosted** · **No default external telemetry**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/Lueyu/squabble/actions/workflows/ci.yml/badge.svg)](https://github.com/Lueyu/squabble/actions/workflows/ci.yml)
@@ -30,7 +30,7 @@ Understand your portfolio, what changed, and what needs your decision.
 
 - **Daily research and a quiet channel.** Independent investigations and a separate reverse check stay in readable reports. The channel publishes short, sourced updates, expandable evidence and one-fact follow-ups. [Channel guide](docs/channel-workbench.md).
 - **Strategy-driven paper trading.** Copy recorded holdings and cash, review the strategy, then explicitly apply it to the simulation. Current rules, proposed changes and actual fills remain distinct. Existing advanced tools remain available.
-- **Your data stays yours.** Self-hosted. Zero telemetry. Desktop and source local workspaces open without a Squabble login; account mode remains available.
+- **Your data stays yours.** Self-hosted. No default external telemetry. Desktop and source local workspaces open without a Squabble login; account mode remains available.
 
 ## Install
 
@@ -172,7 +172,7 @@ Each agent gets a spending limit, a read-only or trade permission, and an approv
 
 ## Privacy
 
-Self-hosted. Zero telemetry. Market-data services and configured AI providers receive the requests needed for their features; public market-data requests can occur without a personal API key. [Full details →](docs/privacy.md)
+Self-hosted. No default external telemetry. Market-data services and configured AI providers receive the requests needed for their features; public market-data requests can occur without a personal API key. [Full details →](docs/privacy.md)
 
 ## Docs
 

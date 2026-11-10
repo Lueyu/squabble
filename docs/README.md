@@ -22,6 +22,7 @@ remain disabled account drafts until explicitly applied.
 | Record holdings and transactions / 记录持仓与交易 | [Portfolio import / 持仓导入](import.md) |
 | Understand data and privacy / 了解数据来源与隐私 | [Research data / 研究数据](research-data.md) · [Privacy](privacy.md) / [隐私](privacy.zh-CN.md) |
 | Change appearance / 调整外观 | [Appearance / 外观](appearance.md) |
+| Analyze Agent runs and connect Langfuse / 分析 Agent 运行与连接 Langfuse | [Agent telemetry / 运行分析](agent-telemetry.md) |
 
 Starting an empty workspace does not require the optional Python agent or a model
 key. AI research requires an available configured model or native agent. Desktop

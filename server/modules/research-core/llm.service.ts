@@ -28,6 +28,8 @@ import type { ModelRoute } from '../../../shared/model-route.interface';
 import type { LocalAgentsService } from '../local-agents/local-agents.service';
 import { LocalAgentError } from '../local-agents/local-agents.types';
 import { parseModelRoute } from '../settings/model-route.rules';
+import { captureTelemetry, TelemetryCaptureService } from '../telemetry/telemetry-capture.service';
+import type { TelemetrySpanRecord } from '../../../shared/telemetry.interface';
 
 export interface LlmCallOptions {
   /** The actual completed dispatch, after a valid non-truncated response. Never selected configuration alone. */
@@ -46,6 +48,8 @@ export interface LlmCallOptions {
   onProgress?: (message: string) => Promise<void>;
   /** Runs after a committed reservation, immediately before transport. Failure prevents transport and releases that reservation. */
   onDispatch?: () => Promise<void>;
+  /** Explicit server-owned correlation; never inferred from arbitrary task identifiers. */
+  telemetryContext?: { sessionId: string; revision: number; cycleId: string; memberId?: string; parentId?: string };
 }
 
 class ProviderHttpError extends Error {
@@ -115,6 +119,7 @@ export class LlmService {
     private readonly settings: SettingsService,
     private readonly budgets: LlmBudgetService,
     @Optional() private readonly moduleRef?: ModuleRef,
+    @Optional() private readonly telemetry?: TelemetryCaptureService,
   ) {}
 
   private localAgents(): LocalAgentsService {
@@ -236,78 +241,136 @@ export class LlmService {
 
     // All retries share a task id, but every attempted HTTP request has its own reservation.
     const taskId = options.taskId ?? randomUUID();
+    const callId = `call:${randomUUID()}`;
+    const callStartedAt = new Date().toISOString();
+    const correlation = options.telemetryContext;
+    const runId = correlation ? `research:${correlation.sessionId}:${correlation.revision}:${correlation.cycleId}` : `model:${callId}`;
+    const callSpan: TelemetrySpanRecord = { id: callId, parentId: correlation?.parentId ?? null, runId, sourceId: taskId,
+      sessionId: correlation?.sessionId ?? null, revision: correlation?.revision ?? null,
+      kind: 'task', name: 'model-call', title: 'Model call', scene: 'analysis', status: 'running',
+      agentId: correlation?.memberId ?? null, agentName: null, provider: new URL(baseUrl).origin, model: null, executionMode: 'api',
+      startedAt: callStartedAt, completedAt: null, durationMs: null, inputTokens: null, outputTokens: null,
+      totalTokens: null, estimatedCostUsd: null, errorCode: null, attempt: 1, traceId: null };
+    captureTelemetry(this.telemetry, userId, callSpan);
     const maxRetries = options.retryPolicy === 'none' ? 0 : this.maxRetries;
     const timeoutMs = Number.isFinite(options.timeoutMs)
       ? Math.max(1000, Math.min(120_000, Math.trunc(options.timeoutMs))) : this.timeoutMs;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      if (options.shouldContinue && !(await options.shouldContinue())) throw new Error('LLM request cancelled');
-      // Deliberately outside the network catch: budget/DB failures must never retry or bypass accounting.
-      const reservation = await this.budgets.reserve(userId, { ...options, taskId, model, messages }, options.onDispatch);
-      const outputLimit = reservation.omitOutputLimit ? {} : /^(?:o[1-9](?:-|$)|gpt-5(?:[.-]|$))/u.test(model)
-        ? { max_completion_tokens: reservation.maxOutputTokens }
-        : { max_tokens: reservation.maxOutputTokens };
-      const body = { model, messages, ...outputLimit, ...boundedDeepSeekMode(baseUrl, model) };
-      let result: ProviderChatPayload;
-      try {
-        const response = await axios.post<ProviderChatPayload>(
-          `${baseUrl}/chat/completions`,
-          body,
-          {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${config.apiKey}`,
-          },
-          timeout: timeoutMs,
-          maxRedirects: 0,
-          proxy: false,
-          httpsAgent: config.source === 'user' ? publicHttpsAgent() : undefined,
-          validateStatus: () => true,
-          },
-        );
-        if (response.status < 200 || response.status >= 300) {
-          throw new ProviderHttpError(response.status);
-        }
+    try {
+      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        if (options.shouldContinue && !(await options.shouldContinue())) throw new Error('LLM request cancelled');
+        // Deliberately outside the network catch: budget/DB failures must never retry or bypass accounting.
+        const reservation = await this.budgets.reserve(userId, { ...options, taskId, model, messages }, options.onDispatch);
+        const span: TelemetrySpanRecord = { ...callSpan, id: `model:${reservation.id}`, parentId: callId,
+          kind: 'model', name: 'model-attempt', startedAt: new Date().toISOString(), attempt: attempt + 1 };
+        captureTelemetry(this.telemetry, userId, span);
+        const outputLimit = reservation.omitOutputLimit ? {} : /^(?:o[1-9](?:-|$)|gpt-5(?:[.-]|$))/u.test(model)
+          ? { max_completion_tokens: reservation.maxOutputTokens }
+          : { max_tokens: reservation.maxOutputTokens };
+        const body = { model, messages, ...outputLimit, ...boundedDeepSeekMode(baseUrl, model) };
+        let result: ProviderChatPayload;
+        let responseCompletedAt: string;
+        try {
+          const response = await axios.post<ProviderChatPayload>(
+            `${baseUrl}/chat/completions`,
+            body,
+            {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${config.apiKey}`,
+            },
+            timeout: timeoutMs,
+            maxRedirects: 0,
+            proxy: false,
+            httpsAgent: config.source === 'user' ? publicHttpsAgent() : undefined,
+            validateStatus: () => true,
+            },
+          );
+          if (response.status < 200 || response.status >= 300) {
+            throw new ProviderHttpError(response.status);
+          }
 
-        result = response.data;
-      } catch (error) {
-        // Timeouts/errors are ambiguous: keep the full charge, including on retries.
-        // If settlement itself fails, the persisted reservation remains charged and execution stops.
-        await this.budgets.settle(userId, reservation.id, undefined, true);
-        const safeError = error instanceof ProviderHttpError
-          ? error
-          : axios.isAxiosError(error) && ['ECONNABORTED', 'ETIMEDOUT'].includes(error.code ?? '')
-            ? new Error('LLM_REQUEST_TIMEOUT') : new Error('LLM request failed. Check provider URL and server network.');
-        if (
-          attempt === maxRetries
-          || (error instanceof ProviderHttpError && error.status < 500 && error.status !== 429)
-        ) {
-          throw safeError;
+          result = response.data;
+          responseCompletedAt = new Date().toISOString();
+        } catch (error) {
+          const completedAt = new Date().toISOString();
+          const errorCode = error instanceof ProviderHttpError ? `LLM_HTTP_${error.status}`
+            : axios.isAxiosError(error) && ['ECONNABORTED', 'ETIMEDOUT'].includes(error.code ?? '')
+              ? 'LLM_REQUEST_TIMEOUT' : 'LLM_TRANSPORT_FAILED';
+          captureTelemetry(this.telemetry, userId, { ...span, status: 'failed', completedAt, errorCode });
+          // Timeouts/errors are ambiguous: keep the full charge, including on retries.
+          // If settlement itself fails, the persisted reservation remains charged and execution stops.
+          await this.budgets.settle(userId, reservation.id, undefined, true);
+          const safeError = error instanceof ProviderHttpError
+            ? error
+            : axios.isAxiosError(error) && ['ECONNABORTED', 'ETIMEDOUT'].includes(error.code ?? '')
+              ? new Error('LLM_REQUEST_TIMEOUT') : new Error('LLM request failed. Check provider URL and server network.');
+          if (
+            attempt === maxRetries
+            || (error instanceof ProviderHttpError && error.status < 500 && error.status !== 429)
+          ) {
+            captureTelemetry(this.telemetry, userId, { ...callSpan, status: 'failed', completedAt, errorCode });
+            throw safeError;
+          }
+          // Exponential backoff: 1s, 2s, 4s… (capped implicitly by retry count).
+          const delayMs = 1000 * Math.pow(2, attempt);
+          this.logger.warn(`LLM call attempt ${attempt + 1} failed; retrying in ${delayMs}ms`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
         }
-        // Exponential backoff: 1s, 2s, 4s… (capped implicitly by retry count).
-        const delayMs = 1000 * Math.pow(2, attempt);
-        this.logger.warn(`LLM call attempt ${attempt + 1} failed; retrying in ${delayMs}ms`);
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
+        let usage: Awaited<ReturnType<LlmBudgetService['settle']>>;
+        try { usage = await this.budgets.settle(userId, reservation.id, result?.usage); }
+        catch (error) {
+          captureTelemetry(this.telemetry, userId, { ...span, completedAt: responseCompletedAt,
+            status: 'unknown', errorCode: 'LLM_ACCOUNTING_FAILED',
+            model: typeof result?.model === 'string' && result.model.trim() ? result.model.trim() : null });
+          throw error;
+        }
+        const choice = result?.choices?.[0];
+        const completedAt = new Date().toISOString();
+        const known = usage.known === true;
+        const observed: TelemetrySpanRecord = { ...span, completedAt: responseCompletedAt,
+          model: typeof result?.model === 'string' && result.model.trim() ? result.model.trim() : null,
+          inputTokens: known ? usage.inputTokens : null, outputTokens: known ? usage.outputTokens : null,
+          totalTokens: known ? usage.chargedTokens : null,
+          estimatedCostUsd: known && reservation.estimateRates
+            ? (usage.inputTokens * reservation.estimateRates.inputUsdPerMillion
+              + usage.outputTokens * reservation.estimateRates.outputUsdPerMillion) / 1_000_000 : null };
+        // A billed but incomplete response is not a decision. Do not retry or
+        // substitute hidden reasoning for final content, and keep its usage.
+        if (choice?.finish_reason === 'length') {
+          captureTelemetry(this.telemetry, userId, { ...observed, status: 'failed', errorCode: 'LLM_OUTPUT_LIMIT' });
+          captureTelemetry(this.telemetry, userId, { ...callSpan, completedAt, status: 'failed', errorCode: 'LLM_OUTPUT_LIMIT' });
+          throw new ModelResponseError('LLM_OUTPUT_LIMIT');
+        }
+        const content = choice?.message?.content;
+        if (typeof content !== 'string' || !content.trim()) {
+          captureTelemetry(this.telemetry, userId, { ...observed, status: 'failed', errorCode: 'LLM_EMPTY_RESPONSE' });
+          captureTelemetry(this.telemetry, userId, { ...callSpan, completedAt, status: 'failed', errorCode: 'LLM_EMPTY_RESPONSE' });
+          throw new ModelResponseError('LLM_EMPTY_RESPONSE');
+        }
+        captureTelemetry(this.telemetry, userId, { ...observed, status: 'completed' });
+        captureTelemetry(this.telemetry, userId, { ...callSpan, completedAt, status: 'completed' });
+        options.onExecuted?.({ provider: new URL(baseUrl).origin, model: typeof result.model === 'string' && result.model.trim() ? result.model.trim() : 'unreported', identityVerified: Boolean(typeof result.model === 'string' && result.model.trim()) });
+        return {
+          content,
+          promptTokens: usage.inputTokens,
+          completionTokens: usage.outputTokens,
+          totalTokens: usage.chargedTokens,
+        };
       }
-      const usage = await this.budgets.settle(userId, reservation.id, result?.usage);
-      const choice = result?.choices?.[0];
-      // A billed but incomplete response is not a decision. Do not retry or
-      // substitute hidden reasoning for final content, and keep its usage.
-      if (choice?.finish_reason === 'length') throw new ModelResponseError('LLM_OUTPUT_LIMIT');
-      const content = choice?.message?.content;
-      if (typeof content !== 'string' || !content.trim()) throw new ModelResponseError('LLM_EMPTY_RESPONSE');
-      options.onExecuted?.({ provider: new URL(baseUrl).origin, model: typeof result.model === 'string' && result.model.trim() ? result.model.trim() : 'unreported', identityVerified: Boolean(typeof result.model === 'string' && result.model.trim()) });
-      return {
-        content,
-        promptTokens: usage.inputTokens,
-        completionTokens: usage.outputTokens,
-        totalTokens: usage.chargedTokens,
-      };
-    }
 
-    // Unreachable: loop always either returns or throws.
-    throw new Error('Unreachable');
+      // Unreachable: loop always either returns or throws.
+      throw new Error('Unreachable');
+    } catch (error) {
+      const cancelled = error instanceof Error && error.message === 'LLM request cancelled';
+      const code = error instanceof ModelResponseError ? error.code
+        : error instanceof ProviderHttpError ? `LLM_HTTP_${error.status}`
+          : error instanceof Error && error.message === 'LLM_REQUEST_TIMEOUT' ? 'LLM_REQUEST_TIMEOUT' : 'LLM_CALL_FAILED';
+      captureTelemetry(this.telemetry, userId, { ...callSpan, completedAt: new Date().toISOString(),
+        status: cancelled ? 'cancelled' : 'failed', errorCode: cancelled ? 'LLM_CANCELLED' : code });
+      throw error;
+    }
   }
 
   private async chatLocal(messages: ChatMessage[], userId: string, route: Extract<ModelRoute, { mode: 'local' }>,
@@ -329,6 +392,11 @@ export class LlmService {
       let result: Awaited<ReturnType<LocalAgentsService['execute']>>;
       try { result = await agents.execute(userId, {
         agentId: route.agentId, agentSettings: route.agentSettings, messageId,
+        activityContext: options.telemetryContext ? {
+          sessionId: options.telemetryContext.sessionId, revision: options.telemetryContext.revision,
+          cycleId: options.telemetryContext.cycleId, memberId: options.telemetryContext.memberId ?? route.agentId,
+          memberName: options.telemetryContext.memberId ?? 'Agent', turn: 0, language: 'en',
+        } : undefined,
         prompt: messages.map(message => `${message.role.toUpperCase()}:\n${message.content}`).join('\n\n'),
         onDispatch: options.onDispatch,
         onTask: async () => undefined, onProgress: options.onProgress ?? (async () => undefined),

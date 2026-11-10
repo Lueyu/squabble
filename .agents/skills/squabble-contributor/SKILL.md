@@ -42,3 +42,7 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 - 合并后同步全局副本：先运行 `node <skill目录>/scripts/sync-skill.cjs --repo <仓库>` 查看计划，再在已获安装/更新授权的范围内加 `--apply`。保留安装版本信息；不要手动维护第二份知识。
 
 完成交付时说明行为/文档改动、验证结果、架构与知识更新、PR 和安装版本，以及实际剩余限制。只有用户要求部署应用时才走实例切换流程。
+
+## Agent 运行分析
+
+`/telemetry` 提供总览、成员比较、运行列表、Trace 与反馈/质量视图；`shared/telemetry.interface.ts` 定义未知值与统计口径。`server/modules/telemetry/` 读取所属用户来源并尊重删除墓碑，迁移52持久化观测元数据和反馈。模型/本地助手/工具的采集不改变执行结果。Langfuse 默认不启用，只有显式配置后导出元数据；不得将提示词、回答、持仓或密钥写入导出。详见 `docs/agent-telemetry.md`；使用临时 `TELEMETRY_TEST_DATABASE_URL` 运行 `npm run test:telemetry`，浏览界面不能触发研究。

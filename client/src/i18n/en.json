@@ -40,7 +40,7 @@
     "dashboard": "Dashboard", "holdings": "Holdings", "import": "Import",
     "watchlist": "Watchlist", "analysis": "Daily Analysis", "paper": "AI Paper Trading",
     "journal": "Trade Review", "transactions": "Transactions", "rules": "Strategy Rules",
-    "notifications": "Notifications"
+    "notifications": "Notifications", "telemetry": "Run analytics"
   },
   "layout": {
     "localWorkspace": "Local workspace",

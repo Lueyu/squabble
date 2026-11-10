@@ -73,9 +73,12 @@ access to the selected workspace; account mode retains separate sign-in sessions
 | Screenshot recognition | Squabble holds images and one-call API keys in memory during recognition; native agents receive an image file in an owned temporary workspace, removed when execution ends. The CLI/provider may keep its own session history outside this workspace (notably OpenCode); Squabble does not control that retention. Job results expire from server memory after 20 minutes and do not survive server restart. Native task records can retain extracted text under the normal local-agent task history policy. Confirmed holdings and import history are stored. |
 | Operational data | The application writes browser-console and server logs. Authentication rate limiting keeps temporary IP-based counters in server memory. Operators, reverse proxies, hosts, and external providers may keep additional request or error logs. |
 
-There is no bundled analytics SDK or central usage-reporting service in this
-repository. **That does not mean there are no logs, network requests, or
-third-party records.** A deployment can add its own monitoring.
+Agent telemetry stores owner-scoped operational metadata and explicit feedback
+inside the instance. No reporting to maintainers occurs by default. Operators can
+explicitly enable metadata-only export to configured Langfuse; keys stay server-side
+and remote retention is separately managed. Prompts, completions, holdings, tool
+arguments and private reasoning are excluded. **Logs, ordinary network requests
+and third-party records still exist.** See [Agent telemetry](agent-telemetry.md).
 
 ## 📤 What leaves the instance?
 

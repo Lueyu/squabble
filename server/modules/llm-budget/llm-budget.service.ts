@@ -12,7 +12,9 @@ import {
 
 type Transaction = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 type SettingsRow = typeof llmBudgetSettings.$inferSelect;
-export interface BudgetReservation extends TokenReservation { id: string; taskId: string; omitOutputLimit?: boolean }
+export interface BudgetReservation extends TokenReservation { id: string; taskId: string; omitOutputLimit?: boolean;
+  /** The user's rate at reservation time, never a provider invoice or a read-time repricing. */
+  estimateRates?: { inputUsdPerMillion: number; outputUsdPerMillion: number } }
 export interface ReserveBudgetRequest {
   taskId?: string;
   purpose?: string;
@@ -121,7 +123,10 @@ export class LlmBudgetService {
         maxOutputTokens, reservedTokens, chargedTokens: reservedTokens, status: 'reserved',
       });
       return { id, taskId, inputTokens, maxOutputTokens, reservedTokens,
-        omitOutputLimit: !settings.enabled && input.maxOutputTokens === undefined };
+        omitOutputLimit: !settings.enabled && input.maxOutputTokens === undefined,
+        ...(settings.enabled && settings.inputUsdPerMillion !== null && settings.outputUsdPerMillion !== null
+          ? { estimateRates: { inputUsdPerMillion: settings.inputUsdPerMillion, outputUsdPerMillion: settings.outputUsdPerMillion } }
+          : {}) };
     });
     // This callback has no transport capability. Rollback is confined to its failure,
     // before the reservation is returned to the caller that can start a network call.

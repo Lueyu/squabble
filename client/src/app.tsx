@@ -48,6 +48,8 @@ import MemoryWorkspacePage from './pages/Workspace/MemoryWorkspacePage';
 import StrategyLibraryPage from './features/strategy-interview/StrategyLibraryPage';
 import NewStrategyInterviewPage from './features/strategy-interview/NewStrategyInterviewPage';
 import StrategyInterviewPage from './features/strategy-interview/StrategyInterviewPage';
+import TelemetryPage from './features/telemetry/TelemetryPage';
+import TelemetryRunPage from './features/telemetry/TelemetryRunPage';
 import { useSimpleExperience } from './hooks/use-simple-experience';
 
 function ExperienceRoute({
@@ -157,6 +159,8 @@ const RoutesComponent = () => {
         <Route path="research/portfolio" element={<SimpleAnalysisPage />} />
         <Route path="data" element={<DataCenterPage />} />
         <Route path="memory" element={<MemoryWorkspacePage />} />
+        <Route path="telemetry" element={<TelemetryPage />} />
+        <Route path="telemetry/runs/:id" element={<TelemetryRunPage />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="watchlist" element={<WatchlistPage />} />
         <Route path="analysis" element={<ReportsRoute />} />

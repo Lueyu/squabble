@@ -1,7 +1,7 @@
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { libraryEvidenceAvailability, libraryEvidenceAvailable, libraryEvidenceReferences, MAX_LIBRARY_EVIDENCE_REFERENCES } from '../../database/data-library-visibility';
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isNull, and, desc, eq, lte, ne, or } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { councilMessages, councilReports, councilSessions } from '../../database/council.schema';
@@ -25,6 +25,8 @@ import { extractValuationInputs, frozenPeerTickers, valuationScenarios } from '.
 import { memoryReference, memoryToolData } from '../research-memory/research-memory.context';
 import { boundedMemoryPins } from '../research-memory/research-memory.ranking';
 import { compactToolEvidence, toolEvidenceMetadata } from './research-tools.evidence';
+import { captureTelemetry, TelemetryCaptureService } from '../telemetry/telemetry-capture.service';
+import type { TelemetrySpanRecord } from '../../../shared/telemetry.interface';
 
 type SessionRow = typeof councilSessions.$inferSelect;
 interface ScopedSession { session: SessionRow; authority: string; review?: boolean }
@@ -32,7 +34,8 @@ type ScopeDatabase = Pick<PostgresJsDatabase, 'select'>;
 const ARCHIVED_TOOLS = new Set(['get_quotes', 'get_financials', 'get_news', 'get_valuation',
   'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web', 'search_data_library', 'get_financial_source_data', 'read_browser_source']);
 const PORTFOLIO_TOOLS = new Set(['get_discussion_context', 'get_research_memory', 'search_data_library', 'read_browser_source']);
-interface CallOptions { signal?: AbortSignal; shouldContinue?: () => Promise<boolean> }
+interface CallOptions { signal?: AbortSignal; shouldContinue?: () => Promise<boolean>;
+  telemetryContext?: { runId: string; sourceId: string; parentId: string } }
 interface HandlerInput extends Partial<ResearchValuationRequest> {
   limit?: number; query?: string; asOf?: string; sourceId?: string;
   provider?: 'alpha-vantage' | 'public' | 'finnhub' | 'sec';
@@ -52,6 +55,7 @@ export class ResearchToolsService {
     private readonly memory: ResearchMemoryService,
     @Optional() private readonly library?: DataLibraryService,
     @Optional() private readonly financial?: DataFinancialService,
+    @Optional() private readonly telemetry?: TelemetryCaptureService,
   ) {}
 
   descriptors(): ResearchToolDescriptor[] {
@@ -88,6 +92,7 @@ export class ResearchToolsService {
     let onAbort: (() => void) | undefined;
     let authority: string | undefined;
     let review = false;
+    let telemetrySpan: TelemetrySpanRecord | undefined;
     const collection = new AbortController();
     let collectionPoll: ReturnType<typeof setInterval> | undefined;
     let checkingCollectionScope = false;
@@ -111,6 +116,18 @@ export class ResearchToolsService {
     const operation = async (): Promise<ResearchToolResult> => {
       try {
         const session: SessionRow = await guard();
+        const runId = options.telemetryContext?.runId
+          ?? (session.checkpoint?.cycleId ? `research:${scope.sessionId}:${scope.revision}:${session.checkpoint.cycleId}`
+            : `research-tool:${scope.sessionId}:${scope.revision}`);
+        const id = createHash('sha256').update(JSON.stringify([runId, scope.memberId, scope.turn, scope.attemptId,
+          options.telemetryContext?.parentId, request.callId])).digest('hex');
+        telemetrySpan = { id: `tool:${id}`, runId, sourceId: options.telemetryContext?.sourceId ?? session.taskId ?? scope.attemptId ?? scope.sessionId,
+          sessionId: scope.sessionId, revision: scope.revision, parentId: options.telemetryContext?.parentId ?? null,
+          kind: 'tool', name: tool.name, title: 'Research tool', scene: 'research', status: 'running',
+          agentId: scope.memberId, agentName: null, provider: null, model: null, executionMode: 'server',
+          startedAt: new Date().toISOString(), completedAt: null, durationMs: null, inputTokens: null,
+          outputTokens: null, totalTokens: null, estimatedCostUsd: null, errorCode: null, attempt: 1, traceId: null };
+        captureTelemetry(this.telemetry, owner, telemetrySpan);
         started = true;
         if (tool.name === 'read_browser_source') {
           // Long browser reads retain the same live research authority and stop
@@ -144,7 +161,13 @@ export class ResearchToolsService {
       onAbort = () => { active = false; collection.abort(); resolve(researchFailure('cancelled', 'RESEARCH_CANCELLED', started)); };
       options.signal?.addEventListener('abort', onAbort, { once: true });
     });
-    try { return await Promise.race([operation(), stopped]); }
+    try {
+      const result = await Promise.race([operation(), stopped]);
+      if (telemetrySpan) captureTelemetry(this.telemetry, owner, { ...telemetrySpan, completedAt: new Date().toISOString(),
+        status: result.status === 'succeeded' || result.status === 'partial' ? 'completed'
+          : result.status === 'cancelled' ? 'cancelled' : 'failed', errorCode: result.errorCode ?? null });
+      return result;
+    }
     finally {
       active = false;
       collection.abort();

@@ -81,8 +81,8 @@ for (const width of [1440, 1024, 1023, 768, 390]) {
   test(`settings adds secondary navigation without changing the primary shell at ${width}px`, () => {
     const assets = shell('/holdings', width), settings = shell('/settings/models', width);
     try {
-      assert.equal(assets.dom.window.document.querySelectorAll('.app-nav-link').length, 8);
-      assert.equal(settings.dom.window.document.querySelectorAll('.app-nav-link').length, 8);
+      assert.equal(assets.dom.window.document.querySelectorAll('.app-nav-link').length, 9);
+      assert.equal(settings.dom.window.document.querySelectorAll('.app-nav-link').length, 9);
       for (const [selector, properties] of [
         ['.app-sidebar', ['width']], ['.app-brand', ['paddingLeft', 'paddingRight']],
         ['.app-brand-copy', ['display']], ['.app-nav-link > span', ['display']],
