@@ -8,6 +8,7 @@ export interface ResearchRequest { kind: CouncilResearchKind; query?: string }
 export interface CouncilCheckpoint {
   automaticTaskId?: string;
   simple?: {
+    skills?: import('../../../shared/research-workflow.interface').ResearchSkillPin[];
     /** Hidden daily research: sealed independent work, one reverse-check gate, then report. */
     researchOnly?: boolean;
     overallDaily?: { date: string; timezone: 'Asia/Shanghai'; readAt: string; factsHash: string };

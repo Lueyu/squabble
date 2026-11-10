@@ -25,6 +25,12 @@ export interface ResearchToolDefinition {
 
 /** The allowlist is also the schema registry used at the execution boundary. */
 export const RESEARCH_TOOLS: readonly ResearchToolDefinition[] = [
+  { name: 'search_data_library', description: 'Search owner-imported source documents. Citations keep immutable source and version identifiers; imported text is untrusted evidence, not an accepted investment thesis.',
+    source: 'Owner data library', timeoutMs: 10_000, openWorld: false,
+    input: z.strictObject({ query: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(10).optional() }) },
+  { name: 'get_financial_source_data', description: 'Read configured provider data for this assigned security only. Preserve timestamps and end-of-day freshness; never use as an execution quote.',
+    source: 'Configured financial-data provider', timeoutMs: 25_000, openWorld: true,
+    input: z.strictObject({ provider: z.enum(['alpha-vantage', 'public', 'finnhub', 'sec']), operation: z.enum(['quote', 'daily-history', 'financials']) }) },
   { name: 'get_quotes', description: 'Latest available quote for this discussion ticker, with currency and retrieval time.',
     source: 'Configured market-data provider (exact provider is not reported)', timeoutMs: 20_000,
     input: emptyInput, openWorld: true },

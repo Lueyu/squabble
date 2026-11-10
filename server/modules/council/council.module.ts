@@ -8,6 +8,7 @@ import { ResearchToolsModule } from '../research-tools/research-tools.module';
 import { LocalAgentsModule } from '../local-agents/local-agents.module';
 import { ResearchDocumentsModule } from '../research-documents/research-documents.module';
 import { SimpleCouncilService } from './simple-council.service';
+import { DataLibraryModule } from '../data-library/data-library.module';
 import {
   ResearchConversationsController,
   ResearchExecutionController,
@@ -22,6 +23,7 @@ import {
     ResearchMemoryModule,
     ResearchToolsModule,
     ResearchDocumentsModule,
+    DataLibraryModule,
   ],
   controllers: [
     CouncilController,

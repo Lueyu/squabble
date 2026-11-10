@@ -9,6 +9,7 @@ export function simpleNavigation(language: string) {
 
 // Historical context takes priority over any live security included in an old link.
 export function contextFromSearch(params: URLSearchParams) {
+  if (params.get('sourceId') && params.get('versionId')) return { kind: 'library' as const, sourceId: params.get('sourceId')!, versionId: params.get('versionId')! };
   if (params.get('decisionId')) return { kind: 'decision' as const, orderId: params.get('decisionId')! };
   if (params.get('referenceVersionId')) return { kind: 'report' as const, documentId: params.get('referenceVersionId')! };
   if (params.get('date')) return { kind: 'portfolio' as const, date: params.get('date')! };

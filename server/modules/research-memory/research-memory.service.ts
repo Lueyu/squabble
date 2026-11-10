@@ -1,4 +1,5 @@
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
+import { libraryEvidenceAvailable, libraryEvidenceReferences } from '../../database/data-library-visibility';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { and, count, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -82,6 +83,7 @@ export class ResearchMemoryService {
       .where(and(eq(councilReports.id, input.report.id), councilReportSourceVisible(), eq(councilReports.owner, owner),
         eq(councilReports.sessionId, input.sessionId), eq(councilReports.version, input.report.version))).limit(1).for('update');
     if (!source) throw new NotFoundException('MEMORY_SOURCE_NOT_FOUND');
+    if (!await libraryEvidenceAvailable(tx, owner, source.report.evidence, true)) throw new BadRequestException('MEMORY_SOURCE_UNAVAILABLE');
     const eligible = await archivalEligibility(tx, owner, source.report, source.session);
     if (!eligible) throw new BadRequestException('MEMORY_SOURCE_NOT_COMPLETED');
     const sourceSymbol = this.symbol({ ticker: source.session.ticker });
@@ -363,6 +365,7 @@ export class ResearchMemoryService {
       if (prepared.some(ref => !current.items.some(item => item.kind === ref.kind && item.id === ref.id && item.version === ref.version))) {
         throw new Error('MEMORY_CONTEXT_CHANGED');
       }
+      if (!await libraryEvidenceAvailable(tx, owner, current.items, true)) throw new Error('MEMORY_CONTEXT_CHANGED');
       await handoff();
     });
   }
@@ -466,6 +469,7 @@ export class ResearchMemoryService {
         eq(councilReports.sessionId, memory.sessionId), eq(councilReports.version, memory.reportVersion),
         eq(councilReports.revision, memory.reportRevision))).limit(1);
     if (!row) return null;
+    if (!await libraryEvidenceAvailable(this.db, owner, row.report.evidence)) return null;
     const symbol = this.symbol({ ticker: row.ticker });
     return symbol.ticker === memory.ticker && symbol.market === memory.market ? row.report : null;
   }
@@ -504,6 +508,7 @@ export class ResearchMemoryService {
         reportId: row.reportId, reportVersion: row.reportVersion, reportRevision: row.reportRevision,
         reportCreatedAt: row.reportCreatedAt.toISOString(),
         url: `/council?sessionId=${row.sessionId}&reportId=${row.reportId}#report-${row.reportId}-v${row.reportVersion}` } : null,
+      ...(report ? { libraryReferences: libraryEvidenceReferences(report.evidence) } : {}),
       citations, flags, thesisStructure: report?.thesisCandidates?.length ? 'present' : 'missing', createdAt: row.createdAt.toISOString() };
   }
   private materializeThesis(row: ThesisRow, memory: ResearchMemoryItem, asOf = new Date().toISOString()): ResearchThesis {
@@ -521,7 +526,7 @@ export class ResearchMemoryService {
     return { ...normalizeThesisContent(available ? row.content : EMPTY_CONTENT), id: row.id, memoryId: row.memoryId, ticker: memory.ticker,
       market: memory.market, topic: memory.topic, status: row.status, freshness,
       version: row.version, excluded: row.excluded || memory.excluded, expiresAt: row.expiresAt?.toISOString() ?? null,
-      sourceStatus: memory.sourceStatus, source: memory.source, citations, flags,
+      sourceStatus: memory.sourceStatus, source: memory.source, citations, flags, libraryReferences: memory.libraryReferences,
       createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
   }
   private async thesisAt(owner: string, current: ThesisRow, asOf?: string): Promise<ThesisRow | null> {
@@ -594,7 +599,7 @@ export class ResearchMemoryService {
   }
   private historyRecallItem(memory: ResearchMemoryItem, asOf?: string): ResearchMemoryRecallItem {
     return { kind: 'history', id: memory.id, memoryId: memory.id, version: memory.source!.reportVersion, topic: memory.topic,
-      summary: memory.summary, flags: memory.flags, source: memory.source!, citations: memory.citations, ...(asOf ? { asOf } : {}) };
+      summary: memory.summary, flags: memory.flags, source: memory.source!, citations: memory.citations, libraryReferences: memory.libraryReferences, ...(asOf ? { asOf } : {}) };
   }
   private thesisRecallItem(thesis: ResearchThesis, asOf?: string): ResearchMemoryRecallItem {
     const { claim, supportingEvidence, opposingEvidence, assumptions, indicators, invalidationConditions,
@@ -606,7 +611,7 @@ export class ResearchMemoryService {
       summary: [thesis.claim, ...thesis.opposingEvidence.map(line => `Opposing: ${line}`),
         ...thesis.assumptions.map(line => `Assumption: ${line}`), ...thesis.indicators.map(line => `Indicator: ${line}`),
         ...thesis.invalidationConditions.map(line => `Invalidation: ${line}`)].join('\n'),
-      flags: thesis.flags, source: thesis.source!, citations: thesis.citations, provenance: thesis.provenance,
+      flags: thesis.flags, source: thesis.source!, citations: thesis.citations, provenance: thesis.provenance, libraryReferences: thesis.libraryReferences,
       content, status: thesis.status, expiresAt: thesis.expiresAt, freshness: thesis.freshness, ...(asOf ? { asOf } : {}),
       endorsement: thesis.status === 'confirmed' ? 'user' : 'agent' };
   }

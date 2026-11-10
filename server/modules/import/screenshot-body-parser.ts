@@ -4,7 +4,7 @@ import { json, urlencoded, type RequestHandler } from 'express';
 export function screenshotBodyParser(): RequestHandler {
   const parse = json({ limit: '12mb' });
   return (req, res, next) => {
-    if (req.method === 'POST' && (['/api/import/screenshot-jobs', '/api/import/ocr/extract'].includes(req.path)
+    if (req.method === 'POST' && (['/api/import/screenshot-jobs', '/api/import/ocr/extract', '/api/data-library/files'].includes(req.path)
       || /^\/api\/import\/batches\/[0-9a-f-]{36}\/images(?:\/[0-9a-f-]{36}\/reselect)?$/i.test(req.path))) parse(req, res, next);
     else next();
   };

@@ -2,6 +2,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/' });
+dom.window.matchMedia = query => ({
+  matches: dom.window.innerWidth <= Number(query.match(/max-width:\s*(\d+)/)?.[1] ?? 0),
+  media: query,
+  onchange: null,
+  addEventListener() {},
+  removeEventListener() {},
+});
 for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'HTMLFormElement', 'FormData', 'Element', 'Node', 'Event']) {
   Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key], writable: true });
 }
@@ -66,23 +73,22 @@ test('trading daily and exact research layers close back to the selected report 
   });
 });
 
-test('data processing details retain their list and health reads stored gaps', async () => {
+test('material original preview retains its selected source and list after closing', async () => {
   await scenario('pages/Workspace/DataCenterPage.tsx', '/data', f => {
-    f.state.queries.set('integration-settings', { data: { financial: { available: true, provider: 'fixture' } } });
-    f.state.queries.set('daily-workspace', { data: { personal: { gaps: ['Fictional missing valuation'], marketSessions: [] } } });
-    f.state.queries.set('import-batches', { data: [{ id: 'batch', status: 'paused', revision: 2, updatedAt: '2026-11-10T00:00:00Z', images: [{ id: 'image', filename: 'fictional-input.png', status: 'recognized' }], rows: [{ id: 'row', ticker: 'FICT', sourceImageIds: ['image'], issues: [{ field: 'quantity', code: 'missing' }] }], receipts: [] }] });
-    f.state.queries.set('data-archive-jobs', { data: { counts: { failed: 0 }, jobs: [] } });
-    f.state.queries.set('model-connections', { data: [] });
-  }, async ({ click }) => {
-    await click('Processing records');
-    await click('Inspect');
-    assert.match(document.querySelector('[role="dialog"]').textContent, /fictional-input.png/);
-    assert.match(document.querySelector('[role="dialog"]').textContent, /quantity: missing/);
+    const source = { id: 'fixture-source', title: 'Fictional material', kind: 'page', format: 'text', state: 'ready', enabled: true, description: '', versionCount: 1, latestVersionId: 'version-1' };
+    f.state.queries.set(JSON.stringify(['data-library', 'list', '', '', 0]), { data: { items: [source], total: 1 } });
+    f.state.queries.set(JSON.stringify(['data-library', 'source', source.id]), { data: { source, versions: [{ id: 'version-1', version: 1 }] } });
+    f.state.queries.set(JSON.stringify(['data-library', 'version', source.id, 'version-1']), { data: { version: 1, extractedText: 'Fictional extracted text', rawContent: 'Exact original fixture content' } });
+  }, async ({ click, location }) => {
+    await React.act(async () => document.querySelector('.data-item').click());
+    assert.equal(location(), '/data?source=fixture-source');
+    await click('Original text');
+    assert.match(document.querySelector('[role="dialog"]').textContent, /Exact original fixture content/);
     await click('Close layer');
-    assert.equal(document.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Processing records');
-    await click('Health');
-    assert.match(document.body.textContent, /Fictional missing valuation/);
-    assert.doesNotMatch(document.body.textContent, /No gaps found/);
+    assert.equal(document.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Library');
+    assert.equal(location(), '/data?source=fixture-source');
+    assert.match(document.querySelector('.data-item[aria-pressed="true"]').textContent, /Fictional material/);
+    assert.match(document.body.textContent, /Fictional extracted text/);
   });
 });
 

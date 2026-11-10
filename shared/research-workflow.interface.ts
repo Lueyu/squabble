@@ -20,6 +20,7 @@ export interface ResearchDelivery {
   response: CouncilResponse;
 }
 export interface ResearchTaskAttempt {
+  libraryReferences?: import('./data-library.interface').DataLibraryReference[];
   memory?: MemoryContextInventory;
   id: string; revision: number; kind: 'work' | 'review'; startedAt: string; finishedAt?: string;
   state: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'uncertain';

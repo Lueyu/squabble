@@ -1,5 +1,22 @@
 # Research, execution and provenance contracts
 
+## V5 research skills and library provenance
+
+The research workspace owns chat history, slash-selected trusted skills and the
+strategy library. Skill versions/hashes are pinned to durable requests and member
+attempts; public skill/tool receipts describe actual execution, not reconstructed
+private reasoning. `/strategy` reuses the saved multi-turn interview and does not
+bypass account preview/application. See `docs/research-data-workspace.md`.
+
+`server/modules/data-library/` owns explicit material writes, versioned extraction,
+encrypted host-bound subscription credentials and scheduled sync. Search and
+research references are owner-scoped and exclude disabled/deleted sources. Exact
+material versions can be frozen into research; dependencies must survive report
+publication and subsequent memory/research consumption. Historical reports remain
+readable. New files/pages never write holdings, cash or transaction records.
+Financial-source query results carry their actual capability, source and timestamp;
+end-of-day data is not an execution-price feed.
+
 Use this reference for current research, report import, strategy state, channel publication and ledger changes. Paths are relative to the selected checkout. See [repository-map.md](repository-map.md) for current module ownership and `docs/architecture.md` for the five flows. The 2026-11-10 review against `98f073e` plus the V4 working tree covers account combinations, interviews, comparison, overall daily research and channel boundaries below. Sealed research and immutable publication retain their prior boundaries. Earlier verification scopes are recorded in `context-manifest.json`; inspect affected source after subsequent changes.
 
 ## Research reports → sealed research → immutable report

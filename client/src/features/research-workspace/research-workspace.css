@@ -1,20 +1,20 @@
 .research-workspace-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 0;
   height: calc(100dvh - 144px);
   min-height: 540px;
   min-width: 0;
-  padding: 24px;
+  padding: 0;
+  background: var(--card);
 }
 
 .research-workspace-sidebar {
   min-width: 0;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--card);
-  padding: 16px 10px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--primary) 3%, var(--card));
+  padding: 20px;
 }
 
 .research-workspace-sidebar header {
@@ -22,18 +22,18 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 4px 24px;
+  padding: 0 0 16px;
 }
 
 .research-workspace-sidebar h1 {
-  font-size: 18px;
-  font-weight: 650;
+  display: none;
 }
 
 .research-workspace-sidebar h2 {
   color: var(--muted-foreground);
   font-size: 12px;
   padding: 0 8px 12px;
+  margin-top: 22px;
 }
 
 .research-workspace-main {
@@ -46,6 +46,8 @@
 .research-workspace-main > .research-room {
   flex: 1;
   height: auto;
+  border: 0;
+  border-radius: 0;
 }
 
 .research-workspace-mobile-tools {
@@ -71,7 +73,258 @@
 
 .research-history-list li:hover,
 .research-history-list li.is-selected {
-  background: var(--muted);
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+}
+
+.research-workspace-sidebar :where(header) button {
+  width: 100%;
+  background: var(--card);
+}
+
+.research-sidebar-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.research-sidebar-tabs button {
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.research-sidebar-tabs [aria-selected='true'] {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+  font-weight: 600;
+}
+
+.research-sidebar-search {
+  box-shadow: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+.research-sidebar-footer {
+  margin-top: 36px;
+  font-size: 12px;
+  line-height: 2;
+  color: var(--muted-foreground);
+}
+
+.research-sidebar-footer strong {
+  color: var(--foreground);
+}
+
+.research-workspace-shell .research-room-header {
+  border: 0;
+  padding: 32px 40px 20px;
+}
+
+.research-workspace-shell :where(.research-room-header) h1 {
+  font-size: 22px;
+}
+
+.research-workspace-shell .council-message {
+  flex-direction: row;
+  gap: 12px;
+}
+
+.research-workspace-shell .council-message-avatar {
+  width: 34px;
+  height: 34px;
+  margin-top: 0;
+}
+
+.research-workspace-shell .council-message-body {
+  width: calc(100% - 46px);
+  align-items: flex-start;
+}
+
+.research-workspace-shell .council-bubble {
+  border: 0;
+  padding: 8px 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.research-workspace-shell .council-bubble::before {
+  display: none;
+}
+
+.research-workspace-shell .council-message[data-role='user'] {
+  justify-content: flex-end;
+}
+
+.research-workspace-shell .council-message[data-role='user'] .council-message-avatar {
+  display: none;
+}
+
+.research-workspace-shell .council-message[data-role='user'] .council-message-body {
+  width: min(82%, 660px);
+}
+
+.research-workspace-shell .council-message[data-role='user'] .council-bubble {
+  padding: 18px 22px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+}
+
+.research-workspace-shell .research-public-activity {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--primary) 3%, var(--card));
+}
+
+.research-workspace-shell .research-composer {
+  position: relative;
+  width: calc(100% - 80px);
+  max-width: 856px;
+  align-self: center;
+  margin: 16px 40px 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+}
+
+.research-workspace-shell .research-composer textarea {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.research-skill-menu {
+  position: absolute;
+  inset: auto 0 calc(100% + 12px);
+  max-height: min(360px, 45vh);
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: 0 8px 30px #12372a1a;
+  z-index: 20;
+}
+
+.research-skill-menu > p {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-bottom: 8px;
+}
+
+.research-skill-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-radius: 7px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.research-skill-menu button[aria-selected='true'],
+.research-skill-menu button:hover {
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+}
+
+.research-skill-menu code {
+  min-width: 95px;
+  color: var(--primary);
+}
+
+.research-skill-menu span {
+  color: var(--muted-foreground);
+}
+
+.research-selected-skill {
+  display: inline-flex;
+  gap: 10px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+  color: var(--primary);
+  font-size: 12px;
+}
+
+.research-interview,
+.research-saved-strategy {
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30px 40px;
+}
+
+.research-interview .interview-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.research-interview > :first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.research-interview .interview-step {
+  margin-left: auto;
+}
+
+.research-interview .interview-history > summary {
+  display: none;
+}
+
+.research-interview .interview-transcript {
+  max-height: none;
+  overflow: visible;
+}
+
+.research-interview .interview-message-assistant {
+  background: transparent;
+}
+
+.research-interview :where(.interview-message) > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.research-interview .interview-message > span svg {
+  width: 32px;
+  height: 32px;
+}
+
+.research-interview .interview-summary {
+  position: static;
+}
+
+.research-saved-strategy h1 {
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.research-saved-strategy h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-block: 24px 12px;
+}
+
+.research-saved-strategy p,
+.research-workspace-shell .research-saved-strategy li {
+  margin-block: 12px;
+  line-height: 1.8;
+}
+
+.research-workspace-shell .research-strategy-accounts button,
+.research-strategy-accounts a {
+  margin: 0 8px 8px 0;
 }
 
 .research-history-select {
@@ -122,7 +375,7 @@
 @media (width < 900px) {
   .research-workspace-shell {
     display: block;
-    height: calc(100dvh - 128px);
+    height: calc(100dvh - 176px);
     min-height: 460px;
     padding: 12px;
   }
@@ -141,5 +394,28 @@
     justify-content: space-between;
     gap: 8px;
     padding-bottom: 10px;
+  }
+
+  .research-workspace-shell .research-room-header {
+    padding: 16px;
+  }
+
+  .research-workspace-shell .research-composer {
+    width: calc(100% - 24px);
+    margin: 12px;
+  }
+
+  .research-skill-menu button {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  .research-skill-menu span {
+    width: 100%;
+  }
+
+  .research-interview,
+  .research-saved-strategy {
+    padding: 16px;
   }
 }

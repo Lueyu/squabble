@@ -60,7 +60,7 @@ export default function CouncilChatMessage({ message, task, session, onQuestion,
       </div>
       <div className="council-bubble">
         {task && <div className={message ? 'mb-4 border-b border-border/60 pb-3' : undefined}>
-          <CouncilResearchTimeline task={task} />
+          <CouncilResearchTimeline task={task} expanded={simple} />
         </div>}
         {replyTo && <button type="button" className="mb-3 flex w-full min-w-0 items-start gap-2 rounded-lg border-l-2 border-primary/40 bg-muted/50 px-2.5 py-2 text-left text-xs text-muted-foreground hover:bg-muted"
           onClick={() => {

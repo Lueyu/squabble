@@ -7,6 +7,11 @@ import { researchIsActive, researchSourceUrl,
 
 const RESEARCH_TOOL_NAMES = new Set(['get_quotes', 'get_financials', 'get_valuation', 'get_news',
   'get_research_report', 'get_discussion_context', 'search_research_web']);
+const WORKSPACE_TOOL_NAMES: Record<string, [string, string]> = {
+  search_data_library: ['检索资料库', 'Search data library'],
+  get_financial_source_data: ['查询金融数据源', 'Query financial source'],
+  get_research_memory: ['读取研究记忆', 'Read research memory'],
+};
 
 function ActivityIcon({ status }: { status: ResearchEventStatus }) {
   const className = 'mt-0.5 size-3.5 shrink-0';
@@ -22,8 +27,10 @@ function ActivityRow({ activity, now, grouped = [] }: { activity: ResearchActivi
   const observation = activity.kind === 'summary';
   const elapsed = activity.kind === 'tool'
     ? activity.durationMs ?? (researchIsActive(activity.status) ? now - Date.parse(activity.startedAt) : undefined) : undefined;
-  const label = activity.toolName && RESEARCH_TOOL_NAMES.has(activity.toolName)
-    ? t(`council.progress.toolNames.${activity.toolName}`) : activity.toolName || t(`council.progress.activityKinds.${activity.kind}`);
+  const workspaceTool = activity.toolName && WORKSPACE_TOOL_NAMES[activity.toolName];
+  const label = activity.kind === 'skill' ? `${i18n.language.startsWith('zh') ? '技能' : 'Skill'} · ${activity.skill?.title ?? activity.skill?.id ?? ''}` : activity.toolName && RESEARCH_TOOL_NAMES.has(activity.toolName)
+    ? t(`council.progress.toolNames.${activity.toolName}`) : workspaceTool ? workspaceTool[i18n.language.startsWith('zh') ? 0 : 1]
+      : activity.toolName || t(`council.progress.activityKinds.${activity.kind}`);
   return <li className="flex min-w-0 items-start gap-2 text-xs leading-5">
     {observation ? <Clock3 aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" /> : <ActivityIcon status={activity.status} />}
     <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
@@ -56,7 +63,7 @@ function ActivityRow({ activity, now, grouped = [] }: { activity: ResearchActivi
 }
 
 /** Kept inside the turn card so disclosure state survives arrival of the final reply. */
-export default function CouncilResearchTimeline({ task }: { task: ResearchTaskView }) {
+export default function CouncilResearchTimeline({ task, expanded = false }: { task: ResearchTaskView; expanded?: boolean }) {
   const { t } = useTranslation();
   const [now, setNow] = useState(Date.now);
   const active = researchIsActive(task.status);
@@ -78,8 +85,8 @@ export default function CouncilResearchTimeline({ task }: { task: ResearchTaskVi
       && activity.toolName === previous[0].toolName && activity.status === previous[0].status) previous.push(activity);
     else groups.push([activity]);
   }
-  return <details open={manualOpen??active} className={`min-w-0 text-xs ${needsAttention ? 'text-destructive' : 'text-muted-foreground'}`}>
-    <summary onClick={event=>{event.preventDefault();setManualOpen(!(manualOpen??active));}} className="cursor-pointer rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+  return <details open={manualOpen??(active || expanded)} className={`research-public-activity min-w-0 text-xs ${needsAttention ? 'text-destructive' : 'text-muted-foreground'}`}>
+    <summary onClick={event=>{event.preventDefault();setManualOpen(!(manualOpen??(active || expanded)));}} className="cursor-pointer rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
       <span className="inline-flex max-w-[calc(100%-1rem)] items-center gap-2 align-middle leading-5">
         <ActivityIcon status={task.status} />
         <span className="min-w-0 truncate font-medium">{t(active ? 'council.progress.researching' : 'council.progress.history')}</span>

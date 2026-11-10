@@ -17,9 +17,9 @@ import {
 import CreateSimulationAccount from './CreateSimulationAccount';
 import AccountStatusControl from './AccountStatusControl';
 import LegacyDecisionPage from './LegacyDecisionPage';
-import { accountColor } from '@/features/portfolio-comparison/comparison-chart-options';
 import type { PortfolioCompanionId } from '@shared/portfolio-workspace.interface';
-import CompanionIdentity from '@/features/companions/CompanionIdentity';
+import AnimalAvatar from '@/components/AnimalAvatar';
+import { companionById } from '@/features/companions/companions';
 import CompanionPicker from '@/features/companions/CompanionPicker';
 import DeleteCompanionAccount from '@/features/companions/DeleteCompanionAccount';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -88,26 +88,16 @@ export default function SimulationAccountsPage() {
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {zh
-              ? '把不同的投资想法，放进各自独立的模拟仓。'
-              : 'Give each investment idea its own independent simulation.'}
+              ? '每位股友独立管理一个模拟账户，想法与行动都可追溯。'
+              : 'Each companion manages an independent simulation with traceable ideas and actions.'}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setLibrary(true)}>{zh ? '认识股友' : 'Meet the companions'}</Button>
+        <div className="companion-page-actions flex flex-wrap gap-2"><Button variant="outline" onClick={() => setLibrary(true)}>{zh ? '认识股友' : 'Meet the companions'}</Button>
         <Button onClick={() => setCreating(true)}>
           <Plus size={16} />
-          {zh ? '新建模拟仓' : 'New simulation'}
+          {zh ? '添加股友' : 'Add companion'}
         </Button></div>
       </header>
-      <p className="max-w-3xl text-sm leading-7 text-muted-foreground">
-        {zh
-          ? '每个账户独立资金、持仓、策略组合与运行状态。对照表现时再放到同一张图里。'
-          : 'Each account has its own funds, holdings, strategy combination and status. Compare them together on the overview.'}
-      </p>
-      <nav className="companion-secondary-nav" aria-label={zh ? '股友工具' : 'Companion tools'}>
-        <Link to="/strategies">{zh ? '我的策略库' : 'My strategies'}<ArrowRight size={14} /></Link>
-        <Link to="/strategies/new">{zh ? '一起聊出策略' : 'Clarify a strategy'}<ArrowRight size={14} /></Link>
-        <Link to="/">{zh ? '在总览看多仓曲线' : 'Compare account histories'}<ArrowRight size={14} /></Link>
-      </nav>
       {(strategyId || orderId) && (
         <div
           role="status"
@@ -123,7 +113,7 @@ export default function SimulationAccountsPage() {
         </div>
       )}
       <div
-        className="flex flex-wrap gap-2"
+        className="companion-account-filters flex flex-wrap gap-2"
         role="group"
         aria-label={zh ? '账户状态' : 'Account status'}
       >
@@ -197,37 +187,29 @@ export default function SimulationAccountsPage() {
         </section>
       )}
       <div className="companion-account-grid">
-        {filtered.map((account) => (
+        {filtered.map((account) => {
+          const companion = companionById(account.companionId);
+          return (
           <article
             key={account.id}
             className="companion-account-card"
           >
             <div className="companion-account-card-body">
-              <CompanionIdentity id={account.companionId} zh={zh} />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span
-                    aria-hidden="true"
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: accountColor(account.id, account.colorIndex) }}
-                  />
-                  <h2 className="break-words text-lg font-semibold">
+              <div className="companion-card-heading">
+                <AnimalAvatar avatar={companion?.id ?? 'moderator'} role="researcher" className="size-12 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <h2 className="break-words text-lg font-semibold leading-7">
                     <Link to={targetPath(account.id)} state={returnState}>{account.name}</Link>
                   </h2>
-                  <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-                    {accountStatusLabel(account.status, zh)}
-                  </span>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {companion?.focus[zh ? 0 : 1] ?? (zh ? '多元思考' : 'Multiple perspectives')}
+                  </p>
                 </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  {account.strategyCount
-                    ? `${account.strategyCount} ${zh ? '项已应用策略 · 独立预算' : 'applied strategies · independent budget'}`
-                    : zh
-                      ? '观察中 · 尚未应用策略'
-                      : 'Observing · no strategies applied'}
-                </p>
+                <DeleteCompanionAccount account={account} iconOnly />
               </div>
-              <div className="min-w-[180px]">
-                <p className="text-2xl font-medium tabular-nums sm:text-3xl">
+              <div className="min-w-0">
+                <p className="mb-1 text-xs text-muted-foreground">{zh ? '账户净值 · USD' : 'Account equity · USD'}</p>
+                <p className="break-words text-[28px] font-semibold tabular-nums leading-10">
                   {portfolioMoney(account.equityUsd, i18n.language)}
                 </p>
                 <p className="mt-2 text-xs text-muted-foreground">
@@ -236,41 +218,32 @@ export default function SimulationAccountsPage() {
                       ? '等待完整估值'
                       : 'Awaiting complete valuation'
                     : zh
-                      ? '已保存净资产 · 美元'
-                      : 'Saved equity · USD'}
+                      ? `现金 ${portfolioMoney(account.cashBalance, i18n.language)}`
+                      : `Cash ${portfolioMoney(account.cashBalance, i18n.language)}`}
                 </p>
               </div>
-              <Button asChild>
+              <div className="companion-card-state">
+                <span className="rounded-md bg-primary/5 px-2 py-1 text-xs text-primary">{accountStatusLabel(account.status, zh)}</span>
+                <span className="text-xs text-muted-foreground">{account.strategyCount} {zh ? '个策略' : 'strategies'}</span>
+              </div>
+              <div className="companion-card-actions">
+              <Button asChild className="flex-1">
                 <Link to={targetPath(account.id)} state={returnState}>
                   {strategyId
                     ? zh
                       ? '选择此账户'
                       : 'Choose account'
                     : zh
-                      ? '看看这个模拟仓'
-                      : 'Open simulation'}
+                      ? '查看账户'
+                      : 'View account'}
                   <ArrowRight size={15} />
                 </Link>
               </Button>
-            </div>
-            <footer className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-              <p className="text-xs text-muted-foreground">
-                {zh ? '起点' : 'Created'}{' '}
-                {new Date(account.createdAt).toLocaleDateString(i18n.language)}{' '}
-                · {zh ? '独立账本' : 'Independent ledger'}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button asChild variant="ghost" size="sm">
-                  <Link to={`/?accountIds=${encodeURIComponent(account.id)}`}>
-                    {zh ? '加入对比' : 'Compare'}
-                  </Link>
-                </Button>
-                <AccountStatusControl account={account} compact />
-                <DeleteCompanionAccount account={account} />
+              <AccountStatusControl account={account} shortLabel />
               </div>
-            </footer>
+            </div>
           </article>
-        ))}
+        );})}
       </div>
       <p className="text-xs leading-6 text-muted-foreground">
         {zh

@@ -2,6 +2,15 @@
 
 [简体中文](privacy.zh-CN.md) · [Security](../SECURITY.md) · [Self-hosting](self-hosting.md)
 
+**Research material library:** uploaded files, page originals and extracted versions
+are stored in your instance's PostgreSQL database. Website subscription credentials
+are encrypted separately and sent only to the configured origin. The crawler uses
+public HTTPS addresses with redirect, time and size limits; sign-in expiry is a
+failure state, not permission to bypass access controls. When you explicitly start
+research, selected material excerpts and source references can be sent to the
+chosen model or native agent. Images have no automatic OCR. See the
+[research and data workspace guide](research-data-workspace.md).
+
 **Research-team connections and tools:** separately saved model keys receive the same server-side encryption as the default key. Each selected provider receives that member's bounded research context, including relevant user notes and previous replies. Optional DeepSeek web search sends a ticker and a bounded research query; it has a separate request-usage ledger. SEC requests contain public issuer identifiers. Team configuration, messages, cited evidence and reports are stored in your instance. See [data-source boundaries](research-data.md).
 
 Squabble supports a local Docker Compose installation and a standalone Windows

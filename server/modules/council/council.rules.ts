@@ -4,6 +4,7 @@ import type { CouncilCandidate, CouncilMember, CouncilRole, CouncilResearchKind 
 import { evidencePromptMetadata } from '../research-memory/research-memory.temporal';
 
 export interface CouncilEvidence {
+  libraryReferences?: Array<{ sourceId: string; versionId: string }>;
   metadata?: import('@shared/research-evidence.interface').EvidenceMetadata;
   id: string;
   role: string;

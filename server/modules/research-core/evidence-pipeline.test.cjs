@@ -35,6 +35,7 @@ function loadService(name) {
     'drizzle-orm': { eq: () => true, and: () => true },
     '@server/database/schema': { holdings, watchlist, agentRuns: {} },
     '../settings/settings.service': { SettingsService: class {} },
+    '../../database/financial-provider-visibility': { financialProviderEnabled: async () => true },
     'node:crypto': require('node:crypto'),
     './research-tools-budget.service': { ResearchToolsBudgetService: class {} },
   };

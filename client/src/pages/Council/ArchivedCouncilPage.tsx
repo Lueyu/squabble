@@ -21,6 +21,7 @@ import InvestmentStrategySourceDialog from '@/features/investment-strategies/Inv
 import type {StrategySourceInput} from '@shared/user-investment-strategy.interface';
 import CouncilChatMessage from './CouncilChatMessage';
 import QuickQuestion from './QuickQuestion';
+import { fetchResearchSkills } from '@/api/research-conversations';
 import DebateSummary from './DebateSummary';
 import ConstraintProposalCard from './ConstraintProposalCard';
 import CouncilMemberActivity from './CouncilMemberActivity';
@@ -55,6 +56,9 @@ export default function ArchivedCouncilPage({readOnly=false,embeddedSessionId,wo
   const sessions = useQuery({ queryKey: ['research-conversations'], queryFn: fetchResearchConversations, refetchInterval: 15_000 });
   const query = useQuery({ queryKey: ['research-conversation', id], queryFn: () => fetchResearchConversation(id!), enabled: Boolean(id), refetchInterval: q => q.state.data?.status === 'running' || q.state.data?.initializing ? 2000 : 10_000 });
   const session = query.data;
+  const skillCatalog = useQuery({ queryKey: ['research-skills'], queryFn: fetchResearchSkills, enabled: Boolean(workspace), staleTime: 300_000 });
+  const selectedSkillId = workspace?.skillId === undefined ? session?.skills?.at(-1)?.id : workspace.skillId;
+  const selectedSkill = skillCatalog.data?.find(skill => skill.id === selectedSkillId);
   const readiness = useQuery({ queryKey: ['research-execution', 'readiness'], queryFn: fetchResearchExecutionReadiness, enabled: Boolean(configurationMember), staleTime: 0 });
   const configurationExecutor = session?.actualExecutors?.find(item => item.memberId === configurationMember);
   const configurationId = configurationExecutor?.connectionId ?? configurationExecutor?.connection;
@@ -72,10 +76,16 @@ export default function ArchivedCouncilPage({readOnly=false,embeddedSessionId,wo
   }, [session?.messages.length, session?.reports.length, timeline?.cursor]);
   const submit = async (message: string, override?: ResearchContext) => {
     if (readOnly || pending || sendLock.current) return false;
+    const command = workspace ? message.trim().match(/^\/(\S+)(?:\s|$)/u)?.[1] : undefined;
+    const commandedSkill = command ? skillCatalog.data?.find(skill => skill.command === `/${command}`) : undefined;
+    if (command === 'strategy') { workspace!.onStrategy(message.replace(/^\s*\/strategy\s*/u, '')); return true; }
+    if (command && !commandedSkill) { toast.error(zh ? '未找到这个技能，请输入 / 选择已安装的技能。' : 'Unknown skill. Type / to choose an installed skill.'); return false; }
     sendLock.current = true; setPending(true); setReceipt('sending');
     try {
-      const payload = id ? { message, ...(reply ? { replyTo: reply.id } : {}) }
-        : { message, ...((override || context) ? { context: override || context } : {}) };
+      const skillSelection = commandedSkill ? { skillId: commandedSkill.id }
+        : workspace?.skillId !== undefined ? { skillId: workspace.skillId } : {};
+      const payload = id ? { message, ...skillSelection, ...(reply ? { replyTo: reply.id } : {}) }
+        : { message, ...skillSelection, ...((override || context) ? { context: override || context } : {}) };
       const requestIntent = workspace?.request.intent ?? intent.current;
       const submission = workspace?.request.submission ?? { ...payload, requestKey: requestIntent.keyFor({ id, ...payload }) };
       if (workspace) workspace.request.submission = submission;
@@ -99,6 +109,7 @@ export default function ArchivedCouncilPage({readOnly=false,embeddedSessionId,wo
     finally { sendLock.current = false; setPending(false); }
   };
   const contextLabel = session?.contextLabel || (context?.kind === 'stock' ? `${zh ? '正在讨论：' : 'Discussing: '}${context.ticker}`
+    : context?.kind === 'library' ? (zh ? '已附加资料库固定版本' : 'Pinned library source version')
     : context?.kind === 'report' ? (zh ? '基于这份持仓分析' : 'Based on this portfolio analysis')
     : context?.kind === 'decision' ? (zh ? '正在讨论：当时的操作及依据' : 'Discussing: action and evidence at the time')
     : context?.kind === 'portfolio' ? `${zh ? '正在讨论：持仓 ' : 'Discussing: portfolio '}${context.date || ''}` : undefined);
@@ -183,6 +194,8 @@ export default function ArchivedCouncilPage({readOnly=false,embeddedSessionId,wo
     {receipt && <p role="status" className="min-w-0 shrink-0 px-4 py-1 text-xs text-muted-foreground">{receipt === 'sending' ? (zh ? '正在发送问题…' : 'Sending your question…') : session?.status === 'running' ? (zh ? '问题已收到，股友正在研究。' : 'Question received. Your stock friends are researching.') : (zh ? '问题已收到，正在安排股友。' : 'Question received. Arranging your stock friends.')}</p>}
     {workspace?.request.submission && !pending && <p role="alert" className="px-4 py-2 text-sm text-muted-foreground">{zh ? '上一条问题尚未确认送达。再次发送会核对同一条问题，不会新建重复任务。' : 'Delivery of this question is unconfirmed. Send again to check the same request without creating a duplicate task.'}</p>}
     {!readOnly && !embeddedSessionId && <QuickQuestion key={id || 'new'} pending={pending} onSubmit={submit} contextLabel={contextLabel} onRemoveContext={!id && !workspace?.request.submission ? () => setContext(undefined) : undefined}
+      skills={workspace ? skillCatalog.data : undefined} selectedSkill={selectedSkill}
+      onSkillSelect={workspace ? skill => skill?.mode === 'interview' ? workspace.onStrategy('') : workspace.onSkillChange(skill?.id ?? null) : undefined}
       value={workspace?.draft} onValueChange={workspace?.onDraftChange} readOnlyText={Boolean(workspace?.request.submission)}
       replyLabel={reply ? `${reply.memberName}: ${reply.content.slice(0, 140)}` : undefined} onRemoveReply={() => setReply(null)} />}
     <InvestmentStrategySourceDialog source={strategySource} onClose={()=>setStrategySource(null)}/>

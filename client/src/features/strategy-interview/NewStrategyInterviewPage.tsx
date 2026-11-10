@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
   portfolioWorkspaceApi,
@@ -27,11 +27,15 @@ import {
 import './strategy-interview.css';
 import InterviewFlowNavigation from './InterviewFlowNavigation';
 
-export default function NewStrategyInterviewPage() {
+export default function NewStrategyInterviewPage({ embedded = false, onCreated }: {
+  embedded?: boolean; onCreated?: (id: string) => void;
+} = {}) {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const client = useQueryClient();
+  const Navigation = embedded ? 'div' : InterviewFlowNavigation;
   const [accountId, setAccountId] = useState(params.get('accountId') ?? '');
   const [message, setMessage] = useState(() => readComposer('new'));
   const intent = useRef(
@@ -59,26 +63,28 @@ export default function NewStrategyInterviewPage() {
     onSuccess: (view) => {
       intent.current.complete();
       saveComposer('new', '');
+      void client.invalidateQueries({ queryKey: ['strategy-interviews'] });
+      if (onCreated) { onCreated(view.id); return; }
       navigate('/strategies/interviews/' + encodeURIComponent(view.id), {
         replace: true,
       });
     },
   });
   return (
-    <div className="portfolio-workspace strategy-interview">
-      <InterviewFlowNavigation>
+    <div className={`portfolio-workspace strategy-interview${embedded ? ' research-interview' : ''}`}>
+      <Navigation>
         <Button asChild variant="outline">
           <Link
             to={
-              '/strategies' +
-              (accountId ? '?accountId=' + encodeURIComponent(accountId) : '')
+              (embedded ? '/research?tab=strategies' : '/strategies') +
+              (accountId ? (embedded ? '&' : '?') + 'accountId=' + encodeURIComponent(accountId) : '')
             }
           >
             {zh ? '返回策略库' : 'Back to strategy library'}
           </Link>
         </Button>
         <span>{zh ? '1 / 4 · 表达想法' : '1 / 4 · Your idea'}</span>
-      </InterviewFlowNavigation>
+      </Navigation>
       <header className="portfolio-page-heading">
         <div>
           <h1>{zh ? '有个想法，先和股友聊聊' : 'Start with an idea'}</h1>

@@ -28,7 +28,7 @@ function setup(options) {
   return f;
 }
 async function click(text) {
-  const button = [...document.querySelectorAll('button')].find(item => item.textContent.trim() === text);
+  const button = [...document.querySelectorAll('button')].find(item => item.textContent.trim() === text || item.getAttribute('aria-label') === text);
   assert.ok(button, 'Missing button: ' + text);
   await React.act(async () => button.click());
 }
@@ -56,11 +56,11 @@ test('a card deletion needs one confirmation, supports legacy revisions, and sta
     const root = createRoot(document.getElementById('root'));
     try {
       await React.act(async () => root.render(React.createElement(QueryClientProvider, { client }, React.createElement(MemoryRouter, { initialEntries: ['/paper'] }, React.createElement(Page), React.createElement(Location)))));
-      await click('Delete');
+      await click('Delete Fictional companion');
       assert.match(document.querySelector('[role="dialog"]').textContent, /ledger and report history/);
       assert.equal(calls.length, 0);
       await click('Cancel'); assert.equal(document.querySelector('[role="dialog"]'), null);
-      await click('Delete'); await click('Confirm deletion');
+      await click('Delete Fictional companion'); await click('Confirm deletion');
       await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
       if (revision === 3) {
         assert.match(document.querySelector('[role="alert"]').textContent, /unconfirmed/);
@@ -75,7 +75,7 @@ test('a card deletion needs one confirmation, supports legacy revisions, and sta
       const archived = [...document.querySelectorAll('button')].find(button => button.textContent.startsWith('Archived'));
       await React.act(async () => archived.click());
       assert.match(document.querySelector('.companion-account-card').textContent, /Fictional companion/);
-      assert.equal([...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Delete'), false);
+      assert.equal(document.querySelector('button[aria-label="Delete Fictional companion"]'), null);
     } finally { await React.act(async () => root.unmount()); client.clear(); }
   }
 });

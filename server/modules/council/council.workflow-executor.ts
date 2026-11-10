@@ -1,4 +1,5 @@
 import { unverifiedAgentMetadata } from '../research-memory/research-memory.temporal';
+import { libraryEvidenceReferences } from '../../database/data-library-visibility';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
@@ -213,7 +214,7 @@ export class CouncilWorkflowExecutor {
     await this.deps.store.markRemote(row, task, attempt.id, { memory: inventory }, true);
     if (inventory.requestTokens! > inputLimit) throw new Error('RESEARCH_CONTEXT_LIMIT');
     const recordSubmission = (nativeDelivery?: 'runtime' | 'companion-command') => this.deps.store.markRemote(row, task, attempt.id,
-      { dispatched: true, memory: { ...inventory, submitted: inventory.prepared,
+      { dispatched: true, libraryReferences: libraryEvidenceReferences(packed.items), memory: { ...inventory, submitted: inventory.prepared,
         counts: { ...inventory.counts, submitted: inventory.prepared.length },
         submission: member.executionMode === 'local' ? 'agent' : 'api', ...(nativeDelivery ? { nativeDelivery } : {}) } },
       nativeDelivery !== 'companion-command');

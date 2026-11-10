@@ -159,32 +159,31 @@ export default function DailyReportPage() {
             date={view.date}
             onEvidence={setReportId}
           />
-          <section className="space-y-4">
+          <section className="workspace-v4-card space-y-4">
             <h2>{zh ? '股友分别做了什么' : 'Each stock friend’s day'}</h2>
-            <div className="workspace-v4-grid workspace-v4-grid-three">
+            <div className="divide-y">
               {view.accounts.map((account) => (
-                <article className="workspace-v4-card" key={account.id}>
-                  <div className="workspace-v4-identity">
+                <article className="flex items-start gap-4 py-5 first:pt-0" key={account.id}>
                     <CouncilMemberAvatar
-                      avatar={account.companionId ?? undefined}
-                      role={account.companionId ? 'researcher' : 'user'}
-                      className="size-12"
+                      avatar={account.companionId ?? 'moderator'}
+                      role="researcher"
+                      className="size-11 shrink-0"
                     />
-                    <div>
+                    <div className="min-w-0 flex-1 space-y-2">
                       <h3>{account.name}</h3>
-                      <p className="muted">
-                        {zh
-                          ? '模拟账户 · 当前状态'
-                          : 'Simulation · Current status'}
-                        : {statusLabel(account.status, zh)}
+                      <p className="text-base font-medium">
+                        {account.trades.length
+                          ? account.trades.slice(0, 2).map(trade => `${statusLabel(trade.side, zh)} ${trade.ticker} ${number(trade.quantity)}${zh ? ' 股/份' : ' units'}`).join(' · ')
+                          : zh ? '今天没有已记录的成交' : 'No recorded fills today'}
+                        {account.trades.length > 2 && (zh ? ` 等 ${account.trades.length} 笔成交` : ` · ${account.trades.length} fills in total`)}
                       </p>
-                    </div>
-                  </div>
-                  <p>
+                      {account.notExecuted.length > 0 && <p className="muted text-sm">
+                        {zh ? '未执行：' : 'Unexecuted: '}{account.notExecuted[0].ticker} · {account.notExecuted[0].reason || statusLabel(account.notExecuted[0].status, zh)}
+                      </p>}
+                  <p className="muted text-xs">
                     {zh ? '当日已记录收益' : 'Saved daily profit'}{' '}
                     {money(account.dailyPnlUsd, i18n.language)}
-                    <br />
-                    {zh ? '成交' : 'Fills'} {account.trades.length} ·{' '}
+                    {' · '}{zh ? '成交' : 'Fills'} {account.trades.length} ·{' '}
                     {zh ? '未执行委托' : 'Unexecuted orders'}{' '}
                     {account.notExecuted.length}
                   </p>
@@ -196,11 +195,12 @@ export default function DailyReportPage() {
                     </p>
                   )}
                   <Button
-                    variant="outline"
+                    variant="outline" size="sm"
                     onClick={() => setLayer(account.id)}
                   >
                     {zh ? '看交易日报' : 'Read trading daily'}
                   </Button>
+                  </div>
                 </article>
               ))}
             </div>

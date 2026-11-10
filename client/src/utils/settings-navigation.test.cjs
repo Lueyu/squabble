@@ -46,7 +46,7 @@ test('canonicalizing the settings entry keeps previously visited form panels mou
   for (const [pathname, hash] of [['/settings', ''], ['/settings', '#research-budget']]) {
     const exports = {};
     const imports = {
-      react: { useEffect() {}, useRef: current => ({ current }), useState: () => [['models', 'data'], () => {}] },
+      react: { useEffect() {}, useRef: current => ({ current }), useState: () => [['models', 'budget'], () => {}] },
       'react/jsx-runtime': { jsx, jsxs: jsx },
       'react-i18next': { useTranslation: () => ({ t: key => key }) },
       'react-router-dom': { useLocation: () => ({ pathname, hash, search: '' }), useNavigate: () => () => {} },
@@ -58,7 +58,7 @@ test('canonicalizing the settings entry keeps previously visited form panels mou
     const tree = exports.default();
     const panels = nodes(tree).filter(node => node.props?.role === 'region');
     assert.ok(panels.some(node => node.key === 'models'), 'The model draft must stay mounted during redirect');
-    assert.ok(panels.some(node => node.key === 'data'), 'The market-data draft must stay mounted during redirect');
+    assert.ok(panels.some(node => node.key === 'budget'), 'The budget draft must stay mounted during redirect');
   }
 });
 

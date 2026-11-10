@@ -31,6 +31,7 @@ import { ResearchToolsService } from '../research-tools/research-tools.service';
 import type { MemoryToolData } from '../research-memory/research-memory.context';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { financialMetadata } from '../research-core/financial-evidence-metadata';
+import { DataLibraryService } from '../data-library/data-library.service';
 
 test('real executor submissions match durable inventories across languages, refresh, API failures, reviews and native callbacks', {
   skip: !process.env.COUNCIL_TEST_DATABASE_URL,
@@ -51,18 +52,21 @@ test('real executor submissions match durable inventories across languages, refr
       '18_research_workflow.sql', '19_atomic_research_theses.sql', '20_research_memory_temporal.sql', '21_research_archive_jobs.sql', '27_research_threads.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     const db = drizzle(client), budgets = new LlmBudgetService(db), store = new CouncilWorkflowStore(db);
     const memory = new ResearchMemoryService(db, new QuoteService(db, undefined as never));
+    const library = new DataLibraryService(db);
     const llm = new LlmService({ getLlmConfig: async () => ({ source: 'server', baseUrl: 'https://fixture.invalid',
       apiKey: 'fixture', fastModel: 'fixture', slowModel: 'fixture' }) } as unknown as SettingsService, budgets);
     for (const language of ['en', 'zh-CN'] as const) {
       let apiRequests = 0, nativeRequests = 0, agreements = 0, intactUnits = 0;
       const owner = randomUUID(), cycleId = randomUUID();
       await client`INSERT INTO users(id, username, password_hash) VALUES (${owner}, ${language}, 'fixture')`;
+      const librarySource = await library.create(owner, { kind: 'page', title: 'Fixture filing source', text: 'Annual revenue 100 USD million.' });
+      const libraryReferences = [{ sourceId: librarySource.id, versionId: librarySource.latestVersionId! }];
       await budgets.saveSettings(owner, { ...await budgets.getSettings(owner), maxCallsPerTask: 30 });
       const [source] = await db.insert(councilSessions).values({ owner, profileVersion: 1, profileSnapshot: {} as never,
         ticker: 'AAPL', language, status: 'completed' }).returning();
       const [report] = await db.insert(councilReports).values({ owner, sessionId: source.id, version: 1, revision: 1,
         decision: 'wait', summary: 'A report summary is history. '.repeat(100), dissent: [], nextReviewCondition: 'Next filing', engine: 'llm',
-        evidence: [{ id: 'filing', title: 'Annual filing', content: 'Annual revenue 100 USD million.', sourceUrl: 'https://example.test/filing',
+        evidence: [{ id: 'filing', title: 'Annual filing', content: 'Annual revenue 100 USD million.', sourceUrl: 'https://example.test/filing', libraryReferences,
           metadata: financialMetadata({ ticker: 'AAPL', provider: 'SEC EDGAR', sourceUrl: 'https://example.test/filing',
             accession: '0000000123-26-000001', filed: '2026-02-01', end: '2025-12-31',
             facts: [{ concept: 'Revenues', value: 100000000, unit: 'USD', start: '2025-01-01' }] }),
@@ -113,7 +117,7 @@ test('real executor submissions match durable inventories across languages, refr
           choices: [{ message: { content: JSON.stringify(input.submitted ? { accepted: true, feedback: 'Checked.' } : result) } }] } };
       };
       let launches = 0;
-      const nativeTools = new ResearchToolsService(db, new QuoteService(db, undefined as never), {} as never, memory);
+      const nativeTools = new ResearchToolsService(db, new QuoteService(db, undefined as never), {} as never, memory, library);
       const localAgents = new LocalAgentsService({
         detectNativeAgents: async () => [{ ...providerCatalog.codex, state: 'ready' }], openNativeLogin: async () => {},
         runNativeAgent: async (_provider, prompt, run) => {
@@ -162,6 +166,7 @@ test('real executor submissions match durable inventories across languages, refr
       const first = await run();
       assert.equal(first.failure, undefined);
       assert.equal(first.latest.memory!.counts.prepared, 1, 'whole memory gets capacity before optional evidence');
+      assert.deepEqual(first.latest.libraryReferences, libraryReferences, 'actual API submission retains source provenance without copying memory text');
       assert.equal(captures[0].readOnlyToolResults[0].data.revenue, 123.45);
       assert.equal(captures[0].readOnlyToolResults[0].data.fiscalYear, 2025);
       assert.ok(captures[0].evidence.length > 0, 'history must not remove all current evidence');
@@ -194,6 +199,10 @@ test('real executor submissions match durable inventories across languages, refr
       const native = await run('work', { ...member, executionMode: 'local', agentId: 'native-codex' });
       assert.equal(native.failure, undefined); assert.equal(native.latest.memory!.submission, 'agent');
       assert.deepEqual(native.latest.memory!.submitted, native.latest.memory!.prepared);
+      assert.deepEqual(native.latest.libraryReferences, libraryReferences);
+      const [withMemoryTool] = await db.select().from(councilSessions).where(eq(councilSessions.id, created.id));
+      assert.ok(withMemoryTool.evidenceSnapshot.some(item => item.libraryReferences?.some(ref => ref.sourceId === librarySource.id)),
+        'native memory tool retains source dependencies in the current session');
       agreements++;
       const nativeReview = await run('review', { ...manager, executionMode: 'local', agentId: 'native-codex' });
       assert.equal(nativeReview.failure, undefined); assert.equal(nativeReview.latest.memory!.counts.submitted, 0);

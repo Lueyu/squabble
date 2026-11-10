@@ -11,6 +11,10 @@ for (const key of [
   'HTMLElement',
   'HTMLInputElement',
   'HTMLTextAreaElement',
+  'HTMLFormElement',
+  'FormData',
+  'DocumentFragment',
+  'getComputedStyle',
   'Element',
   'Node',
   'Event',
@@ -73,6 +77,10 @@ async function scenario(path, configure, run) {
         React.createElement('div', null, children);
   }
   const api = f.load('api/research-conversations.ts');
+  api.fetchResearchSkills = async () => [
+    { id: 'strategy', command: '/strategy', title: '聊出策略', titleEn: 'Clarify a strategy', description: '多轮问答', descriptionEn: 'Clarify together', version: '1.0.0', mode: 'interview', requiredTools: [] },
+    { id: 'financial-verification', command: '/financials', title: '财报解读', titleEn: 'Financial results', description: '核对财报', descriptionEn: 'Verify financials', version: '1.0.0', mode: 'research', requiredTools: ['get_financials'] },
+  ];
   const saved = [
     session('first', 'First saved research'),
     session('second', 'Second saved research'),
@@ -342,4 +350,48 @@ test('history deletion requires confirmation, retains a rejected running task, a
       assert.ok(document.body.textContent.includes('Second saved research'));
     },
   );
+});
+
+test('slash selection sends the chosen trusted skill in the frozen request and unknown commands never dispatch', async () => {
+  await scenario('/research', undefined, async ({ type, click, calls, settle }) => {
+    await type('/unknown Missing skill');
+    await click('Send question');
+    assert.equal(calls.length, 0);
+    await type('/fin');
+    const option = document.querySelector('[role=option]');
+    assert.ok(option.textContent.includes('/financials'));
+    await React.act(async () => option.click());
+    await settle();
+    assert.ok(document.body.textContent.includes('/financials · Financial results'));
+    await type('Why did operating cash flow change?');
+    await click('Send question');
+    assert.equal(calls[0].skillId, 'financial-verification');
+    assert.equal(calls[0].message, 'Why did operating cash flow change?');
+  });
+});
+
+test('strategy slash opens a same-room interview, keeps the original idea and never sends a model research request', async () => {
+  await scenario('/research', ({ f }) => {
+    f.load('api/portfolio-workspace.ts').portfolioWorkspaceApi.accounts = async () => [];
+    f.load('api/strategy-interviews.ts').strategyInterviewsApi.list = async () => [];
+    f.load('api/investment-strategies.ts').investmentStrategiesApi.workspace = async () => ({ drafts: [], history: [], current: null });
+  }, async ({ type, click, calls, location }) => {
+    await type('/strategy Keep a dividend strategy with low turnover');
+    await click('Send question');
+    assert.equal(calls.length, 0);
+    assert.match(location(), /research\?tab=strategies&interview=new/u);
+    assert.equal(document.querySelector('textarea').value, 'Keep a dividend strategy with low turnover');
+    assert.ok(document.body.textContent.includes('Choose an account'));
+    await click('Chats');
+    assert.equal(location(), '/research');
+  });
+});
+
+test('a library deep link submits immutable source context only after an explicit question', async () => {
+  await scenario('/research?sourceId=source-version-owner&versionId=pinned-v1', undefined, async ({ type, click, calls }) => {
+    assert.equal(calls.length, 0);
+    await type('Explain the claim in this source');
+    await click('Send question');
+    assert.deepEqual(JSON.parse(JSON.stringify(calls[0].context)), { kind: 'library', sourceId: 'source-version-owner', versionId: 'pinned-v1' });
+  });
 });

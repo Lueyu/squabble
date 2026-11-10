@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  BookOpenText, Bot, ChevronRight, Coins, Database, Palette, RefreshCw,
+  BookOpenText, Bot, ChevronRight, Coins, Palette, RefreshCw,
   ShieldCheck, SlidersHorizontal, Sparkles, Bell, Plug, type LucideIcon,
 } from 'lucide-react';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -9,7 +9,7 @@ import { SETTINGS_GROUPS, SETTINGS_SECTIONS, type SettingsSection } from './sett
 import { getAuthMode } from '@/api/auth-mode';
 
 const ICONS: Record<SettingsSection, LucideIcon> = {
-  models: Sparkles, agents: Bot, data: Database, budget: Coins, rules: SlidersHorizontal,
+  models: Sparkles, agents: Bot, budget: Coins, rules: SlidersHorizontal,
   appearance: Palette, security: ShieldCheck, updates: RefreshCw, guide: BookOpenText,
   notifications: Bell, mcp: Plug,
 };

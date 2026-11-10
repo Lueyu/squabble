@@ -121,7 +121,7 @@ export function resolveWorkspaceRoute(
     };
   if (pathname.startsWith('/strategies'))
     return {
-      section: 'friends',
+      section: 'research',
       title:
         pathname === '/strategies'
           ? zh
@@ -130,7 +130,7 @@ export function resolveWorkspaceRoute(
           : zh
             ? '聊出策略'
             : 'Strategy conversation',
-      parent: pathname === '/strategies' ? '/paper' : '/strategies',
+      parent: '/research?tab=strategies',
       kind: pathname === '/strategies' ? 'detail' : 'flow',
     };
   if (pathname.startsWith('/settings/'))

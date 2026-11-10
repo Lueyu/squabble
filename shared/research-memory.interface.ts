@@ -50,6 +50,7 @@ export interface ThesisContent {
 }
 export interface ThesisCandidateInput extends ThesisContent { expiresAt?: string | null }
 export interface ResearchMemoryItem {
+  libraryReferences?: import('./data-library.interface').DataLibraryReference[];
   id: string; ticker: string; market: Market; topic: string; language: 'zh-CN' | 'en';
   summary: string; decision: CouncilReport['decision']; excluded: boolean;
   sourceStatus: 'available' | 'source-deleted' | 'not-yet-known'; source: MemorySource | null;
@@ -57,6 +58,7 @@ export interface ResearchMemoryItem {
   thesisStructure?: 'present' | 'missing';
 }
 export interface ResearchThesis extends ThesisContent {
+  libraryReferences?: import('./data-library.interface').DataLibraryReference[];
   freshness?: ThesisFreshness;
   id: string; memoryId: string; ticker: string; market: Market; topic: string;
   status: ThesisStatus; version: number; excluded: boolean; expiresAt: string | null;
@@ -76,6 +78,7 @@ export interface ResearchMemoryInventory extends ResearchMemoryList {
   total: number; offset: number; limit: number;
 }
 export interface ResearchMemoryRecallItem {
+  libraryReferences?: import('./data-library.interface').DataLibraryReference[];
   asOf?: string;
   freshness?: ThesisFreshness;
   kind: 'history' | 'thesis'; id: string; version: number; memoryId: string;

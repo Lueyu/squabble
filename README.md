@@ -190,6 +190,7 @@ Self-hosted. Zero telemetry. Market-data services and configured AI providers re
 | Development guide | [docs/development.md](docs/development.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | AI development skill | [Squabble development and maintenance](.agents/skills/squabble-contributor/SKILL.md) |
+| Research workspace and data library | [Skills, source versions and subscriptions](docs/research-data-workspace.md) |
 
 ---
 
