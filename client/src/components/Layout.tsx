@@ -69,6 +69,7 @@ const navItems = [
   { path: '/council', label: 'council.nav', icon: Users },
   { path: '/journal', label: 'nav.journal', icon: BookOpen },
   { path: '/transactions', label: 'nav.transactions', icon: Receipt },
+  { path: '/telemetry', label: 'nav.telemetry', icon: BarChart3 },
   { path: '/settings', label: 'ui.settings.nav', icon: Settings },
 ];
 
@@ -94,7 +95,7 @@ function Layout() {
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
   const { enabled: simple } = useSimpleExperience();
-  const sectionIcons = { overview: LayoutDashboard, friends: Users, daily: BookOpen, research: FlaskConical, assets: Briefcase, data: Database, memory: Brain, settings: Settings };
+  const sectionIcons = { overview: LayoutDashboard, friends: Users, daily: BookOpen, research: FlaskConical, assets: Briefcase, data: Database, memory: Brain, telemetry: BarChart3, settings: Settings };
   const simpleItems = simple ? workspaceSections(i18n.language).map(item => ({ ...item, icon: sectionIcons[item.id], literal: true })) : [];
   const allItems = simple ? simpleItems : navItems;
   const currentRoute = resolveWorkspaceRoute(location.pathname, i18n.language);
@@ -105,8 +106,8 @@ function Layout() {
     { label: zh ? '工作区' : 'Workspace', items: simpleItems.filter(item => item.group === 'workspace') },
   ] : [
     { label: zh ? '我的投资' : 'Portfolio', items: navItems.slice(0, 4) },
-    { label: zh ? '研究与实验' : 'Research & lab', items: navItems.slice(4, 10) },
-    { label: zh ? '偏好设置' : 'Preferences', items: navItems.slice(10) },
+    { label: zh ? '研究与实验' : 'Research & lab', items: navItems.slice(4, 11) },
+    { label: zh ? '偏好设置' : 'Preferences', items: navItems.slice(11) },
   ];
 
   const toggleLang = () => {
@@ -252,6 +253,8 @@ function Layout() {
         {/* Page content */}
         <main ref={pageScrollRef} className={inSettings
           ? 'app-content app-settings-content flex min-h-0 flex-1 flex-col overflow-hidden'
+          : location.pathname === '/telemetry' || location.pathname.startsWith('/telemetry/')
+          ? 'app-content app-telemetry-content flex-1 overflow-y-auto safe-bottom'
           : location.pathname === '/council'
           ? 'app-content app-council-content app-channel-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden safe-bottom'
           : 'app-content flex-1 overflow-y-auto safe-bottom'}>

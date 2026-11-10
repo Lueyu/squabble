@@ -17,6 +17,7 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 | `portfolio-history` | Current marks and current-position historical references with public price/FX cache | Reads owned ledger inputs; writes only market-data caches; never imports research orchestration |
 | `paper-trading` | Account combinations, simulated policy/runtime, ledger and saved comparison projection | Uses research-routing; never imports experience |
 | `channel` | Source-based conversation, decisions and execution receipts | Projects authoritative research and simulated results |
+| `telemetry` | Owner-scoped operational projections, metadata capture, feedback and opt-in Langfuse export | Reads source tables with deletion fences; capture cannot change research or ledger outcomes |
 | Client `features/investment-strategies` | Strategy import, editing, review and management | Composed by pages; never imports pages |
 
 `multi-agent/` still owns retained pipeline APIs and historical reading; it is not dead code. Its shared infrastructure has moved to research-core. Settings keeps its pre-existing local LLM provider; consolidating global Settings initialization is a separate change. LLM native dispatch retains lazy ModuleRef lookup to avoid a research-core/local-agent/research-tools module cycle.
@@ -47,6 +48,12 @@ flowchart LR
     auth --> overallCommand["Explicit overall daily research request and durable receipt"]
     overallCommand --> council
     auth --> memory["Owner-scoped memory inventory and existing thesis lifecycle"]
+    auth --> telemetry["Owner-scoped Agent run analysis and explicit feedback"]
+    telemetry --> db
+    core --> capture["Metadata-only model/native/tool capture"]
+    native --> capture
+    capture --> db
+    capture -. "Operator opt-in" .-> langfuse["Configured Langfuse; no private contents"]
     auth --> library["Owned materials and financial source configuration"]
     library --> collector["Bounded public-address fetch, host-bound credentials and extraction"]
     library --> browserSession["Explicit local browser login; separately encrypted owner/source state"]
@@ -113,6 +120,8 @@ flowchart TD
     browserTool["Task-scoped read_browser_source: saved source ID only"] --> browserVersion["Owned rendered version; exact provenance and cancellation"]
     browserVersion --> materialPin
     activity["Actual tool and skill receipts; public research summaries"] --> chat["Readable per-member chat activity"]
+    activity --> observed["Operational metadata; separate from truncated chat projection"]
+    observed --> telemetryRead["Owned run/attempt/span queries; source tombstones still apply"]
     today["Research reports: facts and current report"] --> request["Owner, business date and request receipt"]
     dailyWorkspace["Daily workspace"] --> dailyFacts["Current saved ledger facts; read-only, not an archive"]
     dailyWorkspace --> reading
@@ -356,3 +365,7 @@ Schema changes keep Drizzle definitions, fresh-install SQL and registered additi
 The independent lookback uses current quantities and dated closes/FX, excluding cash, trades and dividends. It never writes or extends actual historical NAV or return chains. The client automatically uses this explicitly labelled reference when there are not enough saved observations; it replaces whole series, keeps missing data as gaps, and always permits returning to actual account records even if history fails. Reference dates use UTC calendar-day labels, not fabricated observation times; the table retains exact provider price and FX source dates. See [historical reference contracts](portfolio-history-reference.md).
 
 All five diagrams were rechecked for this refinement: system/cache and ledger-reading flows change; strategy gains explicit archive/stop authority; historical-list consumers change the report reading flow without changing sealed research, saved-result recovery or publication; channel publication/source fences remain unchanged when an account is archived.
+
+## Agent telemetry review · 2026-11-11
+
+Reviewed b57461a plus the telemetry working tree. Flows1–2 add owner-scoped run analysis, metadata capture and opt-in Langfuse export. `/telemetry` is a ninth workspace destination; research remains the owner of conversations and reports. Flows3–5 retain explicit strategy application, source-fenced channel publication and real-ledger writers; telemetry adds no execution authority. Missing identity and usage remain unknown. Export excludes prompts, completions, holdings and tool arguments. Source deletion hides operational detail and feedback; remote exported records have separate retention. See [Agent telemetry](agent-telemetry.md) for setup and verification.

@@ -16,7 +16,8 @@
       "Imported current positions: quick first render, separate current marks/reference history, public cache leases, account archive and compact report list",
       "Research chat/history, exact-version and settled-task tombstones, memory/source availability at final execution and publication; aligned assets and unchanged primary Settings navigation",
       "V5 research slash skills and strategy sidebar; versioned material library, encrypted scheduled subscriptions, financial source queries and visible source memory",
-      "Browser capture: isolated manual login, encrypted owner/source sessions, pinned public egress, token-fenced rendered versions and task-scoped read_browser_source"
+      "Browser capture: isolated manual login, encrypted owner/source sessions, pinned public egress, token-fenced rendered versions and task-scoped read_browser_source",
+      "Agent telemetry: owner-scoped run/attempt/span queries, metadata-only capture, explicit feedback, source-deletion fences and opt-in Langfuse export"
     ]
   },
   "areas": [
@@ -421,6 +422,30 @@
         "system-overview",
         "asset-ledger"
       ]
+    },
+    {
+      "id": "agent-telemetry",
+      "paths": [
+        "client/src/features/telemetry/",
+        "client/src/api/telemetry.ts",
+        "shared/telemetry.interface.ts",
+        "server/modules/telemetry/",
+        "server/database/telemetry.schema.ts",
+        "scripts/db/52_agent_telemetry.sql"
+      ],
+      "entrypoints": [
+        "shared/telemetry.interface.ts",
+        "server/database/telemetry.schema.ts",
+        "server/modules/telemetry/telemetry.module.ts"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/development-and-tests.md"
+      ],
+      "diagrams": [
+        "system-overview",
+        "research-report"
+      ]
     }
   ],
   "reviewNotes": {
@@ -469,5 +494,8 @@
     "importedPortfolioRefinement": "Reviewed b7604b8 plus working tree. Public market-data cache is the only new writer; actual NAV/research/order authority unchanged. Current mark null/date remain independent; archive serializes with final fills and retains history. All five flows reviewed; channel publication unchanged.",
     "researchRecordRefinement": "Reviewed 4d55ace plus working tree. Research workspace reuses persisted conversations with per-task drafts and frozen uncertain request identities. Additive49 records owner-scoped deletion receipts and tombstones; deleting a selected version clears exact adoption and cannot resurrect through legacy sync, while deleting a settled task retains published report history. Source availability is checked in memory, strategy resolution/final execution and channel compilation/publication. Diagrams1-4 changed; diagram5's real ledger writers remain unchanged. Assets tabs share content insets and Settings preserves ordinary primary navigation. Verification and deployment evidence are recorded separately in docs/v4-research-records-plan.md.",
     "browserSourceCollection": "Reviewed fa4a592 plus browser-source working tree. Architecture flows1-2 add explicit browser session, controlled egress, rendered source acquisition and Agent tool references. Flows3-5 preserve strategy application, channel publication and real-ledger writers; browser collection does not create financial orders. Migration51/fresh parity, lease/job/revision ownership, cancellation and session revocation are checked by fictional tests. Real credentials and personal data are not fixtures. Default Docker browser limitations, explicit local login and encrypted-state backup requirements are documented; no deployed revision is implied."
+  },
+  "notes": {
+    "agentTelemetry": "Reviewed b57461a plus telemetry working tree on 2026-11-11. Flows1-2 add operational read views and metadata export. Flows3-5 preserve explicit simulation, source-fenced publication and real-ledger writers. Migration52/fresh parity, owner isolation, source deletion, null usage, feedback and exporter failure tests are required; runtime/deployment verification is separate."
   }
 }

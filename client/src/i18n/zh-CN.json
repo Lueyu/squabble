@@ -39,7 +39,7 @@
   "nav": {
     "dashboard": "仪表盘", "holdings": "持仓", "import": "持仓导入", "watchlist": "关注",
     "analysis": "每日分析", "paper": "AI 模拟盘", "journal": "交易复盘", "transactions": "交易记录",
-    "rules": "策略规则", "notifications": "通知设置"
+    "rules": "策略规则", "notifications": "通知设置", "telemetry": "运行分析"
   },
   "layout": {
     "localWorkspace": "本地工作区",

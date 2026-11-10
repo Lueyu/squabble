@@ -225,8 +225,14 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     let nativeFailure: 'quota' | 'malformed' | null = null;
     const local = { validate: async () => undefined, execute: async (_owner: string, options: {
       prompt: string; onDispatch(): Promise<void>; onTask(ref: { taskId: string; contextId: string }): Promise<void>;
+      activityContext?: import('../../../shared/research-execution.interface').ResearchTaskActivityContext;
     }) => {
+      assert.ok(options.activityContext?.sessionId, 'native workflow retains source identity even without tools');
+      assert.ok(options.activityContext?.cycleId, 'native workflow is part of its research cycle');
+      assert.ok(options.activityContext?.memberId, 'native execution preserves the logical member');
       const input: Input = JSON.parse(options.prompt.slice(options.prompt.lastIndexOf('\n') + 1));
+      if (input.submitted) assert.ok((options.activityContext?.attempt ?? 0) >= 2,
+        'review dispatch follows the saved initial native work attempt');
       nativeCalls.push(`${input.task.key}:${input.submitted ? 'review' : 'work'}`);
       await options.onDispatch();
       const taskId = randomUUID(); await options.onTask({ taskId, contextId: randomUUID() });

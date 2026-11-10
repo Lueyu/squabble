@@ -20,6 +20,7 @@ import { executionReadiness } from './execution-readiness';
 import type { ResearchExecutionReadiness } from '../../../shared/research-execution.interface';
 import type { ModelRoute } from '../../../shared/model-route.interface';
 import { safeExecutionFailure } from '../../local-agents/failures';
+import { captureTelemetry, TelemetryCaptureService } from '../telemetry/telemetry-capture.service';
 
 interface Runtime {
   detectNativeAgents(): Promise<NativeAgentStatus[]>;
@@ -37,10 +38,12 @@ export class LocalAgentsService implements OnModuleDestroy {
   private detection?: { until: number; promise: Promise<NativeAgentStatus[]> };
   private stopping = false;
   private readonly toolCalls = new Map<string, { fingerprint: string; promise: Promise<ResearchToolResult>; controller: AbortController }>();
+  private readonly telemetryStates = new Map<string, string>();
 
   constructor(@Optional() @Inject('LOCAL_AGENT_RUNTIME') runtime?: Runtime,
     @Optional() @Inject('LOCAL_AGENT_STORE') store?: LocalAgentStore,
-    @Optional() private readonly researchTools?: ResearchToolsService) {
+    @Optional() private readonly researchTools?: ResearchToolsService,
+    @Optional() private readonly telemetry?: TelemetryCaptureService) {
     this.runtime = runtime ?? { detectNativeAgents, openNativeLogin, runNativeAgent };
     this.store = store ?? new LocalAgentStore(resolve(process.env.LOCAL_AGENTS_DATA_DIR || join(homedir(), '.squabble', 'local-agents')),
       { sharedNative: isLocalWorkspaceMode() });
@@ -151,6 +154,28 @@ export class LocalAgentsService implements OnModuleDestroy {
     return !options.signal?.aborted && await options.shouldContinue() && !options.signal?.aborted;
   }
 
+  /** Task receipts identify the executor; unreported native model/usage remains unknown. */
+  private captureTask(task: AgentTask): void {
+    if (!this.telemetry) return;
+    const fingerprint = JSON.stringify([task.state, task.usageTokens, task.error]);
+    if (this.telemetryStates.get(task.id) === fingerprint) return;
+    this.telemetryStates.set(task.id, fingerprint);
+    if (this.telemetryStates.size > 4096) this.telemetryStates.delete(this.telemetryStates.keys().next().value!);
+    const activity = task.activityContext;
+    const runId = activity?.cycleId ? `research:${activity.sessionId}:${activity.revision}:${activity.cycleId}` : `native:${task.id}`;
+    const terminal = ['completed', 'failed', 'cancelled'].includes(task.state);
+    captureTelemetry(this.telemetry, task.owner, { id: `native:${task.id}`, parentId: null, runId, sourceId: task.id,
+      sessionId: activity?.sessionId ?? task.researchScope?.sessionId ?? null,
+      revision: activity?.revision ?? task.researchScope?.revision ?? null,
+      kind: 'agent', name: 'native-execution', title: 'Agent execution', scene: 'research',
+      status: task.state === 'staged' ? 'queued' : task.state === 'cancelling' ? 'unknown' : task.state,
+      agentId: activity?.memberId ?? task.agentId, agentName: null, provider: task.provider, model: null,
+      executionMode: task.deviceId ? 'companion' : 'native', startedAt: new Date(task.createdAt).toISOString(),
+      completedAt: terminal ? new Date(task.updatedAt).toISOString() : null, durationMs: terminal ? task.updatedAt - task.createdAt : null,
+      inputTokens: null, outputTokens: null, totalTokens: typeof task.usageTokens === 'number' ? task.usageTokens : null,
+      estimatedCostUsd: null, errorCode: task.error ?? null, attempt: activity?.attempt ?? 1, traceId: null });
+  }
+
   private async launch(task: AgentTask, options: LocalAgentExecution, onSubmitted?: () => Promise<void>): Promise<void> {
     if (this.stopping || this.running.has(task.id) || !['staged', 'queued'].includes(task.state)) return;
     if (task.hasImage && !await this.imageMayContinue(options)) {
@@ -253,6 +278,7 @@ export class LocalAgentsService implements OnModuleDestroy {
       const research = options.researchScope && this.researchTools
         ? { scope: options.researchScope, bundle: await this.researchTools.bundle(owner, options.researchScope) } : undefined;
       task = await this.store.stage(owner, options.agentId, provider, options.messageId, options.prompt, 'run', agentSettings, research, image, options.signal, true, options.activityContext);
+      this.captureTask(task);
       try {
         await options.onTask({ taskId: task.id, contextId: task.id });
         await options.onDispatch?.({ inputBytes: Buffer.byteLength(researchSnapshotPrompt(options.prompt, research?.bundle.snapshot ?? ''), 'utf8') });
@@ -278,6 +304,7 @@ export class LocalAgentsService implements OnModuleDestroy {
     let progress = '';
     for (;;) {
       task = await this.store.task(owner, task.id);
+      this.captureTask(task);
       if (task.commandEmitted) await recordSubmission('companion-command');
       if (task.runtimeEntered) await recordSubmission('runtime');
       if (task.state === 'completed') return { taskId: task.id, contextId: task.id, text: task.text || '', usageTokens: task.usageTokens ?? null };
@@ -312,6 +339,7 @@ export class LocalAgentsService implements OnModuleDestroy {
       try { abandoned = await this.store.abandon(owner, task.id, running?.entered, uncertain); }
       catch { throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id); }
       finally { running?.abort.abort(); }
+      this.captureTask(abandoned);
       if (abandoned.commandEmitted) await recordSubmission('companion-command');
       if (abandoned.runtimeEntered || running?.entered) await recordSubmission('runtime');
       if (uncertain && (abandoned.commandEmitted || abandoned.runtimeEntered || running?.entered)) {
@@ -363,7 +391,11 @@ export class LocalAgentsService implements OnModuleDestroy {
             && await this.researchTools!.isCurrent(owner, latest.researchScope!);
         };
         let result = await shouldContinue()
-          ? await this.researchTools!.call(owner, task.researchScope, request, { signal, shouldContinue })
+          ? await this.researchTools!.call(owner, task.researchScope, request, { signal, shouldContinue,
+            telemetryContext: { sourceId: task.id, parentId: `native:${task.id}`,
+              runId: task.activityContext?.cycleId
+                ? `research:${task.activityContext.sessionId}:${task.activityContext.revision}:${task.activityContext.cycleId}`
+                : `native:${task.id}` } })
           : researchFailure('cancelled', 'RESEARCH_CALL_CANCELLED');
         if (!await shouldContinue()) result = researchFailure('cancelled', 'RESEARCH_TASK_INACTIVE', true);
         result = await this.store.finishToolCall(owner, taskId, request.callId, result);

@@ -956,3 +956,4 @@ export * from './strategy-interviews.schema';
 export * from './portfolio-history.schema';
 export * from './research-deletions.schema';
 export * from './data-library.schema';
+export * from './telemetry.schema';

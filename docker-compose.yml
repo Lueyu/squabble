@@ -44,6 +44,12 @@ services:
       AGENT_GATEWAY_ENABLED: "false"
       LOCAL_AGENTS_MODE: companion
       LOCAL_AGENTS_DATA_DIR: /app/.local-agents
+      # Opt-in metadata export; use an address reachable from inside this container.
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_PROJECT_URL: ${LANGFUSE_PROJECT_URL:-}
       SQUABBLE_UPDATE_MODE: ${SQUABBLE_UPDATE_MODE:-docker}
       SQUABBLE_UPDATE_BACKUP_DIR: /app/.backups
       # AGENT_GATEWAY_TOKEN: "dev-agent-token-change-me"

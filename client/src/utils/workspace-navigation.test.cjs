@@ -10,10 +10,12 @@ function navigation() {
   return fixture().load('features/navigation/workspace-navigation.ts');
 }
 
-test('all eight destinations retain old entry ownership and direct-link fallbacks', () => {
+test('all nine destinations retain old entry ownership and direct-link fallbacks', () => {
   const { workspaceSections, resolveWorkspaceRoute } = navigation();
   assert.deepEqual(Array.from(workspaceSections('en'), row => row.path),
-    ['/', '/paper', '/daily', '/research', '/holdings', '/data', '/memory', '/settings']);
+    ['/', '/paper', '/daily', '/research', '/holdings', '/data', '/memory', '/telemetry', '/settings']);
+  assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').section, 'telemetry');
+  assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').parent, '/telemetry?view=runs');
   assert.equal(resolveWorkspaceRoute('/paper/account-1/strategies', 'en').parent, '/paper/account-1');
   assert.equal(resolveWorkspaceRoute('/transactions', 'en').section, 'assets');
   assert.equal(resolveWorkspaceRoute('/watchlist', 'zh-CN').section, 'assets');

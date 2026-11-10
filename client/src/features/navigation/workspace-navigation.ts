@@ -7,6 +7,7 @@ export type WorkspaceSectionId =
   | 'assets'
   | 'data'
   | 'memory'
+  | 'telemetry'
   | 'settings';
 export interface WorkspaceSection {
   id: WorkspaceSectionId;
@@ -75,6 +76,12 @@ export function workspaceSections(language: string): WorkspaceSection[] {
       group: 'workspace',
     },
     {
+      id: 'telemetry',
+      path: '/telemetry',
+      label: zh ? '运行分析' : 'Run analytics',
+      group: 'workspace',
+    },
+    {
       id: 'settings',
       path: '/settings',
       label: zh ? '模型与设置' : 'Models & settings',
@@ -138,6 +145,13 @@ export function resolveWorkspaceRoute(
       section: 'settings',
       title: zh ? '工作区设置' : 'Workspace settings',
       parent: '/settings',
+      kind: 'detail',
+    };
+  if (pathname.startsWith('/telemetry/runs/'))
+    return {
+      section: 'telemetry',
+      title: zh ? '执行详情' : 'Run detail',
+      parent: '/telemetry?view=runs',
       kind: 'detail',
     };
   if (['/transactions', '/watchlist', '/import'].includes(pathname))

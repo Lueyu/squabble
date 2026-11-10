@@ -44,6 +44,7 @@ import { ResearchDocumentsModule } from './modules/research-documents/research-d
 import { ExperienceModule } from './modules/experience/experience.module';
 import { ChannelModule } from './modules/channel/channel.module';
 import { DataLibraryModule } from './modules/data-library/data-library.module';
+import { TelemetryModule } from './modules/telemetry/telemetry.module';
 
 /**
  * Root Nest module. Aggregates feature modules and installs the global
@@ -56,6 +57,7 @@ import { DataLibraryModule } from './modules/data-library/data-library.module';
     AuthModule,
     SettingsModule,
     LlmBudgetModule,
+    TelemetryModule,
     HealthModule,
     SystemUpdateModule,
     ResearchDocumentsModule,
