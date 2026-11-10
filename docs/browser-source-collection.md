@@ -55,6 +55,10 @@ from HTTP credentials using the instance's existing settings key. It is not
 returned by source/status APIs, sent to models or stored as article content.
 Disconnecting removes the current stored state; historical backups retain their
 matched encrypted data. Preserve the database and settings key together.
+Normal page reads may rotate an existing login session. A successful capture
+updates that encrypted state in the same fenced transaction as its content;
+anonymous reads do not establish a persistent login. Cancelled or superseded
+work cannot restore an old session.
 
 OAuth login may temporarily visit another public site, but confirmation and
 collection must end at the configured origin. Only source-applicable cookies and
@@ -69,6 +73,8 @@ are captured together; a later cross-origin navigation invalidates the capture.
 登录过期会显示需要重连；服务器缺少浏览器或无法显示窗口会说明原因。它采集当前
 配置地址的动态正文；站内其他页面可以另建来源。研究 Agent 使用专用工具调用同一
 条采集与版本流程，不获得任意浏览器操作或登录凭据。
+已有连接在采集时会保存网站更新后的会话；匿名采集不自动建立永久连接。取消、
+断开或被新任务替代的旧采集结果不能恢复过期会话。
 
 验证命令：先安装 Chromium，再运行 `npm run test:browser`。数据生命周期与工具
 集成测试还需要按开发指南配置真正独立的 PostgreSQL 测试库。不要以个人账户、真实

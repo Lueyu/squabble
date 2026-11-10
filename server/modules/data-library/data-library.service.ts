@@ -252,6 +252,7 @@ export class DataLibraryService implements OnModuleInit, OnModuleDestroy {
     if (signal?.aborted) controller.abort(); else signal?.addEventListener('abort', abort, { once: true });
     this.pendingSyncs.set(pendingKey, controller);
     let doc: ExtractedDocument | undefined, bytes = 0, errorCode: string | undefined;
+    let refreshedBrowserStateEnc: string | undefined;
     let acquisition: Acquisition = { acquisition: 'http' };
     try {
       if (controller.signal.aborted) throw new DataLibraryError('CANCELLED');
@@ -260,6 +261,7 @@ export class DataLibraryService implements OnModuleInit, OnModuleDestroy {
         const snapshot = await this.browser.read(owner, row, controller.signal);
         doc = textDocument(snapshot.text); bytes = Buffer.byteLength(snapshot.text);
         acquisition = { acquisition: snapshot.provenance, finalUrl: snapshot.url, pageTitle: snapshot.title, observedAt: snapshot.observedAt };
+        refreshedBrowserStateEnc = snapshot.refreshedStateEnc;
       } else {
         const credential = decodeDataSecret(row.secretEnc);
         if (row.authKind !== 'none' && !credential) throw new DataLibraryError('CREDENTIAL_UNREADABLE');
@@ -280,6 +282,7 @@ export class DataLibraryService implements OnModuleInit, OnModuleDestroy {
       if (controller.signal.aborted) throw new DataLibraryError('CANCELLED');
       if (!doc.text.trim()) throw new DataLibraryError('NO_CONTENT');
     } catch (e) { errorCode = e instanceof DataLibraryError || e instanceof BrowserSourceError ? e.code : 'SYNC_FAILED'; }
+    const cancelledDuringCommit = new BrowserSourceError('CANCELLED');
     const result = await this.db.transaction(async tx => {
       const [current] = await tx.select().from(sources).where(and(eq(sources.owner, owner), eq(sources.id, id))).for('update');
       if (!current || current.deletedAt || current.revision !== row.revision || !current.enabled
@@ -296,13 +299,37 @@ export class DataLibraryService implements OnModuleInit, OnModuleDestroy {
       if (doc && !errorCode) updated = await this.persistVersion(tx, current, doc, bytes, acquisition);
       const authFailed = errorCode === 'NEEDS_AUTH' || errorCode === 'CREDENTIAL_UNREADABLE';
       const [finishedSource] = await tx.update(sources).set({ leaseUntil: null, leaseToken: null, activeJobId: null,
+        ...(doc && !errorCode && row.browserStateEnc && current.browserStateEnc && refreshedBrowserStateEnc
+          ? { browserStateEnc: refreshedBrowserStateEnc } : {}),
         state: errorCode ? authFailed ? 'needs-auth' : 'failed' : updated.state,
         lastErrorCode: errorCode ?? null, updatedAt: new Date(), nextSyncAt: !authFailed && current.syncIntervalMinutes
           ? new Date(Date.now() + current.syncIntervalMinutes * 60_000) : null }).where(eq(sources.id, id)).returning();
       const [finished] = await tx.update(jobs).set({ state: errorCode === 'CANCELLED' ? 'cancelled' : errorCode ? 'failed' : 'succeeded',
         outcome: errorCode ? null : updated.versionCount > current.versionCount ? 'updated' : 'unchanged',
         versionId: errorCode ? null : updated.latestVersionId, errorCode: errorCode ?? null, finishedAt: new Date() }).where(eq(jobs.id, job.id)).returning();
+      // Abort can arrive during any awaited database write. Roll back the whole capture before settling cancellation.
+      if (!errorCode && controller.signal.aborted) throw cancelledDuringCommit;
       return { row: finishedSource, job: finished };
+    }).catch(async error => {
+      if (error !== cancelledDuringCommit) throw error;
+      return this.db.transaction(async tx => {
+        const [current] = await tx.select().from(sources).where(and(eq(sources.owner, owner), eq(sources.id, id))).for('update');
+        let settledSource = current;
+        if (current && !current.deletedAt && current.revision === row.revision && current.enabled
+          && current.activeJobId === job.id && current.leaseToken === job.leaseToken && current.captureMode === row.captureMode) {
+          [settledSource] = await tx.update(sources).set({ leaseUntil: null, leaseToken: null, activeJobId: null,
+            state: 'failed', lastErrorCode: 'CANCELLED', updatedAt: new Date(),
+            nextSyncAt: current.syncIntervalMinutes ? new Date(Date.now() + current.syncIntervalMinutes * 60_000) : null,
+          }).where(eq(sources.id, id)).returning();
+        }
+        const [saved] = await tx.select().from(jobs).where(eq(jobs.id, job.id));
+        let settledJob = saved;
+        if (saved.state === 'running') {
+          [settledJob] = await tx.update(jobs).set({ state: 'cancelled', errorCode: 'CANCELLED', finishedAt: new Date() })
+            .where(eq(jobs.id, job.id)).returning();
+        }
+        return { row: settledSource, job: settledJob };
+      });
     }).finally(() => { signal?.removeEventListener('abort', abort); this.pendingSyncs.delete(pendingKey); });
     if (!result.row || result.row.deletedAt) throw new NotFoundException('DATA_SOURCE_NOT_FOUND');
     return { source: this.view(result.row), job: this.jobView(result.job) };

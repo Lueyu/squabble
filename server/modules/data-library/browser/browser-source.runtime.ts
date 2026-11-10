@@ -175,8 +175,9 @@ export class BrowserSourceRuntime implements BrowserSourceRuntimePort {
       this.check(operation);
       return { expiresAt: new Date(operation.expiresAt).toISOString() };
     } catch (error) {
+      const mapped = this.error(operation, error);
       await this.closeOperation(operation);
-      throw this.error(operation, error);
+      throw mapped;
     }
   }
 
@@ -225,7 +226,15 @@ export class BrowserSourceRuntime implements BrowserSourceRuntimePort {
       assertSourceBrowserOrigin(content.url, operation.source!);
       assertSourceBrowserOrigin(page.url(), operation.source!);
       const snapshot = redactBrowserContent(content, state);
-      return { ...snapshot, observedAt: new Date().toISOString(), mimeType: 'text/html', provenance: 'browser-rendered' };
+      // A normal GET may rotate a login session. Only an existing explicit session can be refreshed durably.
+      const refreshedStorageState = request.storageState
+        ? JSON.stringify(sourceBrowserStorageState(state, operation.source!)) : undefined;
+      if (refreshedStorageState && refreshedStorageState.length > 2 * 1024 * 1024) {
+        throw new BrowserSourceError('RESPONSE_TOO_LARGE');
+      }
+      this.check(operation);
+      return { ...snapshot, observedAt: new Date().toISOString(), mimeType: 'text/html', provenance: 'browser-rendered',
+        ...(refreshedStorageState ? { refreshedStorageState } : {}) };
     } catch (error) { throw this.error(operation, error); }
     finally { request.signal?.removeEventListener('abort', abort); await this.closeOperation(operation); }
   }

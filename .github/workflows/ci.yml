@@ -37,6 +37,12 @@ jobs:
       - name: Install Chromium for isolated browser-collector fixtures
         run: npx playwright install --with-deps chromium
 
+      - name: Verify Chromium sandbox for isolated fixtures
+        timeout-minutes: 2
+        run: |
+          node --test scripts/check-browser-sandbox.spec.cjs
+          node scripts/check-browser-sandbox.cjs
+
       - name: Lint (eslint + stylelint + typecheck)
         run: npm run lint
 

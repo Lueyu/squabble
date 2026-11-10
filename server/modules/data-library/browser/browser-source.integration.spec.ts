@@ -14,13 +14,14 @@ function fixture() {
   let privateHits = 0;
   let proxyPort: number | undefined;
   let restoredState: unknown;
+  let rotation = 0;
   const runtime = new BrowserSourceRuntime({
     inspect: async () => ({ available: true, canOpenInteractive: true }),
     upstream: async () => undefined,
     resolve: async host => [{ address: host === 'private.site' ? '127.0.0.1' : '93.184.216.34', family: 4 }],
     launch: async (options: LaunchOptions) => {
       proxyPort = Number(new URL(options.proxy!.server).port);
-      browser = await chromium.launch({ ...options, channel: undefined, headless: true });
+      browser = await chromium.launch({ ...options, executablePath: chromium.executablePath(), channel: undefined, headless: true });
       const newContext = browser.newContext.bind(browser);
       browser.newContext = async options => {
         restoredState = options?.storageState;
@@ -44,6 +45,19 @@ function fixture() {
           }
           if (url.pathname === '/token') {
             await route.fulfill({ contentType: 'text/html', body: `<title>new-fake-cookie-secret</title><main><article>${content} new-fake-cookie-secret new-fake-storage-token normal dark theme and en locale</article></main><script>document.cookie='fixture=new-fake-cookie-secret;Secure';document.cookie='theme=dark;Secure';document.cookie='locale=en;Secure';localStorage.setItem('fake-auth',JSON.stringify({nested:{access_token:'new-fake-storage-token'}}))</script>` });
+            return;
+          }
+          if (url.pathname === '/rotating') {
+            const expected = rotation === 0 ? 'rotation-cookie-v1' : `rotation-cookie-v${rotation + 1}`;
+            if (!route.request().headers().cookie?.includes(`rotating-session=${expected}`)) {
+              await route.fulfill({ status: 403, contentType: 'text/html', body: '<main><input type="password">Fake session expired</main>' });
+              return;
+            }
+            rotation++;
+            const next = rotation + 1;
+            await route.fulfill({ contentType: 'text/html', headers: {
+              'set-cookie': `rotating-session=rotation-cookie-v${next}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+            }, body: `<title>Fictional rotating session</title><main><article>${content} rotation-cookie-v${next} rotation-storage-v${next}</article></main><script>localStorage.setItem('access_token','rotation-storage-v${next}')</script>` });
             return;
           }
           if (url.pathname === '/private-resource') {
@@ -87,6 +101,22 @@ async function assertClosed(port: number): Promise<void> {
     socket.on('connect', () => { socket.destroy(); resolve(); });
     socket.on('error', reject);
   }), { code: 'ECONNREFUSED' });
+}
+
+async function waitForFixturePage(browser: () => Browser | undefined, reading: Promise<unknown>): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  let waiting = true;
+  try {
+    await Promise.race([
+      (async () => {
+        while (waiting && !browser()?.contexts()[0]?.pages()[0]) {
+          if (Date.now() >= deadline) throw new Error('Browser fixture page was not ready within 10 seconds');
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+      })(),
+      reading.then(() => { throw new Error('Read finished before browser fixture page became ready'); }),
+    ]);
+  } finally { waiting = false; }
 }
 
 test('real Chromium renders dynamic text and does not follow pagination or retain account navigation', async () => {
@@ -206,12 +236,33 @@ test('restoring old mixed state filters third-party sessions before creating the
   } finally { await f.runtime.shutdown(); }
 });
 
+test('normal GET cookie rotation returns internal refreshed source state for the next read', async () => {
+  const f = fixture();
+  const state = JSON.stringify({ cookies: [{ name: 'rotating-session', value: 'rotation-cookie-v1', domain: 'public.site',
+    path: '/', secure: true, httpOnly: true, expires: -1, sameSite: 'Lax' }],
+  origins: [{ origin: 'https://public.site', localStorage: [{ name: 'access_token', value: 'rotation-storage-v1' }] }] });
+  try {
+    const first = await f.runtime.read({ key, url: 'https://public.site/rotating', storageState: state });
+    await assert.rejects(f.runtime.read({ key, url: 'https://public.site/rotating', storageState: state }), { code: 'NEEDS_AUTH' });
+    assert.equal(typeof first.refreshedStorageState, 'string');
+    const updated = JSON.parse(first.refreshedStorageState!);
+    assert.equal(updated.cookies.find((cookie: { name: string }) => cookie.name === 'rotating-session').value, 'rotation-cookie-v2');
+    assert.equal(updated.origins[0].localStorage.find((entry: { name: string }) => entry.name === 'access_token').value, 'rotation-storage-v2');
+    assert.doesNotMatch(`${first.text}${first.title}${first.html}`, /rotation-cookie-v2|rotation-storage-v2/u);
+    const second = await f.runtime.read({ key, url: 'https://public.site/rotating', storageState: first.refreshedStorageState });
+    assert.match(second.text, /Dynamic company/u);
+    assert.match(second.refreshedStorageState!, /rotation-cookie-v3/u);
+    const anonymous = await f.runtime.read({ key, url: 'https://public.site/token' });
+    assert.equal(anonymous.refreshedStorageState, undefined);
+  } finally { await f.runtime.shutdown(); }
+});
+
 test('owner concurrency and cancellation close the browser, release locks and stop pending navigation', async () => {
   const f = fixture();
   const controller = new AbortController();
   try {
     const reading = f.runtime.read({ key, url: 'https://public.site/slow', signal: controller.signal });
-    while (!f.browser()?.contexts()[0]?.pages()[0]) await new Promise(resolve => setTimeout(resolve, 10));
+    await waitForFixturePage(f.browser, reading);
     await assert.rejects(f.runtime.read({ key: { ...key, sourceId: 'other' }, url: 'https://public.site/article' }), { code: 'BUSY' });
     controller.abort();
     await assert.rejects(reading, { code: 'CANCELLED' });
@@ -219,6 +270,48 @@ test('owner concurrency and cancellation close the browser, release locks and st
     await assertClosed(f.proxyPort()!);
     assert.match((await f.runtime.read({ key, url: 'https://public.site/article' })).text, /Dynamic company/u);
   } finally { await f.runtime.shutdown(); }
+});
+
+test('a failed browser launch rejects fixture readiness and still closes the proxy', { timeout: 5000 }, async () => {
+  let proxyPort = 0;
+  const runtime = new BrowserSourceRuntime({
+    inspect: async () => ({ available: true, canOpenInteractive: true }),
+    upstream: async () => undefined,
+    resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+    launch: async options => {
+      proxyPort = Number(new URL(options.proxy!.server).port);
+      throw new Error('fictional browser launch failure');
+    },
+  });
+  try {
+    const reading = runtime.read({ key, url: 'https://public.site/slow' });
+    await assert.rejects(waitForFixturePage(() => undefined, reading), { code: 'NETWORK_ERROR' });
+  } finally { await runtime.shutdown(); }
+  await assertClosed(proxyPort);
+});
+
+test('interactive launch failures retain their original safe code after cleanup', async () => {
+  let proxyPort = 0;
+  const runtime = new BrowserSourceRuntime({
+    inspect: async () => ({ available: true, canOpenInteractive: true }),
+    upstream: async () => undefined,
+    resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+    launch: async options => {
+      proxyPort = Number(new URL(options.proxy!.server).port);
+      throw new Error('fictional interactive launch failure');
+    },
+  });
+  try {
+    await assert.rejects(runtime.open(key, 'https://public.site/article'), { code: 'NETWORK_ERROR' });
+    assert.equal(runtime.loginWindowOpen(key), false);
+    await assertClosed(proxyPort);
+  } finally { await runtime.shutdown(); }
+  const unavailable = new BrowserSourceRuntime({
+    inspect: async () => ({ available: false, canOpenInteractive: false }),
+    resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+  });
+  try { await assert.rejects(unavailable.open(key, 'https://public.site/article'), { code: 'UNAVAILABLE' }); }
+  finally { await unavailable.shutdown(); }
 });
 
 test('cancellation during browser startup closes the newly created process and proxy before releasing its lock', async () => {
@@ -236,7 +329,7 @@ test('cancellation during browser startup closes the newly created process and p
       proxyPort = Number(new URL(options.proxy!.server).port);
       started!();
       await gate;
-      browser = await chromium.launch({ ...options, headless: true });
+      browser = await chromium.launch({ ...options, executablePath: chromium.executablePath(), headless: true });
       return browser;
     },
   });

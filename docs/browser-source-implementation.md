@@ -53,15 +53,40 @@ source-binding gap: third-party login state and cross-origin final navigation.
 The fix filters saved/restored state to source-applicable cookies and the exact
 source origin, atomically captures content URL, then rechecks final origin after
 state capture. Forced navigation during both confirmation and read is rejected;
-normal same-origin redirects remain supported. Final targeted browser/network
-tests:17 passed, zero skips; data/API/fresh-upgrade focused tests:11 passed, zero
-skips. The independent review reported no remaining confirmed P1/P2 in scope.
+normal same-origin redirects remain supported.
+
+A later lifecycle review reproduced normal GET session rotation being lost
+between contexts. Reads with an already confirmed session now return refreshed,
+source-filtered state internally; the service redacts old and new values,
+encrypts the refresh and commits it only inside the successful fenced capture
+transaction. Anonymous reads cannot establish a durable login or change the
+manual connection timestamp. Review also reproduced cancellation during a
+blocked version insert: a final abort check now rolls back all capture writes
+before a separately fenced cancellation settlement. Tests prove successive
+V1→V2→V3 captures, stale-worker rejection, disconnect/delete/cancellation
+protection and no refreshed-state leakage into versions or model results.
+The data/HTTP/upgrade/Agent regression group passed16 tests with zero skips;
+independent review rechecked the new cases and reported no remaining confirmed
+P1/P2 in scope.
 
 One existing concurrency test treated a 1.5-second startup deadline as its
 parallelism assertion. A loaded full local run exceeded it; its two-call barrier
 still keeps both model calls blocked until both enter, now with a ten-second
 deadlock guard and proper timer cleanup. The unchanged concurrency/independence
 assertions pass in the focused rerun. Full PR checks remain mandatory.
+
+The initial Linux CI run exposed browser launch failure followed by an unbounded
+fixture readiness loop. Readiness now propagates launch rejection and has a
+deadline; fixtures use the same full Chromium binary as production. A standalone
+CI preflight preserves the actual launch cause. Only a confirmed AppArmor
+namespace denial with the kernel restriction enabled permits an exact-binary
+userns profile on the GitHub runner, following the
+[Chromium guidance](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
+It never disables Chromium sandbox or changes a global kernel restriction.
+An additional open-error regression verifies cleanup cannot turn an ordinary
+launch failure into a false cancellation. Final browser/network suite:20 passed,
+zero skips; preflight helper tests:3 passed. Independent review rechecked these
+changes; actual Linux preflight and the complete final suite remain CI gates.
 
 A public no-credential Pickalphas runtime read reached its actual login page and
 returned NEEDS_AUTH, instead of the prior static-fetch timeout. This does not

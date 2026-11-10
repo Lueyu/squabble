@@ -48,10 +48,11 @@ const deferred = () => {
   return { promise, resolve };
 };
 async function fixture(run: (context: { db: ReturnType<typeof drizzle>; runtime: FakeRuntime; browser: DataBrowserService;
-  service: DataLibraryService; owner: string; other: string }) => Promise<void>) {
+  service: DataLibraryService; owner: string; other: string; namespace: string;
+  client: ReturnType<typeof postgres>; admin: ReturnType<typeof postgres> }) => Promise<void>) {
   const namespace = `browser_lifecycle_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(databaseUrl!, { max: 1, onnotice: () => {} });
-  const client = postgres(databaseUrl!, { max: 5, onnotice: () => {}, connection: { search_path: namespace } });
+  const client = postgres(databaseUrl!, { max: 5, onnotice: () => {}, connection: { search_path: namespace, application_name: namespace } });
   const priorKey = process.env.SETTINGS_ENCRYPTION_KEY, priorMode = process.env.AUTH_MODE, priorHost = process.env.SERVER_HOST;
   process.env.SETTINGS_ENCRYPTION_KEY = 'test-only-browser-encryption-key-123456'; process.env.AUTH_MODE = 'local'; process.env.SERVER_HOST = '127.0.0.1';
   const db = drizzle(client), runtime = new FakeRuntime(), browser = new DataBrowserService(db, runtime);
@@ -59,7 +60,7 @@ async function fixture(run: (context: { db: ReturnType<typeof drizzle>; runtime:
   try {
     await admin.unsafe(`CREATE SCHEMA ${namespace}`);
     for (const file of ['50_data_library.sql', '51_browser_sources.sql']) await client.unsafe(readFileSync('scripts/db/' + file, 'utf8'));
-    await run({ db, runtime, browser, service, owner: randomUUID(), other: randomUUID() });
+    await run({ db, runtime, browser, service, owner: randomUUID(), other: randomUUID(), namespace, client, admin });
   } finally {
     service.onModuleDestroy(); await browser.onModuleDestroy(); await client.end();
     await admin.unsafe(`DROP SCHEMA ${namespace} CASCADE`); await admin.end();
@@ -139,7 +140,8 @@ test('disconnect, disable, capture mode change and delete reject late browser ca
   for (const action of ['disconnect', 'disable', 'mode', 'delete']) {
     const [source] = await addBrowser(db, owner), entered = deferred(), release = deferred();
     await browser.open(owner, source.id); await browser.confirm(owner, source.id);
-    runtime.readHandler = async request => { entered.resolve(); await release.promise; return runtime.snapshot(request.url); };
+    runtime.readHandler = async request => { entered.resolve(); await release.promise;
+      return { ...runtime.snapshot(request.url), refreshedStorageState: session.replace('test-cookie-only', 'test-cookie-revoked-v2-only') }; };
     const pending = service.sync(owner, source.id); await entered.promise;
     if (action === 'disconnect') await browser.clear(owner, source.id);
     if (action === 'disable') await service.update(owner, source.id, { enabled: false });
@@ -152,6 +154,7 @@ test('disconnect, disable, capture mode change and delete reject late browser ca
     assert.ok(runtime.closes.some(key => key.sourceId === source.id));
     const [stored] = await db.select().from(dataLibrarySources).where(eq(dataLibrarySources.id, source.id));
     if (action !== 'disable') assert.equal(stored.browserStateEnc, null);
+    else assert.equal(decodeDataSecret(stored.browserStateEnc), session);
   }
 }));
 
@@ -181,19 +184,25 @@ test('superseded lease results cannot overwrite a newer precise HTTP version', {
   assert.match((await service.version(owner, source.id, recent.job.versionId!)).extractedText, /Current response/u);
 }));
 
-test('caller cancellation and runtime timeout retain truthful job codes without publishing a version', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, service, owner }) => {
+test('caller cancellation and runtime timeout retain truthful job codes without publishing a version', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, browser, service, owner }) => {
   const [source] = await addBrowser(db, owner), entered = deferred(), release = deferred(), controller = new AbortController();
-  runtime.readHandler = async request => { entered.resolve(); await release.promise; assert.equal(request.signal?.aborted, true); return runtime.snapshot(request.url); };
+  await browser.open(owner, source.id); await browser.confirm(owner, source.id);
+  runtime.readHandler = async request => { entered.resolve(); await release.promise; assert.equal(request.signal?.aborted, true);
+    return { ...runtime.snapshot(request.url), refreshedStorageState: session.replace('test-cookie-only', 'test-cookie-cancelled-v2-only') }; };
   const pending = service.sync(owner, source.id, { signal: controller.signal }); await entered.promise; controller.abort(); release.resolve();
   const cancelled = await pending; assert.equal(cancelled.job.state, 'cancelled'); assert.equal(cancelled.job.errorCode, 'CANCELLED'); assert.equal(cancelled.job.versionId, null);
+  const [stored] = await db.select().from(dataLibrarySources).where(eq(dataLibrarySources.id, source.id));
+  assert.equal(decodeDataSecret(stored.browserStateEnc), session);
   runtime.readHandler = async () => { throw new BrowserSourceError('TIMEOUT'); };
   const timedOut = await service.sync(owner, source.id); assert.equal(timedOut.job.state, 'failed'); assert.equal(timedOut.job.errorCode, 'TIMEOUT');
   assert.equal((await db.select().from(dataLibraryJobs).where(eq(dataLibraryJobs.sourceId, source.id))).length, 2);
 }));
 
-test('an expired lease cannot publish even when no replacement worker has claimed it', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, service, owner }) => {
+test('an expired lease cannot publish even when no replacement worker has claimed it', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, browser, service, owner }) => {
   const [source] = await addBrowser(db, owner), entered = deferred(), release = deferred();
-  runtime.readHandler = async request => { entered.resolve(); await release.promise; return runtime.snapshot(request.url); };
+  await browser.open(owner, source.id); await browser.confirm(owner, source.id);
+  runtime.readHandler = async request => { entered.resolve(); await release.promise;
+    return { ...runtime.snapshot(request.url), refreshedStorageState: session.replace('test-cookie-only', 'test-cookie-expired-v2-only') }; };
   const pending = service.sync(owner, source.id); await entered.promise;
   await db.update(dataLibrarySources).set({ leaseUntil: new Date(0) }).where(eq(dataLibrarySources.id, source.id));
   release.resolve(); const result = await pending;
@@ -201,6 +210,7 @@ test('an expired lease cannot publish even when no replacement worker has claime
   assert.equal(result.job.versionId, null); assert.equal(result.source.versionCount, 0);
   const [row] = await db.select().from(dataLibrarySources).where(eq(dataLibrarySources.id, source.id));
   assert.equal(row.activeJobId, null); assert.equal(row.leaseToken, null); assert.equal(row.leaseUntil, null);
+  assert.equal(decodeDataSecret(row.browserStateEnc), session);
 }));
 
 test('browser global/source concurrency is bounded while existing HTTP capacity remains independent', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, browser, owner, other }) => {
@@ -218,4 +228,89 @@ test('browser global/source concurrency is bounded while existing HTTP capacity 
   const [http] = await db.insert(dataLibrarySources).values({ owner: randomUUID(), kind: 'website', title: 'HTTP independent capacity', format: 'html', url: first.url }).returning();
   assert.equal((await service.sync(http.owner, http.id)).job.state, 'succeeded');
   release.resolve(); await Promise.all([firstPending, secondPending]);
+}));
+
+test('consecutive browser collections persist a provider-rotated session without reconfirming login', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, browser, service, owner }) => {
+  const [source] = await addBrowser(db, owner);
+  await browser.open(owner, source.id); const confirmed = await browser.confirm(owner, source.id);
+  const rotated = session.replace('test-cookie-only', 'test-cookie-rotated-v2-only');
+  let acceptedSession = session;
+  runtime.readHandler = async request => {
+    if (request.storageState !== acceptedSession) throw new BrowserSourceError('NEEDS_AUTH');
+    acceptedSession = rotated;
+    return { ...runtime.snapshot(request.url, 'Rendered research test-cookie-rotated-v2-only'), refreshedStorageState: rotated };
+  };
+  const first = await service.sync(owner, source.id), second = await service.sync(owner, source.id);
+  assert.equal(first.job.state, 'succeeded'); assert.equal(second.job.state, 'succeeded');
+  assert.equal(runtime.reads[1].storageState, rotated);
+  const [row] = await db.select().from(dataLibrarySources).where(eq(dataLibrarySources.id, source.id));
+  assert.equal(decodeDataSecret(row.browserStateEnc), rotated);
+  assert.notEqual(row.browserStateEnc, rotated); assert.equal(row.browserConnectedAt?.toISOString(), confirmed.connectedAt);
+  assert.equal(second.job.versionId, first.job.versionId, 'a refreshed session alone must not create another content version');
+  const version = await service.version(owner, source.id, second.job.versionId!);
+  const search = await service.search(owner, { query: 'Rendered' });
+  assert.ok(!JSON.stringify([first, second, await service.detail(owner, source.id), version, search]).includes('test-cookie-rotated-v2-only'));
+  const internal = await browser.read(owner, row);
+  assert.equal(Object.hasOwn(internal, 'refreshedStorageState'), false); assert.ok(internal.refreshedStateEnc);
+}));
+
+test('caller abort during the archive transaction rolls back both new content and rotated session', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, browser, service, owner, client, admin, namespace }) => {
+  const [source] = await addBrowser(db, owner), controller = new AbortController();
+  await browser.open(owner, source.id); await browser.confirm(owner, source.id);
+  const rotated = session.replace('test-cookie-only', 'test-cookie-rotated-late-only');
+  runtime.readHandler = async request => ({ ...runtime.snapshot(request.url), refreshedStorageState: rotated });
+  await client.unsafe(`CREATE FUNCTION wait_browser_version_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN PERFORM pg_sleep(1); RETURN NEW; END $$;
+    CREATE TRIGGER wait_browser_version_insert BEFORE INSERT ON data_library_versions FOR EACH ROW EXECUTE FUNCTION wait_browser_version_insert()`);
+  const pending = service.sync(owner, source.id, { signal: controller.signal });
+  let writingVersion = false;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const rows = await admin.unsafe("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event='PgSleep'", [namespace]);
+    if (rows.length) { writingVersion = true; break; }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.ok(writingVersion, 'the caller must cancel while the database is writing the new version');
+  controller.abort(); const result = await pending;
+  assert.equal(result.job.state, 'cancelled'); assert.equal(result.job.errorCode, 'CANCELLED'); assert.equal(result.job.versionId, null);
+  const [row] = await db.select().from(dataLibrarySources).where(eq(dataLibrarySources.id, source.id));
+  assert.equal(row.versionCount, 0); assert.equal(decodeDataSecret(row.browserStateEnc), session); assert.equal(row.activeJobId, null);
+  assert.equal((await db.select().from(dataLibraryVersions).where(eq(dataLibraryVersions.sourceId, source.id))).length, 0);
+}));
+
+test('anonymous browser collection strips refreshed state without creating a durable login', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, browser, service, owner }) => {
+  const [source] = await addBrowser(db, owner);
+  const anonymousState = session.replace('test-cookie-only', 'test-cookie-anonymous-v2-only');
+  runtime.readHandler = async request => ({ ...runtime.snapshot(request.url, 'Rendered research test-cookie-anonymous-v2-only'), refreshedStorageState: anonymousState });
+  const capture = await service.sync(owner, source.id);
+  assert.equal(capture.job.state, 'succeeded'); assert.equal(capture.source.hasBrowserSession, false);
+  const [row] = await db.select().from(dataLibrarySources).where(eq(dataLibrarySources.id, source.id));
+  assert.equal(row.browserStateEnc, null); assert.equal(row.browserConnectedAt, null);
+  const internal = await browser.read(owner, row);
+  assert.equal(Object.hasOwn(internal, 'refreshedStorageState'), false); assert.equal(internal.refreshedStateEnc, undefined);
+  const version = await service.version(owner, source.id, capture.job.versionId!);
+  assert.ok(!JSON.stringify([capture, version]).includes('test-cookie-anonymous-v2-only'));
+}));
+
+test('a superseded browser capture cannot overwrite a newer persisted rotated session', { skip: !databaseUrl }, async () => fixture(async ({ db, runtime, browser, service, owner }) => {
+  const [source] = await addBrowser(db, owner), entered = deferred(), release = deferred();
+  await browser.open(owner, source.id); await browser.confirm(owner, source.id);
+  const staleState = session.replace('test-cookie-only', 'test-cookie-stale-v2-only');
+  const currentState = session.replace('test-cookie-only', 'test-cookie-current-v3-only');
+  let reads = 0;
+  runtime.readHandler = async request => {
+    reads++;
+    if (reads === 1) {
+      entered.resolve(); await release.promise;
+      return { ...runtime.snapshot(request.url, 'Stale captured research'), refreshedStorageState: staleState };
+    }
+    return { ...runtime.snapshot(request.url, 'Current captured research'), refreshedStorageState: currentState };
+  };
+  const pending = service.sync(owner, source.id); await entered.promise;
+  await db.update(dataLibrarySources).set({ leaseUntil: new Date(0) }).where(eq(dataLibrarySources.id, source.id));
+  const replacement = new DataLibraryService(db, undefined, browser);
+  const recent = await replacement.sync(owner, source.id); release.resolve(); const stale = await pending;
+  assert.equal(recent.job.state, 'succeeded'); assert.equal(stale.job.errorCode, 'SYNC_INTERRUPTED');
+  const [row] = await db.select().from(dataLibrarySources).where(eq(dataLibrarySources.id, source.id));
+  assert.equal(row.latestVersionId, recent.job.versionId); assert.equal(row.versionCount, 1);
+  assert.equal(decodeDataSecret(row.browserStateEnc), currentState);
 }));

@@ -7,9 +7,13 @@ import { sourceId } from './data-library.requests';
 import { decodeDataSecret, encodeDataSecret } from './data-library.secrets';
 import { BrowserSourceRuntime } from './browser/browser-source.runtime';
 import { redactBrowserSessionValues } from './browser/browser-content';
-import { BrowserSourceError, type BrowserSourceKey, type BrowserSourceRuntimePort } from './browser/browser-source.types';
+import { BrowserSourceError, type BrowserSourceKey, type BrowserSourceReadResult, type BrowserSourceRuntimePort } from './browser/browser-source.types';
 
 type SourceRow = typeof sources.$inferSelect;
+interface BrowserCapture extends Omit<BrowserSourceReadResult, 'refreshedStorageState'> {
+  /** Internal only. The library may commit this inside its successful capture transaction. */
+  refreshedStateEnc?: string;
+}
 /** Owns encrypted browser sessions; raw state never crosses the runtime boundary. */
 @Injectable()
 export class DataBrowserService implements OnModuleDestroy {
@@ -100,15 +104,22 @@ export class DataBrowserService implements OnModuleDestroy {
     return this.status(owner, id);
   }
   cancel(owner: string, id: string) { return this.runtime.close(this.key(owner, id)); }
-  async read(owner: string, row: SourceRow, signal?: AbortSignal) {
+  async read(owner: string, row: SourceRow, signal?: AbortSignal): Promise<BrowserCapture> {
     const storageState = decodeDataSecret(row.browserStateEnc);
     if (row.browserStateEnc && !storageState) throw new BrowserSourceError('NEEDS_AUTH');
-    const result = await this.runtime.read({ key: this.key(owner, row.id), url: row.url!, storageState: storageState ?? undefined, signal });
-    if (!storageState) return result;
+    const { refreshedStorageState, ...result } = await this.runtime.read({
+      key: this.key(owner, row.id), url: row.url!, storageState: storageState ?? undefined, signal,
+    });
     // A provider can reflect session values in visible text. Strip those before archiving.
-    let state: unknown;
-    try { state = JSON.parse(storageState); } catch { throw new BrowserSourceError('NEEDS_AUTH'); }
-    const safe = (text: string) => redactBrowserSessionValues(text, state);
-    return { ...result, text: safe(result.text), title: safe(result.title), url: safe(result.url), html: Buffer.alloc(0) };
+    const states: unknown[] = [];
+    try {
+      if (storageState) states.push(JSON.parse(storageState));
+      if (refreshedStorageState) states.push(JSON.parse(refreshedStorageState));
+    } catch { throw new BrowserSourceError('NEEDS_AUTH'); }
+    const safe = (text: string) => states.reduce<string>((value, state) => redactBrowserSessionValues(value, state), text);
+    return { ...result, text: safe(result.text), title: safe(result.title), url: safe(result.url), html: Buffer.alloc(0),
+      // Anonymous reads never create a durable login. Manual confirmation owns connectedAt.
+      ...(storageState && refreshedStorageState ? { refreshedStateEnc: encodeDataSecret(refreshedStorageState) } : {}),
+    };
   }
 }

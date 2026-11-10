@@ -36,6 +36,8 @@ export interface BrowserSourceReadResult {
   observedAt: string;
   mimeType: 'text/html';
   provenance: 'browser-rendered';
+  /** Internal only: encrypt and strip before archiving or returning a snapshot. Never log or expose to clients/Agents. */
+  refreshedStorageState?: string;
 }
 
 export interface BrowserSourceRuntimePort {

@@ -10,6 +10,7 @@ import { councilSessions } from '../../database/council.schema';
 import { dataLibrarySources, dataLibraryVersions } from '../../database/data-library.schema';
 import { DataLibraryService } from '../data-library/data-library.service';
 import { DataBrowserService } from '../data-library/data-browser.service';
+import { encodeDataSecret } from '../data-library/data-library.secrets';
 import { BrowserSourceError, type BrowserSourceRuntimePort } from '../data-library/browser/browser-source.types';
 import { ResearchToolsService } from './research-tools.service';
 import type { ResearchToolScope } from '../../../shared/research-tools.interface';
@@ -35,6 +36,8 @@ test('Agent browser collection archives the exact owned rendered version and can
     const [source, other] = await db.insert(dataLibrarySources).values([owner, foreign].map(account => ({
       owner: account, kind: 'website', title: 'Fictional rendered filing', format: 'html',
       url: 'https://reports.fixture-provider.org/article', captureMode: 'browser', enabled: true,
+      browserStateEnc: encodeDataSecret(JSON.stringify({ cookies: [{ name: 'session', value: 'fixture-browser-session-v1' }], origins: [] })),
+      browserConnectedAt: new Date(),
     }))).returning();
     let reads = 0;
     let waitForCancellation = false;
@@ -56,10 +59,11 @@ test('Agent browser collection archives the exact owned rendered version and can
             if (request.signal?.aborted) cancel(); else request.signal?.addEventListener('abort', cancel, { once: true });
           });
         }
-        const text = 'Fictional rendered disclosure: revenue USD 1000000 for the stated annual period. Source gaps remain explicit.';
+        const text = 'Fictional rendered disclosure: revenue USD 1000000 for the stated annual period. Source gaps remain explicit. Reflected fixture-browser-session-v2';
         return { url: request.url, title: 'Fictional JS-rendered disclosure', text,
           html: Buffer.from(`<main><h1>Fictional disclosure</h1><p>${text}</p></main>`),
-          observedAt: new Date().toISOString(), mimeType: 'text/html', provenance: 'browser-rendered' };
+          observedAt: new Date().toISOString(), mimeType: 'text/html', provenance: 'browser-rendered',
+          refreshedStorageState: JSON.stringify({ cookies: [{ name: 'session', value: 'fixture-browser-session-v2' }], origins: [] }) };
       },
       close: async () => undefined,
       shutdown: async () => undefined,
@@ -85,6 +89,8 @@ test('Agent browser collection archives the exact owned rendered version and can
     assert.equal(version.acquisition, 'browser-rendered');
     assert.equal(version.finalUrl, source.url);
     assert.match(JSON.stringify(result.data), new RegExp(version.id));
+    assert.doesNotMatch(JSON.stringify(result), /fixture-browser-session-v[12]|refreshedStorageState|refreshedStateEnc/u);
+    assert.doesNotMatch(JSON.stringify(version), /fixture-browser-session-v[12]|refreshedStorageState|refreshedStateEnc/u);
     const [saved] = await db.select().from(councilSessions).where(eq(councilSessions.id, session.id));
     assert.deepEqual(saved.evidenceSnapshot.at(-1)?.libraryReferences, [{ sourceId: source.id, versionId: version.id }]);
     assert.doesNotMatch(JSON.stringify(result), /storageState|browserStateEnc|secretEnc|cookies/u);
