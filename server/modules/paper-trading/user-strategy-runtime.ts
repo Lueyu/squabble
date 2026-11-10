@@ -44,9 +44,9 @@ export function isSameInvestorEntry(candidate: { accountId?: string; userStrateg
 export function compileInvestorRules(snapshot: ConfirmedInvestmentStrategy, config: InvestmentConfig, allocationPct = 100): MandateRule[] {
   return snapshot.preview.directives.map(directive => ({
     id: investorRuleId(snapshot.id, directive.entryId), ticker: directive.ticker, side: directive.side,
-    trigger: { kind: directive.trigger.kind === 'price_lte' ? 'price_below' : 'price_above', value: directive.trigger.price ?? 1e-8 },
+    trigger: { kind: directive.trigger.kind === 'price_lte' || directive.trigger.kind === 'price_lt' ? 'price_below' : 'price_above', value: directive.trigger.price ?? 1e-8 },
     referencePrice: directive.trigger.price ?? 1,
-    minPrice: directive.minPrice ?? (directive.side === 'sell' && directive.trigger.kind === 'price_gte' ? directive.trigger.price! : 1e-8), maxPrice: directive.maxPrice ?? (directive.side === 'buy' && directive.trigger.kind === 'price_lte' ? directive.trigger.price! : 1e12),
+    minPrice: directive.minPrice ?? (directive.side === 'sell' && (directive.trigger.kind === 'price_gte' || directive.trigger.kind === 'price_gt') ? directive.trigger.price! : 1e-8), maxPrice: directive.maxPrice ?? (directive.side === 'buy' && (directive.trigger.kind === 'price_lte' || directive.trigger.kind === 'price_lt') ? directive.trigger.price! : 1e12),
     maxPositionPct: Math.min(config.limits.maxPositionPct, config.positionCaps[directive.ticker] ?? 100),
     stopLossPrice: directive.stopLossPrice ?? 0, expiresAt: directive.endsAt,
     evidenceIds: snapshot.sources.filter(source => directive.sourceKeys.includes(source.key) && source.versionId).map(source => source.versionId!),

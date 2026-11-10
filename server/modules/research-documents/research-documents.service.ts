@@ -355,6 +355,7 @@ export class ResearchDocumentsService {
       fields = { summary: row.report.summary, dissent: row.report.dissent, nextReviewCondition: row.report.nextReviewCondition,
         evidence: row.report.evidence, researchStance: row.report.researchStance, thesisCandidates: row.report.thesisCandidates };
       snapshot = { businessDate:row.session.checkpoint?.simple?.contextDate??businessDate(row.report.createdAt,timezone),generatedAt:row.report.createdAt.toISOString(),evidence: row.report.evidence, inputRevision: row.report.revision, sessionId: row.session.id,
+        ...(row.session.checkpoint?.simple?.overallDaily ? { overallDaily: row.session.checkpoint.simple.overallDaily } : {}),
         scene: row.session.scene, subject: row.session.subject, period: row.session.period, references: row.session.references,
         resolvedReferences: row.session.resolvedReferences, parentSessionId: row.session.parentSessionId,
         parentMessageId: row.session.parentMessageId, inheritedContext: row.session.inheritedContext, continuationSummary: row.session.continuationSummary,

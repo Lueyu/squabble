@@ -30,6 +30,7 @@ import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from 
 import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
 import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
 import { dailyResearchMembers } from './council.daily';
+import type { OverallDailyEvidence } from '../../../shared/daily-workspace.interface';
 
 const key = z.string().trim().min(1).max(200);
 const message = z.string().trim().min(1).max(2000);
@@ -40,7 +41,8 @@ const context = z.discriminatedUnion('kind', [z.object({ kind: z.literal('portfo
 const createSchema = z.object({ message, requestKey: key, context: context.optional() }).strict();
 const messageSchema = z.object({ message, requestKey: key, replyTo: z.uuid().optional() }).strict();
 const renameSchema = z.object({ title: z.string().trim().min(1).max(160), requestKey: key }).strict();
-type InternalOptions = { automaticTaskId?: string; researchOnly?: boolean };
+type InternalOptions = { automaticTaskId?: string; researchOnly?: boolean;
+  overallDaily?: { date: string; capture: () => Promise<OverallDailyEvidence> } };
 interface FrozenContext { ticker: string; scene: 'stock' | 'portfolio_daily' | 'period_strategy' | 'trade_post_review'; label: string;
   contextDate?: string; references: ReportReference[]; resolvedReferences: ResolvedReportReference[]; evidence: CouncilEvidence[] }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -70,12 +72,25 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
         if(receipt.status!=='idle'||receipt.revision!==1||receipt.checkpoint?.inflight||receipt.checkpoint?.remote||(receipt.checkpoint?.simple?.calls??0)>0){
           await this.closeInitializingReceipt(receipt.owner,receipt.id,'问题已保留，请明确继续本讨论。 / Your question is saved. Resume this conversation explicitly.');return;
         }
-        try{await this.initializeMembers(receipt.owner,receipt.id,await this.resolveMembers(receipt.owner));}
+        try{await this.initializeMembers(receipt.owner,receipt.id,await this.resolveMembers(receipt.owner),!receipt.checkpoint?.simple?.overallDaily);}
         catch{await this.closeInitializingReceipt(receipt.owner,receipt.id,'股友配置检查未完成，请重新继续本讨论。 / Member configuration could not be checked. Resume this conversation.');}
       })();
       this.initializingReceipts.set(receipt.id,job);
       try{await job;}finally{if(this.initializingReceipts.get(receipt.id)===job)this.initializingReceipts.delete(receipt.id);}
     }
+    // A committed overall receipt may outlive a process exit before start. Startup only exposes recovery.
+    const saved = await this.db.select().from(councilSessions).where(and(eq(councilSessions.status, 'idle'),
+      sql`${councilSessions.checkpoint}->'simple'->'overallDaily' IS NOT NULL`));
+    for (const receipt of saved) await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, receipt.owner);
+      const [row] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, receipt.owner), eq(councilSessions.id, receipt.id))).for('update');
+      const checkpoint = row?.checkpoint;
+      if (row?.status !== 'idle' || !checkpoint?.simple?.overallDaily || checkpoint.simple.initializing
+        || checkpoint.inflight || checkpoint.remote || (checkpoint.simple.calls ?? 0) > 0) return;
+      await tx.update(councilSessions).set({ status: 'paused', revision: row.revision + 1,
+        error: '资料已保存，模型尚未派发。请明确继续已有日报。 / Saved inputs are ready; explicitly continue this daily report.', updatedAt: new Date() })
+        .where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
+    });
   }
 
   private async closeInitializingReceipt(owner:string,id:string,error:string):Promise<void>{
@@ -89,11 +104,29 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
 
   async create(owner: string, input: CreateResearchConversationInput, options: InternalOptions = {}): Promise<ResearchConversationResult> {
     const value = parse(createSchema, input);
-    const inputHash = hash({ operation: 'create', ...value });
+    const inputHash = hash({ operation: 'create', ...value, ...(options.overallDaily ? { overallDaily: options.overallDaily.date } : {}) });
     const [prior] = await this.db.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
     if (prior) { this.same(prior.inputHash, inputHash); return this.get(owner, prior.sessionId); }
-    const frozen = await this.resolveContext(owner, value.context, value.message);
+    const overallInput = options.overallDaily ? await options.overallDaily.capture() : undefined;
+    if (overallInput && (!options.researchOnly || value.context?.kind !== 'portfolio' || value.context.date !== overallInput.facts.date
+      || options.overallDaily!.date !== overallInput.facts.date || overallInput.facts.timezone !== 'Asia/Shanghai'
+      || overallInput.facts.personal.businessDate !== overallInput.facts.date || overallInput.facts.accounts.some(account => account.date !== overallInput.facts.date))) {
+      throw new BadRequestException('OVERALL_DAILY_CONTEXT_MISMATCH');
+    }
+    const overallDaily = overallInput ? { date: overallInput.facts.date, timezone: 'Asia/Shanghai' as const,
+      readAt: overallInput.facts.readAt, factsHash: hash(overallInput) } : undefined;
+    const frozen: FrozenContext | Extract<ResearchConversationResult, { needsInput: unknown }> = overallInput ? {
+      ticker: 'PORTFOLIO', scene: 'portfolio_daily', label: `总体日报 ${overallInput.facts.date} / Overall daily`, contextDate: overallInput.facts.date,
+      references: overallInput.personalHistory.sources.map(source => ({ versionId: source.versionId })), resolvedReferences: [],
+      evidence: [{ id: `context:overall-daily:${overallDaily!.factsHash}`, title: `Overall daily ${overallInput.facts.date} · Asia/Shanghai`,
+        content: JSON.stringify(overallInput), role: 'fundamental', evidenceType: 'other', sourceName: 'Frozen owner context',
+        sourceUrl: null, fetchedAt: overallInput.facts.readAt, relevanceScore: 1 }],
+    } : await this.resolveContext(owner, value.context, value.message);
     if ('needsInput' in frozen) return frozen;
+    if (overallInput && frozen.references.length) {
+      if (!this.documents) throw new BadRequestException('Report documents unavailable');
+      frozen.resolvedReferences = await this.documents.resolveReferences(owner, frozen.references);
+    }
     const pendingMembers=this.resolveMembers(owner).catch(()=>({members:[] as CouncilMember[],executors:[] as ActualExecutor[]}));
     let timer:ReturnType<typeof setTimeout>|undefined;
     const immediate=await Promise.race([pendingMembers,new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),100);})]);
@@ -107,12 +140,12 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       if (existing) { this.same(existing.inputHash, inputHash); return { id: existing.sessionId, created: false }; }
       const checkpoint = newCheckpoint(members, { independent: true });
       checkpoint.simple = { ...checkpoint.simple!, executors, contextLabel: frozen.label, contextDate: frozen.contextDate,commonEvidence: frozen.evidence,
-        automaticTaskId: options.automaticTaskId,researchOnly:options.researchOnly,initializing };
+        automaticTaskId: options.automaticTaskId,researchOnly:options.researchOnly,overallDaily,initializing };
       const config = normalizeBuilderConfig({ name: 'Research conversation', template: 'guard', tickers: [frozen.ticker], minimumRating: 'Buy',
         customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1, notifyOnProposal: false, priceRules: [], language: 'zh-CN' });
       config.council = { enabled: true, members, webResearch: false };
       const [session] = await tx.insert(councilSessions).values({ owner, profileVersion: 1, profileSnapshot: config,
-        ticker: frozen.ticker, scene: frozen.scene, title: [...value.message].slice(0, 48).join(''), subject: value.message.slice(0, 240),
+        ticker: frozen.ticker, scene: frozen.scene, title: overallInput ? frozen.label : [...value.message].slice(0, 48).join(''), subject: value.message.slice(0, 240),
         references: frozen.references, resolvedReferences: frozen.resolvedReferences, evidenceSnapshot: frozen.evidence,
         checkpoint, status: members.length||initializing ? 'idle' : 'paused', error: members.length||initializing ? null : '连接 AI 后可生成分析。 / Connect an available AI to generate research.' }).returning();
       await tx.insert(councilMessages).values({ owner, sessionId: session.id, role: 'user', memberName: 'You', content: value.message,
@@ -171,6 +204,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       if (!row) throw new NotFoundException('Research conversation not found');
       const [prior] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
       if (prior) { this.same(prior.inputHash, inputHash); return false; }
+      if (row.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
       if (value.replyTo) {
         const [reply] = await tx.select({ id: councilMessages.id }).from(councilMessages).where(and(eq(councilMessages.owner, owner), eq(councilMessages.sessionId, id), eq(councilMessages.id, value.replyTo)));
         if (!reply) throw new BadRequestException('Reply message must belong to this conversation');
@@ -191,7 +225,8 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
         || !row.profileSnapshot.council?.members.length);
       const checkpoint = convert ? newCheckpoint(actual.members, { independent: true }) : row.checkpoint;
       if (convert && checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, executors: actual.executors, commonEvidence: row.evidenceSnapshot,
-        contextDate:row.checkpoint?.simple?.contextDate,contextLabel:row.checkpoint?.simple?.contextLabel };
+        contextDate:row.checkpoint?.simple?.contextDate,contextLabel:row.checkpoint?.simple?.contextLabel,
+        researchOnly:row.checkpoint?.simple?.researchOnly,overallDaily:row.checkpoint?.simple?.overallDaily };
       if (checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, automaticTaskId: options.automaticTaskId,
         steeringRevision: (checkpoint.simple.steeringRevision ?? 0) + 1 };
       await tx.update(councilSessions).set({ revision, updatedAt: new Date(), continuationSummary,
@@ -223,7 +258,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
   }
 
   private same(stored: string, current: string): void { if (stored !== current) throw new ConflictException('REQUEST_KEY_CONFLICT'); }
-  private async initializeMembers(owner:string,id:string,resolved:{members:CouncilMember[];executors:ActualExecutor[]}){
+  private async initializeMembers(owner:string,id:string,resolved:{members:CouncilMember[];executors:ActualExecutor[]},start=true){
     const ready=await this.db.transaction(async tx=>{
       await lockMemoryOwner(tx,owner);const [row]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
       if(!row?.checkpoint?.simple?.initializing)return false;
@@ -238,7 +273,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
         status:resolved.members.length?'idle':'paused',error:resolved.members.length?null:'尚未连接可执行的 AI 股友。 / No executable AI member is connected.',updatedAt:new Date()}).where(eq(councilSessions.id,id));
       return resolved.members.length>0;
     });
-    if(ready)await this.start(owner,id);
+    if(ready&&start)await this.start(owner,id);
   }
   private async start(owner: string, id: string): Promise<void> {
     try { await this.council.runSession(owner, id); }

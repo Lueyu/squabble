@@ -14,6 +14,8 @@ export class PortfolioWorkspaceController {
   detail(@Req() req: Request, @Param('accountId') id: string) { return this.workspace.detail(req.userContext.userId, id); }
   @NeedLogin() @Patch(':accountId')
   rename(@Req() req: Request, @Param('accountId') id: string, @Body() input: unknown) { return this.workspace.rename(req.userContext.userId, id, input); }
+  @NeedLogin() @Patch(':accountId/companion')
+  companion(@Req() req: Request, @Param('accountId') id: string, @Body() input: unknown) { return this.workspace.setCompanion(req.userContext.userId, id, input); }
   @NeedLogin() @Post(':accountId/pause')
   pause(@Req() req: Request, @Param('accountId') id: string, @Body() input: unknown) { return this.workspace.switchStatus(req.userContext.userId, id, input, false); }
   @NeedLogin() @Post(':accountId/resume')

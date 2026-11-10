@@ -36,6 +36,18 @@ export interface InvestmentStartRequest {
   confirmNoCash?: boolean; cashAvailable?: Record<string, number>; sellableShares?: Record<string, number>;
   adoptAccountId?: string;
 }
+export interface CustomSimulationHolding {
+  ticker: string;
+  shares: number;
+  /** Reference cost only. The new experiment is valued using current market data. */
+  historicalCost?: number;
+}
+export interface CustomSimulationCash { currency: 'USD' | 'HKD' | 'CNY'; amount: number }
+export type InvestmentPreviewRequest =
+  | { origin: 'holdings'; requestKey: string }
+  | { origin: 'cash'; cash: CustomSimulationCash; requestKey: string }
+  | { origin: 'account'; sourceAccountId: string; requestKey: string }
+  | { origin: 'custom'; holdings: CustomSimulationHolding[]; cash: CustomSimulationCash[]; requestKey: string };
 export interface InvestmentRemoveStrategyRequest {
   strategyId: string; expectedRevision: number; expectedPolicyRevision: number; requestKey: string;
 }

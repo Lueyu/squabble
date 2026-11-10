@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, Plus, Wallet } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -18,15 +18,33 @@ import CreateSimulationAccount from './CreateSimulationAccount';
 import AccountStatusControl from './AccountStatusControl';
 import LegacyDecisionPage from './LegacyDecisionPage';
 import { accountColor } from '@/features/portfolio-comparison/comparison-chart-options';
+import type { PortfolioCompanionId } from '@shared/portfolio-workspace.interface';
+import CompanionIdentity from '@/features/companions/CompanionIdentity';
+import CompanionPicker from '@/features/companions/CompanionPicker';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 export default function SimulationAccountsPage() {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const returnState = { returnTo: `${location.pathname}${location.search}` };
+  const library = params.get('view') === 'library';
+  const setLibrary = (open: boolean) => {
+    const next = new URLSearchParams(params);
+    if (open) next.set('view', 'library'); else next.delete('view');
+    setParams(next, { replace: true });
+  };
+  const [selectedCompanion, setSelectedCompanion] = useState<PortfolioCompanionId>('value');
   const [creating, setCreating] = useState(
     () => params.get('seedReal') === '1' || params.get('create') === '1',
   );
-  const [filter, setFilter] = useState('all');
+  const filter = ['running', 'paused', 'archived'].includes(params.get('status') ?? '') ? params.get('status')! : 'all';
+  const setFilter = (value: string) => {
+    const next = new URLSearchParams(params);
+    if (value === 'all') next.delete('status'); else next.set('status', value);
+    setParams(next, { replace: true });
+  };
   const accounts = useQuery({
     queryKey: portfolioWorkspaceKeys.accounts,
     queryFn: portfolioWorkspaceApi.accounts,
@@ -61,28 +79,34 @@ export default function SimulationAccountsPage() {
       ? simulationStrategyPath(id, strategyId)
       : `${simulationAccountPath(id)}${orderId ? `?orderId=${encodeURIComponent(orderId)}` : ''}`;
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-7">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+    <div className="portfolio-page companion-accounts-page">
+      <header className="portfolio-page-header">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-[26px]">
-            {zh ? '模拟账户' : 'Simulation accounts'}
+            {zh ? '我的股友' : 'My companions'}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {zh
-              ? '把不同的投资想法，放进各自独立的账户。'
-              : 'Give each investment idea its own independent account.'}
+              ? '把不同的投资想法，放进各自独立的模拟仓。'
+              : 'Give each investment idea its own independent simulation.'}
           </p>
         </div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setLibrary(true)}>{zh ? '认识股友' : 'Meet the companions'}</Button>
         <Button onClick={() => setCreating(true)}>
           <Plus size={16} />
-          {zh ? '新建模拟账户' : 'New account'}
-        </Button>
+          {zh ? '新建模拟仓' : 'New simulation'}
+        </Button></div>
       </header>
       <p className="max-w-3xl text-sm leading-7 text-muted-foreground">
         {zh
           ? '每个账户独立资金、持仓、策略组合与运行状态。对照表现时再放到同一张图里。'
           : 'Each account has its own funds, holdings, strategy combination and status. Compare them together on the overview.'}
       </p>
+      <nav className="companion-secondary-nav" aria-label={zh ? '股友工具' : 'Companion tools'}>
+        <Link to="/strategies">{zh ? '我的策略库' : 'My strategies'}<ArrowRight size={14} /></Link>
+        <Link to="/strategies/new">{zh ? '一起聊出策略' : 'Clarify a strategy'}<ArrowRight size={14} /></Link>
+        <Link to="/">{zh ? '在总览看多仓曲线' : 'Compare account histories'}<ArrowRight size={14} /></Link>
+      </nav>
       {(strategyId || orderId) && (
         <div
           role="status"
@@ -161,8 +185,8 @@ export default function SimulationAccountsPage() {
           </h2>
           <p className="max-w-md text-sm leading-7 text-muted-foreground">
             {zh
-              ? '复制真实持仓或使用模拟现金建立起点，再核对策略组合。'
-              : 'Copy real holdings or use virtual cash as the starting point, then review your strategies.'}
+              ? '选择股友与起点，核对持仓和现金，再配置策略组合。'
+              : 'Choose a companion and starting point, review holdings and cash, then configure your strategies.'}
           </p>
           {!items.length && (
             <Button onClick={() => setCreating(true)}>
@@ -171,13 +195,14 @@ export default function SimulationAccountsPage() {
           )}
         </section>
       )}
-      <div className="space-y-5">
+      <div className="companion-account-grid">
         {filtered.map((account) => (
           <article
             key={account.id}
-            className="rounded-2xl border bg-card p-5 sm:p-6"
+            className="companion-account-card"
           >
-            <div className="flex flex-wrap items-center justify-between gap-6">
+            <div className="companion-account-card-body">
+              <CompanionIdentity id={account.companionId} zh={zh} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-3">
                   <span
@@ -186,7 +211,7 @@ export default function SimulationAccountsPage() {
                     style={{ backgroundColor: accountColor(account.id, account.colorIndex) }}
                   />
                   <h2 className="break-words text-lg font-semibold">
-                    <Link to={targetPath(account.id)}>{account.name}</Link>
+                    <Link to={targetPath(account.id)} state={returnState}>{account.name}</Link>
                   </h2>
                   <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
                     {accountStatusLabel(account.status, zh)}
@@ -215,14 +240,14 @@ export default function SimulationAccountsPage() {
                 </p>
               </div>
               <Button asChild>
-                <Link to={targetPath(account.id)}>
+                <Link to={targetPath(account.id)} state={returnState}>
                   {strategyId
                     ? zh
                       ? '选择此账户'
                       : 'Choose account'
                     : zh
-                      ? '管理账户'
-                      : 'Manage account'}
+                      ? '看看这个模拟仓'
+                      : 'Open simulation'}
                   <ArrowRight size={15} />
                 </Link>
               </Button>
@@ -250,7 +275,14 @@ export default function SimulationAccountsPage() {
           ? '归档后保留估值记录、持仓快照、已确认策略及成交历史，可随时回看。'
           : 'Archived accounts retain valuation records, holdings snapshots, confirmed strategies and trade history.'}
       </p>
-      {creating && <CreateSimulationAccount onClose={closeCreate} />}
+      <Dialog open={library} onOpenChange={setLibrary}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl">
+        <DialogHeader><DialogTitle>{zh ? '找到合拍的动物股友' : 'Find your animal companion'}</DialogTitle>
+          <DialogDescription>{zh ? '每种视角都有长处，也有盲点。动物形象不自动修改研究成员或交易规则。' : 'Every perspective has strengths and blind spots. Animal identity does not change research members or trading rules.'}</DialogDescription></DialogHeader>
+        <CompanionPicker value={selectedCompanion} onChange={setSelectedCompanion} zh={zh} expanded />
+        <footer className="flex justify-end"><Button onClick={() => { setLibrary(false); setCreating(true); }}>{zh ? '和这位股友新建模拟仓' : 'Create a simulation with this companion'}</Button></footer>
+      </DialogContent></Dialog>
+      {creating && <CreateSimulationAccount onClose={closeCreate} initialCompanionId={selectedCompanion}
+        initialOrigin={params.get('seedReal') === '1' ? 'holdings' : 'cash'} />}
     </div>
   );
 }

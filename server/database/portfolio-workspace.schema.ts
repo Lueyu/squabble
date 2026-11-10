@@ -1,6 +1,15 @@
 import { boolean, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import type { ConfirmedInvestmentStrategy } from '../../shared/user-investment-strategy.interface';
-import type { PortfolioAllocationInput, PortfolioStrategyAssignment } from '../../shared/portfolio-workspace.interface';
+import type { PortfolioAllocationInput, PortfolioCompanionId, PortfolioStrategyAssignment } from '../../shared/portfolio-workspace.interface';
+
+/** Companion identity is intentionally stored outside policy and ledger records. */
+export const portfolioAccountCompanions = pgTable('portfolio_account_companions', {
+  owner: text('owner').notNull(),
+  accountId: uuid('account_id').notNull(),
+  companionId: text('companion_id').$type<PortfolioCompanionId>().notNull(),
+  revision: integer('revision').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [uniqueIndex('portfolio_account_companion_identity').on(t.owner, t.accountId)]);
 
 export const portfolioStrategyAssignments = pgTable('portfolio_strategy_assignments', {
   id: uuid('id').primaryKey().defaultRandom(),

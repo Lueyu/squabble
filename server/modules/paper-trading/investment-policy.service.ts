@@ -111,6 +111,9 @@ export class InvestmentPolicyService {
     if (prior) { if (prior.requestHash !== hash) throw new ConflictException('REQUEST_KEY_CONFLICT'); return this.previewView(prior); }
     let seed: SimulationSeed; let sourcePreviewId: string | null = null;
     if (request.origin === 'holdings') { const source = await this.simulations.preview(owner); seed = source.seed; sourcePreviewId = source.id; }
+    else if (request.origin === 'account') seed = await this.simulations.previewAccount(owner, request.sourceAccountId);
+    else if (request.origin === 'custom') seed = await this.simulations.previewCustom(
+      request.holdings.map(holding => ({ ...holding, ticker: holding.ticker ?? '' })), request.cash);
     else {
       const cash = request.cash!;
       seed = await this.simulations.previewCash(owner, cash.currency, cash.amount);

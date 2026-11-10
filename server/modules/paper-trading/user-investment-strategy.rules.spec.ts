@@ -19,6 +19,19 @@ test('free text remains an observation without inventing a trade or numbers', ()
   assert.equal(preview.directives.length, 0);
   assert.equal(preview.revision, 3);
 });
+test('strict comparison and explicitly selected daily frequency survive normalization and preview', () => {
+  const draft = input();
+  draft.entries[0].directive!.trigger.kind = 'price_lt';
+  draft.entries[0].directive!.executionFrequency = { kind: 'per_trading_day', maxExecutions: 1 };
+  const preview = previewStrategy(normalizeStrategyDraft(draft), [], 1, now);
+  assert.equal(preview.directives[0].trigger.kind, 'price_lt');
+  assert.deepEqual(preview.directives[0].executionFrequency, { kind: 'per_trading_day', maxExecutions: 1 });
+  assert.match(preview.entries[0].explanation.en, /strictly|price </);
+  assert.match(preview.entries[0].explanation.en, /trading day/);
+  const invalid = structuredClone(draft);
+  (invalid.entries[0].directive!.executionFrequency as { maxExecutions: number }).maxExecutions = 2;
+  assert.throws(() => normalizeStrategyDraft(invalid));
+});
 test('a reviewed concrete price and quantity compiles without fabricated stop loss or investment bounds', () => {
   const preview = previewStrategy(normalizeStrategyDraft(input()), [], 4, now);
   assert.equal(preview.entries[0].state, 'executable');

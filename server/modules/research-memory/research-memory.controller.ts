@@ -5,7 +5,7 @@ import type { z } from 'zod';
 import { NeedLogin } from '../../common/platform';
 import { ResearchMemoryService } from './research-memory.service';
 import { ResearchMonitorService } from './research-memory.monitor.service';
-import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema,
+import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema, memoryInventoryQuerySchema,
   archiveImportSchema, archiveQuerySchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -18,6 +18,10 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 @Controller('api/research-memory')
 export class ResearchMemoryController {
   constructor(private readonly memory: ResearchMemoryService, private readonly archives: ResearchArchiveService, private readonly monitors: ResearchMonitorService) {}
+
+  @Get('inventory') inventory(@Req() request: Request, @Query() query: unknown) {
+    return this.memory.inventory(request.userContext.userId, parse(memoryInventoryQuerySchema, query));
+  }
 
   @Get('theses/:id/monitors') monitorsForThesis(@Req() request: Request, @Param('id') id: string) {
     return this.monitors.view(request.userContext.userId, parse(memoryIdSchema, id));

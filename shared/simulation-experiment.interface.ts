@@ -8,6 +8,8 @@ export interface SimulationCash {
   availabilityKnown: boolean; sourceUpdatedAt?: string;
 }
 export interface SimulationSeed {
+  /** Frozen provenance. These are current forward experiments, never historical replays. */
+  origin?: { kind: 'real_holdings' | 'cash' | 'simulation_account' | 'custom_holdings'; accountId?: string; accountName?: string };
   sourceRevision: string; capturedAt: string; valuationStartedAt?: string; positions: SimulationSeedPosition[]; cash: SimulationCash[];
   /** Real recorded cash before optional virtual funding, for source-change comparisons. */
   copiedCash?: Array<{ currency: string; total: string }>;

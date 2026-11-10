@@ -19,7 +19,10 @@ import {Select,SelectContent,SelectItem,SelectTrigger,SelectValue} from '@/compo
 export default function SimpleCouncilPage(){
  const {i18n}=useTranslation(),language=i18n.language,c=channelText(language);
  const client=useQueryClient(),navigate=useNavigate(),[params,setParams]=useSearchParams();
- const [message,setMessage]=useState(''),[pending,setPending]=useState(false),[receipt,setReceipt]=useState(false);
+ const [message,setMessage]=useState(()=>params.get('question')?.slice(0,2000)??''),[pending,setPending]=useState(false),[receipt,setReceipt]=useState(false);
+ const importedQuestion=useRef(params.get('question'));
+ useEffect(()=>{const incoming=params.get('question');if(incoming===importedQuestion.current)return;importedQuestion.current=incoming;
+  if(incoming)setMessage(current=>current.trim()?current:incoming.slice(0,2000));},[params]);
  const [history,setHistory]=useState(Boolean(params.get('session')||params.get('sessionId')));
  const [logs,setLogs]=useState(false),[pendingOpen,setPendingOpen]=useState(false),[priorId,setPriorId]=useState<string|null>(null);
  const [context,setContext]=useState(()=>contextFromSearch(params));

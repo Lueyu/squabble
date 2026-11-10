@@ -4,6 +4,20 @@ import type { ConfirmedInvestmentStrategy } from './user-investment-strategy.int
 /** Enabled combinations share the execution profile's bounded symbol capacity. */
 export const PORTFOLIO_COMBINATION_MAX_SECURITIES = 100;
 
+/** A companion is presentation metadata, never investment or execution authority. */
+export const PORTFOLIO_COMPANION_IDS = ['value', 'growth', 'risk', 'technical', 'news', 'macro', 'moderator'] as const;
+export type PortfolioCompanionId = typeof PORTFOLIO_COMPANION_IDS[number];
+export interface PortfolioCompanionRequest {
+  companionId: PortfolioCompanionId;
+  expectedRevision: number;
+  requestKey: string;
+}
+export interface PortfolioCompanionResult {
+  accountId: string;
+  companionId: PortfolioCompanionId;
+  companionRevision: number;
+}
+
 export interface PortfolioAllocationInput {
   strategyId: string;
   strategyRevision: number;
@@ -23,6 +37,8 @@ export interface PortfolioAccountSummary {
   equityUsd: string | null;
   cashBalance: string;
   strategyCount: number;
+  companionId?: PortfolioCompanionId | null;
+  companionRevision?: number;
 }
 export interface PortfolioAccountDetail extends PortfolioAccountSummary {
   investment: AiInvestmentView;

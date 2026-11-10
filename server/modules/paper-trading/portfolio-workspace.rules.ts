@@ -1,8 +1,14 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { investmentSecurityKey } from './investment-policy.rules';
-import { PORTFOLIO_COMBINATION_MAX_SECURITIES } from '../../../shared/portfolio-workspace.interface';
+import { PORTFOLIO_COMBINATION_MAX_SECURITIES, PORTFOLIO_COMPANION_IDS } from '../../../shared/portfolio-workspace.interface';
 import type { PortfolioCombinationIssue, PortfolioStrategyAssignment } from '../../../shared/portfolio-workspace.interface';
+
+export const workspaceCompanionSchema = z.object({
+  companionId: z.enum(PORTFOLIO_COMPANION_IDS),
+  expectedRevision: z.number().int().nonnegative(),
+  requestKey: z.string().regex(/^[a-zA-Z0-9_-]{8,128}$/u),
+}).strict();
 
 export const workspaceMutationSchema = z.object({
   expectedPolicyRevision: z.number().int().positive(),

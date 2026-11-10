@@ -52,6 +52,7 @@ test('canonicalizing the settings entry keeps previously visited form panels mou
       'react-router-dom': { useLocation: () => ({ pathname, hash, search: '' }), useNavigate: () => () => {} },
       './settings-navigation': navigation,
       '@/api/auth-mode': { getAuthMode: () => 'account' },
+      '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
     };
     vm.runInNewContext(output, { exports, require: name => imports[name] ?? {} });
     const tree = exports.default();

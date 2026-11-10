@@ -14,6 +14,7 @@ export function seedRevision(source: SeedSource): string {
 }
 /** A read-only economic comparison, separate from the preview's stricter CAS revision. */
 export function sourceLedgerRevision(source: SeedSource | SimulationSeed): string | null {
+  if ('positions' in source && source.origin && source.origin.kind !== 'real_holdings') return null;
   const decimal = (value: unknown): string | null => {
     if (typeof value !== 'string' || !/^\+?\d+(?:\.\d+)?$/.test(value)) return null;
     const [whole, fraction = ''] = value.replace(/^\+/, '').split('.');

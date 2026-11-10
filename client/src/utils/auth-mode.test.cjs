@@ -112,6 +112,8 @@ test('local sidebar replaces account identity and logout with the workspace labe
       '../hooks/use-theme': { useTheme: () => ({ theme: 'light' }) },
       '@/api/http': { hasSession: () => true }, '@/api/auth-mode': { getAuthMode: () => mode },
       '@/hooks/use-simple-experience': { useSimpleExperience: () => ({ enabled: false }) },
+      '@/features/navigation/workspace-navigation': load('features/navigation/workspace-navigation.ts'),
+      '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
     });
     const tree = nodes(layout.default());
     const names = tree.map(node => node.type?.name);
@@ -158,6 +160,7 @@ test('local settings hides account security on desktop and mobile and redirects 
   for (const mode of ['local', 'account']) {
     const imports = { react, 'react/jsx-runtime': { jsx, jsxs: jsx }, 'react-i18next': language,
       '@/api/auth-mode': { getAuthMode: () => mode }, './settings-navigation': navigation,
+      '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
       'react-router-dom': { NavLink: 'NavLink', useNavigate: () => () => {} },
     };
     const menu = nodes(load('pages/Settings/SettingsNavigation.tsx', imports).default({ active: 'models' }));

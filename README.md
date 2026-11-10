@@ -12,6 +12,8 @@ An open-source investing workspace.
 Independent research and reverse checks produce a daily report.
 A sourced channel follows meaningful changes and keeps decisions in your hands.
 
+The [AI companion workspace](docs/ai-friend-v4.md) adds independent animal companions, a large multi-account chart, persistent strategy clarification and clear navigation across reports, data and memory.
+
 **US · HK · China A-shares** · **English / Chinese** · **Self-hosted** · **Zero telemetry**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

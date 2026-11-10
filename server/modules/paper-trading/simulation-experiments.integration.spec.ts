@@ -59,6 +59,9 @@ test('real snapshot creates an immutable independent opening ledger with idempot
       cashAvailable: { USD: '1000' }, sellableShares: { AAPL: '5' } };
     await assert.rejects(experiments.create(stranger, request), /Preview not found/);
     const [first, retry] = await Promise.all([experiments.create(owner, request), experiments.create(owner, request)]);
+    // Node's fake Date does not change PostgreSQL CURRENT_TIMESTAMP. Keep this
+    // opening inventory in the fixture's November 5 timeline for later splits.
+    await db.update(paperPositions).set({ openedAt: new Date(first.seed!.capturedAt) }).where(eq(paperPositions.accountId, first.id));
     assert.equal(first.id, retry.id);
     assert.notEqual(first.id, oldAccount.id);
     assert.equal((await db.select().from(paperOrders)).length, 0, 'opening balance must not fabricate buy orders');
@@ -244,6 +247,7 @@ test('real snapshot creates an immutable independent opening ledger with idempot
     assert.equal(Number(feeSell.filledPrice), 99.9, 'sell slippage is adverse');
     const feeBuy = await paper.placeOrder(feeOwner, { ticker: 'AAPL', side: 'buy', quantity: 1 }, 'manual', undefined, true);
     assert.equal(Number(feeBuy.filledPrice), 100.1, 'buy slippage is adverse');
+    await db.update(paperTrades).set({ createdAt: new Date() }).where(eq(paperTrades.accountId, feeAccount.id));
     const feeCash = (await experiments.get(feeOwner, feeAccount.id)).cash[0];
     assert.ok(Math.abs(Number(feeCash.available) - 899.84995) < 1e-8, 'buy fee is debited in native currency');
     assert.ok(Math.abs(Number(feeCash.unsettled) - 99.85005) < 1e-8, 'sell fee reduces unsettled proceeds');

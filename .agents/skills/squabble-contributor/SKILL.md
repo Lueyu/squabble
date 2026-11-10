@@ -15,6 +15,7 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 4. 明确是当前简化体验还是保留的旧流程，再打开对应入口。当前 `/council` 通过 `SimpleCouncilPage` 进入频道；旧 `CouncilPage` 和 `multi-agent/` 分析仍存在。
 5. 当前 `/` 为账户表现总览，`/paper` 为多模拟仓列表，`/paper/:accountId/strategies` 管理该仓组合；比较和频道账户选择是只读操作，不替代显式应用。旧无账户接口保留歧义与托管账户保护。
 6. 共享研究基础在 `server/modules/research-core/`，执行器选择在 `research-routing/`；策略界面在 `client/src/features/investment-strategies/`。不要把旧目录名当作功能归属；中文阅读顺序见 `docs/code-reading.zh-CN.md`。
+7. V4 新入口为 `/daily`、`/research`、`/data`、`/memory`；策略问答在 `client/src/features/strategy-interview/` 和 `/strategies`。访谈采纳与执行授权分开；已保存预览只能通过只读 `GET /api/strategy-interviews/:id/review` 恢复，不得重新生成时丢失观察意图。导航返回/滚动逻辑在 `features/navigation/`，通知/MCP 复用面板在 `features/integrations/`。
 
 所有反引号内的仓库路径都相对于选定仓库；参考文件之间的链接相对于 skill。
 

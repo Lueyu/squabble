@@ -2,6 +2,17 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fixture = require('./simple-test-loader.cjs');
 
+test('companion changes address one account with their own revision and cannot silently change policy authority', async () => {
+  const f = fixture();
+  const { portfolioWorkspaceApi: api } = f.load('api/portfolio-workspace.ts');
+  assert.equal(typeof api.setCompanion, 'function');
+  const input = { companionId: 'macro', expectedRevision: 0, requestKey: 'choose-friend' };
+  await api.setCompanion('account/a', input);
+  assert.equal(f.state.requests[0].args[0], '/api/ai-investment/accounts/account%2Fa/companion');
+  assert.deepEqual(f.state.requests[0].args[1], input);
+  await assert.rejects(api.setCompanion('', input), /explicit simulation account/);
+});
+
 test('every account read and write requires explicit identity and preserves it in URLs and cache keys', async () => {
   const f = fixture();
   const { portfolioWorkspaceApi: api, portfolioWorkspaceKeys: keys } = f.load(

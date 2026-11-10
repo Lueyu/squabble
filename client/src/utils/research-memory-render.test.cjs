@@ -54,6 +54,17 @@ const thesis = { id: 'old-thesis', memoryId: 'outside-history-cap', ticker: 'TES
   sourceStatus: 'available', source, citations: [], flags: ['provenance_unknown'], freshness: 'unknown', excluded: false, expiresAt: null,
   createdAt: '2026-08-20T00:00:00Z', updatedAt: '2026-08-20T00:00:00Z' };
 const render = (Component, props) => renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(Component, props)));
+
+test('an inventory selection reads the exact old claim beyond the recent-source cap and fails closed when unavailable', () => {
+  const Panel = load('pages/Council/CouncilMemoryPanel.tsx').CouncilMemoryPanel;
+  listing = { theses: [], memories: [] };
+  liveThesis = { data: { ...thesis, status: 'candidate', claim: 'Exact old paged claim' } };
+  const props = { ticker: 'TEST', selection: { kind: 'thesis', id: thesis.id } };
+  assert.match(render(Panel, props), /Exact old paged claim/);
+  liveThesis = { data: { ...thesis, claim: 'Cached stale selected claim' }, error: Error('not found') };
+  assert.doesNotMatch(render(Panel, props), /Cached stale selected claim/);
+  liveThesis = {};
+});
 test('dossier leads with active claims and visible boundaries before folded history in both languages', () => {
   const Panel = load('pages/Council/CouncilMemoryPanel.tsx').CouncilMemoryPanel;
   listing = { theses: [thesis], memories: [{ id: 'recent', ticker: 'TEST', topic: 'general', summary: 'Recent historical report',

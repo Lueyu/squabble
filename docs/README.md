@@ -13,6 +13,8 @@ remain disabled account drafts until explicitly applied.
 
 | Goal / 目标 | Guide / 指南 |
 |---|---|
+| Navigate V4, clarify a strategy and manage companions / V4 导航、策略问答与股友 | [AI companion workspace / AI 股友工作区](ai-friend-v4.md) |
+| Understand V4 account and daily contracts / V4 账户、日报与记忆契约 | [Portfolio workspace](v4-portfolio-workspace.md) · [Daily and memory](v4-daily-and-memory-workspace.md) · [Verification](v4-delivery.md) |
 | Run the Web app locally / 本地运行 Web | [Local setup](self-hosting.md#docker-compose) · [本地安装](self-hosting.zh-CN.md#docker-compose) |
 | Follow a report through simulation / 从报告走到模拟盘 | [Assets, reports and strategies / 资产、报告与策略](assets-reports-strategy.md) |
 | Read stock-friend opinions and execution updates / 阅读股友观点与执行动态 | [Channel workbench / 频道](channel-workbench.md) |

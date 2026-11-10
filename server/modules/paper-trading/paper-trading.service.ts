@@ -453,7 +453,8 @@ export class PaperTradingService {
         } else if (plan.profileId !== builderProfile.id || plan.profileVersion !== builderProfile.version
           || plan.status !== 'active' || plan.expiresAt.getTime() <= now || Date.parse(strategyRule.expiresAt) <= now
           || strategySnapshot.schedule.tradingDate !== plan.marketDate || Math.abs(price.price / candidate.price - 1) > 0.005
-          || strategyRule.side !== dto.side || !strategyTriggerMatches(strategyRule, price.price, strategySnapshot.indicators)) {
+          || strategyRule.side !== dto.side || !strategyTriggerMatches(strategyRule, price.price, strategySnapshot.indicators)
+          || strategyRule.userDirective && !strategyTriggerMatches(strategyRule, execution.price, strategySnapshot.indicators)) {
           throw new BadRequestException('Entry plan is expired, superseded or price moved');
         }
         if (!protectiveStrategyStop) {

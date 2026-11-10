@@ -12,6 +12,8 @@
 独立研究与反向核查形成每日报告。
 有事实依据的频道持续跟进变化，由你拍板。
 
+[AI 股友工作区](docs/ai-friend-v4.md)提供独立动物股友、多仓大图、可保存的多轮策略问答，以及清晰的日报、数据与记忆导航。
+
 **美股 · 港股 · A 股** · **中英双语** · **自托管** · **零埋点**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

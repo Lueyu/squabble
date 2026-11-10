@@ -2,7 +2,7 @@
 
 Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent investing assistant: portfolio-aware research, coordinated agents, readable reports, a stock-friend channel and explicitly applied simulated strategies.
 
-**Structural review — 2026-11-09:** inspected `9e2d83a` plus the portfolio-workspace working tree. All five diagrams were checked: system routes/read projections, account strategy combinations and channel account identity changed; the real-ledger diagram adds its saved-observation reader. The research diagram changes its page entry only: independent submissions, saved-result recovery and immutable publication retain their authority boundaries. This is a source review, not a release or deployed-instance certification.
+**Structural review — 2026-11-10:** inspected `98f073e` plus the V4 working tree. All five diagrams were checked: new workspace routes, read-only daily/memory projections, persistent interviews, companion metadata and explicit execution frequency affect the system and strategy flows. Daily reading adds real/fill ledger consumers and exact-version research reading; notification configuration moves into Settings while channel publication remains source-fenced. Research independent submissions, saved-result recovery, immutable publication and real-ledger writer boundaries remain authoritative. This is a source review, not a release or deployed-instance certification.
 
 The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
@@ -32,6 +32,17 @@ flowchart LR
     auth --> channel["Channel projection and actions"]
     auth --> strategy["Independent simulation accounts and strategy combinations"]
     auth --> ledger["Recorded real assets and imports"]
+    auth --> interview["Persistent strategy questions and explicit acceptance"]
+    interview --> strategy
+    auth --> daily["Read-only overall daily ledger projection"]
+    auth --> overallCommand["Explicit overall daily research request and durable receipt"]
+    overallCommand --> council
+    auth --> memory["Owner-scoped memory inventory and existing thesis lifecycle"]
+    auth --> persona["Companion display metadata; separate revision and receipts"]
+    interview --> db
+    daily --> db
+    memory --> db
+    persona --> db
     experience --> council["Independent research and publication"]
     council --> core["Shared research core: models, evidence and portfolio context"]
     legacy["Retained analysis APIs"] --> core
@@ -65,12 +76,20 @@ flowchart LR
 
 Protected controllers derive owner from `req.userContext.userId`; services scope reads/writes and joins by that owner. `AUTH_MODE=local` selects one local workspace identity and requires loopback binding with no proxy trust. Account mode uses first-party login and sessions. These are application ownership guarantees, not a blanket PostgreSQL RLS claim. Credentials are encrypted private settings; native task files and import images are private runtime artifacts, not fixture sources. See [privacy](privacy.md) and [local agents](local-agents.md).
 
+V4 uses eight owning destinations: overview, companions, daily, research, assets, data, memory and settings. `features/navigation/workspace-navigation.ts` owns route/parent classification and safe internal return paths; `use-workspace-navigation.ts` records React Router history and restores content scroll or direct hash targets. Existing URLs remain compatible, including `/paper#notifications` to the Settings integration. `features/strategy-interview/` owns authoring UI, `features/companions/` owns display preferences and shared `components/AnimalAvatar.tsx` preserves the original SVGs. Feature code does not import pages. Search is a destination catalog, not an implicit AI action.
+
+`GET /api/daily-workspace?date=` reads personal saved facts, all owned simulation facts and exact research versions using a repeatable-read, read-only transaction. This projection is not itself a frozen published report. `GET /api/research-memory/inventory` is an owner-only paginated source inventory; existing thesis lifecycle/version controls retain their authority. Provider configuration, import receipts, notification channels and scoped MCP sessions are composed into explicit workspaces without claiming new connection health or model adoption metrics.
+
 <a id="research-report"></a>
 ## 2. Research and immutable reports
 
 ```mermaid
 flowchart TD
     today["Research reports: facts and current report"] --> request["Owner, business date and request receipt"]
+    dailyWorkspace["Daily workspace"] --> dailyFacts["Current saved ledger facts; read-only, not an archive"]
+    dailyWorkspace --> reading
+    dailyWorkspace -->|"Explicit generation request"| overallFacts["Freeze all account facts, gaps and bounded historical personal inputs"]
+    overallFacts --> request
     request --> frozen["Complete frozen holdings, cash, limits and source times"]
     frozen --> fit["Atomic owner input and full-request limit"]
     fit -->|"Fits"| independent["Independent source checks"]
@@ -86,8 +105,8 @@ flowchart TD
     archive --> saved["Saved report formatting recovery"]
     saved -->|"Visibility and generation fences; no model rerun"| reading
     review["Saved simulation review envelope"] --> reviewProjection["Readable historical review projection"]
-    archive --> handoff["Exact typed plan draft handoff"]
-    archive --> channelSource["Channel report and findings"]
+    archive -->|"Eligible ordinary reports"| handoff["Exact typed plan draft handoff"]
+    archive -->|"Eligible ordinary reports"| channelSource["Channel report and findings"]
     independent --> interrupted["Interrupted or incomplete state retained"]
     reverse --> interrupted
     summary --> interrupted
@@ -117,6 +136,12 @@ Provider completion and local acceptance are separate states. When a native task
 
 `server/modules/research-documents/research-documents.service.ts` publishes immutable content/sections/snapshots and maintains mutable document pointers and revocation state separately. `research-documents.rules.ts` hashes recursively canonicalized payloads; exact versions and section references survive later revisions. `CurrentResearchService.getDailyReports` separates the initial daily report from later discussion reports. A newer discussion does not overwrite what the initial report said. Availability time, data-as-of time and provenance are retained.
 
+V4 `DailyWorkspaceResearchService` adds an explicit `POST /api/daily-workspace/research` with `{date, requestKey}` and a read-only GET for status/history. It supplies frozen `OverallDailyEvidence` internally after the existing durable request lookup; clients cannot provide owner or facts. The evidence contains every owned account's dated saved fills, pending/failed/unexecuted orders and gaps, personal saved-ledger facts, and at most five available historical personal-portfolio inputs with exact version IDs. Today's stored holdings/cash are labelled read-time records; historical dates exclude current holdings. This is a current reading of saved historical records, not an exchange-close reconstruction. Missing history remains explicit.
+
+The entire evidence is one mandatory frozen owner-context item through independent submissions, reverse check and summary. API/native budget gates may reject oversized context; they cannot silently clip account facts. `overallDaily` in the checkpoint and immutable report snapshot records the Shanghai date, read time and facts hash. Overall reports remain separate from ordinary initial/discussion reports and automatic channel/strategy handoff. Publication creates neither a strategy nor a fill. Browsing the page or replaying a create receipt never starts research.
+
+Explicit recovery preserves the original cycle, frozen facts and remaining budget. It can start an idle receipt interrupted before dispatch, release the original independent barrier after failed members were recovered, or retry a failed API summary without repeating completed openings. Native saved-result recovery keeps its task, revision, result and uncertain-provider fences. Independent results publish once and native usage is not counted twice. Generic rerun, message and fork operations cannot convert a completed overall report into another ordinary cycle; a new overall run requires its dedicated explicit request.
+
 **Report-reading update checked against `f0fb2a0` (PR #80):** `CurrentResearchService.reformat` and `reconcile` recover saved daily-research and legacy portfolio results, including older formatting receipts that stored a session ID. This reuses saved source material without another model call, and preserves owner, visibility, revocation and generation fences. `returnedDocumentId` exposes the exact returned archive while the last complete current report remains visible. Recovery writes current-view/task receipts; it is not a read-only diagnostic.
 
 `client/src/pages/Analysis/SimpleReportReader.tsx` uses `shared/simulation-review-reading.ts` to project valid saved simulation-review envelopes into readable historical sections. It does not rewrite archived reports, fill unknown values with zero or present a missing execution plan as a review failure. Report history filters/labels daily research, stock research and simulation ledger reviews; a ledger review points back to holdings research. Archived reviews without observation timestamps retain an explicit unknown-coverage warning. The research/report diagram includes these reading and recovery paths; the other four flows were unchanged by PR #80.
@@ -130,10 +155,17 @@ The older `server/modules/multi-agent/pipeline.service.ts` bull/bear/critic/risk
 flowchart TD
     real["Recorded real holdings and cash"] --> seed["Explicit preview with quote and FX gaps"]
     virtual["Chosen virtual opening cash"] --> seed
+    ownedPaper["Owned simulation snapshot"] --> seed
+    custom["Reviewed custom positions and cash"] --> seed
     seed --> create["Confirm named independent account; existing accounts unchanged"]
     source["Exact report version, section or released opinion"] --> readable["Validate readable source; retain exact content and hash"]
     readable --> typed["Validated typed proposal or bounded prose observations"]
     typed --> draft["Owner strategy library: editable draft"]
+    idea["Original investor wording; fixed target account"] --> questions["Persist questions, suggestions, accepted answers and provenance"]
+    questions --> acceptAnswer["Explicit acceptance; revisions invalidate previous review"]
+    acceptAnswer --> savedReview["Saved strategy revision, preview hash and deterministic examples"]
+    savedReview --> draft
+    savedReview --> restoreReview["Read-only restoration; preserve observation intent"]
     draft --> target["Choose account; add disabled allocation to saved draft"]
     create --> target
     target --> preview["Review source revisions, budgets, conflicts and combination hash"]
@@ -143,6 +175,8 @@ flowchart TD
     authority --> runtime["One account policy, profile and compiled mandate"]
     runtime --> schedule["Account-scoped trigger, quote, market and review checks"]
     schedule --> order["Final source, allocation, shared-cash and account-risk fences"]
+    frequency["Explicit once or per-exchange-trading-day frequency"] --> schedule
+    frequency --> order
     order --> ledger["Paper positions, orders and fills"]
     pause["Pause selected account"] --> stop["Stop all its automation including protective exits"]
     stop --> history["Preserve snapshots, strategies and fills; other accounts continue"]
@@ -159,6 +193,12 @@ flowchart TD
 A combination contains at most thirty distinct strategy assignments. Enabled budgets must be positive and total at most 100%; disabled assignments do not consume that total. Cross-strategy overlapping opposite directions or incompatible share/target-position instructions fail review. Enabled strategies support at most 100 distinct execution symbols; the preview and runtime compiler share this bound. This is separate from the retained AI daily discussion cap of twenty securities **per market**. Already reviewed `fixed_rules` combinations do not enter that daily discussion cap; the AI gate remains in place for non-fixed plans.
 
 `PortfolioWorkspaceService.preview/apply` uses `UserInvestmentStrategyService.accountSnapshot` to recheck owner, stored revision/preview and exact source availability/revocation. The saved combination preview expires after fifteen minutes. `combinationHash` binds account, policy revision, enabled flags, budgets, persisted contents/sources and compiled authority, excluding volatile rendering/confirmation timestamps. Apply rechecks the hash and source fences inside the owner/account/policy transaction, confirms drafts, records immutable combination history, increments policy revision and invalidates only that account's pending work. Request receipts bind account, operation and complete payload. Saving an account draft does not change its installed combination. Confirmed strategy history cannot be deleted; draft deletion retains its tombstone and receipts.
+
+`StrategyInterviewService` freezes owner/account at creation and persists exact user messages, suggestions, accepted values and source-message identities in migration 46. Answer mutation, acceptance and preview use expected revisions and idempotent receipts. Conservative parsing cannot silently complete ambiguous intent. Only explicit acceptance becomes a confirmed answer; changed premises invalidate dependent answers and the saved review. Preview materializes an existing user-strategy draft and binds interview revision, strategy revision and preview content hash. `GET /api/strategy-interviews/:id/review` restores that exact review and deterministic boundary examples without creating a draft or changing observation intent. Later edits of a confirmed strategy retain immutable history and establish parent lineage. The client stages a disabled replacement in that account's combination draft, preserving other entries and any existing budget, and refuses to silently rebase a stale combination draft.
+
+Strict `price_lt`/`price_gt` remain distinct from inclusive thresholds through preview, trigger and final slippage-adjusted fill checks. Explicit `executionFrequency` is either once or at most once per verified exchange trading day; missing legacy frequency remains once. Candidate claim and final order checks share the account execution lock and inspect both prior fills and pending reservations. Daily repetition uses the immutable daily plan's `marketDate` and verified market calendar, not the server's UTC day. Rebuilding a runtime does not reset execution history, and model preparation cannot invent repeated-execution permission.
+
+Companion selection uses separate display metadata, revision and receipts in migration 47; it does not change the investment policy or ledger. Starting-state previews support recorded real holdings, cash, an owned simulation and custom holdings. Seed provenance distinguishes `real_holdings`, `cash`, `simulation_account` and `custom_holdings`. Only real-holdings previews compare the current source real ledger at confirmation; simulation copies/custom inputs freeze their own source rather than accidentally comparing to real holdings. Quotes, FX, missing-data guards and explicit confirmation still establish the opening. No synthetic fill or historical return is created.
 
 `user-strategy-runtime.ts::installInvestorCombinationMandate` compiles enabled snapshots into one account-bound profile and published mandate. Rules retain original strategy/revision/entry identity under collision-free runtime identifiers. `isSameInvestorEntry` recognizes historical and current identifiers, so rebuilding or re-enabling a combination cannot replay a completed entry. Account caps intersect with the tightest enabled strategy caps; combination changes cannot loosen base account limits. In `strategy-allocation.ts`, allocation is a cap on attributed exposure after the cash floor, including existing attributed fills and pending reservations. It is not an automatic rebalance or a separate cash ledger. `strategy-reservation.ts`, `strategy-portfolio-risk.ts` and final `strategy-mandate.fence.ts` checks still share the locked account cash/positions and all pending risk.
 
@@ -192,6 +232,7 @@ flowchart TD
     runtime["Account, enabled strategy and simulation revisions"] --> authority["Recheck monitored rule identity under owner fence"]
     authority --> gate
     fills["Actual partial or complete paper fills per account"] --> receipt["Account-labelled receipt and exact account/order link"]
+    notificationSettings["Settings notification channels; explicit configuration"] --> notification
     receipt --> gate
     gate --> transaction["Bubble, episode, memory and outbox transaction"]
     transaction --> stream["Channel stream projection"]
@@ -238,6 +279,10 @@ flowchart TD
     paper["Saved paper snapshots and trusted opening seeds"] --> compare["Pure read account comparison"]
     points --> compare
     compare --> overview["Portfolio overview; equity and qualified returns"]
+    transactions --> dailyRead["Daily saved-ledger projection; separate real and simulated accounts"]
+    paper --> dailyRead
+    paperFills["Actual paper fill ledger; fill time and currency"] --> dailyRead
+    dailyRead --> dailyUI["Daily facts and closeable evidence reading"]
 ```
 
 The real ledger is owned by `server/modules/transactions/transactions.service.ts`, `server/modules/holdings/holdings.service.ts` and `server/modules/cash-accounts/cash-accounts.service.ts`. Holdings, transactions, closed positions and cash are separate from paper-trading tables. `server/database/asset-ledger.schema.ts` adds position baselines and cash-confirmation receipts; `transaction-imports.schema.ts` and `import-batches.schema.ts` store distinct batch types.

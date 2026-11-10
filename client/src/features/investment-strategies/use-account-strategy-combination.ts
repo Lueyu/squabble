@@ -222,7 +222,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
           }),
           client.invalidateQueries({ queryKey: ['investment-strategies'] }),
         ]);
-        navigate(simulationAccountPath(account.id));
+        navigate(simulationAccountPath(account.id), { replace: true });
       } else if (
         result.action === 'preview' &&
         result.result &&

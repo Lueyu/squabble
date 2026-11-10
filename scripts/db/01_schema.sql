@@ -1772,3 +1772,41 @@ INSERT INTO portfolio_combination_revisions(owner, account_id, policy_revision, 
 SELECT owner, account_id, revision, base_config->'portfolio' FROM investment_policies
 WHERE base_config ? 'portfolio' AND status <> 'archived'
 ON CONFLICT (owner, account_id, policy_revision) DO NOTHING;
+
+-- 46_strategy_interviews.sql
+-- Durable authoring state and idempotent actions; no execution policies are changed.
+CREATE TABLE IF NOT EXISTS strategy_interviews (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner text NOT NULL,
+  account_id uuid NOT NULL,
+  base_strategy_id uuid,
+  revision integer NOT NULL DEFAULT 1 CHECK (revision > 0),
+  state jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS strategy_interviews_owner_account_updated
+  ON strategy_interviews(owner, account_id, updated_at);
+CREATE TABLE IF NOT EXISTS strategy_interview_requests (
+  owner text NOT NULL,
+  request_key text NOT NULL,
+  input_hash text NOT NULL,
+  interview_id uuid NOT NULL REFERENCES strategy_interviews(id),
+  result jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS strategy_interview_request_owner_key
+  ON strategy_interview_requests(owner, request_key);
+
+-- 47_portfolio_companions.sql
+-- Appearance is separate from execution authority. Existing accounts remain
+-- unassigned until the owner explicitly chooses their companion.
+CREATE TABLE IF NOT EXISTS portfolio_account_companions (
+  owner text NOT NULL,
+  account_id uuid NOT NULL REFERENCES paper_accounts(id),
+  companion_id text NOT NULL CHECK (companion_id IN ('value','growth','risk','technical','news','macro','moderator')),
+  revision integer NOT NULL CHECK (revision > 0),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS portfolio_account_companion_identity
+  ON portfolio_account_companions(owner, account_id);

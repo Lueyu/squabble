@@ -15,6 +15,11 @@ export function comparisonLineData(series: PortfolioComparisonSeries, metric: Po
   return series.points.map(point => [Date.parse(point.timestamp), metric === 'equity' ? point.equityUsd : point.returnPct]);
 }
 
+export function comparisonTimeWindow(series: PortfolioComparisonSeries[]) {
+  const timestamps = series.flatMap(item => item.points.map(point => Date.parse(point.timestamp))).filter(Number.isFinite);
+  return timestamps.length ? { first: Math.min(...timestamps), last: Math.max(...timestamps) } : null;
+}
+
 export function comparisonGapLabel(code: string, zh: boolean): string {
   const labels: Record<string, [string, string]> = {
     MISSING_OBSERVATION: ['部分日期没有估值记录', 'Some dates have no observations'],

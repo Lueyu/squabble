@@ -2,7 +2,7 @@
 
 Resolve code and document paths against the **selected repository checkout**, not the installed skill directory. Read this map, then only the source and reference for the affected area. Contracts are in [research-and-execution.md](research-and-execution.md); the five maintained diagrams are in `docs/architecture.md`.
 
-Structure reviewed on **2026-11-09** against `9e2d83a` plus the portfolio-workspace working tree. Account combinations, read-only comparison and account-scoped channel projections below describe that source. Earlier review scopes remain in `context-manifest.json`; this review does not certify a deployed instance.
+Structure reviewed on **2026-11-10** against `98f073e` plus the V4 working tree. Account combinations, saved comparison, persistent interviews, companion identities, daily/data/memory entrypoints and navigation below describe that source. Earlier review scopes remain in `context-manifest.json`; this review does not certify a deployed instance.
 
 ## Current and retained product entrypoints
 
@@ -10,6 +10,10 @@ Structure reviewed on **2026-11-09** against `9e2d83a` plus the portfolio-worksp
 
 | Route | Current experience | Retained or shared surface |
 |---|---|---|
+| `/daily`, `/research` | `pages/Analysis/DailyReportPage.tsx`, `ResearchWorkspacePage.tsx` | Current saved daily facts, exact report versions and explicit research |
+| `/data`, `/memory` | `pages/Workspace/DataCenterPage.tsx`, `MemoryWorkspacePage.tsx` | Existing provider/import and thesis/version controls |
+| `/strategies`, `/strategies/new`, `/strategies/interviews/:interviewId` | `features/strategy-interview/` | Persisted clarification; existing combination confirmation remains execution authority |
+| `/settings/notifications`, `/settings/mcp` | `features/integrations/PaperIntegrationPanels.tsx` | Shared with retained Paper page; hidden Settings panels close portals |
 | `/` | `client/src/pages/Overview/PortfolioOverviewPage.tsx`: saved real/simulation comparison and research entry | `client/src/pages/Dashboard/DashboardPage.tsx` |
 | `/analysis` | `client/src/pages/Analysis/SimpleAnalysisPage.tsx` | `client/src/pages/Analysis/AnalysisPage.tsx` |
 | `/analysis/reports/:versionId` | `client/src/pages/Analysis/ResearchDocumentPage.tsx`, `SimpleReportReader.tsx`: exact immutable version and archived simulation-review reading | Shared; never replace requested ID with the latest report |
@@ -52,6 +56,11 @@ In the table, abbreviated filenames are siblings of the fully qualified director
 | Retained bull/bear/critic pipeline | `client/src/pages/Analysis/AnalysisRunner.tsx`; `client/src/api/analysis-runner.ts` | `server/modules/multi-agent/batch.service.ts`, `pipeline.service.ts`, `portfolio-analysis.service.ts`, `analysis-report.ts`; `shared/portfolio-report.interface.ts` |
 
 ## Infrastructure and data ownership
+
+- V4 navigation: `client/src/features/navigation/` owns the eight roots, safe return destinations, history and content-scroll/hash restoration. `workspace-navigation.css` must keep the desktop top bar visible over old simple-experience styles. Interview flow controls portal into this fixed header; legacy direct links remain valid.
+- Strategy interviews: `client/src/api/strategy-interviews.ts`, `features/strategy-interview/`, `server/modules/paper-trading/strategy-interview.controller.ts`, `strategy-interview.service.ts`, `strategy-interview.rules.ts`, `shared/strategy-interview.interface.ts`, migration `46_strategy_interviews.sql`. Saved review restoration is a GET, never a new preview POST.
+- Companion display: `features/companions/` composes shared `components/AnimalAvatar.tsx`. Migration `47_portfolio_companions.sql` stores explicit identity/revision; policy and funds do not change when identity changes. Four starting origins are in the simulation seed JSON, not a new trading mode.
+- Daily/visible memory: `server/modules/experience/daily-workspace.service.ts` reads saved facts in a read-only transaction; `research-memory.service.ts::inventory` exposes owner-only source pagination. A selected memory detail uses its exact ID, not only a symbol list capped at 100 records. See `docs/v4-daily-and-memory-workspace.md`.
 
 - Shared research infrastructure: `server/modules/research-core/research-core.module.ts` owns LLM calls, evidence/source adapters and portfolio context. Both current research and retained analysis consume it; it does not import their orchestration. `research-errors.ts` owns shared sanitized failure codes. The legacy rating-to-holdings command remains in `multi-agent.service.ts`.
 - Executor selection: `server/modules/research-routing/research-routing.module.ts` exports `PortfolioResearchRouteService` to Experience and PaperTrading. Routing selects existing configured executors; it does not stage research. Settings retains its pre-existing local LLM provider to avoid changing global initialization in this refactor.

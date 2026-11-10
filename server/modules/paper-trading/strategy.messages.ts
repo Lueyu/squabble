@@ -14,6 +14,7 @@ const MEMORY: Record<string, [string, string]> = {
 const ZH: Record<string, string> = {
   'Waiting for verified security identity, asset type and lot size': '等待核实证券身份、资产类别和每手股数',
   'This confirmed strategy entry already executed': '这条已确认策略已执行，等待新的策略指令',
+  'This entry already executed for this trading day or its prior day cannot be verified': '本条规则在当前交易日已执行，或历史成交所属交易日无法核验，暂不重复执行',
   'Waiting: exact approved amount exceeds cash, risk, position or market lot allowance': '等待：确认的数量超过可用现金、风险额度、仓位或市场每手限制',
   'Target position reached or remaining difference smaller than one market lot': '已达到目标总仓位，或差额不足市场最小交易单位',
   'Agent paused': 'Agent 已暂停',

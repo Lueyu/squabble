@@ -136,6 +136,26 @@ export class UserInvestmentStrategyService {
       await this.saveRevision(tx, row); return map(row);
     });
   }
+  /** Interview authoring shares the caller's owner fence and commits its saved preview atomically. */
+  async createInterviewPreviewInTransaction(tx: UserStrategyTransaction, owner: string, input: StrategyDraftInput, parentId?: string): Promise<UserInvestmentStrategy> {
+    const content = this.normalize(input);
+    const parent = parentId ? await this.row(tx, owner, parentId) : null;
+    const sources = parent?.sources ?? [];
+    this.assertSourceKeys(content, sources);
+    const [written] = await tx.insert(strategies).values({ owner, content, parentId: parent?.id, sources }).returning();
+    const preview = previewStrategy(written.content, written.sources, written.revision);
+    const [saved] = await tx.update(strategies).set({ preview }).where(eq(strategies.id, written.id)).returning();
+    await this.saveRevision(tx, saved);
+    return map(saved);
+  }
+  /** Changed interview answers invalidate a previously materialized draft, never immutable confirmations. */
+  async invalidateInterviewPreviewInTransaction(tx: UserStrategyTransaction, owner: string, id: string, expectedRevision: number): Promise<void> {
+    const previous = await this.row(tx, owner, id, true, true);
+    if (previous.status !== 'draft' || previous.revision !== expectedRevision || previous.deletedAt) return;
+    const [saved] = await tx.update(strategies).set({ preview: null, revision: previous.revision + 1, updatedAt: new Date() })
+      .where(eq(strategies.id, id)).returning();
+    await this.saveRevision(tx, saved);
+  }
   private assertSourceKeys(content: StrategyDraftInput, sources: StrategySourceSnapshot[]) {
     if (content.entries.some(entry => entry.sourceKeys.some(key => !sources.some(source => source.key === key)))) throw new BadRequestException('Unknown strategy source');
   }
@@ -327,7 +347,8 @@ export class UserInvestmentStrategyService {
     try {
       const output = await this.model.json(owner, undefined, randomUUID(), 'user-strategy-preview',
         'Prepare an editable PAPER strategy explanation, never orders. Return {entries:[{id,directive}]} with the existing entry ids only. ' +
-        'directive schema: {ticker,side:"buy"|"sell",trigger:{kind:"price_lte"|"price_gte"|"always"|"semantic",price?,text?},quantity? or positionPct?,minPrice?,maxPrice?,stopLossPrice?,reviewedText,numericEvidence:[{field,value,quote}]}. ' +
+        'directive schema: {ticker,side:"buy"|"sell",trigger:{kind:"price_lt"|"price_lte"|"price_gt"|"price_gte"|"always"|"semantic",price?,text?},quantity? or positionPct?,minPrice?,maxPrice?,stopLossPrice?,reviewedText,numericEvidence:[{field,value,quote}]}. ' +
+        'Preserve strict versus inclusive comparisons exactly: below means price_lt; at or below means price_lte. Never choose execution frequency; only an existing explicitly selected frequency may be preserved. ' +
         'Use exact existing text as reviewedText. For EVERY numeric field supply an exact quote from that entry containing the same numeric token. ' +
         'positionPct means TOTAL account exposure after the trade, never the incremental amount of the order. Extract it only for an explicit total target. ' +
         'Phrases such as increase by 5% are ambiguous increments: preserve them as observation unless an explicit share quantity or total target is supplied. ' +
@@ -342,7 +363,8 @@ export class UserInvestmentStrategyService {
       const content = this.normalize({ ...row.content, entries: row.content.entries.map(entry => {
         const candidate = extracted.entries.find(item => item.id === entry.id)?.directive;
         if (!candidate) return { ...entry, directive: undefined, mandateRule: undefined };
-        return { ...entry, directive: { ...candidate, semanticAuthorized: entry.directive?.semanticAuthorized === true && entry.directive.trigger.text === (candidate.trigger as { text?: string } | undefined)?.text } };
+        return { ...entry, directive: { ...candidate, executionFrequency: entry.directive?.reviewedText === entry.text ? entry.directive.executionFrequency : undefined,
+          semanticAuthorized: entry.directive?.semanticAuthorized === true && entry.directive.trigger.text === (candidate.trigger as { text?: string } | undefined)?.text } };
       }) });
       return await this.db.transaction(async tx => {
         await lockMemoryOwner(tx, owner); const previous = await this.row(tx, owner, id, true); this.assertDraft(previous, expectedRevision);

@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { monitorConditionSchema } from './research-memory.monitor.rules';
 export const memoryIdSchema = z.string().uuid();
+export const memoryInventoryQuerySchema = z.object({
+  offset: z.coerce.number().int().min(0).max(100000).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(24),
+}).strict();
 const text = z.string().trim().min(1).max(1500);
 const lines = z.array(text).max(20);
 const reference = z.object({ evidenceId: z.string().trim().min(1).max(100) }).strict();

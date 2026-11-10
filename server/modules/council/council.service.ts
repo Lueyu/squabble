@@ -1,6 +1,6 @@
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import {
-  BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional, type OnModuleInit,
+  BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, type OnModuleInit,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { and, desc, eq, gte, ilike, or, sql } from 'drizzle-orm';
@@ -183,6 +183,7 @@ export class CouncilService implements OnModuleInit {
       throw new BadRequestException('Message must contain 1–2000 characters');
     }
     const owned = await this.requireSession(userId, id);
+    if (owned.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
     const resolved = await this.resolvePinnedReferences(userId, details.references ?? [], owned.scene !== 'trade_pre_review');
     if (details.replyToMessageId !== undefined) this.assertId(details.replyToMessageId);
     await this.db.transaction(async (tx) => {
@@ -190,6 +191,7 @@ export class CouncilService implements OnModuleInit {
       const [current] = await tx.select().from(councilSessions)
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
+      if (current.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
       if (details.replyToMessageId) {
         const [reply] = await tx.select({ id: councilMessages.id }).from(councilMessages).where(and(
           eq(councilMessages.owner, userId), eq(councilMessages.sessionId, id), eq(councilMessages.id, details.replyToMessageId)));
@@ -225,6 +227,7 @@ export class CouncilService implements OnModuleInit {
       await lockMemoryOwner(tx, userId);
       const [parent] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!parent) throw new NotFoundException('Council session not found');
+      if (parent.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
       const messages = await tx.select().from(councilMessages).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, id)))
         .orderBy(councilMessages.createdAt, councilMessages.id);
       const context = freezeThreadContext(messages.filter(message => message.role !== 'system'), input.messageId);
@@ -440,6 +443,9 @@ export class CouncilService implements OnModuleInit {
           await this.db.transaction(async tx=>{
           const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
           if(current?.status!=='running'||current.revision!==active.revision)return;
+          // An overall opening awaiting its original barrier remains sealed until that single release.
+          if(current.checkpoint?.simple?.overallDaily && current.checkpoint.simple.stage === 'waiting'
+            && current.checkpoint.turns.every(turn => turn.phase === 'opening')) return;
           await tx.insert(councilMessages).values({owner,sessionId:id,role:member.role,memberName:member.name,
             revision:active.revision,tokensUsed:output.tokens,content:output.contribution.content,
             metadata:{cycleId:attempt.cycleId,memberId:member.id,phase:'response',response:output.contribution.response,
@@ -498,6 +504,9 @@ export class CouncilService implements OnModuleInit {
   async runSession(userId: string, id: string, retryKeys?: ResearchTaskKind[]): Promise<CouncilSession> {
     this.assertId(id);
     const previous = await this.requireSession(userId, id);
+    if (previous.checkpoint?.simple?.overallDaily && ['completed', 'failed', 'paused'].includes(previous.status)) {
+      throw new ConflictException('OVERALL_DAILY_RESUME_REQUIRED');
+    }
     await this.validatePinnedReferences(previous);
     if (previous.status === 'running') return this.hydrate(userId, previous);
     const members = this.members(previous.profileSnapshot);
@@ -513,6 +522,9 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
       if (current.status === 'running') return { row: current, started: false };
+      if (current.checkpoint?.simple?.overallDaily && (['completed', 'failed', 'paused'].includes(current.status) || current.checkpoint.simple.stopped)) {
+        throw new ConflictException('OVERALL_DAILY_RESUME_REQUIRED');
+      }
       if(current.checkpoint?.simple?.stopped){
         const unresolved=await tx.select({id:councilMemberAttempts.id}).from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,userId),eq(councilMemberAttempts.sessionId,id),eq(councilMemberAttempts.cycleId,current.checkpoint.cycleId),sql`${councilMemberAttempts.status} in ('queued','running','unknown')`));
         if(unresolved.length)throw new BadRequestException('ORIGINAL_TASK_NOT_TERMINATED');
@@ -567,6 +579,7 @@ export class CouncilService implements OnModuleInit {
     checkpoint.automaticTaskId = row.checkpoint?.automaticTaskId;
     if (checkpoint.simple && row.checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple,
       executors: row.checkpoint.simple.executors, contextLabel: row.checkpoint.simple.contextLabel,
+      contextDate: row.checkpoint.simple.contextDate, researchOnly: row.checkpoint.simple.researchOnly, overallDaily: row.checkpoint.simple.overallDaily,
       commonEvidence: row.checkpoint.simple.commonEvidence, automaticTaskId: row.checkpoint.simple.automaticTaskId };
     const workflow = row.checkpoint?.workflow;
     if (workflow) checkpoint.workflow = { ...workflow, memory: workflow.recallEnabled && this.memory
@@ -1075,7 +1088,7 @@ export class CouncilService implements OnModuleInit {
 
   private simplePrompt(row: SessionRow, turn: DialogueTurn): string {
     if (!row.checkpoint?.simple) return '';
-    if(row.checkpoint.simple.researchOnly)return '\n'+dailyResearchPrompt(turn.phase)+(row.checkpoint.simple.inputCorrection
+    if(row.checkpoint.simple.researchOnly)return '\n'+dailyResearchPrompt(turn.phase, Boolean(row.checkpoint.simple.overallDaily))+(row.checkpoint.simple.inputCorrection
       ? '\nInput correction: the retained independent openings used incomplete wire context. Keep their source findings, but do not describe them as complete independent portfolio research. This contribution receives the complete frozen owner holdings and recorded cash. Recheck all constituents and cash, explicitly correct earlier missing-cash or partial-holdings claims, and preserve source dates, uncertainty and disagreement.' : '');
     return '\n' + [
       row.checkpoint.simple.stage === 'independent'
@@ -1141,7 +1154,7 @@ export class CouncilService implements OnModuleInit {
         : manager ? [{ memberId: manager.id, phase: 'summary' }] : [];
       await tx.update(councilSessions).set({ status: manager ? 'running' : 'paused',
         error: manager ? null : current.language === 'en' ? 'No usable conclusion this round. Review each member’s cause and recovery options.' : '本轮尚无可用结论，请查看各位股友的原因与恢复操作。',
-        evidenceSnapshot: [...(checkpoint.simple.commonEvidence ?? []), ...submissions.flatMap(item => item.evidence)].slice(-60),
+        evidenceSnapshot: reportExecutionEvidence([...(checkpoint.simple.commonEvidence ?? []), ...submissions.flatMap(item => item.evidence)]),
         checkpoint: { ...checkpoint, turns: [...checkpoint.turns, ...next], pendingResearch: [],
           simple: { ...checkpoint.simple, privateEvidence: undefined, stage: manager ? 'discussion' : 'waiting' } } })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));

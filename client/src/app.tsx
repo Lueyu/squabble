@@ -10,7 +10,7 @@
  * under `api/`, and shared layout under `components/Layout.tsx`.
  */
 import React, { useEffect } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { getAuthMode } from './api/auth-mode';
 import { initAgentAPI } from './utils/agent-api';
 
@@ -40,12 +40,24 @@ import SimpleCouncilPage from './pages/Council/SimpleCouncilPage';
 import SimulationAccountsPage from './pages/Paper/SimulationAccountsPage';
 import SimulationAccountPage from './pages/Paper/SimulationAccountPage';
 import AccountStrategyCombinationPage from './features/investment-strategies/AccountStrategyCombinationPage';
+import DailyReportPage from './pages/Analysis/DailyReportPage';
+import ResearchWorkspacePage from './pages/Analysis/ResearchWorkspacePage';
+import DataCenterPage from './pages/Workspace/DataCenterPage';
+import MemoryWorkspacePage from './pages/Workspace/MemoryWorkspacePage';
+import StrategyLibraryPage from './features/strategy-interview/StrategyLibraryPage';
+import NewStrategyInterviewPage from './features/strategy-interview/NewStrategyInterviewPage';
+import StrategyInterviewPage from './features/strategy-interview/StrategyInterviewPage';
 import { useSimpleExperience } from './hooks/use-simple-experience';
 
 function ExperienceRoute({ current, legacy }: { current: React.ReactNode; legacy: React.ReactNode }) {
   const { enabled, isPending } = useSimpleExperience();
   if (isPending) return <div role="status" className="p-6">Squabble…</div>;
   return <>{enabled ? current : legacy}</>;
+}
+
+function SimulationsRoute() {
+  const { hash } = useLocation();
+  return <ExperienceRoute current={hash === '#notifications' ? <Navigate to="/settings/notifications" replace /> : <SimulationAccountsPage />} legacy={<PaperPage />} />;
 }
 
 /**
@@ -74,11 +86,18 @@ const RoutesComponent = () => {
       <Route element={<Layout />}>
         <Route index element={<ExperienceRoute current={<PortfolioOverviewPage />} legacy={<DashboardPage />} />} />
         <Route path="holdings" element={<HoldingsPage />} />
+        <Route path="daily" element={<DailyReportPage />} />
+        <Route path="research" element={<ResearchWorkspacePage />} />
+        <Route path="data" element={<DataCenterPage />} />
+        <Route path="memory" element={<MemoryWorkspacePage />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="watchlist" element={<WatchlistPage />} />
         <Route path="analysis" element={<ExperienceRoute current={<SimpleAnalysisPage />} legacy={<AnalysisPage />} />} />
         <Route path="analysis/reports/:versionId" element={<ResearchDocumentPage />} />
-        <Route path="paper" element={<ExperienceRoute current={<SimulationAccountsPage />} legacy={<PaperPage />} />} />
+        <Route path="paper" element={<SimulationsRoute />} />
+        <Route path="strategies" element={<StrategyLibraryPage />} />
+        <Route path="strategies/new" element={<NewStrategyInterviewPage />} />
+        <Route path="strategies/interviews/:interviewId" element={<StrategyInterviewPage />} />
         <Route path="paper/:accountId" element={<SimulationAccountPage />} />
         <Route path="paper/:accountId/strategies" element={<AccountStrategyCombinationPage />} />
         <Route path="agent-builder" element={<ExperienceRoute current={<Navigate to="/settings/agents" replace />} legacy={<AgentBuilderPage />} />} />

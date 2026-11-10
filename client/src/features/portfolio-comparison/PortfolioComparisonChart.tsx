@@ -3,19 +3,23 @@ import ReactECharts from 'echarts-for-react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/hooks/use-theme';
 import type { PortfolioComparisonMetric, PortfolioComparisonSeries } from '@shared/portfolio-comparison.interface';
-import { accountColor, comparisonLineData } from './comparison-chart-options';
+import { accountColor, comparisonLineData, comparisonTimeWindow } from './comparison-chart-options';
 
 interface Props {
   series: PortfolioComparisonSeries[];
   metric: PortfolioComparisonMetric;
   compact?: boolean;
+  onSelectAccount?: (accountId: string) => void;
 }
 
-export default function PortfolioComparisonChart({ series, metric, compact = false }: Props) {
+export default function PortfolioComparisonChart({ series, metric, compact = false, onSelectAccount }: Props) {
   const { i18n } = useTranslation();
   const { theme } = useTheme();
   const zh = i18n.language.startsWith('zh');
   const dark = theme === 'dark';
+  const timeWindow = useMemo(() => comparisonTimeWindow(series), [series]);
+  const singleObservation = timeWindow !== null && timeWindow.first === timeWindow.last;
+  const intraday = timeWindow !== null && timeWindow.last - timeWindow.first < 2 * 86400000;
   const option = useMemo(() => ({
     animationDuration: 200,
     aria: { enabled: true, description: zh ? '实仓与模拟账户的历史估值。缺少资料的日期断线显示。' : 'Saved real and simulation valuations. Missing observations break the line.' },
@@ -27,8 +31,11 @@ export default function PortfolioComparisonChart({ series, metric, compact = fal
         ? `${Number(value).toFixed(2)}%` : new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(Number(value)),
     },
     xAxis: { type: 'time', boundaryGap: false, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
-      axisLabel: { color: dark ? '#a6b8ae' : '#65796f', hideOverlap: true, fontSize: 12,
-        formatter: (value: number) => new Intl.DateTimeFormat(zh ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit' }).format(value) } },
+      min: singleObservation ? timeWindow.first - 3600000 : undefined,
+      max: singleObservation ? timeWindow.first + 3600000 : undefined,
+      minInterval: intraday ? 60000 : 86400000,
+      axisLabel: { show: !singleObservation, color: dark ? '#a6b8ae' : '#65796f', hideOverlap: true, fontSize: 12,
+        formatter: (value: number) => new Intl.DateTimeFormat(zh ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', ...(intraday ? { hour: '2-digit', minute: '2-digit' } as const : {}) }).format(value) } },
     yAxis: { type: 'value', position: 'right', scale: true, splitNumber: compact ? 3 : 4,
       axisLabel: { color: dark ? '#a6b8ae' : '#65796f', fontSize: 12,
         formatter: (value: number) => metric === 'return' ? `${value > 0 ? '+' : ''}${Number(value.toFixed(1))}%`
@@ -42,7 +49,7 @@ export default function PortfolioComparisonChart({ series, metric, compact = fal
       itemStyle: { color: item.kind === 'real' && dark ? '#c9ded2' : accountColor(item.accountId, item.colorIndex) },
       emphasis: { focus: 'series' },
     })),
-  }), [series, metric, compact, dark, zh]);
+  }), [series, metric, compact, dark, zh, timeWindow, singleObservation, intraday]);
   const hasValues = series.some(item => item.points.some(point => (metric === 'equity' ? point.equityUsd : point.returnPct) !== null));
   if (!hasValues) return <div className={`portfolio-chart-empty ${compact ? 'compact' : ''}`} role="status">
     <strong>{series.length === 0 ? (zh ? '选择要比较的账户' : 'Choose accounts to compare') : (zh ? '等待可比较的估值' : 'Waiting for comparable valuations')}</strong>
@@ -51,8 +58,12 @@ export default function PortfolioComparisonChart({ series, metric, compact = fal
   </div>;
   return <>
     <div className={`portfolio-chart ${compact ? 'compact' : ''}`} role="img" aria-label={zh ? '账户表现对比折线图。完整数值可展开下方历史估值表查看。' : 'Portfolio performance comparison chart. Expand the historical valuations table below for all values.'}>
-      <ReactECharts option={option} notMerge style={{ height: '100%', width: '100%' }} opts={{ renderer: 'svg' }} />
+      <ReactECharts option={option} notMerge style={{ height: '100%', width: '100%' }} opts={{ renderer: 'svg' }}
+        onEvents={{ click: (event: { seriesId?: string }) => {
+          if (event.seriesId && series.some(item => item.accountId === event.seriesId)) onSelectAccount?.(event.seriesId);
+        } }} />
     </div>
+    {singleObservation && <p className="px-3 text-center text-xs leading-6 text-muted-foreground">{zh ? '仅一条已存估值，等待下一次观察' : 'One saved valuation; waiting for the next observation'} · {new Date(timeWindow.first).toLocaleString(i18n.language)}</p>}
     <HistoricalValuations series={series} />
   </>;
 }

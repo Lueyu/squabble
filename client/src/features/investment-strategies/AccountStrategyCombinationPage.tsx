@@ -121,8 +121,8 @@ function CombinationEditor({
         <strong className="font-semibold text-primary">{account.name}</strong>
         <span className="text-muted-foreground">
           {zh
-            ? '当前组合继续运行；核对并应用后才切换到新版本。'
-            : 'The current combination stays in place until you review and apply the new revision.'}
+            ? '当前组合及运行状态保持不变；核对并应用后才切换到新版本。'
+            : 'The current combination and its running or paused state stay unchanged until you review and apply the new revision.'}
         </span>
       </div>
       {stale && (

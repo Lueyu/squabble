@@ -1,13 +1,13 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { investorAssignments, investorRuleId, investorSnapshotHash, isSameInvestorEntry } from './user-strategy-runtime';
+import { investorAssignments, investorRuleId, investorSnapshotHash } from './user-strategy-runtime';
+import { investorEntryFrequencyBlock } from './user-strategy-frequency';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { investmentPolicies } from '../../database/investment-policy.schema';
 import { paperAccounts, paperTrades, paperPositions } from '../../database/schema';
 import { strategyMandates, strategyRouteReviews } from '../../database/strategy-mandates.schema';
-import { strategySignals } from '../../database/strategy.schema';
 import { councilMessages, councilSessions } from '../../database/council.schema';
 import { councilIndependentSubmissions } from '../../database/simple-council.schema';
 import { simulationSeeds } from '../../database/simulation-experiments.schema';
@@ -70,9 +70,8 @@ export async function investmentExecutionFence(tx: MemoryFenceTransaction, owner
       }
     } catch { return { policy, block: 'USER_STRATEGY_SOURCE_CHANGED' }; }
     if (candidate.protectiveStop) return { policy, block: directive.stopLossPrice && order.side === 'sell' ? null : 'USER_STRATEGY_PROTECTION_NOT_AUTHORIZED' };
-    const filled = await tx.select().from(strategySignals).where(and(eq(strategySignals.owner, owner), eq(strategySignals.state, 'filled'),
-      sql`${strategySignals.candidate}->>'accountId' = ${accountId}`, sql`${strategySignals.candidate}->>'userStrategyId' = ${investor.id}`));
-    if (filled.some(signal => isSameInvestorEntry(signal.candidate, accountId, investor.id, directive.entryId))) return { policy, block: 'USER_STRATEGY_ENTRY_ALREADY_EXECUTED' };
+    const frequencyBlock = await investorEntryFrequencyBlock(tx, owner, accountId, investor.id, directive, candidate, now);
+    if (frequencyBlock) return { policy, block: frequencyBlock };
     if (!rule.security || rule.security.market !== order.market || rule.security.ticker !== order.ticker || rule.security.leveraged !== false || rule.security.inverse !== false
       || !policy.effectiveConfig.assetTypes.includes(rule.security.assetType) || now.getTime() - Date.parse(rule.security.observedAt) > 24 * 3600000) return { policy, block: 'WAITING_VERIFIED_SECURITY' };
     if (reviewComplete && order.side === 'buy' && !policy.baseConfig.initialTickers?.some(ticker => investmentSecurityKey(ticker) === investmentSecurityKey(order.ticker))) {

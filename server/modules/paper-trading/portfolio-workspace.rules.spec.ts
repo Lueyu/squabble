@@ -4,6 +4,18 @@ import { randomUUID } from 'node:crypto';
 import { combinationHash, combinationIssues, workspaceCombinationSchema } from './portfolio-workspace.rules';
 import { DEFAULT_INVESTMENT_CONFIG, effectiveInvestmentConfig } from './investment-policy.rules';
 import type { PortfolioStrategyAssignment } from '../../../shared/portfolio-workspace.interface';
+import * as workspaceRules from './portfolio-workspace.rules';
+
+test('companion preferences have a separate revision and reject execution fields and unknown identities', () => {
+  assert.ok('workspaceCompanionSchema' in workspaceRules, 'companion requests need a separate non-execution contract');
+  const schema = workspaceRules.workspaceCompanionSchema;
+  const input = { companionId: 'macro', expectedRevision: 0, requestKey: 'fixture-request' };
+  assert.equal(schema.safeParse(input).success, true);
+  assert.equal(schema.safeParse({ ...input, companionId: 'fictional-person' }).success, false);
+  assert.equal(schema.safeParse({ ...input, expectedRevision: -1 }).success, false);
+  assert.equal(schema.safeParse({ ...input, expectedPolicyRevision: 1 }).success, false);
+  assert.equal(schema.safeParse({ ...input, allocations: [] }).success, false);
+});
 
 function assignment(quantity = 10): PortfolioStrategyAssignment {
   const id = randomUUID(); const stamp = '2026-11-09T00:00:00Z';

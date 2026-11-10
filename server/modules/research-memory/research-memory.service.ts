@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { QuoteService } from '../quote/quote.service';
 import { councilReports, councilSessions } from '../../database/council.schema';
@@ -8,7 +8,7 @@ import type { ArchiveResearchReport, MemoryCitation, MemoryFlag, MemoryOmission,
   ResearchMemoryPreferences, ResearchMemoryQuery, ResearchMemoryRecall, ResearchMemoryRecallItem,
   ResearchThesis, ResearchThesisVersion, ThesisContent, UpdateResearchThesis, ResearchEvidenceGraph, ResearchEvidenceRecord } from '@shared/research-memory.interface';
 import { canonicalMemorySymbol, normalizedTopic, rankMemoryRecall } from './research-memory.rules';
-import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema,
+import { memoryIdSchema, memoryPreferencesSchema, memoryQuerySchema, memoryUpdateSchema, memoryInventoryQuerySchema,
   thesisCandidateSchema, thesisDeleteSchema, thesisUpdateSchema } from './research-memory.requests';
 import { isUnverifiedCitation, normalizeThesisContent, thesisEvidenceIds, thesisFingerprint, validateThesisReferences } from './research-memory.theses';
 import { acceptedWorkflowProvenance } from './research-memory.provenance';
@@ -137,6 +137,26 @@ export class ResearchMemoryService {
 
   async list(owner: string, input: ResearchMemoryQuery): Promise<ResearchMemoryList> {
     return this.listCandidates(owner, input);
+  }
+  /** All visible source records, paged by source, with owner-scoped current thesis versions. */
+  async inventory(owner: string, input: { offset?: number; limit?: number } = {}): Promise<import('@shared/research-memory.interface').ResearchMemoryInventory> {
+    this.owner(owner);
+    const parsed = memoryInventoryQuerySchema.safeParse(input);
+    if (!parsed.success) throw new BadRequestException('MEMORY_INVALID_QUERY');
+    const { offset, limit } = parsed.data;
+    const visible = and(eq(researchMemories.owner, owner), isNull(researchMemories.deletedAt));
+    const [rows, totals, preferences] = await Promise.all([
+      this.db.select().from(researchMemories).where(visible).orderBy(desc(researchMemories.createdAt), researchMemories.id).limit(limit).offset(offset),
+      this.db.select({ total: count() }).from(researchMemories).where(visible),
+      this.getPreferences(owner),
+    ]);
+    const memories = await this.materializeMemories(owner, rows);
+    const byId = new Map(memories.map(memory => [memory.id, memory]));
+    const thesisRows = rows.length ? await this.db.select().from(researchTheses).where(and(eq(researchTheses.owner, owner),
+      inArray(researchTheses.memoryId, rows.map(row => row.id)), isNull(researchTheses.deletedAt)))
+      .orderBy(desc(researchTheses.updatedAt), researchTheses.id) : [];
+    return { memories, theses: thesisRows.map(row => this.materializeThesis(row, byId.get(row.memoryId)!)),
+      preferences, total: totals[0]?.total ?? 0, offset, limit };
   }
   private async listCandidates(owner: string, input: ResearchMemoryQuery, retrieval = false): Promise<ResearchMemoryList> {
     this.owner(owner);

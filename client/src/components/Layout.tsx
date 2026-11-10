@@ -38,6 +38,9 @@ import {
   X,
   Circle,
   LogOut,
+  Database,
+  Brain,
+  Bell,
 } from 'lucide-react';
 import { useTheme } from '../hooks/use-theme';
 import { getAggregateMarketStatus, forceRefreshAllQuotes } from '../hooks/use-market-quotes';
@@ -46,7 +49,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Mascot } from '@/components/Mascot';
 import { AppearancePicker } from '@/components/AppearancePicker';
 import { useSimpleExperience } from '@/hooks/use-simple-experience';
-import { simpleNavigation } from '@/utils/simple-experience';
+import { workspaceSections, resolveWorkspaceRoute } from '@/features/navigation/workspace-navigation';
+import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navigation';
+import { WorkspaceNavigationBar, WorkspaceSectionTabs } from '@/features/navigation/WorkspaceNavigationBar';
+import { WorkspaceSearch } from '@/features/navigation/WorkspaceSearch';
 
 /**
  * Sidebar navigation entries. `end: true` marks the index route so it is only
@@ -88,11 +94,15 @@ function Layout() {
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
   const { enabled: simple } = useSimpleExperience();
-  const simpleItems = simple ? simpleNavigation(i18n.language).map((item, index) => ({ ...item, icon: [LayoutDashboard, FlaskConical, BookOpen, Users, Briefcase][index], literal: true })) : [];
-  const allItems = simple ? [...simpleItems, ...navItems.filter(item => item.path === '/settings')] : navItems;
+  const sectionIcons = { overview: LayoutDashboard, friends: Users, daily: BookOpen, research: FlaskConical, assets: Briefcase, data: Database, memory: Brain, settings: Settings };
+  const simpleItems = simple ? workspaceSections(i18n.language).map(item => ({ ...item, icon: sectionIcons[item.id], literal: true })) : [];
+  const allItems = simple ? simpleItems : navItems;
+  const currentRoute = resolveWorkspaceRoute(location.pathname, i18n.language);
+  const focusedFlow = simple && currentRoute.kind === 'flow';
+  useWorkspaceNavigation(inSettings ? undefined : pageScrollRef);
   const navGroups = simple ? [
-    { label: zh ? '工作区' : 'Workspace', items: simpleItems },
-    { label: zh ? '偏好' : 'Preferences', items: navItems.filter(item => item.path === '/settings') },
+    { label: zh ? '日常' : 'Every day', items: simpleItems.filter(item => item.group === 'daily') },
+    { label: zh ? '工作区' : 'Workspace', items: simpleItems.filter(item => item.group === 'workspace') },
   ] : [
     { label: zh ? '我的投资' : 'Portfolio', items: navItems.slice(0, 4) },
     { label: zh ? '研究与实验' : 'Research & lab', items: navItems.slice(4, 10) },
@@ -106,7 +116,6 @@ function Layout() {
 
   useEffect(() => {
     setMobileOpen(false);
-    if (pageScrollRef.current) pageScrollRef.current.scrollTop = 0;
   }, [location.pathname]);
 
   if (!hasSession()) {
@@ -128,7 +137,7 @@ function Layout() {
               {!simple && <Mascot className="app-brand-mark" />}
               <div className="app-brand-copy">
                 <div className="app-wordmark">{simple ? 'squabble' : 'Squabble'}<span className="text-[var(--brand)]">.</span></div>
-                <div className="app-brand-caption">{simple ? (zh ? '研究，让判断可验证' : 'Research. Test. Learn.') : 'BULLS. BEARS. YOU.'}</div>
+                <div className="app-brand-caption">{simple ? (zh ? '一群股友，陪你验证想法' : 'Companions to test your ideas.') : 'BULLS. BEARS. YOU.'}</div>
               </div>
             </NavLink>
             <button
@@ -153,7 +162,7 @@ function Layout() {
                 title={'literal' in item ? item.label : t(item.label)}
                 className={({ isActive }) =>
                   `app-nav-link flex items-center px-3 py-2 text-sm transition-colors ${
-                    isActive
+                    (simple && 'id' in item ? item.id === currentRoute.section : isActive)
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                       : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
                   }`
@@ -213,8 +222,8 @@ function Layout() {
       {/* Main content */}
       <div className="app-workspace flex flex-1 flex-col overflow-hidden">
         {/* Top bar */}
-        <header className="app-topbar flex flex-shrink-0 items-center justify-between border-b border-border">
-          <div className="flex min-w-0 items-center gap-3">
+        <header className={`app-topbar ${focusedFlow ? 'app-topbar-flow' : ''} flex flex-shrink-0 items-center justify-between border-b border-border`}>
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
               onClick={() => setMobileOpen(true)}
               aria-label={zh ? '打开导航' : 'Open navigation'}
@@ -223,7 +232,7 @@ function Layout() {
             >
               <Menu size={20} />
             </button>
-            <div className="app-page-title">
+            {simple ? <WorkspaceNavigationBar /> : <div className="app-page-title">
               {(() => {
                 const match = allItems.find((item) => {
                   if (item.end) return location.pathname === item.path;
@@ -231,12 +240,13 @@ function Layout() {
                 });
                 return match ? ('literal' in match ? match.label : t(match.label)) : t('layout.appName');
               })()}
-            </div>
+            </div>}
           </div>
-          <div className="app-topbar-actions">
+          {!focusedFlow && <div className="app-topbar-actions">
+            {simple && <><WorkspaceSearch /><NavLink to="/settings/notifications" className="workspace-alert-link" aria-label={zh ? '提醒与通知渠道' : 'Alerts and notification channels'}><Bell size={17} /></NavLink></>}
             <div className="app-market-status"><MarketStatusIndicator simple={simple} /></div>
             <AppearancePicker />
-          </div>
+          </div>}
         </header>
 
         {/* Page content */}
@@ -245,10 +255,11 @@ function Layout() {
           : location.pathname === '/council'
           ? 'app-content app-council-content app-channel-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden safe-bottom'
           : 'app-content flex-1 overflow-y-auto safe-bottom'}>
+          {simple && <WorkspaceSectionTabs />}
           <Outlet />
         </main>
-        {simple && <nav className="portfolio-mobile-nav" aria-label={zh ? '快捷导航' : 'Quick navigation'}>
-          {[simpleItems[0], simpleItems[1], simpleItems[2], simpleItems[3]].map(item => <NavLink key={item.path} to={item.path} end={item.end}><item.icon size={18} /><span>{item.label}</span></NavLink>)}
+        {simple && !focusedFlow && <nav className="portfolio-mobile-nav" aria-label={zh ? '快捷导航' : 'Quick navigation'}>
+          {simpleItems.filter(item => ['overview', 'friends', 'daily', 'memory'].includes(item.id)).map(item => <NavLink key={item.path} to={item.path} end={item.end} className={item.id === currentRoute.section ? 'active' : undefined}><item.icon size={18} /><span>{item.label}</span></NavLink>)}
           <button type="button" onClick={() => setMobileOpen(true)} aria-expanded={mobileOpen}><Menu size={18} /><span>{zh ? '更多' : 'More'}</span></button>
         </nav>}
       </div>

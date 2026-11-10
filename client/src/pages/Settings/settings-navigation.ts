@@ -4,6 +4,8 @@ export const SETTINGS_SECTIONS = [
   { id: 'data', group: 'research' },
   { id: 'budget', group: 'research' },
   { id: 'rules', group: 'research' },
+  { id: 'notifications', group: 'personal' },
+  { id: 'mcp', group: 'research' },
   { id: 'appearance', group: 'personal' },
   { id: 'security', group: 'personal' },
   { id: 'updates', group: 'personal' },

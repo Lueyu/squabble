@@ -16,6 +16,10 @@ import { QuoteModule } from '../quote/quote.module';
 import { DailyChannelResearchService } from './daily-channel-research.service';
 import { ChannelModule } from '../channel/channel.module';
 import { PaperTradingModule } from '../paper-trading/paper-trading.module';
+import { DailyWorkspaceService } from './daily-workspace.service';
+import { DailyWorkspaceController } from './daily-workspace.controller';
+import { DailyWorkspaceResearchController } from './daily-workspace-research.controller';
+import { DailyWorkspaceResearchService } from './daily-workspace-research.service';
 
 @Module({
   imports: [
@@ -30,8 +34,10 @@ import { PaperTradingModule } from '../paper-trading/paper-trading.module';
     ChannelModule,
     PaperTradingModule,
   ],
-  controllers: [ExperienceController],
+  controllers: [ExperienceController, DailyWorkspaceController, DailyWorkspaceResearchController],
   providers: [
+    DailyWorkspaceService,
+    DailyWorkspaceResearchService,
     TodayService,
     CurrentResearchService,
     ExperienceScheduler,

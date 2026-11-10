@@ -9,5 +9,6 @@
 @import url("./typography.css");
 @import url("./themes.css");
 @import url("./portfolio-workspace.css");
+@import url("./workspace-navigation.css");
 
 @config "../../tailwind.config.ts";

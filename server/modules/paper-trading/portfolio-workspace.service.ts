@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperAccounts, paperSnapshots } from '../../database/schema';
 import { investmentPolicies, investmentRequests } from '../../database/investment-policy.schema';
-import { portfolioCombinationDrafts, portfolioCombinationPreviews, portfolioCombinationRevisions,
+import { portfolioAccountCompanions, portfolioCombinationDrafts, portfolioCombinationPreviews, portfolioCombinationRevisions,
   portfolioStrategyAssignments } from '../../database/portfolio-workspace.schema';
 import { strategyMandates } from '../../database/strategy-mandates.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
@@ -14,9 +14,9 @@ import { cancelInvestmentCandidates, expireInvestmentConstraints, InvestmentPoli
 import { UserInvestmentStrategyService } from './user-investment-strategy.service';
 import { effectiveInvestmentConfig } from './investment-policy.rules';
 import { installInvestorCombinationMandate } from './user-strategy-runtime';
-import { combinationHash, combinationIssues, workspaceCombinationSchema, workspaceHash, workspaceMutationSchema } from './portfolio-workspace.rules';
+import { combinationHash, combinationIssues, workspaceCombinationSchema, workspaceCompanionSchema, workspaceHash, workspaceMutationSchema } from './portfolio-workspace.rules';
 import type { PortfolioAccountDetail, PortfolioAccountSummary, PortfolioAllocationInput, PortfolioCombination,
-  PortfolioCombinationPreview, PortfolioStrategyAssignment } from '../../../shared/portfolio-workspace.interface';
+  PortfolioCombinationPreview, PortfolioCompanionResult, PortfolioStrategyAssignment } from '../../../shared/portfolio-workspace.interface';
 
 @Injectable()
 export class PortfolioWorkspaceService {
@@ -74,17 +74,20 @@ export class PortfolioWorkspaceService {
     });
   }
   async list(owner: string): Promise<PortfolioAccountSummary[]> {
-    const [accounts, policies, snapshots, assignments] = await Promise.all([
+    const [accounts, policies, snapshots, assignments, companions] = await Promise.all([
       this.db.select().from(paperAccounts).where(eq(paperAccounts.owner, owner)).orderBy(desc(paperAccounts.createdAt)),
       this.db.select().from(investmentPolicies).where(eq(investmentPolicies.owner, owner)),
       this.db.selectDistinctOn([paperSnapshots.accountId]).from(paperSnapshots).where(eq(paperSnapshots.owner, owner))
         .orderBy(paperSnapshots.accountId, desc(paperSnapshots.valuedAt), desc(paperSnapshots.snapshotDate)),
       this.db.select().from(portfolioStrategyAssignments).where(eq(portfolioStrategyAssignments.owner, owner)),
+      this.db.select().from(portfolioAccountCompanions).where(eq(portfolioAccountCompanions.owner, owner)),
     ]);
     const colorOrder = [...accounts].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
     return accounts.map(account => {
       const policy = policies.find(p => p.accountId === account.id);
+      const companion = companions.find(item => item.accountId === account.id);
       return { id: account.id, colorIndex: colorOrder.findIndex(a => a.id === account.id), name: account.name, createdAt: account.createdAt.toISOString(),
+        companionId: companion?.companionId ?? null, companionRevision: companion?.revision ?? 0,
         status: !account.isActive || policy?.status === 'archived' ? 'archived'
           : policy ? policy.status === 'running' ? 'running' : 'paused' : account.botEnabled ? 'running' : 'paused',
         policyRevision: policy?.revision ?? null, equityUsd: snapshots.find(s => s.accountId === account.id)?.equity ?? null,
@@ -101,6 +104,38 @@ export class PortfolioWorkspaceService {
   async create(owner: string, input: unknown) {
     await this.policies.assertFeatureEnabled(owner);
     return this.policies.createAccount(owner, input);
+  }
+  /** Cosmetic preferences use their own revision and never advance strategy authority. */
+  async setCompanion(owner: string, accountId: string, input: unknown): Promise<PortfolioCompanionResult> {
+    const request = this.parse(workspaceCompanionSchema, input);
+    if (!z.string().uuid().safeParse(accountId).success) throw new BadRequestException('INVALID_ACCOUNT_ID');
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      const [account] = await tx.select().from(paperAccounts)
+        .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId))).for('update');
+      if (!account) throw new NotFoundException('ACCOUNT_NOT_FOUND');
+      const requestKey = `companion:${accountId}:${request.requestKey}`;
+      const requestHash = workspaceHash({ accountId, request });
+      const [prior] = await tx.select().from(investmentRequests)
+        .where(and(eq(investmentRequests.owner, owner), eq(investmentRequests.requestKey, requestKey)));
+      if (prior) {
+        if (prior.requestHash !== requestHash) throw new ConflictException('REQUEST_KEY_CONFLICT');
+        return prior.result as unknown as PortfolioCompanionResult;
+      }
+      const [policy] = await tx.select({ status: investmentPolicies.status }).from(investmentPolicies)
+        .where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, accountId)));
+      if (!account.isActive || policy?.status === 'archived') throw new ConflictException('ARCHIVED_ACCOUNT_READ_ONLY');
+      const [current] = await tx.select().from(portfolioAccountCompanions)
+        .where(and(eq(portfolioAccountCompanions.owner, owner), eq(portfolioAccountCompanions.accountId, accountId)));
+      if ((current?.revision ?? 0) !== request.expectedRevision) throw new ConflictException('COMPANION_REVISION_CHANGED');
+      const value = { owner, accountId, companionId: request.companionId, revision: request.expectedRevision + 1, updatedAt: new Date() };
+      await tx.insert(portfolioAccountCompanions).values(value).onConflictDoUpdate({
+        target: [portfolioAccountCompanions.owner, portfolioAccountCompanions.accountId], set: value,
+      });
+      const result = { accountId, companionId: value.companionId, companionRevision: value.revision };
+      await tx.insert(investmentRequests).values({ owner, requestKey, requestHash, operation: 'companion', result });
+      return result;
+    });
   }
   async combination(owner: string, accountId: string): Promise<PortfolioCombination> {
     await this.account(owner, accountId);

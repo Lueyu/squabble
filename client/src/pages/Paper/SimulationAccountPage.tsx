@@ -44,6 +44,8 @@ import DecisionCard from './DecisionCard';
 import { limitLabels } from './StartInvestmentCard';
 import PortfolioComparisonPanel from '@/features/portfolio-comparison/PortfolioComparisonPanel';
 import { accountColor } from '@/features/portfolio-comparison/comparison-chart-options';
+import CompanionIdentity from '@/features/companions/CompanionIdentity';
+import AccountCompanionEditor from '@/features/companions/AccountCompanionEditor';
 
 function AccountRename({
   account,
@@ -139,12 +141,18 @@ export default function SimulationAccountPage() {
 function SimulationAccountDetail({ accountId }: { accountId: string }) {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState(false);
-  const [tab, setTab] = useState(
-    params.has('orderId') ? 'trades' : 'strategies',
-  );
+  const [choosingCompanion, setChoosingCompanion] = useState(false);
+  const requestedTab = params.get('tab');
+  const tab = ['strategies', 'holdings', 'trades', 'risk'].includes(requestedTab ?? '')
+    ? requestedTab! : params.has('orderId') ? 'trades' : 'strategies';
+  const setTab = (value: string) => {
+    const next = new URLSearchParams(params);
+    next.set('tab', value);
+    setParams(next, { replace: true });
+  };
   const query = useQuery({
     queryKey: portfolioWorkspaceKeys.account(accountId),
     queryFn: () => portfolioWorkspaceApi.account(accountId),
@@ -196,7 +204,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
   const combination = data.combination;
   const rules = limitLabels(zh);
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-7">
+    <div className="portfolio-page companion-detail-page">
       <header className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
@@ -204,7 +212,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft size={14} />
-            {zh ? '全部模拟账户' : 'All simulation accounts'}
+            {zh ? '我的股友' : 'My companions'}
           </Link>
           <Select
             value={accountId}
@@ -227,6 +235,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
         </div>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
+            <CompanionIdentity id={data.companionId} zh={zh} />
             <div className="flex flex-wrap items-center gap-2">
               <span
                 aria-hidden="true"
@@ -255,6 +264,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {data.status !== 'archived' && <Button variant="outline" onClick={() => setChoosingCompanion(true)}>{data.companionId ? zh ? '更换股友形象' : 'Change companion' : zh ? '选择股友' : 'Choose companion'}</Button>}
             <AccountStatusControl account={data} />
             {data.status !== 'archived' && (
               <Button asChild>
@@ -313,6 +323,13 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
             {zh ? '政策修订' : 'Policy revision'} {data.policyRevision ?? '—'}
           </p>
         </div>
+      </section>
+      <section className="companion-latest-event">
+        <div><h2>{investment.actions.length ? zh ? '每个动作，都能回到依据' : 'Every action has a record' : zh ? '把想法说清楚，再开始观察' : 'Clarify your idea, then observe'}</h2>
+          <p>{investment.actions.length ? zh ? `此账户保留了 ${investment.actions.length} 条当前可读取的模拟执行记录。查看状态、原因和对应策略。` : `${investment.actions.length} available simulation execution records. Review their status, reasons and strategies.` : zh ? '从一个问题开始，逐步核对规则。未确认并应用策略前，模拟仓不会自动买卖。' : 'Start with a question and review the rules step by step. This account does not trade automatically until a strategy is confirmed and applied.'}</p></div>
+        <div className="flex flex-wrap gap-2">{investment.actions.length > 0 && <Button variant="outline" onClick={() => setTab('trades')}>{zh ? '查看模拟动态' : 'View activity'}</Button>}
+          <Button asChild variant="outline"><Link to={`/strategies/new?accountId=${encodeURIComponent(accountId)}`}>{zh ? '一起聊出策略' : 'Clarify a strategy'}</Link></Button>
+          <Button asChild variant="ghost"><Link to={`/daily?accountId=${encodeURIComponent(accountId)}`}>{zh ? '阅读股友日报' : 'Read account daily'}</Link></Button></div>
       </section>
       <PortfolioComparisonPanel accountIds={['real', accountId]} compact />
       <Tabs value={tab} onValueChange={setTab}>
@@ -523,6 +540,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
       {renaming && (
         <AccountRename account={data} onClose={() => setRenaming(false)} />
       )}
+      {choosingCompanion && <AccountCompanionEditor account={data} onClose={() => setChoosingCompanion(false)} />}
     </div>
   );
 }

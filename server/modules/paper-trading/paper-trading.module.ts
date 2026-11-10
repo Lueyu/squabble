@@ -45,6 +45,8 @@ import { PortfolioWorkspaceService } from './portfolio-workspace.service';
 import { PortfolioWorkspaceController } from './portfolio-workspace.controller';
 import { PortfolioComparisonService } from './portfolio-comparison.service';
 import { PortfolioComparisonController } from './portfolio-comparison.controller';
+import { StrategyInterviewController } from './strategy-interview.controller';
+import { StrategyInterviewService } from './strategy-interview.service';
 
 @Module({
   imports: [
@@ -67,6 +69,7 @@ import { PortfolioComparisonController } from './portfolio-comparison.controller
     UserInvestmentStrategyController,
     PortfolioWorkspaceController,
     PortfolioComparisonController,
+    StrategyInterviewController,
   ],
   providers: [
     PaperTradingService,
@@ -92,6 +95,7 @@ import { PortfolioComparisonController } from './portfolio-comparison.controller
     UserInvestmentStrategyService,
     PortfolioWorkspaceService,
     PortfolioComparisonService,
+    StrategyInterviewService,
   ],
   exports: [
     PaperTradingService,

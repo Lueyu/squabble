@@ -235,9 +235,17 @@ export class StrategyService {
         if (rule.userDirective && mandate) {
           const verified = await this.verifyInvestorSecurity(owner, mandate, rule, snapshot);
           if (!verified) { runtime.reason = 'Waiting for verified security identity, asset type and lot size'; continue; }
-          const fills = await this.db.select().from(strategySignals).where(and(eq(strategySignals.owner, owner), eq(strategySignals.state, 'filled'),
+          const fills = await this.db.select({ candidate: strategySignals.candidate, marketDate: strategyPlans.marketDate })
+            .from(strategySignals).leftJoin(strategyPlans, and(eq(strategyPlans.owner, owner), eq(strategyPlans.id, strategySignals.planId)))
+            .where(and(eq(strategySignals.owner, owner), eq(strategySignals.state, 'filled'),
             sql`${strategySignals.candidate}->>'accountId' = ${account.id}`, sql`${strategySignals.candidate}->>'userStrategyId' = ${rule.userStrategyId}`));
-          if (fills.some(fill => isSameInvestorEntry(fill.candidate, account.id, rule.userStrategyId!, rule.userEntryId ?? rule.userDirective!.entryId))) { runtime.reason = 'This confirmed strategy entry already executed'; continue; }
+          const daily = rule.userDirective.executionFrequency?.kind === 'per_trading_day';
+          if (fills.some(fill => isSameInvestorEntry(fill.candidate, account.id, rule.userStrategyId!, rule.userEntryId ?? rule.userDirective!.entryId)
+            && (!daily || !fill.marketDate || fill.marketDate === current.tradingDate))) {
+            runtime.reason = daily ? 'This entry already executed for this trading day or its prior day cannot be verified'
+              : 'This confirmed strategy entry already executed'; continue;
+          }
+          // Daily frequency and live duplicate reservations are rechecked by claimSignal's account-locked fence.
         }
         let quantity = rule.side === 'sell' ? await this.sellableQuantity(owner, ticker, market, shares, account.id, snapshot.lotSize)
           : await this.buyQuantity(owner, profile, rule.maxPositionPct, snapshot, shares, account.id, mandate?.config.limits.maxOrderPct);

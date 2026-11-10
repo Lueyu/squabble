@@ -1,0 +1,136 @@
+/* Navigation remains visible while its independently scrolling content changes. */
+.app-shell-simple .app-topbar {
+  display: flex;
+  min-height: 72px;
+  padding: 12px 40px;
+  background: var(--background);
+}
+
+@media (width >= 768px) {
+  .app-shell-simple .app-sidebar {
+    width: 224px;
+  }
+}
+
+.workspace-return-location,
+.workspace-location {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.workspace-location {
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.workspace-parent-link {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.workspace-section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 36px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+
+.workspace-section-tabs a {
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.workspace-section-tabs a[aria-current='page'] {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.workspace-search-results {
+  display: grid;
+  gap: 4px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.workspace-search-results button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.workspace-search-results button:hover,
+.workspace-search-results button:focus-visible {
+  background: var(--brand-soft);
+}
+
+.workspace-flow-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.app-shell-simple .app-brand-caption {
+  max-width: 180px;
+  font-size: 11px;
+}
+
+@media (width <= 767px) {
+  .app-shell-simple .app-topbar.app-topbar-flow {
+    min-height: 96px;
+    height: auto;
+  }
+
+  .app-shell-simple .app-topbar {
+    min-height: 64px;
+    padding: 12px 16px;
+  }
+
+  .workspace-return-location {
+    gap: 10px;
+  }
+
+  .workspace-parent-link {
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-section-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 8px 16px;
+  }
+
+  .workspace-section-tabs a {
+    flex-shrink: 0;
+  }
+}
+
+@media (width <= 360px) {
+  .app-shell-simple .app-topbar-actions {
+    gap: 10px;
+  }
+
+  .app-shell-simple .app-topbar-actions > .appearance-trigger {
+    display: none;
+  }
+
+  .workspace-parent-link {
+    flex-shrink: 0;
+  }
+}

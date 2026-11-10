@@ -1,6 +1,6 @@
 import http from './http';
 import type { Market } from '@shared/api.interface';
-import type { AiInvestmentView, AiInvestmentPreview, InvestmentConstraint, InvestmentPolicy, InvestmentStartRequest } from '@shared/investment-policy.interface';
+import type { AiInvestmentView, AiInvestmentPreview, InvestmentConstraint, InvestmentPolicy, InvestmentStartRequest, InvestmentPreviewRequest } from '@shared/investment-policy.interface';
 import type { ActualExecutor } from '@shared/simple-conversation.interface';
 import type { ReportReference } from '@shared/research-document.interface';
 
@@ -18,8 +18,8 @@ export interface InvestmentDecision {
 export const fetchAiInvestment = async (): Promise<AiInvestmentView> => (await http.get('/api/ai-investment')).data;
 export const fetchInvestmentDecision = async (id: string): Promise<InvestmentDecision> =>
   (await http.get(`/api/ai-investment/decisions/${encodeURIComponent(id)}`)).data;
-export const previewAiInvestment = async (input: { origin: 'holdings' | 'cash'; cash?: { amount: number; currency: 'USD' | 'HKD' | 'CNY' }; requestKey: string }): Promise<AiInvestmentPreview> =>
-  (await http.post('/api/ai-investment/preview', input, input.origin === 'holdings' ? { timeout: 60_000 } : undefined)).data;
+export const previewAiInvestment = async (input: InvestmentPreviewRequest): Promise<AiInvestmentPreview> =>
+  (await http.post('/api/ai-investment/preview', input, input.origin !== 'cash' ? { timeout: 60_000 } : undefined)).data;
 export const startAiInvestment = async (input: InvestmentStartRequest): Promise<{ status: string; policy: InvestmentPolicy; evaluationState: string }> =>
   (await http.post('/api/ai-investment/start', input)).data;
 export const restartAiInvestment = async (input: InvestmentStartRequest & { expectedAccountId: string }) =>

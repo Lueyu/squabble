@@ -13,7 +13,9 @@ export interface StrategyNumericEvidence { field: string; value: number; quote: 
 /** Investor intent. Technical quote/slippage guards are supplied by the execution bridge, never invented as investment advice. */
 export interface StrategyDirective {
   ticker: string; side: 'buy' | 'sell';
-  trigger: { kind: 'price_lte' | 'price_gte' | 'always' | 'semantic'; price?: number; text?: string };
+  trigger: { kind: 'price_lt' | 'price_lte' | 'price_gt' | 'price_gte' | 'always' | 'semantic'; price?: number; text?: string };
+  /** Missing on legacy records means once for this source entry, never daily repetition. */
+  executionFrequency?: { kind: 'once' } | { kind: 'per_trading_day'; maxExecutions: 1 };
   /** Exact shares, or the TOTAL account position after the action; never an incremental order percentage. */
   quantity?: number; positionPct?: number; minPrice?: number; maxPrice?: number; stopLossPrice?: number;
   semanticAuthorized?: boolean;

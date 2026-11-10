@@ -10,6 +10,8 @@ import type {
   PortfolioCombinationDraft,
   PortfolioCombinationPreview,
   PortfolioCombinationRequest,
+  PortfolioCompanionRequest,
+  PortfolioCompanionResult,
 } from '@shared/portfolio-workspace.interface';
 
 const base = '/api/ai-investment/accounts';
@@ -33,6 +35,8 @@ export const portfolioWorkspaceApi = {
     (await http.get<PortfolioAccountDetail>(accountPath(accountId))).data,
   create: async (input: CreatePortfolioAccountRequest) =>
     (await http.post<PortfolioAccountMutationResult>(base, input)).data,
+  setCompanion: async (accountId: string, input: PortfolioCompanionRequest) =>
+    (await http.patch<PortfolioCompanionResult>(`${accountPath(accountId)}/companion`, input)).data,
   rename: async (
     accountId: string,
     input: PortfolioAccountMutationRequest & { name: string },

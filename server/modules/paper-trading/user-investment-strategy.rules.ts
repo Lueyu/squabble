@@ -10,7 +10,9 @@ const positive = z.number().finite().positive();
 const timestamp = z.string().datetime({ offset: true });
 const timezone = z.string().min(1).max(80).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } });
 const directiveSchema = z.object({ ticker: z.string().min(1).max(30), side: z.enum(['buy', 'sell']),
-  trigger: z.object({ kind: z.enum(['price_lte', 'price_gte', 'always', 'semantic']), price: positive.optional(), text: z.string().max(1000).optional() }).strict(),
+  trigger: z.object({ kind: z.enum(['price_lt', 'price_lte', 'price_gt', 'price_gte', 'always', 'semantic']), price: positive.optional(), text: z.string().max(1000).optional() }).strict(),
+  executionFrequency: z.discriminatedUnion('kind', [z.object({ kind: z.literal('once') }).strict(),
+    z.object({ kind: z.literal('per_trading_day'), maxExecutions: z.literal(1) }).strict()]).optional(),
   quantity: positive.optional(), positionPct: positive.max(100).optional(), minPrice: positive.optional(), maxPrice: positive.optional(), stopLossPrice: positive.optional(),
   semanticAuthorized: z.boolean().optional(), reviewedText: z.string().max(12000),
   numericEvidence: z.array(z.object({ field: z.string().max(40), value: positive, quote: z.string().min(1).max(120) }).strict()).max(10),
@@ -98,7 +100,7 @@ export function previewStrategy(content: StrategyDraftInput, sources: StrategySo
     if ((directive.quantity === undefined) === (directive.positionPct === undefined)) {
       issue('AMOUNT_REQUIRED', [entry.id], 'Specify either a share quantity or a position percentage.', '请明确股数或仓位比例其中一项。', 'warning'); continue;
     }
-    if ((directive.trigger.kind === 'price_lte' || directive.trigger.kind === 'price_gte') && directive.trigger.price === undefined) {
+    if (directive.trigger.kind.startsWith('price_') && directive.trigger.price === undefined) {
       issue('CONDITION_REQUIRED', [entry.id], 'A price condition needs its explicit threshold.', '价格条件需要明确价格。', 'warning'); continue;
     }
     if (directive.trigger.kind === 'semantic' && (!directive.semanticAuthorized || !directive.trigger.text?.trim() || !entry.text.includes(directive.trigger.text))) {
@@ -112,10 +114,13 @@ export function previewStrategy(content: StrategyDraftInput, sources: StrategySo
     }
     const amountEn = directive.quantity !== undefined ? `${directive.quantity} shares` : `target TOTAL position after this action: ${directive.positionPct}% (rounded toward the target by market lots)`;
     const amountZh = directive.quantity !== undefined ? `${directive.quantity} 股` : `交易后目标总仓位 ${directive.positionPct}%（按市场每手向目标取整）`;
-    const conditionEn = directive.trigger.kind === 'always' ? 'when valid execution quotes are available' : directive.trigger.kind === 'semantic' ? `after AI confirms “${directive.trigger.text}”` : `when price ${directive.trigger.kind === 'price_lte' ? '≤' : '≥'} ${directive.trigger.price}`;
-    const conditionZh = directive.trigger.kind === 'always' ? '取得有效执行报价时' : directive.trigger.kind === 'semantic' ? `由 AI 确认「${directive.trigger.text}」后` : `价格${directive.trigger.kind === 'price_lte' ? '不高于' : '不低于'} ${directive.trigger.price} 时`;
-    result.state = 'executable'; result.explanation = message(`${directive.side === 'buy' ? 'Buy' : 'Sell'} ${directive.ticker}: ${amountEn}, ${conditionEn}. ${startsAt} – ${endsAt} (${zone}); global risk checks still apply.`,
-      `${directive.ticker}：${conditionZh}${directive.side === 'buy' ? '买入' : '卖出'} ${amountZh}。${startsAt} 至 ${endsAt}（${zone}），仍须通过总体风险校验。`);
+    const operators = { price_lt: ['<', '严格低于'], price_lte: ['≤', '不高于'], price_gt: ['>', '严格高于'], price_gte: ['≥', '不低于'] };
+    const operator = operators[directive.trigger.kind as keyof typeof operators];
+    const conditionEn = directive.trigger.kind === 'always' ? 'when valid execution quotes are available' : directive.trigger.kind === 'semantic' ? `after AI confirms “${directive.trigger.text}”` : `when price ${operator[0]} ${directive.trigger.price}`;
+    const conditionZh = directive.trigger.kind === 'always' ? '取得有效执行报价时' : directive.trigger.kind === 'semantic' ? `由 AI 确认「${directive.trigger.text}」后` : `价格${operator[1]} ${directive.trigger.price} 时`;
+    const daily = directive.executionFrequency?.kind === 'per_trading_day';
+    result.state = 'executable'; result.explanation = message(`${directive.side === 'buy' ? 'Buy' : 'Sell'} ${directive.ticker}: ${amountEn}, ${conditionEn}. ${daily ? 'At most once per verified trading day' : 'Once for this confirmed entry'}. ${startsAt} – ${endsAt} (${zone}); global risk checks still apply.`,
+      `${directive.ticker}：${conditionZh}${directive.side === 'buy' ? '买入' : '卖出'} ${amountZh}。${daily ? '每个经校验的交易日最多执行一次' : '本条已确认规则只执行一次'}。${startsAt} 至 ${endsAt}（${zone}），仍须通过总体风险校验。`);
     preview.directives.push({ ...directive, entryId: entry.id, startsAt, endsAt, timezone: zone, sourceKeys: [...entry.sourceKeys], route: directive.trigger.kind === 'semantic' ? 'ai' : 'direct' });
   }
   for (let i = 0; i < preview.directives.length; i++) for (const other of preview.directives.slice(i + 1)) {
