@@ -22,6 +22,7 @@ import {
   currentAccountBasis,
   currentAccountValue,
   historicalReferenceSeries,
+  partialReferenceCoverage,
   shouldShowReference,
 } from './comparison-display';
 import type {
@@ -163,6 +164,16 @@ export default function PortfolioComparisonPanel({
   const referenceAvailable = history.data?.series.some(
     (item) => item.coverage.totalPositions > 0,
   );
+  const partialReferences = reference
+    ? selected.flatMap((account) => {
+        const partial = partialReferenceCoverage(
+          history.data?.series.find(
+            (item) => item.accountId === account.accountId,
+          ),
+        );
+        return partial ? [{ account, ...partial }] : [];
+      })
+    : [];
   const toggle = (id: string) => {
     const current = selectedIds ?? series.map((item) => item.accountId);
     const next = current.includes(id)
@@ -399,7 +410,16 @@ export default function PortfolioComparisonPanel({
                 background: accountColor(item.accountId, item.colorIndex),
               }}
             />
-            <span>{label(item)}</span>
+            <span>
+              {label(item)}
+              {partialReferences.some(
+                (row) => row.account.accountId === item.accountId,
+              )
+                ? zh
+                  ? ' · 部分持仓'
+                  : ' · Partial holdings'
+                : ''}
+            </span>
             <span className="portfolio-legend-value">
               {metric === 'equity'
                 ? money(
@@ -414,6 +434,22 @@ export default function PortfolioComparisonPanel({
           </button>
         ))}
       </div>
+      {partialReferences.length > 0 && (
+        <div className="portfolio-notice" role="note">
+          <span>
+            {zh ? '部分持仓参考线：' : 'Partial holdings lookback: '}
+            {partialReferences
+              .map(
+                (item) =>
+                  `${label(item.account)} ${item.covered}/${item.total} ${zh ? '个标的' : 'positions'}${item.missingTickers.length ? ` (${zh ? '未计入' : 'excludes '}${item.missingTickers.join(', ')})` : ''}`,
+              )
+              .join(' · ')}
+            {zh
+              ? '。仅包含整个区间可一致核对的持仓；未覆盖项不计入曲线，账户金额仍按当前可用资料显示。'
+              : '. Only a consistent covered set is plotted. Missing holdings are excluded from the line; account figures retain their current coverage.'}
+          </span>
+        </div>
+      )}
       {history.data?.refreshing && (
         <p role="status" className="portfolio-valuation-time">
           {zh
@@ -441,6 +477,9 @@ export default function PortfolioComparisonPanel({
         compact={compact}
         reference={reference}
         historySeries={reference ? history.data?.series : undefined}
+        partialAccountIds={partialReferences.map(
+          (item) => item.account.accountId,
+        )}
         onSelectAccount={(id) =>
           navigate(accountPath(id), { state: returnState })
         }

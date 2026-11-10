@@ -1,5 +1,8 @@
 import type { PortfolioComparisonSeries } from '@shared/portfolio-comparison.interface';
-import type { PortfolioHistoryView } from '@shared/portfolio-history.interface';
+import type {
+  PortfolioHistorySeries,
+  PortfolioHistoryView,
+} from '@shared/portfolio-history.interface';
 
 export function currentAccountValue(
   series: PortfolioComparisonSeries,
@@ -35,6 +38,35 @@ export function currentAccountBasis(
 }
 
 /** This replaces an entire series; historical reference values never join an actual NAV line. */
+export function partialReferenceCoverage(reference?: PortfolioHistorySeries) {
+  if (!reference || reference.coverage.completePoints !== 0) return null;
+  const last = reference.points.at(-1);
+  if (
+    !last ||
+    !last.coveredPositions ||
+    last.coveredPositions >= last.totalPositions ||
+    last.priceAsOf.length !== last.coveredPositions ||
+    new Set(last.priceAsOf.map((row) => row.ticker)).size !==
+      last.coveredPositions
+  )
+    return null;
+  return {
+    covered: last.coveredPositions,
+    total: last.totalPositions,
+    missingTickers: last.gaps
+      .filter(
+        (gap) =>
+          gap.startsWith('PRICE_MISSING:') ||
+          gap.startsWith('POSITION_UNSUPPORTED:'),
+      )
+      .map((gap) => gap.slice(gap.indexOf(':') + 1)),
+    identity: last.priceAsOf
+      .map((row) => row.ticker)
+      .sort()
+      .join('\n'),
+  };
+}
+
 export function historicalReferenceSeries(
   accounts: PortfolioComparisonSeries[],
   history: PortfolioHistoryView | undefined,
@@ -43,11 +75,34 @@ export function historicalReferenceSeries(
     const reference = history?.series.find(
       (item) => item.accountId === account.accountId,
     );
+    const partial = partialReferenceCoverage(reference);
     const points =
       reference?.points.map((point) => ({
         timestamp: `${point.date}T12:00:00.000Z`,
         date: point.date,
-        equityUsd: point.valueUsd,
+        equityUsd: partial
+          ? point.coveredPositions === partial.covered &&
+            point.totalPositions === partial.total &&
+            new Set(point.priceAsOf.map((row) => row.ticker)).size ===
+              partial.covered &&
+            point.priceAsOf
+              .map((row) => row.ticker)
+              .sort()
+              .join('\n') === partial.identity &&
+            point.gaps.every((gap) =>
+              [
+                'PRICE_MISSING',
+                'FX_MISSING',
+                'POSITION_UNSUPPORTED',
+                'PRIOR_CLOSE',
+                'PRIOR_FX',
+              ].includes(gap.split(':')[0]),
+            ) &&
+            Number.isFinite(point.knownValueUsd) &&
+            point.knownValueUsd >= 0
+            ? point.knownValueUsd
+            : null
+          : point.valueUsd,
         returnPct: null,
         gaps: point.gaps,
       })) ?? [];

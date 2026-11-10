@@ -39,6 +39,32 @@ test('reference dates and tooltip have a date without a fabricated observed-at t
   assert.doesNotMatch(text, /12:00|20:00|Observed at/);
 });
 
+test('one unsupported holding does not hide a consistent covered subset, and a changing subset or price discontinuity breaks the partial line', () => {
+  const { historicalReferenceSeries, partialReferenceCoverage } = fixture().load('features/portfolio-comparison/comparison-display.ts');
+  const point = (date, ticker, value, gaps = []) => ({ date, valueUsd: null, knownValueUsd: value, coveredPositions: 1, totalPositions: 2,
+    priceAsOf: [{ ticker, date, source: 'fixture:raw-close' }], fxAsOf: [], gaps });
+  const partial = { accountId: 'real', coverage: { completePoints: 0 }, points: [
+    point('2026-11-06', 'OTHER', 999), point('2026-11-07', 'FICT', 100),
+    point('2026-11-08', 'FICT', 200, ['PRICE_DISCONTINUITY_UNVERIFIED:FICT']), point('2026-11-09', 'FICT', 120),
+  ], gaps: ['PRICE_MISSING:UNRESOLVED'] };
+  assert.equal(partialReferenceCoverage(partial).covered, 1);
+  const display = historicalReferenceSeries([{ accountId: 'real' }], { series: [partial] })[0];
+  assert.deepEqual(Array.from(display.points, p => p.equityUsd), [null, 100, null, 120]);
+  assert.equal(display.returnPct, null);
+  assert.equal(partial.points.every(p => p.valueUsd === null), true, 'original full-portfolio unknowns remain unknown');
+  const invalid = [
+    { ...point('2026-11-01', 'FICT', 80), totalPositions: 3 },
+    point('2026-11-02', 'FICT', Infinity),
+    point('2026-11-03', 'FICT', 80, ['FUTURE_UNRECOGNIZED_RISK']),
+    { ...point('2026-11-04', 'FICT', 80), coveredPositions: 0, priceAsOf: [], gaps: ['FX_MISSING:HKD'] },
+  ];
+  partial.points.unshift(...invalid);
+  const expanded = historicalReferenceSeries([{ accountId: 'real' }], { series: [partial] })[0];
+  assert.equal(expanded.points.slice(0, invalid.length).every(p => p.equityUsd === null), true);
+  partial.points.at(-1).priceAsOf.push({ ticker: 'FICT', date: '2026-11-09', source: 'duplicate' });
+  assert.equal(partialReferenceCoverage(partial), null, 'duplicate identity cannot anchor a partial-portfolio line');
+});
+
 test('overview automatically shows available imported-position history and fills current account amounts', async () => {
   const React = require('react');
   const { createRoot } = require('react-dom/client');

@@ -22,6 +22,7 @@ interface Props {
   compact?: boolean;
   reference?: boolean;
   historySeries?: PortfolioHistorySeries[];
+  partialAccountIds?: string[];
   onSelectAccount?: (accountId: string) => void;
 }
 
@@ -31,6 +32,7 @@ export default function PortfolioComparisonChart({
   compact = false,
   reference = false,
   historySeries,
+  partialAccountIds,
   onSelectAccount,
 }: Props) {
   const { i18n } = useTranslation();
@@ -130,7 +132,16 @@ export default function PortfolioComparisonChart({
       series: series.map((item) => ({
         id: item.accountId,
         name:
-          item.kind === 'real' ? (zh ? '实仓' : 'Real portfolio') : item.name,
+          (item.kind === 'real'
+            ? zh
+              ? '实仓'
+              : 'Real portfolio'
+            : item.name) +
+          (partialAccountIds?.includes(item.accountId)
+            ? zh
+              ? ' · 部分持仓'
+              : ' · Partial holdings'
+            : ''),
         type: 'line',
         data: comparisonLineData(item, metric),
         connectNulls: false,
@@ -172,6 +183,7 @@ export default function PortfolioComparisonChart({
       intraday,
       reference,
       i18n.language,
+      partialAccountIds,
     ],
   );
   const hasValues = series.some((item) =>
@@ -309,8 +321,8 @@ function HistoricalValuations({
             <caption>
               {reference
                 ? zh
-                  ? '当前数量 × 历史收盘价 × 当日汇率 · 不含现金、分红或交易'
-                  : 'Current quantities × historical closes × dated FX · Excludes cash, dividends and trades'
+                  ? '已覆盖持仓数量 × 历史收盘价 × 当日汇率 · 缺失项、现金、分红和交易不计入'
+                  : 'Covered current quantities × historical closes × dated FX · Excludes missing positions, cash, dividends and trades'
                 : zh
                   ? '所选账户的已存估值 · 缺少数值以“—”显示'
                   : 'Saved valuations for selected accounts · Missing values shown as “—”'}
