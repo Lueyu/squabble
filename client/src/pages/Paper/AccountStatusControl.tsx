@@ -21,9 +21,11 @@ import { pauseLegacyInvestment } from '@/api/ai-investment';
 export default function AccountStatusControl({
   account,
   compact = false,
+  shortLabel = false,
 }: {
   account: PortfolioAccountSummary;
   compact?: boolean;
+  shortLabel?: boolean;
 }) {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
@@ -82,7 +84,7 @@ export default function AccountStatusControl({
         size={compact ? 'sm' : 'default'}
         onClick={() => setConfirming(true)}
       >
-        {label}
+        {shortLabel ? account.status === 'paused' ? (zh ? '恢复' : 'Resume') : (zh ? '暂停' : 'Pause') : label}
       </Button>
       <Dialog
         open={confirming}

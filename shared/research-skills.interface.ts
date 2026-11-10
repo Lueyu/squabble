@@ -7,3 +7,11 @@ export interface ResearchSkillManifest {
   input: string[]; output: string[]; steps: string[]; requiredTools: string[];
   dependencies: string[]; context: string; fixtures: ResearchSkillFixture[];
 }
+
+/** Public discovery metadata. Only the server resolves executable, pinned instructions. */
+export interface ResearchSkillDescriptor {
+  id: string; command: string; title: string; titleEn: string;
+  description: string; descriptionEn: string; version: string;
+  mode: 'research' | 'interview'; requiredTools: string[];
+}
+export interface ResearchSkillIdentity { id: string; version: string; title: string }

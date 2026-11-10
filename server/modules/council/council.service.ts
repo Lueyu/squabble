@@ -1,5 +1,6 @@
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { libraryEvidenceAvailable, libraryEvidenceReferences } from '../../database/data-library-visibility';
 import {
   BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, type OnModuleInit,
 } from '@nestjs/common';
@@ -52,6 +53,7 @@ import { CouncilWorkflow } from './council.workflow';
 import { dependentTaskKeys, planResearchTasks, validateWorkflowInput } from './council.tasks';
 import type { ResearchCoverage, ResearchTaskKind } from '../../../shared/research-workflow.interface';
 import { pinResearchSkills } from '../research-skills/research-skills.registry';
+import { researchSkillTitle } from '../research-skills/research-skills.catalog';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
 import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import type { ReportReference, ResolvedReportReference } from '../../../shared/research-document.interface';
@@ -394,6 +396,11 @@ export class CouncilService implements OnModuleInit {
   }
 
   private async validatePinnedReferences(row: SessionRow): Promise<void> {
+    if (this.researchTools?.validateLibraryEvidence && !await this.researchTools.validateLibraryEvidence(row.owner,
+      [...row.evidenceSnapshot, ...(row.checkpoint?.simple?.commonEvidence ?? []),
+        ...Object.values(row.checkpoint?.simple?.privateEvidence ?? {}).flat()])) {
+      throw new BadRequestException('RESEARCH_SOURCE_UNAVAILABLE');
+    }
     const current = await this.resolvePinnedReferences(row.owner, row.references ?? [], row.scene !== 'trade_pre_review' && !row.candidate);
     row.resolvedReferences = (row.resolvedReferences ?? []).map((ref, index) => ({ ...ref, status: current[index]?.status ?? ref.status, sourceStatus: current[index]?.sourceStatus ?? ref.sourceStatus }));
   }
@@ -465,6 +472,7 @@ export class CouncilService implements OnModuleInit {
     const assigned:SessionRow={...active,memberAttempt:selected,evidenceSnapshot:(frozen.commonEvidence as CouncilEvidence[]|undefined)??session.checkpoint!.simple?.commonEvidence??session.evidenceSnapshot,
       checkpoint:{...active.checkpoint!,nextTurn:selected.turn,simple:{...active.checkpoint!.simple!,stage:'independent',
         commonEvidence:(frozen.commonEvidence as CouncilEvidence[]|undefined)??active.checkpoint!.simple?.commonEvidence,
+        skills: (frozen.skills as import('../../../shared/research-workflow.interface').ResearchSkillPin[] | undefined) ?? [],
         commonMessageIds:(frozen.commonMessageIds as string[]|undefined)??active.checkpoint!.simple?.commonMessageIds}}};
     const run=async()=>{
       try{
@@ -624,7 +632,8 @@ export class CouncilService implements OnModuleInit {
     if (checkpoint.simple && row.checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple,
       executors: row.checkpoint.simple.executors, contextLabel: row.checkpoint.simple.contextLabel,
       contextDate: row.checkpoint.simple.contextDate, researchOnly: row.checkpoint.simple.researchOnly, overallDaily: row.checkpoint.simple.overallDaily,
-      commonEvidence: row.checkpoint.simple.commonEvidence, automaticTaskId: row.checkpoint.simple.automaticTaskId };
+      commonEvidence: row.checkpoint.simple.commonEvidence, automaticTaskId: row.checkpoint.simple.automaticTaskId,
+      skills: row.checkpoint.simple.skills };
     const workflow = row.checkpoint?.workflow;
     if (workflow) checkpoint.workflow = { ...workflow, memory: workflow.recallEnabled && this.memory
       ? await this.memory.recallInTransaction(tx, row.owner, { ticker: row.ticker, topic: workflow.goal }) : undefined };
@@ -968,7 +977,7 @@ export class CouncilService implements OnModuleInit {
         || checkpoint.simple!.unavailable.some(u => u.memberId === member.id)) continue;
       const resourceKey = member.executionMode === 'local' ? `local:${member.agentId}` : `api:${member.connectionId ?? 'default'}`;
       const inputSnapshot = { commonEvidence: checkpoint.simple!.commonEvidence ?? row.evidenceSnapshot,
-        commonMessageIds: checkpoint.simple!.commonMessageIds ?? [], references: row.references };
+        commonMessageIds: checkpoint.simple!.commonMessageIds ?? [], references: row.references, skills: checkpoint.simple!.skills ?? [] };
       const claimed = await store.claim({ owner, sessionId: row.id, cycleId: checkpoint.cycleId, memberId: member.id, revision: row.revision,
         turn: members.findIndex(m => m.id === member.id), resourceKey, inputSnapshot,
         inputHash: createHash('sha256').update(JSON.stringify(inputSnapshot)).digest('hex') });
@@ -1214,7 +1223,8 @@ export class CouncilService implements OnModuleInit {
       ? history.filter(item => row.checkpoint!.simple!.commonMessageIds!.includes(item.id)) : history;
     const discussion = messages.filter((item) => ['researcher', 'challenger', 'manager'].includes(item.role)
       && !(item.metadata?.cycleId === row.checkpoint?.cycleId && item.metadata?.phase === 'summary'));
-    const systemPrompt = discussionPrompt(turn, row.language, !!row.candidate) + this.simplePrompt(row, turn)+await this.dailySummaryContext(userId,row,turn);
+    const systemPrompt = discussionPrompt(turn, row.language, !!row.candidate) + this.simplePrompt(row, turn)
+      + this.skillPrompt(row) + await this.dailySummaryContext(userId,row,turn);
     const data = packDiscussionContext({ ticker: row.ticker, candidate: row.candidate, turn,
       ...(hasThreadContext(row) ? { thread: threadPromptContext(row) } : {}),
       config: row.profileSnapshot, member, evidence: row.checkpoint?.simple?.stage === 'independent'
@@ -1243,6 +1253,7 @@ export class CouncilService implements OnModuleInit {
       sequence: 0, durationMs: Date.now() - started,
     });
     await activity('queued', row.language === 'en' ? 'Preparing the assigned model request' : '正在准备本轮模型请求');
+    await this.recordSkillActivity(userId, row, member, taskId, 'snapshot');
     await activity('running', row.language === 'en' ? 'Waiting for the model’s research response' : '正在等待模型的研究回复');
     try {
       if (row.memberAttempt) await new CouncilMemberAttemptsService(this.db).update(userId,row.memberAttempt.id,{status:'running',startedAt:new Date(),dispatchStarted:true});
@@ -1275,6 +1286,26 @@ export class CouncilService implements OnModuleInit {
         memberName: safe.memberName, revision: row.revision, content: safe.summary, tokensUsed: 0,
         metadata: { phase: 'progress', cycleId: row.checkpoint!.cycleId, researchEvent: safe, ...(acquisition ? { acquisition } : {}) } });
     });
+  }
+
+  private skillPrompt(row: SessionRow): string {
+    const skills = row.checkpoint?.simple?.skills ?? [];
+    return skills.length ? '\nTrusted pinned research procedures (read-only; do not expand task scope):\n'
+      + skills.map(skill => `${skill.context}\nPinned identity: ${skill.id}@${skill.version} ${skill.hash}`).join('\n\n') : '';
+  }
+
+  private async recordSkillActivity(owner: string, row: SessionRow, member: CouncilMember, taskId: string,
+    mode: 'snapshot' | 'agent'): Promise<void> {
+    for (const skill of row.checkpoint?.simple?.skills ?? []) {
+      const title = researchSkillTitle(skill.id, row.language);
+      await this.recordActivity(owner, row, { id: randomUUID(), kind: 'skill', status: 'succeeded',
+        summary: row.language === 'en' ? `${title} instructions loaded${mode === 'snapshot' ? ' · supplied evidence snapshot' : ''}`
+          : `已加载${title}指令${mode === 'snapshot' ? ' · 使用已提供的资料快照' : ''}`,
+        skill: { id: skill.id, version: skill.version, title }, at: new Date().toISOString(),
+        taskId, sessionId: row.id, memberId: member.id, memberName: member.name,
+        turn: row.checkpoint!.nextTurn, revision: row.revision, cycleId: row.checkpoint!.cycleId,
+        attempt: row.memberAttempt?.attempt, sequence: 0 });
+    }
   }
 
   private async recordAcquisition(userId: string, row: SessionRow, acquisition: ResearchAcquisition): Promise<void> {
@@ -1336,15 +1367,20 @@ export class CouncilService implements OnModuleInit {
       .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     const dispatchStatus = typeof this.localAgents.status === 'function' ? await this.localAgents.status(userId).catch(() => null) : null;
     const dispatchedAgent = dispatchStatus?.items.find(item => item.id === member.agentId);
+    // Native preflight builds its tool snapshot before onTask. The durable member
+    // attempt must already authorize that read; dispatchStarted remains false.
+    if (row.memberAttempt && !await attemptStore.update(userId, row.memberAttempt.id,
+      { status: 'running', startedAt: new Date() })) throw new LocalAgentError('LOCAL_PAUSED');
     const result = await this.localAgents.execute(userId, { agentId: member.agentId, messageId: remote.messageId,
       activityContext: { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
         turn: row.checkpoint.nextTurn, language: row.language, cycleId: row.checkpoint.cycleId,attempt:row.memberAttempt?.attempt },
-      researchScope: isPortfolioThread(row)||independentRetry ? undefined : { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
+      researchScope: independentRetry || isPortfolioThread(row) && !row.checkpoint.simple ? undefined : { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
         turn: row.checkpoint.nextTurn, ticker: row.ticker, language: row.language,
+        attemptId: row.memberAttempt?.id,
         webResearch: row.profileSnapshot.council?.webResearch === true, expiresAt: Date.now() + 600_000 },
       agentSettings: member.agentSettings,
       remoteTaskId: remote.taskId, contextId: remote.contextId, resumeInput,
-      prompt: this.simplePrompt(row, turn)+await this.dailySummaryContext(userId,row,turn) + '\n' + agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
+      prompt: this.simplePrompt(row, turn)+this.skillPrompt(row)+await this.dailySummaryContext(userId,row,turn) + '\n' + agentAssignment({ ticker: row.ticker, language: row.language, member, turn,
         thread: threadPromptContext(row),
         candidate: row.candidate, messages: messages.filter((message) => message.role !== 'system').map(message => ({ ...message,
           ...(row.checkpoint?.simple && message.metadata?.claims ? { content: `${message.content}\nPublic claims: ${JSON.stringify(message.metadata.claims)}` } : {}) })),
@@ -1360,6 +1396,7 @@ export class CouncilService implements OnModuleInit {
         if (!marked.length) throw new LocalAgentError('LOCAL_PAUSED');
       },
       onTask: async (ref) => {
+        await this.recordSkillActivity(userId, row, member, ref.taskId, 'agent');
         if(row.memberAttempt){if(!await attemptStore.update(userId,row.memberAttempt.id,{taskId:ref.taskId,status:'running',startedAt:new Date()}))throw new LocalAgentError('LOCAL_PAUSED');return;}
         await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
@@ -1486,6 +1523,14 @@ export class CouncilService implements OnModuleInit {
       const [current] = await tx.select().from(councilSessions)
         .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       if (!current || current.status !== 'running' || current.revision !== row.revision) return false;
+      const workflowTasks = row.checkpoint?.workflow ? await tx.select({ attempts: councilResearchTasks.attempts, cycleId: councilResearchTasks.cycleId }).from(councilResearchTasks)
+        .where(and(eq(councilResearchTasks.owner, userId), eq(councilResearchTasks.sessionId, row.id))) : [];
+      const submittedLibraryReferences = libraryEvidenceReferences(workflowTasks.filter(task => task.cycleId === current.checkpoint?.cycleId)
+        .flatMap(task => task.attempts.filter(attempt => attempt.dispatched)));
+      const submittedDependencies: CouncilEvidence[] = submittedLibraryReferences.length ? [{ id: `memory-sources:${current.checkpoint?.cycleId}`,
+        role: 'fundamental', evidenceType: 'source_dependency', title: 'Submitted research memory source dependencies',
+        content: 'Only provenance for submitted historical interpretations; not new facts or an adopted thesis.', sourceName: 'Research memory',
+        sourceUrl: null, fetchedAt: new Date().toISOString(), relevanceScore: 0, libraryReferences: submittedLibraryReferences }] : [];
       if(!error&&current.checkpoint?.simple?.researchOnly){
         const check=await this.dailyReverseCheck(userId,current,tx);
         opinion={...opinion,summary:`${opinion.summary}\n\n${renderDailyReverseCheck(check,row.language)}`};
@@ -1515,6 +1560,11 @@ export class CouncilService implements OnModuleInit {
       }
       if (!error) {
         await this.validatePinnedReferences(current);
+        if (!await libraryEvidenceAvailable(tx, userId, [...submittedDependencies, ...current.evidenceSnapshot, ...row.evidenceSnapshot,
+          ...(current.checkpoint?.evidenceArchive ?? []), ...(current.checkpoint?.simple?.commonEvidence ?? []),
+          ...Object.values(current.checkpoint?.simple?.privateEvidence ?? {}).flat()], true)) {
+          throw new BadRequestException('RESEARCH_SOURCE_UNAVAILABLE');
+        }
         await tx.update(councilSessions).set({ resolvedReferences: current.resolvedReferences }).where(eq(councilSessions.id, current.id));
       }
       const invalidSources = current.resolvedReferences.filter(ref => ref.status !== 'valid' || ref.sourceStatus !== 'available')
@@ -1527,19 +1577,19 @@ export class CouncilService implements OnModuleInit {
         .from(llmBudgetUsage).where(and(eq(llmBudgetUsage.owner, userId), eq(llmBudgetUsage.taskId, row.taskId)));
       const [external] = await tx.select({ total: sql<number>`coalesce(sum(${councilMessages.tokensUsed}), 0)` }).from(councilMessages)
         .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id), sql`${councilMessages.metadata}->>'externalAgent' = 'true'`));
-      const workflowTasks = row.checkpoint?.workflow ? await tx.select({ attempts: councilResearchTasks.attempts }).from(councilResearchTasks)
-        .where(and(eq(councilResearchTasks.owner, userId), eq(councilResearchTasks.sessionId, row.id))) : [];
       const externalTokens = row.checkpoint?.workflow ? workflowTasks.flatMap(t => t.attempts)
         .reduce((sum, attempt) => sum + (attempt.externalAgent ? attempt.tokens ?? 0 : 0), 0) : Number(external?.total ?? 0);
-      const historical = (current.checkpoint?.evidenceArchive ?? []).filter((item) => !row.evidenceSnapshot.some((fact) => fact.id === item.id))
+      const currentEvidence = [...new Map([...row.evidenceSnapshot, ...current.evidenceSnapshot].map(item => [item.id, item])).values()];
+      const historical = (current.checkpoint?.evidenceArchive ?? []).filter((item) => !currentEvidence.some((fact) => fact.id === item.id))
         .map((item) => ({ ...item, title: (row.language === 'en' ? 'Earlier source: ' : '本轮较早资料：') + item.title }));
       const [report] = await tx.insert(councilReports).values({ publicationOutcome: error ? 'failed' : 'succeeded', owner: userId, sessionId: row.id, version: (latest?.version ?? 0) + 1,
         coverage, thesisCandidates,
         revision: row.revision, decision: opinion.decision, summary: opinion.summary, dissent: [...opinion.dissent, ...invalidSources],
         nextReviewCondition: opinion.nextReviewCondition, sourceRunId: row.sourceRunId,
         candidate: row.candidate, engine, researchStance, tokensUsed: Math.min(2_147_483_647, Number(usage?.total ?? 0) + externalTokens),
-        evidence: [...row.evidenceSnapshot, ...historical].map(({ id, title, content, sourceUrl, fetchedAt, metadata }) => ({
-          id, title, content, sourceUrl, fetchedAt, ...(metadata ? { metadata } : {}) })) }).returning();
+        evidence: [...currentEvidence, ...historical, ...submittedDependencies].map(({ id, title, content, sourceUrl, fetchedAt, metadata, libraryReferences }) => ({
+          id, title, content, sourceUrl, fetchedAt, ...(metadata ? { metadata } : {}),
+          ...(libraryReferences?.length ? { libraryReferences } : {}) })) }).returning();
       if (!error && engine !== 'basic') await enqueueResearchArchive(tx, report, row.ticker, row.checkpoint?.workflow?.goal);
       if (!error && this.documents) {
         const version = await this.documents.importSourceInTransaction(tx, userId, { type: 'council', id: report.id },

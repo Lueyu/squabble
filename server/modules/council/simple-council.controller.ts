@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import { NeedLogin } from '../../common/platform/need-login.decorator';
 import { simpleExperienceEnvironmentEnabled } from '../../common/platform';
 import { SimpleCouncilService } from './simple-council.service';
+import { researchSkillCatalog } from '../research-skills/research-skills.catalog';
 import type { CreateResearchConversationInput, ResearchConversationMessageInput, ResumeDailyReportInput } from '../../../shared/simple-conversation.interface';
 import type { DeleteResearchConversationInput } from '../../../shared/research-deletion.interface';
 import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
@@ -18,6 +19,7 @@ export class ResearchConversationEnabledGuard implements CanActivate {
 @Controller('api/research-conversations')
 export class ResearchConversationsController {
   constructor(private readonly conversations: SimpleCouncilService) {}
+  @NeedLogin() @Get('skills') skills() { return { items: researchSkillCatalog() }; }
   @NeedLogin() @Get() async list(@Req() request: Request, @Query('search') search?: string) { return { items: await this.conversations.list(request.userContext.userId, search) }; }
   @NeedLogin() @Post() create(@Req() request: Request, @Body() input: CreateResearchConversationInput) { return this.conversations.create(request.userContext.userId, input); }
   @NeedLogin() @Get(':id') get(@Req() request: Request, @Param('id') id: string) { return this.conversations.get(request.userContext.userId, id); }

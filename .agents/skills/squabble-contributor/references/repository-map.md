@@ -10,8 +10,8 @@ Structure reviewed on **2026-11-10** against `98f073e` plus the V4 working tree.
 
 | Route | Current experience | Retained or shared surface |
 |---|---|---|
-| `/daily`, `/research` | `pages/Analysis/DailyReportPage.tsx`, `ResearchWorkspacePage.tsx` | Saved daily facts; persisted large research chat and history sidebar |
-| `/data`, `/memory` | `pages/Workspace/DataCenterPage.tsx`, `MemoryWorkspacePage.tsx` | Existing provider/import and thesis/version controls |
+| `/daily`, `/research` | `pages/Analysis/DailyReportPage.tsx`, `ResearchWorkspacePage.tsx` | Saved daily facts with animals; persisted chat, slash skills, history/strategy sidebar |
+| `/data`, `/memory` | `pages/Workspace/DataCenterPage.tsx`, `MemoryWorkspacePage.tsx`; `features/data-library/` | Versioned materials, subscriptions, financial sources and visible source-memory controls |
 | `/strategies`, `/strategies/new`, `/strategies/interviews/:interviewId` | `features/strategy-interview/` | Persisted clarification; existing combination confirmation remains execution authority |
 | `/settings/notifications`, `/settings/mcp` | `features/integrations/PaperIntegrationPanels.tsx` | Shared with retained Paper page; hidden Settings panels close portals |
 | `/` | `client/src/pages/Overview/PortfolioOverviewPage.tsx`: saved real/simulation comparison and research entry | `client/src/pages/Dashboard/DashboardPage.tsx` |
@@ -33,6 +33,8 @@ In the table, abbreviated filenames are siblings of the fully qualified director
 
 | Area | Client/API | Authoritative server and shared contracts |
 |---|---|---|
+| V5 material and financial sources | `client/src/features/data-library/`; `client/src/api/data-library.ts`; `/api/data-library` | `server/modules/data-library/`, `server/database/data-library.schema.ts`, `shared/data-library.interface.ts`, migration50 |
+| Explicit research skills and strategy sidebar | `client/src/features/research-workspace/`; `ResearchWorkspacePage.tsx`; `QuickQuestion.tsx` | `server/modules/research-skills/research-skills.catalog.ts`, trusted bundled manifests, `simple-council.service.ts`, `council.service.ts`; `shared/research-skills.interface.ts` |
 | Current research (mounted by `/research/portfolio`) | `client/src/pages/Today/CurrentAnalysisPanel.tsx`; `client/src/api/simple-experience.ts` | `server/modules/experience/experience.controller.ts`, `today.service.ts`, `current-research.service.ts`, `experience.scheduler.ts`; `shared/simple-experience.interface.ts` |
 | Saved report reading and formatting recovery | `client/src/pages/Today/CurrentAnalysisPanel.tsx`; `POST /api/research/current/reformat` | `server/modules/experience/current-research.service.ts` (`completedSource`, `reformat`, `reconcile`); `shared/simple-experience.interface.ts` (`returnedDocumentId`); `server/modules/experience/report-recovery.integration.spec.ts` |
 | Daily research/report handoff | `/api/research/current/refresh` | `server/modules/experience/daily-channel-research.service.ts`; `server/modules/council/simple-council.service.ts`, `council.service.ts`, `council.daily.ts`, `council.dialogue.ts`; `shared/council.interface.ts`, `shared/report-execution-plan.interface.ts` |

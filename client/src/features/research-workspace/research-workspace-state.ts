@@ -9,10 +9,14 @@ export interface ResearchWorkspaceRequest {
     context?: ResearchContext;
     replyTo?: string;
     requestKey: string;
+    skillId?: string | null;
   };
 }
 
 export interface ResearchWorkspaceComposer {
+  skillId?: string | null;
+  onSkillChange: (id: string | null) => void;
+  onStrategy: (message: string) => void;
   draft: string;
   onDraftChange: (value: string) => void;
   request: ResearchWorkspaceRequest;

@@ -1,4 +1,5 @@
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
+import { libraryEvidenceAvailable } from '../../database/data-library-visibility';
 import { isNull, and, eq, gt, inArray, isNotNull } from 'drizzle-orm';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
@@ -26,6 +27,7 @@ export async function lockedThesis(tx: MemoryFenceTransaction, owner: string, id
     || report.sessionId !== session.id || report.version !== memory.reportVersion || report.revision !== memory.reportRevision
     || report.publicationOutcome === 'failed') return null;
   if (!sameMonitorSymbol(session.ticker, memory.ticker)) return null;
+  if (!await libraryEvidenceAvailable(tx, owner, report.evidence, true)) return null;
   const records = await tx.select().from(researchMemoryEvidence).where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemoryEvidence.memoryId, memory.id)));
   const asOf = new Date().toISOString();
   const known = memory.createdAt.getTime() <= Date.parse(asOf) && memory.reportCreatedAt.getTime() <= Date.parse(asOf)
@@ -87,6 +89,9 @@ export async function captureStrategyMemory(tx: MemoryFenceTransaction, owner: s
   const dependencies: StrategyThesisDependency[] = [];
   let structured = false;
   for (const report of reports) {
+    if (!await libraryEvidenceAvailable(tx, owner, report.evidence, true)) {
+      return { state: 'unknown', dependencies, reason: 'MEMORY_SOURCE_UNAVAILABLE' };
+    }
     const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, report.sessionId)));
     if (!session) return { state: 'unknown', dependencies, reason: 'MEMORY_SOURCE_UNAVAILABLE' };
     let submitted: Awaited<ReturnType<typeof acceptedSubmitted>>;

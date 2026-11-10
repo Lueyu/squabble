@@ -78,7 +78,7 @@ export class CouncilWorkflow {
           const primary = (await this.store.list(owner, id, task.cycleId)).find(item => item.id === task.id)
             ?.attempts.find(item => item.id === attempt.id);
           if (primary?.memory) await this.store.markRemote(row, secondary, secondaryAttempt.id, {
-            memory: { ...primary.memory, sharedRequestAttemptId: attempt.id }, dispatched: primary.dispatched });
+            memory: { ...primary.memory, sharedRequestAttemptId: attempt.id }, libraryReferences: primary.libraryReferences, dispatched: primary.dispatched });
         };
         const latest = await this.callbacks.get(owner, id);
         try {

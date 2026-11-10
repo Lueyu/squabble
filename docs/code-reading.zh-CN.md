@@ -10,6 +10,14 @@ Squabble 的主线是一款智能投资助手：理解持仓，多位研究者�
 
 ## 跟随“账户总览 → 报告 → 账户组合 → 频道”
 
+V5 的研究入口是 `/research`：左侧聊天／策略库、输入框 slash 技能和同页策略访谈。
+先看 [ResearchWorkspacePage](../client/src/pages/Analysis/ResearchWorkspacePage.tsx)，
+再看受信 [Skill 目录](../server/modules/research-skills/research-skills.catalog.ts)。
+资料中心的 [DataLibraryService](../server/modules/data-library/data-library.service.ts)
+保存来源、原文、版本与同步记录，金融源由同模块的 DataFinancialService 管理。
+资料版本进入研究前检查归属和可用性，版本引用随报告与记忆传递；资料导入不写金融账本。
+完整使用方法见[研究室与数据中心](research-data-workspace.md)。
+
 1. **总览先读取已保存表现，再进入研究。** 从
    [PortfolioOverviewPage](../client/src/pages/Overview/PortfolioOverviewPage.tsx) 和
    [PortfolioComparisonService](../server/modules/paper-trading/portfolio-comparison.service.ts)

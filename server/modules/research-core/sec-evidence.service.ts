@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { FinnhubFinancialsResult } from './finnhub-financials';
 import { parseSecFinancials, secRecord, secTicker } from './sec-financials';
 
-type SecFailureCode = 'unsupported_market' | 'no_data' | 'invalid_response' | 'stale_data'
+type SecFailureCode = 'disabled' | 'unsupported_market' | 'no_data' | 'invalid_response' | 'stale_data'
   | 'forbidden' | 'rate_limited' | 'timeout' | 'network_error' | 'provider_error' | 'response_too_large';
 
 export class SecEvidenceError extends Error {

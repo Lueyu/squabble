@@ -17,6 +17,7 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 6. 共享研究基础在 `server/modules/research-core/`，执行器选择在 `research-routing/`；策略界面在 `client/src/features/investment-strategies/`。不要把旧目录名当作功能归属；中文阅读顺序见 `docs/code-reading.zh-CN.md`。
 7. V4 新入口为 `/daily`、`/research`、`/data`、`/memory`；策略问答在 `client/src/features/strategy-interview/` 和 `/strategies`。访谈采纳与执行授权分开；已保存预览只能通过只读 `GET /api/strategy-interviews/:id/review` 恢复，不得重新生成时丢失观察意图。导航返回/滚动逻辑在 `features/navigation/`，通知/MCP 复用面板在 `features/integrations/`。
 8. `/research` 复用持久化研究会话的大框聊天与历史侧栏，不是能力超链接入口。报告历史逐条删除一个版本；研究任务删除不级联报告。迁移 `49_research_deletions.sql` 保留墓碑和请求回执，已运行或提供方状态未确定的任务先结算。删除来源不可再次同步、调用记忆、执行策略或发布新频道内容；已有成交和固定快照保留，删除已采纳版本只清空采纳指针。
+9. V5 研究室侧栏同时拥有策略库；`/strategy` 在同页恢复多轮访谈，其他 slash skills 固定受信清单版本与 hash，聊天展示真实公开活动。`server/modules/data-library/` 拥有资料、订阅、金融查询与迁移50；`features/data-library/` 复用于数据中心和记忆资料来源。`/settings/data` 重定向到 `/data?tab=financial`。资料检索与后续研究复验 owner、精确版本和启停/删除状态；资料原文不是采纳结论，更不是持仓导入。详见 `docs/research-data-workspace.md`。
 
 所有反引号内的仓库路径都相对于选定仓库；参考文件之间的链接相对于 skill。
 

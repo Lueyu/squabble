@@ -2,7 +2,7 @@
 
 Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent investing assistant: portfolio-aware research, coordinated agents, readable reports, a stock-friend channel and explicitly applied simulated strategies.
 
-**Structural review — 2026-11-10:** inspected `4d55ace` plus the research-record and navigation working tree. All five diagrams were checked. Research now includes the persisted chat/history workspace and owner-fenced record tombstones; source availability reaches memory, final strategy execution and channel publication. Deleting an adopted report clears adoption without choosing another version. Immutable content, existing financial rows and execution snapshots remain retained. The real-ledger writer flow is unchanged. This is a source review, not a release or deployed-instance certification.
+**Structural review — 2026-11-10:** inspected `02e9d73` plus the V5 research and data-library working tree. All five diagrams were checked. Research adds explicitly selected, frozen skill versions and owned material versions; the data library owns encrypted subscriptions, extraction, versioning and retrieval. Strategy authoring moves into the research workspace without changing account confirmation. Channel publication and real-ledger writers retain their existing authority. This is a source review, not a release or deployed-instance certification.
 
 The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
@@ -12,6 +12,7 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 |---|---|---|
 | `research-core` | Model calls, financial evidence/source adapters and portfolio context | Shared infrastructure; never imports current or retained orchestration |
 | `research-routing` | Select a usable configured research executor | Uses research-core and local-agent readiness; starts no task itself |
+| `data-library` | Owned materials, encrypted subscriptions, version extraction, retrieval and financial-provider queries | Uses existing financial/settings adapters; never creates research tasks or ledger entries |
 | `council`, `experience` | Research workflow, current-report projection and scheduling | Consume shared research services and retained history where required |
 | `portfolio-history` | Current marks and current-position historical references with public price/FX cache | Reads owned ledger inputs; writes only market-data caches; never imports research orchestration |
 | `paper-trading` | Account combinations, simulated policy/runtime, ledger and saved comparison projection | Uses research-routing; never imports experience |
@@ -46,6 +47,13 @@ flowchart LR
     auth --> overallCommand["Explicit overall daily research request and durable receipt"]
     overallCommand --> council
     auth --> memory["Owner-scoped memory inventory and existing thesis lifecycle"]
+    auth --> library["Owned materials and financial source configuration"]
+    library --> collector["Bounded public-address fetch, host-bound credentials and extraction"]
+    collector --> versions["Original files, immutable versions and search index"]
+    versions --> db
+    library --> sources["Public quotes, SEC, Finnhub and Alpha Vantage"]
+    versions --> memory
+    versions -->|"Exact owned version; explicit send"| council
     auth --> persona["Companion display metadata; separate revision and receipts"]
     interview --> db
     daily --> db
@@ -86,6 +94,8 @@ Protected controllers derive owner from `req.userContext.userId`; services scope
 
 V4 uses eight owning destinations: overview, companions, daily, research, assets, data, memory and settings. `features/navigation/workspace-navigation.ts` owns route/parent classification and safe internal return paths; `use-workspace-navigation.ts` records React Router history and restores content scroll or direct hash targets. Existing URLs remain compatible, including `/paper#notifications` to the Settings integration. `features/strategy-interview/` owns authoring UI, `features/companions/` owns display preferences and shared `components/AnimalAvatar.tsx` preserves the original SVGs. Feature code does not import pages. Search is a destination catalog, not an implicit AI action.
 
+V5 keeps these eight destinations. `/research` owns chat history and the strategy sidebar; `/strategy` in its composer opens the persisted interview in place. Existing `/strategies` links belong to Research. `/data` contains material previews, website subscriptions and inline financial-provider configuration; `/settings/data` redirects there. `/memory?tab=sources` shares the source inventory and version controls. Material pages, slides and images are research evidence, not account imports or endorsed investment claims. See [the data and research workspace guide](research-data-workspace.md).
+
 `GET /api/daily-workspace?date=` reads personal saved facts, all owned simulation facts and exact research versions using a repeatable-read, read-only transaction. This projection is not itself a frozen published report. `GET /api/research-memory/inventory` is an owner-only paginated source inventory; existing thesis lifecycle/version controls retain their authority. Provider configuration, import receipts, notification channels and scoped MCP sessions are composed into explicit workspaces without claiming new connection health or model adoption metrics.
 
 <a id="research-report"></a>
@@ -93,6 +103,11 @@ V4 uses eight owning destinations: overview, companions, daily, research, assets
 
 ```mermaid
 flowchart TD
+    selectedSkill["Explicit slash skill selection"] --> skillPin["Trusted manifest version and hash frozen in request and attempt"]
+    skillPin --> request
+    material["Owned enabled material version"] --> materialPin["Bounded sections with immutable source/version references"]
+    materialPin --> request
+    activity["Actual tool and skill receipts; public research summaries"] --> chat["Readable per-member chat activity"]
     today["Research reports: facts and current report"] --> request["Owner, business date and request receipt"]
     dailyWorkspace["Daily workspace"] --> dailyFacts["Current saved ledger facts; read-only, not an archive"]
     dailyWorkspace --> reading
@@ -175,7 +190,7 @@ flowchart TD
     source["Exact report version, section or released opinion"] --> readable["Validate visible source and task; retain exact content and hash"]
     readable --> typed["Validated typed proposal or bounded prose observations"]
     typed --> draft["Owner strategy library: editable draft"]
-    idea["Original investor wording; fixed target account"] --> questions["Persist questions, suggestions, accepted answers and provenance"]
+    idea["Research /strategy: original wording and explicit target account"] --> questions["Persist questions, suggestions, accepted answers and provenance"]
     questions --> acceptAnswer["Explicit acceptance; revisions invalidate previous review"]
     acceptAnswer --> savedReview["Saved strategy revision, preview hash and deterministic examples"]
     savedReview --> draft
@@ -310,7 +325,7 @@ flowchart TD
     transactions --> dailyRead["Daily saved-ledger projection; separate real and simulated accounts"]
     paper --> dailyRead
     paperFills["Actual paper fill ledger; fill time and currency"] --> dailyRead
-    dailyRead --> dailyUI["Daily facts and closeable evidence reading"]
+    dailyRead --> dailyUI["Animal identities, actual actions and closeable daily evidence"]
 ```
 
 The real ledger is owned by `server/modules/transactions/transactions.service.ts`, `server/modules/holdings/holdings.service.ts` and `server/modules/cash-accounts/cash-accounts.service.ts`. Holdings, transactions, closed positions and cash are separate from paper-trading tables. `server/database/asset-ledger.schema.ts` adds position baselines and cash-confirmation receipts; `transaction-imports.schema.ts` and `import-batches.schema.ts` store distinct batch types.

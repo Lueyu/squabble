@@ -6,6 +6,10 @@ export const deleteResearchConversation = async (id: string, input: DeleteResear
 import type { CreateResearchConversationInput, ResearchConversationMessageInput, ResearchConversationView, ResearchConversationResult, ResumeDailyReportInput } from '@shared/simple-conversation.interface';
 import type { ResearchExecutionReadiness, ResearchRecoveryInput } from '@shared/research-execution.interface';
 import type { NativeAgentConfiguration } from '@shared/local-agents.interface';
+import type { ResearchSkillDescriptor } from '@shared/research-skills.interface';
+
+export const fetchResearchSkills = async (): Promise<ResearchSkillDescriptor[]> =>
+  (await http.get<{ items: ResearchSkillDescriptor[] }>('/api/research-conversations/skills')).data.items;
 
 export const fetchResearchConversations = async (): Promise<ResearchConversationView[]> => {
   const data = (await http.get('/api/research-conversations')).data;

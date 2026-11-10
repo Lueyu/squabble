@@ -160,6 +160,7 @@ npm run dev
 | 开发指南 | [docs/development.md](docs/development.md) |
 | 参与贡献 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | AI 开发技能 | [Squabble 开发与维护](.agents/skills/squabble-contributor/SKILL.md) |
+| 研究室与数据中心 | [Slash 技能、资料版本与网站订阅](docs/research-data-workspace.md) |
 
 ---
 

@@ -20,6 +20,7 @@ import { ModuleRef } from '@nestjs/core';
 import type { ModelRoute } from '../../../shared/model-route.interface';
 import type { LocalAgentsService } from '../local-agents/local-agents.service';
 import { parseModelRoute } from './model-route.rules';
+import { financialProviderEnabled } from '../../database/financial-provider-visibility';
 
 export interface ResolvedLlmConfig {
   source: 'user' | 'server';
@@ -211,8 +212,13 @@ export class SettingsService {
   }
 
   async getFinnhubKey(userId: string): Promise<string | null> {
+    if (!await financialProviderEnabled(this.db, userId, 'finnhub')) return null;
     const row = await this.rowFor(userId);
     return this.tryDecrypt(row?.finnhubApiKeyEnc);
+  }
+
+  isFinancialProviderEnabled(userId: string, provider: string): Promise<boolean> {
+    return financialProviderEnabled(this.db, userId, provider);
   }
 
   async getResearchSearchConfig(userId: string): Promise<ResolvedLlmConfig | null> {

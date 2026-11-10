@@ -13,6 +13,8 @@ import type { DeleteResearchDocumentVersionInput, ResearchDeletionResult } from 
 import { assertDeletionReceipt, deletionHash, deleteVersionSchema, parseDeletion } from './research-deletion.rules';
 import { businessDate } from '../experience/simple-experience.rules';
 import { experiencePreferences } from '../../database/simple-experience.schema';
+import { libraryEvidenceAvailable, libraryEvidenceReferences, libraryReferencesAvailable } from '../../database/data-library-visibility';
+import type { DataLibraryReference } from '../../../shared/data-library.interface';
 import type { ReportSource, ReportReference, ResolvedReportReference, ResearchDocumentVersion, ResearchDocumentView,
   ResearchInputSnapshot, ResearchRevisionDraft, ResearchRevisionInput, SubmitResearchDocument, ResearchDocumentIndex, ResearchDocumentIndexQuery } from '../../../shared/research-document.interface';
 import { assertAdoption, assertIdempotency, contentHash, diffSections, parseReportRequest, reportIdSchema, reportReferencesSchema,
@@ -161,6 +163,7 @@ export class ResearchDocumentsService {
   }
   async resolveReferences(owner: string, references: ReportReference[]): Promise<ResolvedReportReference[]> {
     this.owner(owner); const checked = parseReportRequest(reportReferencesSchema, references);
+    await this.librarySourceReferences(owner, checked);
     return Promise.all(checked.map(async reference => {
       const version = await this.getVersion(owner, reference.versionId);
       if (version.status === 'revoked') throw new ConflictException('REPORT_REVOKED');
@@ -180,6 +183,7 @@ export class ResearchDocumentsService {
       active.add(reference.versionId);
       const row = await this.versionRow(tx, owner, reference.versionId);
       if (row.revokedAt) throw new ConflictException('REPORT_REVOKED');
+      if (!await libraryEvidenceAvailable(tx, owner, row.snapshot, true)) throw new ConflictException('REPORT_LIBRARY_SOURCE_UNAVAILABLE');
       if (await this.sourceStatus(tx, owner, row.source, true) === 'missing') throw new ConflictException('REPORT_SOURCE_MISSING');
       if (!row.availableAt) throw new ConflictException('REPORT_AVAILABILITY_UNKNOWN');
       if (row.availableAt.getTime() > decisionAt.getTime()) throw new ConflictException('REPORT_NOT_YET_AVAILABLE');
@@ -216,6 +220,26 @@ export class ResearchDocumentsService {
     collect(snapshot);
     if (snapshot.continuationSummary && typeof snapshot.continuationSummary === 'object') collect(snapshot.continuationSummary as Record<string, unknown>);
     return [...new Map(references.map(ref => [`${ref.versionId}:${ref.sectionId ?? ''}:${ref.excerpt ?? ''}`, ref])).values()];
+  }
+
+  /** Research may read historical reports; using their source evidence still observes live source exclusions. */
+  async librarySourceReferences(owner: string, references: ReportReference[]): Promise<DataLibraryReference[]> {
+    this.owner(owner);
+    const checked = parseReportRequest(reportReferencesSchema, references);
+    const visited = new Set<string>();
+    const refs: DataLibraryReference[] = [];
+    const inspect = async (reference: ReportReference, depth: number): Promise<void> => {
+      if (visited.has(reference.versionId)) return;
+      if (depth > 50 || visited.size >= 100) throw new ConflictException('REPORT_REFERENCE_CHAIN_INVALID');
+      visited.add(reference.versionId);
+      const row = await this.versionRow(this.db, owner, reference.versionId);
+      refs.push(...libraryEvidenceReferences(row.snapshot));
+      for (const dependency of this.executionDependencies(row.snapshot)) await inspect(dependency, depth + 1);
+    };
+    for (const reference of checked) await inspect(reference, 0);
+    const unique = [...new Map(refs.map(ref => [`${ref.sourceId}:${ref.versionId}`, ref])).values()];
+    if (!await libraryReferencesAvailable(this.db, owner, unique)) throw new ConflictException('REPORT_LIBRARY_SOURCE_UNAVAILABLE');
+    return unique;
   }
   async view(owner: string, id: string): Promise<ResearchDocumentView> {
     const version = await this.getVersion(owner, id);
@@ -362,6 +386,7 @@ export class ResearchDocumentsService {
         .where(and(eq(councilReports.owner, owner), eq(councilReports.id, source.id)));
       const [row] = lock ? await query.for('share') : await query;
       if (!row || row.report.publicationOutcome === 'failed') throw new NotFoundException('REPORT_SOURCE_NOT_FOUND');
+      if (!await libraryEvidenceAvailable(tx, owner, row.report.evidence, lock)) throw new BadRequestException('REPORT_LIBRARY_SOURCE_UNAVAILABLE');
       ticker = row.session.ticker === 'PORTFOLIO' ? null : row.session.ticker;
       proposalLanguage=row.session.language;
       title = row.session.title || `${ticker ?? 'Portfolio'} · Research discussion`; sourceKey = `council:${row.session.id}`;

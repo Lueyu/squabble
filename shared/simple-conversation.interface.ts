@@ -1,7 +1,8 @@
 import type { CouncilSession } from './council.interface';
 
 export type ResearchContext = { kind: 'portfolio'; date?: string } | { kind: 'stock'; ticker: string }
-  | { kind: 'report'; documentId: string } | { kind: 'decision'; orderId: string };
+  | { kind: 'report'; documentId: string } | { kind: 'decision'; orderId: string }
+  | { kind: 'library'; sourceId: string; versionId: string };
 export interface ActualExecutor { identity: string; connection: string; connectionId?: string; provider: string; model: string; memberId: string;
   /** A verified execution origin does not imply different underlying models or statistical independence. */
   identityVerified?: boolean; modelVerified?: boolean }
@@ -14,8 +15,8 @@ export interface DebateOutcome {
   currentAction: 'observe' | 'research_more' | 'consider_action';
   nextEvidence: string[];
 }
-export interface CreateResearchConversationInput { message: string; context?: ResearchContext; requestKey: string }
-export interface ResearchConversationMessageInput { message: string; replyTo?: string; requestKey: string }
+export interface CreateResearchConversationInput { message: string; context?: ResearchContext; requestKey: string; skillId?: string | null }
+export interface ResearchConversationMessageInput { message: string; replyTo?: string; requestKey: string; skillId?: string | null }
 /** Explicit paid continuation of saved daily work, fenced to the reviewed revision. */
 export interface ResumeDailyReportInput { requestKey: string; expectedRevision: number }
 export interface DailyReportInputCorrection {
@@ -27,6 +28,7 @@ export interface DailyReportInputCorrection {
   revalidated: boolean;
 }
 export interface ResearchConversationView extends CouncilSession {
+  skills?: import('./research-skills.interface').ResearchSkillIdentity[];
   /** A durable question receipt exists; member configuration is being checked asynchronously. */
   initializing?: boolean;
   memberStates: import('./research-execution.interface').ResearchMemberState[];

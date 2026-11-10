@@ -94,7 +94,6 @@ function SettingsSectionContent({ section, active }: { section: SettingsSection;
       <IntegrationSettingsPanel section="models" active={active} />
     </div>;
     case 'agents': return <div className="space-y-6">{simple && <ResearchParticipantsPanel />}<LocalAgentsPanel /><ResearchMemorySettings /></div>;
-    case 'data': return <IntegrationSettingsPanel section="data" active={active} />;
     case 'budget': return <BudgetPanel />;
     case 'rules': return <StrategyRulesPage embedded active={active} />;
     case 'appearance': return <AppearancePanel active={active} />;

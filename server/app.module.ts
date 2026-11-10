@@ -43,6 +43,7 @@ import { SystemUpdateModule } from './modules/system-update/system-update.module
 import { ResearchDocumentsModule } from './modules/research-documents/research-documents.module';
 import { ExperienceModule } from './modules/experience/experience.module';
 import { ChannelModule } from './modules/channel/channel.module';
+import { DataLibraryModule } from './modules/data-library/data-library.module';
 
 /**
  * Root Nest module. Aggregates feature modules and installs the global
@@ -60,6 +61,7 @@ import { ChannelModule } from './modules/channel/channel.module';
     ResearchDocumentsModule,
     ExperienceModule,
     ChannelModule,
+    DataLibraryModule,
 
     // ====== @route-section: business-modules START ======
     HoldingsModule,

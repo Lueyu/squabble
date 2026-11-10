@@ -1,4 +1,5 @@
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
+import { libraryEvidenceAvailability } from '../../database/data-library-visibility';
 import { isNull, and, eq, inArray } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilReports, councilSessions } from '../../database/council.schema';
@@ -21,9 +22,10 @@ export async function loadMemorySources(db: Pick<PostgresJsDatabase, 'select'>, 
     .innerJoin(councilSessions, and(eq(councilReports.sessionId, councilSessions.id), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner)))
     .where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), inArray(councilReports.id, memories.map(row => row.reportId))));
   const byId = new Map(sources.map(row => [row.report.id, row]));
+  const libraryAvailable = await libraryEvidenceAvailability(db, owner, sources.map(row => ({ id: row.report.id, evidence: row.report.evidence })));
   for (const memory of memories) {
     const source = byId.get(memory.reportId);
-    if (source && source.report.sessionId === memory.sessionId && source.report.version === memory.reportVersion
+    if (source && libraryAvailable.get(source.report.id) !== false && source.report.sessionId === memory.sessionId && source.report.version === memory.reportVersion
       && source.report.revision === memory.reportRevision && matchesSymbol(memory, source.ticker)) result.reports.set(memory.id, source.report);
   }
   const records = await db.select().from(researchMemoryEvidence).where(and(eq(researchMemoryEvidence.owner, owner),

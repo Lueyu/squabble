@@ -12,6 +12,8 @@ export interface ResearchToolResult {
   data: unknown; sources: ResearchSource[]; asOf: string; truncated: boolean; errorCode?: string;
 }
 export interface ResearchToolScope {
+  /** Server-owned durable member attempt, required for parallel simple research. */
+  attemptId?: string;
   /** Server-owned allowlist for workflow prompt memory. Explicit [] forbids further memory; snapshots never duplicate it. */
   memoryReferences?: MemoryReference[];
   sessionId: string; revision: number; memberId: string; memberName: string; turn: number;

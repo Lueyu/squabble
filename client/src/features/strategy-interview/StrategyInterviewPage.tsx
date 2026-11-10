@@ -47,17 +47,19 @@ import {
 import './strategy-interview.css';
 import InterviewFlowNavigation from './InterviewFlowNavigation';
 import CompanionIdentity from '@/features/companions/CompanionIdentity';
+import AnimalAvatar from '@/components/AnimalAvatar';
 
 export default function StrategyInterviewPage() {
   const { interviewId = '' } = useParams();
   return <InterviewWorkspace key={interviewId} id={interviewId} />;
 }
 
-function InterviewWorkspace({ id }: { id: string }) {
+export function InterviewWorkspace({ id, embedded = false }: { id: string; embedded?: boolean }) {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
   const language = zh ? 'zh-CN' : 'en';
   const navigate = useNavigate();
+  const Navigation = embedded ? 'div' : InterviewFlowNavigation;
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
   const reviewing = params.get('step') === 'review';
@@ -98,7 +100,7 @@ function InterviewWorkspace({ id }: { id: string }) {
       : undefined);
   const field = editing ?? view?.currentQuestion?.field ?? 'idea';
   const libraryPath =
-    '/strategies' +
+    embedded ? '/research?tab=strategies' : '/strategies' +
     (view ? '?accountId=' + encodeURIComponent(view.accountId) : '');
   const updateComposer = (
     text: string,
@@ -269,7 +271,7 @@ function InterviewWorkspace({ id }: { id: string }) {
           {zh ? '重试' : 'Retry'}
         </Button>
         <Button asChild variant="ghost">
-          <Link to="/strategies">
+          <Link to={embedded ? '/research?tab=strategies' : '/strategies'}>
             {zh ? '返回策略库' : 'Back to strategies'}
           </Link>
         </Button>
@@ -278,8 +280,8 @@ function InterviewWorkspace({ id }: { id: string }) {
   const question =
     view.pending.find((item) => item.field === field) ?? view.currentQuestion;
   return (
-    <div className="portfolio-workspace strategy-interview">
-      <InterviewFlowNavigation>
+    <div className={`portfolio-workspace strategy-interview${embedded ? ' research-interview' : ''}`}>
+      <Navigation>
         <Button
           variant="outline"
           disabled={busy}
@@ -317,7 +319,7 @@ function InterviewWorkspace({ id }: { id: string }) {
               ? '一起问清楚'
               : 'Clarify together'}
         </span>
-      </InterviewFlowNavigation>
+      </Navigation>
       <header className="portfolio-page-heading">
         <div>
           <h1>{zh ? '把想法聊成策略' : 'Turn your idea into a strategy'}</h1>
@@ -371,7 +373,7 @@ function InterviewWorkspace({ id }: { id: string }) {
           />
         ) : (
           <section className="interview-conversation-card">
-            <details className="interview-history">
+            <details className="interview-history" open={embedded || undefined}>
               <summary>
                 {zh ? '查看对话记录' : 'Conversation history'} ·{' '}
                 {view.messages.length}
@@ -388,6 +390,7 @@ function InterviewWorkspace({ id }: { id: string }) {
                     }
                   >
                     <span>
+                      {embedded && item.role === 'assistant' && <AnimalAvatar role="researcher" avatar="value" />}
                       {item.role === 'user'
                         ? zh
                           ? '你'

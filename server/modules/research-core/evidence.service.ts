@@ -17,6 +17,7 @@ import { SecEvidenceService, SecEvidenceError } from './sec-evidence.service';
 import type { FinnhubFinancialsResult } from './finnhub-financials';
 import type { CouncilResearchKind, ResearchAcquisition } from '@shared/council.interface';
 import { ResearchWebService } from './research-web.service';
+import { financialProviderEnabled } from '../../database/financial-provider-visibility';
 
 export interface EvidenceCollectionOptions {
   onAcquisition?: (event: ResearchAcquisition) => Promise<void> | void;
@@ -303,10 +304,14 @@ export class EvidenceService {
       detail: en ? 'Checking the original public SEC filing for missing financial data.' : '正在核对 SEC 原始公开申报，补充缺失财务数据。' });
     let fallbackReason: string = '';
     let secResult: Awaited<ReturnType<SecEvidenceService['getFinancials']>> | null = null;
-    try { secResult = await this.secEvidence.getFinancials(ticker); }
+    try {
+      if (!await financialProviderEnabled(this.db, userId, 'sec')) throw new SecEvidenceError('disabled');
+      secResult = await this.secEvidence.getFinancials(ticker);
+    }
     catch (error) {
       const code: string = error instanceof SecEvidenceError ? error.code : 'provider_error';
       const descriptions: Record<string, [string, string]> = {
+        disabled: ['SEC research data is disabled in this account’s Data Center.', '当前账户已在数据中心停用 SEC 研究数据源。'],
         unsupported_market: ['This SEC integration supports U.S. listings only.', 'SEC 备用来源仅支持美股上市代码。'],
         no_data: ['No matching SEC issuer or usable filing was found.', '未找到匹配的 SEC 公司或可用申报。'],
         invalid_response: ['SEC issuer, filing or response validation failed.', 'SEC 公司、申报或响应校验失败。'],

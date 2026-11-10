@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateDelivery } from '../council/council.tasks';
-import { BUNDLED_RESEARCH_SKILLS, pinResearchSkills, validateResearchSkills } from './research-skills.registry';
+import { BUNDLED_RESEARCH_SKILLS, pinResearchSkill, pinResearchSkills, validateResearchSkills } from './research-skills.registry';
+import { researchSkillCatalog } from './research-skills.catalog';
 
 test('bundled skills have deterministic pins, minimal selection and three documented fixture cases', () => {
-  assert.equal(BUNDLED_RESEARCH_SKILLS.length, 4);
-  assert.equal(validateResearchSkills(BUNDLED_RESEARCH_SKILLS).length, 4);
+  assert.equal(BUNDLED_RESEARCH_SKILLS.length, 9);
+  assert.equal(validateResearchSkills(BUNDLED_RESEARCH_SKILLS).length, 9);
   for (const kind of ['financials', 'business', 'valuation', 'challenge'] as const) {
     const pins = pinResearchSkills(kind);
     assert.equal(pins.length, 1);
@@ -23,6 +24,21 @@ test('bundled skills have deterministic pins, minimal selection and three docume
       assert.ok(fixture.input.length && fixture.expected.length);
       assert.match(skill.context, /untrusted|instructions/i);
     }
+  }
+});
+
+test('slash discovery maps only installed research instructions; strategy is an explicit interview workflow', () => {
+  const catalog = researchSkillCatalog();
+  assert.equal(catalog.find(skill => skill.command === '/strategy')?.mode, 'interview');
+  assert.throws(() => pinResearchSkill('strategy'), /RESEARCH_SKILL_UNAVAILABLE/u);
+  assert.throws(() => pinResearchSkill('../local-secret-skill'), /RESEARCH_SKILL_UNAVAILABLE/u);
+  for (const item of catalog.filter(skill => skill.mode === 'research')) {
+    const pins = pinResearchSkill(item.id);
+    assert.equal(pins.at(-1)?.version, item.version);
+    assert.equal(new Set(catalog.map(skill => skill.command)).size, catalog.length);
+    assert.equal('context' in item, false);
+    assert.doesNotMatch(JSON.stringify(item), /seed_finance|doubao|credential/iu);
+    assert.match(pins.at(-1)!.context, /untrusted data|Historical opinions/u);
   }
 });
 

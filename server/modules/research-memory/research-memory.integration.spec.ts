@@ -11,6 +11,8 @@ import { researchMemories, researchTheses, researchThesisVersions } from '../../
 import { QuoteService } from '../quote/quote.service';
 import { ResearchMemoryService } from './research-memory.service';
 import type { CouncilReport } from '@shared/council.interface';
+import { DataLibraryService } from '../data-library/data-library.service';
+import { lockedThesis } from './research-memory.dependencies';
 
 test('memory archives idempotently, isolates owners/markets, requires CAS and hides deleted sources across versions', {
   skip: !process.env.MEMORY_TEST_DATABASE_URL,
@@ -44,6 +46,26 @@ test('memory archives idempotently, isolates owners/markets, requires CAS and hi
         thesisCandidates: [{ claim: 'Cash conversion remains resilient', supportingEvidence: evidence ? [{ evidenceId: 'e1' }] : [],
           opposingEvidence: [], assumptions: [], indicators: [], invalidationConditions: [] }] } };
     };
+    const library = new DataLibraryService(db);
+    const material = await library.create(owner, { kind: 'page', title: 'Source material', text: 'Source evidence for research.' });
+    const libraryReport = await seed('LIB');
+    await db.update(councilReports).set({ evidence: libraryReport.report.evidence.map(item => ({ ...item,
+      libraryReferences: [{ sourceId: material.id, versionId: material.latestVersionId! }] })) }).where(eq(councilReports.id, libraryReport.report.id));
+    const libraryMemory = await service.archiveReport(owner, libraryReport.input);
+    assert.equal(libraryMemory?.sourceStatus, 'available');
+    const libraryThesis = (await service.list(owner, { ticker: 'LIB' })).theses[0];
+    await library.update(owner, material.id, { enabled: false });
+    assert.equal((await service.getMemory(owner, libraryMemory!.id)).sourceStatus, 'source-deleted');
+    assert.equal((await service.getThesis(owner, libraryThesis.id)).claim, '');
+    assert.equal(await db.transaction(tx => lockedThesis(tx, owner, libraryThesis.id, false)), null);
+    assert.equal((await service.recall(owner, { ticker: 'LIB' })).items.length, 0);
+    assert.deepEqual((await service.evidenceGraph(owner, libraryMemory!.id)).evidence, []);
+    await assert.rejects(service.archiveReport(owner, libraryReport.input), /MEMORY_SOURCE_UNAVAILABLE/u);
+    await assert.rejects(service.updateThesis(owner, libraryThesis.id, { action: 'confirm', expectedVersion: 1 }), /MEMORY_SOURCE_REQUIRED/u);
+    await library.update(owner, material.id, { enabled: true });
+    assert.equal((await service.getMemory(owner, libraryMemory!.id)).sourceStatus, 'available');
+    await library.remove(owner, material.id);
+    assert.equal((await service.getMemory(owner, libraryMemory!.id)).summary, '');
     const legacy = await seed('INTC');
     const legacyMemory = await service.archiveReport(owner, { ...legacy.input, thesisCandidates: undefined });
     const legacyListing = await service.list(owner, { ticker: 'INTC' });

@@ -48,7 +48,7 @@ async function bootstrap() {
     app.use(desktopRequestGuard(process.env.SQUABBLE_DESKTOP_ORIGIN));
   }
 
-  // Only screenshot uploads need space for an 8MiB image encoded as base64.
+  // Screenshot and library uploads need space for an 8MiB file encoded as base64.
   // Other bodies remain limited to 1MB. Keep every parser on the same version.
   app.use(...importBodyParsers());
 

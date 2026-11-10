@@ -30,6 +30,15 @@ existing instance, not `npm run dev` or an ignored temporary helper.
 
 ## Choose checks by changed behavior
 
+V5 data-library tests are included in `test:server` and require the disposable
+`RESEARCH_TEST_DATABASE_URL`. They exercise source ownership/version lifecycle,
+SSRF/redirect and extraction limits, credential isolation, sync recovery and actual
+financial-adapter consumption with fake transports. `client/src/utils/data-library-flow.test.cjs`
+checks write-only credentials, exact historical-version navigation and deletion.
+Research skill and conversation suites cover explicit selection, frozen pins,
+per-member native tool scopes and material dependencies. No test needs a real
+subscription password or live model session.
+
 V4 focused checks include `client/src/utils/strategy-interview*.test.cjs`, `workspace-navigation.test.cjs`, `workspace-v4-*.test.cjs`, `companion-creation-flow.test.cjs` and `integrations-reachability.test.cjs`; server interviews, frequency, companions, custom/copy seeds, daily-workspace and memory-inventory suites use disposable URLs. Interview cases cover exact raw wording, explicit acceptance, edited/stale reviews, read-only observation restoration and lost-response receipts across reload. Frequency tests exercise both claim and final order locks. Update `assets-upgrade.integration.spec.ts` alongside migrations 46/47 so fresh-versus-upgraded catalogs and unchanged ledgers are actually compared. Node fake time does not change PostgreSQL CURRENT_TIMESTAMP; set explicit fixture opening/fill timestamps for corporate-action and historical-window checks.
 
 Browser acceptance should check desktop visibility of `.app-topbar`, real route/query/scroll restoration, directly opened details, hash links, mobile fixed save/return, closed dialog context and saved conversation reload. A passing pure route unit test does not prove the old stylesheet did not hide the controls. The live personal instance is not a UI fixture.

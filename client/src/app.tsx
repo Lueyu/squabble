@@ -204,6 +204,7 @@ const RoutesComponent = () => {
         />
         <Route path="journal" element={<JournalPage />} />
         <Route path="transactions" element={<TransactionsPage />} />
+        <Route path="settings/data" element={<Navigate to="/data?tab=financial" replace />} />
         <Route path="settings/*" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<NotFound />} />

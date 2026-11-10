@@ -3,7 +3,7 @@ import { SettingsService } from '../settings/settings.service';
 import type { EvidenceInput } from './evidence.service';
 import { finiteFinnhubNumber, parseFinnhubFinancials, type FinnhubFinancialsResult } from './finnhub-financials';
 
-type FinnhubFailureCode = 'missing_key' | 'unsupported_market' | 'unauthorized' | 'forbidden'
+type FinnhubFailureCode = 'missing_key' | 'disabled' | 'unsupported_market' | 'unauthorized' | 'forbidden'
   | 'rate_limited' | 'timeout' | 'network_error' | 'invalid_response' | 'provider_error'
   | 'no_data' | 'stale_data' | 'incomplete_data';
 
@@ -18,6 +18,7 @@ export class FinnhubEvidenceError extends Error {
 export function finnhubGapReason(error: unknown): string {
   const code: FinnhubFailureCode = error instanceof FinnhubEvidenceError ? error.code : 'provider_error';
   const reasons: Record<FinnhubFailureCode, string> = {
+    disabled: '当前账户已在数据中心停用 Finnhub 研究数据源。',
     missing_key: '当前账户未配置 Finnhub 密钥；请在设置中保存密钥后刷新研究数据。',
     unsupported_market: '当前 Finnhub 证据接入仅支持美股代码，暂不支持该市场。',
     unauthorized: 'Finnhub 拒绝认证（HTTP 401）；请检查当前账户保存的密钥。',
@@ -79,6 +80,9 @@ export class FinnhubEvidenceService {
   private async callerToken(userId: string, ticker: string): Promise<string> {
     if (!isSupportedSymbol(ticker)) throw new FinnhubEvidenceError('unsupported_market');
     const token: string | null = await this.settings.getFinnhubKey(userId);
+    if (!token && this.settings.isFinancialProviderEnabled && !await this.settings.isFinancialProviderEnabled(userId, 'finnhub')) {
+      throw new FinnhubEvidenceError('disabled');
+    }
     if (!token?.trim()) throw new FinnhubEvidenceError('missing_key');
     return token.trim();
   }

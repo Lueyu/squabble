@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { Client } from 'pg';
 
 const url = process.env.EXPERIENCE_TEST_DATABASE_URL ?? process.env.RESEARCH_TEST_DATABASE_URL;
-const files = ['37_asset_ledger_integrity.sql', '39_user_investment_strategies.sql', '40_transaction_imports.sql', '41_portfolio_value_points.sql', '42_user_strategy_runtime.sql', '43_channel_workbench.sql', '44_strategy_draft_deletion.sql', '45_portfolio_workspace.sql', '46_strategy_interviews.sql', '47_portfolio_companions.sql','48_portfolio_history.sql', '49_research_deletions.sql'];
+const files = ['37_asset_ledger_integrity.sql', '39_user_investment_strategies.sql', '40_transaction_imports.sql', '41_portfolio_value_points.sql', '42_user_strategy_runtime.sql', '43_channel_workbench.sql', '44_strategy_draft_deletion.sql', '45_portfolio_workspace.sql', '46_strategy_interviews.sql', '47_portfolio_companions.sql','48_portfolio_history.sql', '49_research_deletions.sql', '50_data_library.sql'];
 const identifier = (name: string) => '"' + name.replaceAll('"', '""') + '"';
 
 test('fresh install and repeated asset/report/strategy upgrades have identical catalogs and preserve existing ledgers', { skip: !url }, async () => {
@@ -36,15 +36,18 @@ test('fresh install and repeated asset/report/strategy upgrades have identical c
     await client.query(`INSERT INTO cash_accounts(owner,currency,balance) VALUES ($1,'USD',1234.50)`, [owner]);
     await client.query(`INSERT INTO paper_accounts(id,owner,initial_cash,cash_balance,bot_enabled,ledger_mode) VALUES ($1,$2,10000,9876.54,false,'native')`, [account, owner]);
     await client.query(`INSERT INTO paper_positions(owner,account_id,ticker,shares,avg_cost) VALUES ($1,$2,'FICT',2.5,49.38)`, [owner, account]);
+    await client.query(`INSERT INTO user_api_settings(owner,finnhub_api_key_enc,llm_route) VALUES ($1,'test-only-existing-encrypted-finnhub', '{"mode":"basic"}')`, [owner]);
     const before = {
       holdings: (await client.query('SELECT id,owner,ticker,shares,buy_price FROM holdings')).rows,
       cash: (await client.query('SELECT id,owner,currency,balance FROM cash_accounts')).rows,
       paper: (await client.query('SELECT * FROM paper_positions')).rows,
+      financialSettings: (await client.query('SELECT owner,finnhub_api_key_enc,llm_route FROM user_api_settings')).rows,
     };
     for (let pass = 0; pass < 2; pass++) for (const file of files) await client.query(readFileSync('scripts/db/' + file, 'utf8'));
     assert.deepEqual((await client.query('SELECT id,owner,ticker,shares,buy_price FROM holdings')).rows, before.holdings);
     assert.deepEqual((await client.query('SELECT id,owner,currency,balance FROM cash_accounts')).rows, before.cash);
     assert.deepEqual((await client.query('SELECT * FROM paper_positions')).rows, before.paper);
+    assert.deepEqual((await client.query('SELECT owner,finnhub_api_key_enc,llm_route FROM user_api_settings')).rows, before.financialSettings);
     assert.equal((await client.query('SELECT reconciliation_status FROM cash_accounts')).rows[0].reconciliation_status, 'confirmed');
     assert.equal((await client.query('SELECT shares FROM position_baselines')).rows[0].shares, '7');
     const upgraded = await catalog(upgrade);
@@ -58,7 +61,8 @@ test('fresh install and repeated asset/report/strategy upgrades have identical c
     assert.equal((await client.query(`SELECT count(*) FROM position_baselines WHERE ticker='LATER'`)).rows[0].count, '0');
     for (const table of ['paper_orders', 'paper_trades', 'strategy_signals', 'investment_requests', 'user_investment_strategy_current',
       'portfolio_strategy_assignments', 'portfolio_combination_revisions', 'portfolio_combination_drafts', 'portfolio_combination_previews',
-      'strategy_interviews', 'strategy_interview_requests', 'portfolio_account_companions', 'research_deletion_requests']) {
+      'strategy_interviews', 'strategy_interview_requests', 'portfolio_account_companions', 'research_deletion_requests',
+      'data_library_sources', 'data_library_versions', 'data_library_jobs', 'financial_data_connections']) {
       assert.equal((await client.query('SELECT count(*) FROM ' + identifier(table))).rows[0].count, '0', table + ' must not receive implicit work');
     }
     await client.query('ROLLBACK');

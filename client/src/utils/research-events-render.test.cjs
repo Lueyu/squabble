@@ -45,6 +45,19 @@ const task = { key: 'task-turn', taskId: 't1', revision: 1, memberId: 'm1', memb
   status: 'running', startedAt: base.createdAt, activities: [], sourceCount: 0, isStale: false, truncated: false };
 const render = props => renderToStaticMarkup(React.createElement(ChatMessage, { session, onQuestion: () => {}, ...props }));
 
+test('simple workspace exposes saved skill and failed tool activity directly without inventing a successful call', () => {
+  const event = { id: 'skill-loaded', key: 'skill-loaded', kind: 'skill', status: 'succeeded',
+    at: base.createdAt, startedAt: base.createdAt, summary: 'Financial instructions loaded; evidence snapshot only.',
+    skill: { id: 'financial-verification', title: 'Financial results', version: '1.0.0' },
+    taskId: task.taskId, sessionId: session.id, memberId: 'm1', memberName: 'Analyst', turn: 0, revision: 1, sequence: 1 };
+  const html = render({ message: base, simple: true, task: { ...task, status: 'succeeded', activities: [event,
+    { ...event, id: 'failed-tool', key: 'failed-tool', kind: 'tool', skill: undefined, status: 'failed', toolName: 'search_data_library', summary: 'Source was deleted.' }] } });
+  assert.match(html, /<details[^>]*open[^>]*class="research-public-activity/u);
+  assert.match(html, /Financial results/u);
+  assert.match(html, /evidence snapshot only/u);
+  assert.match(html, /Source was deleted/u);
+});
+
 test('legacy automated replies expose missing submission records as unknown while user replies do not', () => {
   const automated = render({ message: base });
   assert.match(automated, /Memory submission unknown/);

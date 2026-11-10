@@ -86,11 +86,18 @@ function versionSelection(raw: string | undefined, bundles: readonly ResearchSki
 /** Return fresh immutable-by-ownership values. Persist the entire pin once; retries use the stored context. */
 export function pinResearchSkills(kind: ResearchTaskKind,
   options: { bundles?: readonly ResearchSkillManifest[]; versions?: string } = {}): ResearchSkillPin[] {
+  const id = SELECTION[kind];
+  if (id) return pinResearchSkill(id, options);
+  const bundles = options.bundles ? validateResearchSkills(options.bundles) : BUNDLED_RESEARCH_SKILLS;
+  versionSelection(options.versions ?? process.env.RESEARCH_SKILL_VERSIONS, bundles);
+  return [];
+}
+
+export function pinResearchSkill(id: string,
+  options: { bundles?: readonly ResearchSkillManifest[]; versions?: string } = {}): ResearchSkillPin[] {
   // Only trusted bundled source/config enters here; never resolve native CLI directories or request-supplied skills.
   const bundles = options.bundles ? validateResearchSkills(options.bundles) : BUNDLED_RESEARCH_SKILLS;
   const versions = versionSelection(options.versions ?? process.env.RESEARCH_SKILL_VERSIONS, bundles);
-  const id = SELECTION[kind];
-  if (!id) return [];
   const candidates = bundles.filter(skill => skill.id === id)
     .sort((a, b) => compareVersions(b.version, a.version));
   const root = versions.has(id) ? candidates.find(skill => skill.version === versions.get(id)) : candidates[0];

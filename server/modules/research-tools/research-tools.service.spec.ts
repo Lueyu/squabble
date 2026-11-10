@@ -90,9 +90,9 @@ function fixture() {
   return { service, session, rows, queries, quotes, evidence, memory, bound, call, quoteCalls: () => quoteCalls };
 }
 
-test('registry offers nine schema-bounded read-only tools and no mutation or scope arguments', () => {
+test('registry offers schema-bounded read-only tools and no mutation or scope arguments', () => {
   const { service } = fixture(); const descriptors = service.descriptors();
-  assert.deepEqual(descriptors.map(item => item.name), ['get_quotes', 'get_financials', 'get_valuation',
+  assert.deepEqual(descriptors.map(item => item.name), ['search_data_library', 'get_financial_source_data', 'get_quotes', 'get_financials', 'get_valuation',
     'get_news', 'get_research_report', 'get_discussion_context', 'get_research_memory',
     'get_peer_comparison', 'get_valuation_scenarios']);
   for (const item of descriptors) {

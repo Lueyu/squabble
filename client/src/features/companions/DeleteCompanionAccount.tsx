@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { createRequestIntent } from '@/utils/simple-experience';
 import { portfolioWorkspaceError } from '@/utils/portfolio-workspace';
 
-export default function DeleteCompanionAccount({ account }: { account: PortfolioAccountSummary }) {
+export default function DeleteCompanionAccount({ account, iconOnly = false }: { account: PortfolioAccountSummary; iconOnly?: boolean }) {
   const { i18n } = useTranslation(), zh = i18n.language.startsWith('zh');
   const [open, setOpen] = useState(false);
   const intent = useRef(createRequestIntent(() => crypto.randomUUID()));
@@ -35,7 +35,7 @@ export default function DeleteCompanionAccount({ account }: { account: Portfolio
   });
   if (account.status === 'archived') return null;
   return <>
-    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={() => setOpen(true)} aria-label={zh ? `删除 ${account.name}` : `Delete ${account.name}`}><Trash2 size={14} />{zh ? '删除' : 'Delete'}</Button>
+    <Button variant="ghost" size={iconOnly ? 'icon' : 'sm'} className="shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setOpen(true)} aria-label={zh ? `删除 ${account.name}` : `Delete ${account.name}`} title={zh ? '删除股友' : 'Delete companion'}><Trash2 size={14} />{!iconOnly && (zh ? '删除' : 'Delete')}</Button>
     <Dialog open={open} onOpenChange={value => { if (!deletion.isPending) setOpen(value); }}><DialogContent>
       <DialogHeader><DialogTitle>{zh ? '删除这个股友账户？' : 'Delete this companion account?'}</DialogTitle>
         <DialogDescription>{zh ? `“${account.name}”将停止运行并移出当前列表。历史账本、持仓和报告会保留，可在“已归档”中回看，其他账户不受影响。` : `“${account.name}” will stop running and leave the current list. Its ledger and report history, including holdings, remain available under Archived. Other accounts are unaffected.`}</DialogDescription>

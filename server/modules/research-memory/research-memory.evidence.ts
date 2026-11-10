@@ -1,4 +1,5 @@
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
+import { libraryEvidenceAvailability } from '../../database/data-library-visibility';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilReports, councilSessions } from '../../database/council.schema';
@@ -35,7 +36,7 @@ export async function evidenceComparisons(db: Pick<PostgresJsDatabase, 'select'>
 
 export async function loadComparisonEvidence(db: Pick<PostgresJsDatabase, 'select'>, owner: string, memories: Memory[]) {
   if (!memories.length) return [];
-  return db.select({ evidence: researchMemoryEvidence, memory: researchMemories, ticker: councilSessions.ticker,
+  const rows = await db.select({ evidence: researchMemoryEvidence, memory: researchMemories, ticker: councilSessions.ticker,
     reportEvidence: councilReports.evidence }).from(researchMemoryEvidence)
     .innerJoin(researchMemories, and(eq(researchMemories.id, researchMemoryEvidence.memoryId), eq(researchMemories.owner, owner)))
     .innerJoin(councilReports, and(eq(councilReports.id, researchMemoryEvidence.reportId), councilReportSourceVisible(), eq(councilReports.owner, owner),
@@ -43,6 +44,9 @@ export async function loadComparisonEvidence(db: Pick<PostgresJsDatabase, 'selec
     .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner),
       eq(councilSessions.id, researchMemories.sessionId)))
     .where(and(eq(researchMemoryEvidence.owner, owner), or(...memories.map(memory => and(eq(researchMemories.ticker, memory.ticker), eq(researchMemories.market, memory.market)))), eq(researchMemories.excluded, false), isNull(researchMemories.deletedAt)));
+  const available = await libraryEvidenceAvailability(db, owner, [...new Map(rows.map(row => [row.memory.reportId,
+    { id: row.memory.reportId, evidence: row.reportEvidence }])).values()]);
+  return rows.filter(row => available.get(row.memory.reportId) !== false);
 }
 
 export function compareEvidenceRows(local: EvidenceRow[], rows: Awaited<ReturnType<typeof loadComparisonEvidence>>,

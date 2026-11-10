@@ -20,7 +20,7 @@ test('daily separates real unknown values, independent accounts, initial researc
   assert.match(html, /A later disagreement remains/);
   assert.match(html, /Real ledger daily profit: —/);
   assert.match(html, /recorded 1 fills/);
-  assert.match(html, /data-persona="user"/, 'unassigned accounts do not inherit an invented animal identity');
+  assert.match(html, /data-persona="moderator"/, 'legacy accounts retain an animal fallback without changing account identity');
   assert.equal(state.requests.length, 0);
 });
 
@@ -40,15 +40,13 @@ test('global memory distinguishes accepted research from user confirmation and l
   assert.match(html, /Fictional source-backed observation/);
 });
 
-test('data center shows configured availability without claiming fresh data', () => {
+test('financial sources show configuration without claiming a successful connection test', () => {
   const { state, load, render } = fixture();
-  state.queries.set('integration-settings', { data: { financial: { provider: 'public', available: true } } });
-  state.queries.set('import-batches', { data: [] });
-  state.queries.set('data-archive-jobs', { data: { counts: { failed: 1 }, jobs: [] } });
-  state.queries.set('model-connections', { data: [] });
-  const html = render(load('pages/Workspace/DataCenterPage.tsx').default);
-  assert.match(html, /configured source does not prove freshness/);
-  assert.match(html, /No named model connections/);
+  state.queries.set(JSON.stringify(['data-library', 'financial']), { data: { providers: [{ provider: 'public', name: 'Public quotes', description: 'Public source', capabilities: ['quote'], markets: ['US'], enabled: true, configured: true, requiresKey: false, lastTestAt: null, lastTestOk: null }] } });
+  const html = render(load('features/data-library/FinancialSources.tsx').default);
+  assert.match(html, /Test connection/);
+  assert.match(html, /Only actual provider results and timestamps/);
+  assert.doesNotMatch(html, /Last connection test succeeded/);
   assert.doesNotMatch(html, /5 \/ 6|09:40|demo/);
   assert.equal(state.requests.length, 0);
 });

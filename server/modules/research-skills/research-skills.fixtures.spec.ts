@@ -127,8 +127,9 @@ function checkDeterministicBoundary(fixture: FixtureCase): void {
   }
 }
 
-test('offline cases cover every documented fixture of all four bundled skills', () => {
+test('offline delivery cases cover every documented fixture of the four workflow-selected skills', () => {
   const covered = cases.map(fixture => `${pinResearchSkills(fixture.task, { versions: '{}' })[0].id}/${fixture.kind}`).sort();
-  const documented = BUNDLED_RESEARCH_SKILLS.flatMap(skill => skill.fixtures.map(fixture => `${skill.id}/${fixture.kind}`)).sort();
+  const selected = new Set(cases.flatMap(fixture => pinResearchSkills(fixture.task).map(skill => skill.id)));
+  const documented = BUNDLED_RESEARCH_SKILLS.filter(skill => selected.has(skill.id)).flatMap(skill => skill.fixtures.map(fixture => `${skill.id}/${fixture.kind}`)).sort();
   assert.deepEqual(covered, documented);
 });
