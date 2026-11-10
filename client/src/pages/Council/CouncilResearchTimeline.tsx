@@ -8,6 +8,7 @@ import { researchIsActive, researchSourceUrl,
 const RESEARCH_TOOL_NAMES = new Set(['get_quotes', 'get_financials', 'get_valuation', 'get_news',
   'get_research_report', 'get_discussion_context', 'search_research_web']);
 const WORKSPACE_TOOL_NAMES: Record<string, [string, string]> = {
+  read_browser_source: ['浏览器采集资料', 'Collect browser source'],
   search_data_library: ['检索资料库', 'Search data library'],
   get_financial_source_data: ['查询金融数据源', 'Query financial source'],
   get_research_memory: ['读取研究记忆', 'Read research memory'],

@@ -44,6 +44,9 @@ The former `/settings/data` address redirects to Financial sources.
   email/password form is not HTTP Basic. Browser-only sites may need a dedicated
   connector or a renewed session cookie. Failed authorization, unavailable text
   and unchanged responses remain visible in the sync history.
+  Browser mode adds a separate local sign-in connection and rendered-page capture;
+  see [browser collection](browser-source-collection.md). It preserves real
+  source/version identity and never treats HTTP Basic as website form login.
 - **Financial sources:** public quote adapters, SEC filings, Finnhub news and
   fundamentals, and Alpha Vantage end-of-day quotes/history expose their actual
   supported operations. Save credentials and test or query in place. Provider

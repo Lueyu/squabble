@@ -4,7 +4,7 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "02e9d735a368ccc794c56f9e287cff26f6093091",
+    "commit": "fa4a5922afa848a1e6c6a310e86a58bc66c3196d",
     "workingTreeChanges": true,
     "reviewedAt": "2026-11-10",
     "scope": [
@@ -15,7 +15,8 @@
       "Explicit frozen overall daily research, immutable classification and same-cycle recovery without read-time dispatch or repeated opening usage",
       "Imported current positions: quick first render, separate current marks/reference history, public cache leases, account archive and compact report list",
       "Research chat/history, exact-version and settled-task tombstones, memory/source availability at final execution and publication; aligned assets and unchanged primary Settings navigation",
-      "V5 research slash skills and strategy sidebar; versioned material library, encrypted scheduled subscriptions, financial source queries and visible source memory"
+      "V5 research slash skills and strategy sidebar; versioned material library, encrypted scheduled subscriptions, financial source queries and visible source memory",
+      "Browser capture: isolated manual login, encrypted owner/source sessions, pinned public egress, token-fenced rendered versions and task-scoped read_browser_source"
     ]
   },
   "areas": [
@@ -375,9 +376,12 @@
     {
       "id": "data-library",
       "paths": [
-        "server/modules/data-library/", "server/database/data-library.schema.ts",
-        "shared/data-library.interface.ts", "client/src/features/data-library/",
-        "client/src/api/data-library.ts", "scripts/db/50_data_library.sql"
+        "server/modules/data-library/",
+        "server/database/data-library.schema.ts",
+        "shared/data-library.interface.ts",
+        "client/src/features/data-library/",
+        "client/src/api/data-library.ts",
+        "scripts/db/50_data_library.sql"
       ],
       "entrypoints": [
         "server/modules/data-library/data-library.controller.ts",
@@ -385,8 +389,15 @@
         "server/modules/data-library/data-financial.service.ts",
         "client/src/pages/Workspace/DataCenterPage.tsx"
       ],
-      "references": ["references/repository-map.md", "references/research-and-execution.md", "references/development-and-tests.md"],
-      "diagrams": ["system-overview", "research-report"]
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md",
+        "references/development-and-tests.md"
+      ],
+      "diagrams": [
+        "system-overview",
+        "research-report"
+      ]
     },
     {
       "id": "portfolio-market-history",
@@ -456,6 +467,7 @@
     },
     "aiFriendV4": "Reviewed 98f073e plus V4 working tree on 2026-11-10. Five diagrams updated for new routes/read projections, interviews/frequency/seed provenance, Settings integration and daily ledger consumers. Research publication and real-ledger writer authority remain unchanged; no deployment is implied. Verification is recorded in the implementation plan and delivery notes, not inferred from this metadata.",
     "importedPortfolioRefinement": "Reviewed b7604b8 plus working tree. Public market-data cache is the only new writer; actual NAV/research/order authority unchanged. Current mark null/date remain independent; archive serializes with final fills and retains history. All five flows reviewed; channel publication unchanged.",
-    "researchRecordRefinement": "Reviewed 4d55ace plus working tree. Research workspace reuses persisted conversations with per-task drafts and frozen uncertain request identities. Additive49 records owner-scoped deletion receipts and tombstones; deleting a selected version clears exact adoption and cannot resurrect through legacy sync, while deleting a settled task retains published report history. Source availability is checked in memory, strategy resolution/final execution and channel compilation/publication. Diagrams1-4 changed; diagram5's real ledger writers remain unchanged. Assets tabs share content insets and Settings preserves ordinary primary navigation. Verification and deployment evidence are recorded separately in docs/v4-research-records-plan.md."
+    "researchRecordRefinement": "Reviewed 4d55ace plus working tree. Research workspace reuses persisted conversations with per-task drafts and frozen uncertain request identities. Additive49 records owner-scoped deletion receipts and tombstones; deleting a selected version clears exact adoption and cannot resurrect through legacy sync, while deleting a settled task retains published report history. Source availability is checked in memory, strategy resolution/final execution and channel compilation/publication. Diagrams1-4 changed; diagram5's real ledger writers remain unchanged. Assets tabs share content insets and Settings preserves ordinary primary navigation. Verification and deployment evidence are recorded separately in docs/v4-research-records-plan.md.",
+    "browserSourceCollection": "Reviewed fa4a592 plus browser-source working tree. Architecture flows1-2 add explicit browser session, controlled egress, rendered source acquisition and Agent tool references. Flows3-5 preserve strategy application, channel publication and real-ledger writers; browser collection does not create financial orders. Migration51/fresh parity, lease/job/revision ownership, cancellation and session revocation are checked by fictional tests. Real credentials and personal data are not fixtures. Default Docker browser limitations, explicit local login and encrypted-state backup requirements are documented; no deployed revision is implied."
   }
 }

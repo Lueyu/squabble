@@ -20,7 +20,7 @@ test('data library owns and versions material, indexes Chinese, and removes all 
   const owner = randomUUID(), other = randomUUID();
   try {
     await admin.unsafe(`CREATE SCHEMA ${namespace}`);
-    await client.unsafe(readFileSync('scripts/db/50_data_library.sql', 'utf8'));
+    await client.unsafe(readFileSync('scripts/db/50_data_library.sql', 'utf8')); await client.unsafe(readFileSync('scripts/db/51_browser_sources.sql', 'utf8'));
     const db = drizzle(client), service = new DataLibraryService(db);
     const page = await service.create(owner, { kind: 'page', title: '季度研究', text: '公司营收增长，现金流改善。' });
     assert.equal(page.versionCount, 1); assert.equal(page.state, 'ready');
@@ -69,7 +69,7 @@ test('sync deduplicates versions, pauses expired authentication, schedules refre
   const owner = randomUUID(), previousKey = process.env.SETTINGS_ENCRYPTION_KEY;
   process.env.SETTINGS_ENCRYPTION_KEY = 'test-only-sync-encryption-key-123456';
   try {
-    await admin.unsafe(`CREATE SCHEMA ${namespace}`); await client.unsafe(readFileSync('scripts/db/50_data_library.sql', 'utf8'));
+    await admin.unsafe(`CREATE SCHEMA ${namespace}`); await client.unsafe(readFileSync('scripts/db/50_data_library.sql', 'utf8')); await client.unsafe(readFileSync('scripts/db/51_browser_sources.sql', 'utf8'));
     const db = drizzle(client); let body = '<article><p>Subscribed research content</p></article>', authExpired = false, requests = 0;
     const service = new DataLibraryService(db, async (url, headers) => {
       requests++; assert.equal(headers?.Cookie, 'session=test-only-cookie');

@@ -6,10 +6,13 @@ export const dataLibrarySources = pgTable('data_library_sources', {
   format: text('format').notNull(), url: text('url'), fileName: text('file_name'), mimeType: text('mime_type'),
   fileData: text('file_data'), enabled: boolean('enabled').notNull().default(true),
   authKind: text('auth_kind').notNull().default('none'), secretEnc: text('secret_enc'),
+  captureMode: text('capture_mode').notNull().default('http'), browserStateEnc: text('browser_state_enc'),
+  browserConnectedAt: timestamp('browser_connected_at', { withTimezone: true }),
   syncIntervalMinutes: integer('sync_interval_minutes'), nextSyncAt: timestamp('next_sync_at', { withTimezone: true }),
   latestVersionId: uuid('latest_version_id'), versionCount: integer('version_count').notNull().default(0),
   state: text('state').notNull().default('pending'), lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
   lastErrorCode: text('last_error_code'), leaseUntil: timestamp('lease_until', { withTimezone: true }),
+  leaseToken: uuid('lease_token'), activeJobId: uuid('active_job_id'),
   revision: integer('revision').notNull().default(1), deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -22,11 +25,13 @@ export const dataLibraryVersions = pgTable('data_library_versions', {
   sections: jsonb('sections').$type<DataLibrarySection[]>().notNull(),
   byteLength: integer('byte_length').notNull(), extractionState: text('extraction_state').notNull(),
   observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  acquisition: text('acquisition').notNull().default('document'), finalUrl: text('final_url'), pageTitle: text('page_title'),
 }, t => [uniqueIndex('data_library_version_idx').on(t.sourceId, t.version), index('data_library_version_owner_idx').on(t.owner, t.sourceId)]);
 export const dataLibraryJobs = pgTable('data_library_jobs', {
   id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(),
   sourceId: uuid('source_id').notNull().references(() => dataLibrarySources.id),
   state: text('state').notNull(), outcome: text('outcome'), versionId: uuid('version_id'), errorCode: text('error_code'),
+  leaseToken: uuid('lease_token'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, t => [index('data_library_job_owner_idx').on(t.owner, t.startedAt)]);

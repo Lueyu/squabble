@@ -50,8 +50,17 @@ test('durable member claims enforce concurrent limits, preserve neighbors and fe
       { getPortfolioContext: async () => ({ totalValue: 0, cash: 0, holdings: [] }) } as never, { listRuns: async () => ({items:[]}) } as never);
     const conversation = await council.createSession(owner, { ticker: 'AAPL', language: 'en', members: members.slice(0,2).map((m,i)=>({...m,role:i?'manager':'researcher'})) }, { independent:true });
     await council.runSession(owner, conversation.id);
-    try { await Promise.race([bothEntered, new Promise((_,reject)=>setTimeout(()=>reject(new Error('Independent calls did not run concurrently')),1500))]); }
-    finally { finish(); }
+    let barrierTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // This is a concurrency barrier, not a startup-latency benchmark. Schema
+      // and TypeScript cold starts on a shared worker must not release either call.
+      await Promise.race([bothEntered, new Promise((_, reject) => {
+        barrierTimeout = setTimeout(() => reject(new Error('Independent calls did not run concurrently')), 10_000);
+      })]);
+    } finally {
+      if (barrierTimeout) clearTimeout(barrierTimeout);
+      finish();
+    }
     assert.equal(prompts[1].includes('FIRST_PRIVATE_VIEW'), false);
     for (let n=0;n<200;n++) { if ((await council.getSession(owner, conversation.id)).status !== 'running') break; await new Promise(resolve=>setTimeout(resolve,10)); }
     assert.equal((await council.getSession(owner, conversation.id)).status,'completed');

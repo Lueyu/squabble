@@ -159,6 +159,15 @@ supply operator-specific contact details or terms.
 
 ## ✅ Verify implementation
 
+Browser-source collection uses a separate, temporary browser context and explicit
+local sign-in confirmation. The saved cookie/local-storage state is encrypted
+with the existing settings key, separate from HTTP credentials. Source/status
+APIs and research tools never return that state. Collected main text and its
+URL/title/time are stored as a rendered source version and can be sent to the
+configured research model like other selected material. Disconnection clears the
+current encrypted session; database backups retain their historical copy. See
+[browser collection](browser-source-collection.md) for runtime and network limits.
+
 Start with the [database schema](../server/database/schema.ts),
 [authentication](../server/modules/auth/auth.service.ts),
 [provider settings](../server/modules/settings/settings.service.ts),

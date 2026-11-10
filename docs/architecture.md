@@ -2,7 +2,7 @@
 
 Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent investing assistant: portfolio-aware research, coordinated agents, readable reports, a stock-friend channel and explicitly applied simulated strategies.
 
-**Structural review — 2026-11-10:** inspected `02e9d73` plus the V5 research and data-library working tree. All five diagrams were checked. Research adds explicitly selected, frozen skill versions and owned material versions; the data library owns encrypted subscriptions, extraction, versioning and retrieval. Strategy authoring moves into the research workspace without changing account confirmation. Channel publication and real-ledger writers retain their existing authority. This is a source review, not a release or deployed-instance certification.
+**Structural review — 2026-11-10:** inspected `fa4a592` plus the browser-source working tree. All five diagrams were checked. Flows1–2 add isolated browser connection, controlled public-network egress, rendered versions and the task-scoped source tool. Login state is separately encrypted; source/job token and revision guard publication. Flows3–5 retain explicit strategy application, source-aware channel publication and real-ledger writers. This is a source review, not a deployed-instance certification.
 
 The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
@@ -49,6 +49,9 @@ flowchart LR
     auth --> memory["Owner-scoped memory inventory and existing thesis lifecycle"]
     auth --> library["Owned materials and financial source configuration"]
     library --> collector["Bounded public-address fetch, host-bound credentials and extraction"]
+    library --> browserSession["Explicit local browser login; separately encrypted owner/source state"]
+    browserSession --> browser["Isolated browser; bounded authenticated public-address egress"]
+    browser -->|"Rendered main content; job token and source revision"| versions
     collector --> versions["Original files, immutable versions and search index"]
     versions --> db
     library --> sources["Public quotes, SEC, Finnhub and Alpha Vantage"]
@@ -107,6 +110,8 @@ flowchart TD
     skillPin --> request
     material["Owned enabled material version"] --> materialPin["Bounded sections with immutable source/version references"]
     materialPin --> request
+    browserTool["Task-scoped read_browser_source: saved source ID only"] --> browserVersion["Owned rendered version; exact provenance and cancellation"]
+    browserVersion --> materialPin
     activity["Actual tool and skill receipts; public research summaries"] --> chat["Readable per-member chat activity"]
     today["Research reports: facts and current report"] --> request["Owner, business date and request receipt"]
     dailyWorkspace["Daily workspace"] --> dailyFacts["Current saved ledger facts; read-only, not an archive"]

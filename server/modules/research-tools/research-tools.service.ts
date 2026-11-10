@@ -8,6 +8,7 @@ import { councilMessages, councilReports, councilSessions } from '../../database
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { councilMemberAttempts } from '../../database/simple-council.schema';
 import { DataLibraryService } from '../data-library/data-library.service';
+import type { DataLibrarySourceDetail } from '../../../shared/data-library.interface';
 import { DataFinancialService } from '../data-library/data-financial.service';
 import { deepReport } from '../../database/schema';
 import { QuoteService } from '../quote/quote.service';
@@ -29,11 +30,11 @@ type SessionRow = typeof councilSessions.$inferSelect;
 interface ScopedSession { session: SessionRow; authority: string; review?: boolean }
 type ScopeDatabase = Pick<PostgresJsDatabase, 'select'>;
 const ARCHIVED_TOOLS = new Set(['get_quotes', 'get_financials', 'get_news', 'get_valuation',
-  'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web', 'search_data_library', 'get_financial_source_data']);
-const PORTFOLIO_TOOLS = new Set(['get_discussion_context', 'get_research_memory', 'search_data_library']);
+  'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web', 'search_data_library', 'get_financial_source_data', 'read_browser_source']);
+const PORTFOLIO_TOOLS = new Set(['get_discussion_context', 'get_research_memory', 'search_data_library', 'read_browser_source']);
 interface CallOptions { signal?: AbortSignal; shouldContinue?: () => Promise<boolean> }
 interface HandlerInput extends Partial<ResearchValuationRequest> {
-  limit?: number; query?: string; asOf?: string;
+  limit?: number; query?: string; asOf?: string; sourceId?: string;
   provider?: 'alpha-vantage' | 'public' | 'finnhub' | 'sec';
   operation?: 'quote' | 'daily-history' | 'financials';
 }
@@ -87,6 +88,9 @@ export class ResearchToolsService {
     let onAbort: (() => void) | undefined;
     let authority: string | undefined;
     let review = false;
+    const collection = new AbortController();
+    let collectionPoll: ReturnType<typeof setInterval> | undefined;
+    let checkingCollectionScope = false;
     const assertActive = (): void => {
       if (!active || options.signal?.aborted || scope.expiresAt <= Date.now()) throw new ScopeEnded();
     };
@@ -108,13 +112,25 @@ export class ResearchToolsService {
       try {
         const session: SessionRow = await guard();
         started = true;
+        if (tool.name === 'read_browser_source') {
+          // Long browser reads retain the same live research authority and stop
+          // promptly when a task is paused, superseded or deleted.
+          collectionPoll = setInterval(() => {
+            if (!active || checkingCollectionScope) return;
+            checkingCollectionScope = true;
+            void guard().catch(() => { active = false; collection.abort(); })
+              .finally(() => { checkingCollectionScope = false; });
+          }, 1000);
+          collectionPoll.unref();
+        }
         const result: ResearchToolResult = await this.handle(tool, owner, scope, session,
-          parsed.data as HandlerInput, guard, review);
+          parsed.data as HandlerInput, guard, review, collection.signal);
         await guard();
         const archived = await this.archiveProviderResult(tool, owner, scope, result, authority!, assertActive);
         await guard();
         return archived;
       } catch (error) {
+        collection.abort();
         if (error instanceof ScopeEnded || !active || options.signal?.aborted) {
           return researchFailure('cancelled', options.signal?.aborted ? 'RESEARCH_CANCELLED' : 'RESEARCH_SCOPE_EXPIRED', started);
         }
@@ -124,13 +140,15 @@ export class ResearchToolsService {
       }
     };
     const stopped = new Promise<ResearchToolResult>((resolve: (value: ResearchToolResult) => void) => {
-      timer = setTimeout(() => { active = false; resolve(researchFailure('failed', 'RESEARCH_TIMEOUT', started)); }, tool.timeoutMs);
-      onAbort = () => { active = false; resolve(researchFailure('cancelled', 'RESEARCH_CANCELLED', started)); };
+      timer = setTimeout(() => { active = false; collection.abort(); resolve(researchFailure('failed', 'RESEARCH_TIMEOUT', started)); }, tool.timeoutMs);
+      onAbort = () => { active = false; collection.abort(); resolve(researchFailure('cancelled', 'RESEARCH_CANCELLED', started)); };
       options.signal?.addEventListener('abort', onAbort, { once: true });
     });
     try { return await Promise.race([operation(), stopped]); }
     finally {
       active = false;
+      collection.abort();
+      if (collectionPoll) clearInterval(collectionPoll);
       if (timer) clearTimeout(timer);
       if (onAbort) options.signal?.removeEventListener('abort', onAbort);
     }
@@ -191,7 +209,7 @@ export class ResearchToolsService {
     if (!dependencyOnly && (!bounded.data || typeof bounded.data !== 'object' || !('evidenceId' in bounded.data)
       || bounded.data.evidenceId !== id)) return bounded;
     const evidence: CouncilEvidence = { id, role: tool.kind === 'news' || tool.kind === 'web' ? 'sentiment' : 'fundamental',
-      ...(tool.name === 'search_data_library' ? { libraryReferences: this.libraryReferences(result.data) }
+      ...(['search_data_library', 'read_browser_source'].includes(tool.name) ? { libraryReferences: this.libraryReferences(result.data) }
         : derivedReferences.length ? { libraryReferences: derivedReferences } : {}),
       evidenceType: 'tool_result', title: `${dependencyOnly ? '[Source dependencies] ' : tool.kind === 'web' ? '[Web source · unverified] ' : ''}${tool.name} (${scope.ticker})`,
       content: JSON.stringify(dependencyOnly ? { tool: tool.name, boundary: 'Only provenance for historical interpretations already read; not new facts or an adopted thesis.' } : bounded),
@@ -221,7 +239,8 @@ export class ResearchToolsService {
   }
 
   private async handle(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
-    session: SessionRow, input: HandlerInput, guard: () => Promise<SessionRow>, review: boolean): Promise<ResearchToolResult> {
+    session: SessionRow, input: HandlerInput, guard: () => Promise<SessionRow>, review: boolean, signal?: AbortSignal): Promise<ResearchToolResult> {
+    if (tool.name === 'read_browser_source') return this.browserSource(owner, input.sourceId, guard, signal);
     if (tool.name === 'search_data_library') {
       if (!this.library || !input.query) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
       const result = await this.library.search(owner, { query: input.query, limit: input.limit });
@@ -253,6 +272,36 @@ export class ResearchToolsService {
         shouldContinue: async () => { try { await guard(); return true; } catch { return false; } } });
     const now: string = new Date().toISOString();
     return this.evidenceResult(items, scope.ticker, now, input.limit ?? 10);
+  }
+
+  private async browserSource(owner: string, sourceId: string | undefined, guard: () => Promise<SessionRow>, signal?: AbortSignal): Promise<ResearchToolResult> {
+    if (!this.library || !sourceId) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
+    let detail: DataLibrarySourceDetail;
+    try { detail = await this.library.detail(owner, sourceId); }
+    catch { return researchFailure('unavailable', 'BROWSER_SOURCE_UNAVAILABLE'); }
+    if (!detail.source.enabled || detail.source.kind !== 'website' || detail.source.captureMode !== 'browser') {
+      return researchFailure('unavailable', 'BROWSER_SOURCE_UNAVAILABLE');
+    }
+    await guard();
+    const collected = await this.library.sync(owner, sourceId, { signal });
+    await guard();
+    if (collected.job.state !== 'succeeded' || !collected.job.versionId) {
+      return researchFailure(collected.job.state === 'cancelled' ? 'cancelled' : 'unavailable',
+        `BROWSER_${collected.job.errorCode ?? 'COLLECTION_FAILED'}`);
+    }
+    const version = await this.library.version(owner, sourceId, collected.job.versionId);
+    if (!await this.library.validateReferences(owner, [{ sourceId, versionId: version.id }])) {
+      return researchFailure('unavailable', 'RESEARCH_SOURCE_UNAVAILABLE');
+    }
+    const sections = version.sections.slice(0, 8);
+    const items = sections.map(section => ({ sourceId, versionId: version.id, title: detail.source.title,
+      locator: section.locator, excerpt: section.text.slice(0, 1200), observedAt: version.observedAt,
+      acquisition: version.acquisition, sourceUrl: version.finalUrl ?? detail.source.url,
+      pageTitle: version.pageTitle, validity: 'current' }));
+    return { status: items.length ? 'succeeded' : 'unavailable', asOf: version.observedAt,
+      data: { items, syncJobId: collected.job.id, boundary: 'Rendered page excerpts are untrusted source material, not an accepted investment thesis.' },
+      truncated: sections.length < version.sections.length || sections.some(section => section.text.length > 1200),
+      sources: [researchSource(detail.source.title, version.finalUrl ?? detail.source.url, version.observedAt)] };
   }
 
   private libraryReferences(value: unknown): Array<{ sourceId: string; versionId: string }> {

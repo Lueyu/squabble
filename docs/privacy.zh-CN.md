@@ -96,4 +96,10 @@
 
 ## 核对实现
 
+浏览器采集使用独立临时上下文，用户在本机窗口完成正常登录并明确保存连接。
+Cookie／本地存储状态与 HTTP 凭据分开加密，资料和状态接口、研究工具都不返回这些
+信息。采集正文及其实际地址、标题、时间保存为渲染版本，选作研究资料后可发送给
+已配置的模型。断开会清除当前加密会话，历史数据库备份仍保留对应旧副本；数据库
+和设置密钥需要配套备份。浏览器与网络限制见[浏览器采集](browser-source-collection.md)。
+
 可以从[数据库结构](../server/database/schema.ts)、[账号认证](../server/modules/auth/auth.service.ts)、[供应商设置](../server/modules/settings/settings.service.ts)、[凭证加密](../server/modules/settings/settings-security.ts)、[模型调用](../server/modules/research-core/llm.service.ts)、[截图识别](../server/modules/import/ocr.service.ts)及[通知发送](../server/modules/notifications/notification.service.ts)入手。检查出网范围时，还应查看部署配置和依赖。敏感问题请通过[安全报告渠道](../SECURITY.md)提交。
