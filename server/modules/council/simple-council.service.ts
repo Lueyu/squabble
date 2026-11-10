@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional, type OnApplicationBootstrap } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { cashAccounts,holdings, paperOrders, watchlist } from '../../database/schema';
@@ -23,6 +23,7 @@ import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import type { CouncilMember } from '../../../shared/council.interface';
 import type { ActualExecutor, CreateResearchConversationInput, ResearchContext, ResearchConversationMessageInput,
   ResearchConversationResult, ResearchConversationView } from '../../../shared/simple-conversation.interface';
+import type { DeleteResearchConversationInput } from '../../../shared/research-deletion.interface';
 import type { ResumeDailyReportInput } from '../../../shared/simple-conversation.interface';
 import type { ReportReference, ResolvedReportReference } from '../../../shared/research-document.interface';
 import { CouncilMemberAttemptsService } from './council-member-attempts.service';
@@ -63,7 +64,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
 
   /** Run after Council's module-init interruption sweep, never alongside it. */
   async onApplicationBootstrap():Promise<void>{
-    const receipts=await this.db.select().from(councilSessions).where(sql`${councilSessions.checkpoint}->'simple'->>'initializing'='true'`);
+    const receipts=await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), sql`${councilSessions.checkpoint}->'simple'->>'initializing'='true'`));
     for(const receipt of receipts){
       const active=this.initializingReceipts.get(receipt.id);if(active){await active;continue;}
       const job=(async()=>{
@@ -79,26 +80,26 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       try{await job;}finally{if(this.initializingReceipts.get(receipt.id)===job)this.initializingReceipts.delete(receipt.id);}
     }
     // A committed overall receipt may outlive a process exit before start. Startup only exposes recovery.
-    const saved = await this.db.select().from(councilSessions).where(and(eq(councilSessions.status, 'idle'),
+    const saved = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.status, 'idle'),
       sql`${councilSessions.checkpoint}->'simple'->'overallDaily' IS NOT NULL`));
     for (const receipt of saved) await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, receipt.owner);
-      const [row] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, receipt.owner), eq(councilSessions.id, receipt.id))).for('update');
+      const [row] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, receipt.owner), eq(councilSessions.id, receipt.id))).for('update');
       const checkpoint = row?.checkpoint;
       if (row?.status !== 'idle' || !checkpoint?.simple?.overallDaily || checkpoint.simple.initializing
         || checkpoint.inflight || checkpoint.remote || (checkpoint.simple.calls ?? 0) > 0) return;
       await tx.update(councilSessions).set({ status: 'paused', revision: row.revision + 1,
         error: '资料已保存，模型尚未派发。请明确继续已有日报。 / Saved inputs are ready; explicitly continue this daily report.', updatedAt: new Date() })
-        .where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
     });
   }
 
   private async closeInitializingReceipt(owner:string,id:string,error:string):Promise<void>{
     await this.db.transaction(async tx=>{
-      await lockMemoryOwner(tx,owner);const [row]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
+      await lockMemoryOwner(tx,owner);const [row]=await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
       if(!row?.checkpoint?.simple?.initializing)return;
       await tx.update(councilSessions).set({checkpoint:{...row.checkpoint,simple:{...row.checkpoint.simple,initializing:false}},
-        status:row.status==='idle'?'paused':row.status,error:row.error??error,updatedAt:new Date()}).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id)));
+        status:row.status==='idle'?'paused':row.status,error:row.error??error,updatedAt:new Date()}).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id)));
     });
   }
 
@@ -158,10 +159,12 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
     return this.get(owner, result.id);
   }
 
+  delete(owner: string, id: string, input: DeleteResearchConversationInput) { return this.council.deleteSession(owner, id, input); }
+
   async get(owner: string, id: string): Promise<ResearchConversationView> {
     parse(z.uuid(), id);
     const session = await this.council.getSession(owner, id);
-    const [row] = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
+    const [row] = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
     if (!row) throw new NotFoundException('Research conversation not found');
     const simple = row.checkpoint?.simple;
     const executors = simple?.executors.length ? simple.executors : session.messages.flatMap(item => item.actualExecutor ? [item.actualExecutor] : []);
@@ -187,7 +190,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
   async list(owner: string, search?: string): Promise<ResearchConversationView[]> {
     if (search !== undefined && (typeof search !== 'string' || search.length > 240)) throw new BadRequestException('Invalid search');
     const term = search?.trim().replace(/[%_\\]/gu, '\\$&');
-    const rows = await this.db.select({ id: councilSessions.id }).from(councilSessions).where(and(eq(councilSessions.owner, owner),
+    const rows = await this.db.select({ id: councilSessions.id }).from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner),
       term ? or(ilike(councilSessions.title, `%${term}%`), ilike(councilSessions.subject, `%${term}%`),
         sql`exists(select 1 from council_messages m where m.owner=${owner} and m.session_id=${councilSessions.id} and m.role <> 'system' and m.content ilike ${`%${term}%`})`) : undefined))
       .orderBy(desc(councilSessions.updatedAt)).limit(100);
@@ -200,7 +203,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
     const inputHash = hash({ operation: 'message', id, ...value });
     const created = await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
-      const [row] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).for('update');
+      const [row] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).for('update');
       if (!row) throw new NotFoundException('Research conversation not found');
       const [prior] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
       if (prior) { this.same(prior.inputHash, inputHash); return false; }
@@ -232,12 +235,12 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       await tx.update(councilSessions).set({ revision, updatedAt: new Date(), continuationSummary,
         ...(convert ? { profileSnapshot: { ...row.profileSnapshot, council: { enabled: true, members: actual.members, webResearch: row.profileSnapshot.council?.webResearch ?? false } } } : {}),
         ...(checkpoint ? { checkpoint } : {}),
-        status: row.status === 'running' ? 'running' : 'idle' }).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
+        status: row.status === 'running' ? 'running' : 'idle' }).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
       await tx.insert(simpleCouncilRequests).values({ owner, requestKey: value.requestKey, inputHash, sessionId: id });
       return true;
     });
     if (created) {
-      const [row] = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
+      const [row] = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
       if (row.profileSnapshot.council?.members.length) await this.start(owner, id);
     }
     return this.get(owner, id);
@@ -247,11 +250,11 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
     parse(z.uuid(), id); const value = parse(renameSchema, input); const inputHash = hash({ operation: 'rename', id, ...value });
     await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
-      const [row] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).for('update');
+      const [row] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).for('update');
       if (!row) throw new NotFoundException('Research conversation not found');
       const [prior] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
       if (prior) { this.same(prior.inputHash, inputHash); return; }
-      await tx.update(councilSessions).set({ title: value.title, updatedAt: new Date() }).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
+      await tx.update(councilSessions).set({ title: value.title, updatedAt: new Date() }).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
       await tx.insert(simpleCouncilRequests).values({ owner, requestKey: value.requestKey, inputHash, sessionId: id });
     });
     return this.get(owner, id);
@@ -260,7 +263,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
   private same(stored: string, current: string): void { if (stored !== current) throw new ConflictException('REQUEST_KEY_CONFLICT'); }
   private async initializeMembers(owner:string,id:string,resolved:{members:CouncilMember[];executors:ActualExecutor[]},start=true){
     const ready=await this.db.transaction(async tx=>{
-      await lockMemoryOwner(tx,owner);const [row]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
+      await lockMemoryOwner(tx,owner);const [row]=await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
       if(!row?.checkpoint?.simple?.initializing)return false;
       if(row.status!=='idle'||row.revision!==1){await tx.update(councilSessions).set({checkpoint:{...row.checkpoint,simple:{...row.checkpoint.simple,initializing:false}}}).where(eq(councilSessions.id,id));return false;}
       const [prefs]=await tx.select().from(experiencePreferences).where(eq(experiencePreferences.owner,owner));
@@ -278,7 +281,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
   private async start(owner: string, id: string): Promise<void> {
     try { await this.council.runSession(owner, id); }
     catch { await this.db.update(councilSessions).set({ status: 'paused', error: 'AI 暂不可用，请检查连接。 / AI unavailable; check the connection.' })
-      .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))); }
+      .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))); }
   }
 
   async resolveMembers(owner: string): Promise<{ members: CouncilMember[]; executors: ActualExecutor[] }> {

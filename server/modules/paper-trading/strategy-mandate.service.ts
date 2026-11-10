@@ -1,6 +1,6 @@
 import { requireActivePaperAccount } from './simulation-account';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperAccounts, paperOrders, paperPositions } from '../../database/schema';
@@ -167,7 +167,7 @@ export class StrategyMandateService {
     const [account] = await this.db.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, config.accountId)));
     if (!account) throw new NotFoundException('Paper account not found');
     if (config.sourceSessionId) {
-      const [session] = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, config.sourceSessionId)));
+      const [session] = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, config.sourceSessionId)));
       if (!session) throw new NotFoundException('Research discussion not found');
     }
     const [row] = await this.db.insert(strategyMandates).values({ owner, accountId: config.accountId, profileId: config.profileId,
@@ -179,7 +179,7 @@ export class StrategyMandateService {
     if (config.accountId !== previous.accountId || config.profileId !== previous.profileId) throw new BadRequestException('Create a new draft to change the account or agent');
     await this.documents.resolveReferences(owner, config.references);
     if (config.sourceSessionId) {
-      const [session] = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, config.sourceSessionId)));
+      const [session] = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, config.sourceSessionId)));
       if (!session) throw new NotFoundException('Research discussion not found');
     }
     const [row] = await this.db.update(strategyMandates).set({ config, revision: previous.revision + 1, updatedAt: new Date() })

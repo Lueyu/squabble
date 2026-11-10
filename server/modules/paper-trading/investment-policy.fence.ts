@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { investorAssignments, investorRuleId, investorSnapshotHash } from './user-strategy-runtime';
@@ -64,7 +64,10 @@ export async function investmentExecutionFence(tx: MemoryFenceTransaction, owner
       await new ResearchDocumentsService(tx as PostgresJsDatabase).assertExecutionSourcesInTransaction(tx, owner,
         sources.filter(item => item.versionId).map(item => ({ versionId: item.versionId!, ...(item.sectionId ? { sectionId: item.sectionId } : {}) })), now);
       for (const source of sources.filter(item => item.kind === 'message')) {
-        const [message] = await tx.select().from(councilMessages).where(and(eq(councilMessages.owner, owner), eq(councilMessages.id, source.messageId!))).for('share');
+        const [sourceRow] = await tx.select({ message: councilMessages }).from(councilMessages)
+          .innerJoin(councilSessions, and(eq(councilSessions.owner, owner), eq(councilSessions.id, councilMessages.sessionId), isNull(councilSessions.deletedAt)))
+          .where(and(eq(councilMessages.owner, owner), eq(councilMessages.id, source.messageId!))).for('share');
+        const message = sourceRow?.message;
         const content = message?.metadata?.response ? JSON.stringify({ content: message.content, response: message.metadata.response }) : message?.content;
         if (!content || createHash('sha256').update(content).digest('hex') !== source.contentHash) return { policy, block: 'USER_STRATEGY_SOURCE_CHANGED' };
       }
@@ -78,7 +81,7 @@ export async function investmentExecutionFence(tx: MemoryFenceTransaction, owner
       const [trade] = await tx.select().from(paperTrades).where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, accountId), eq(paperTrades.ticker, order.ticker))).limit(1);
       if (!trade) {
         const [review] = await tx.select().from(strategyRouteReviews).where(and(eq(strategyRouteReviews.owner, owner), eq(strategyRouteReviews.signalId, candidate.signalId)));
-        const [session] = review?.councilSessionId && review.councilReportId ? await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, review.councilSessionId))) : [];
+        const [session] = review?.councilSessionId && review.councilReportId ? await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, review.councilSessionId), isNull(councilSessions.deletedAt))).for('share') : [];
         const completed = session?.status === 'completed' && session.checkpoint?.simple ? await tx.select().from(councilIndependentSubmissions).where(and(eq(councilIndependentSubmissions.owner, owner), eq(councilIndependentSubmissions.sessionId, session.id), eq(councilIndependentSubmissions.cycleId, session.checkpoint.cycleId))) : [];
         const identities = completed.filter(submission => submission.releasedAt && submission.executorIdentity.identityVerified === true).map(submission => submission.executorIdentity.identity);
         if (new Set(identities).size < 2) return { policy, block: 'INVESTMENT_INDEPENDENT_REVIEW_REQUIRED' };

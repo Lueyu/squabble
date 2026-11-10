@@ -1,9 +1,10 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import {
   BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, type OnModuleInit,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { and, desc, eq, gte, ilike, or, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, gte, ilike, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperOrders } from '../../database/schema';
 import { councilMessages, councilReports, councilSessions, councilRevisionRequests } from '../../database/council.schema';
@@ -16,6 +17,9 @@ import type { ResumeDailyReportInput } from '../../../shared/simple-conversation
 import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
 import { experiencePreferences } from '../../database/simple-experience.schema';
 import { AutomaticResearchBudgetService } from '../paper-trading/automatic-research-budget.service';
+import { researchDeletionRequests } from '../../database/research-deletions.schema';
+import type { DeleteResearchConversationInput, ResearchDeletionResult } from '../../../shared/research-deletion.interface';
+import { assertDeletionReceipt, deletionHash, deleteConversationSchema, parseDeletion } from '../research-documents/research-deletion.rules';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { llmBudgetUsage } from '../../database/llm-budget.schema';
 import { LlmService } from '../research-core/llm.service';
@@ -94,7 +98,7 @@ export class CouncilService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.workflow.store.recover();
-    const interrupted = await this.db.select().from(councilSessions).where(eq(councilSessions.status, 'running'));
+    const interrupted = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.status, 'running')));
     for (const row of interrupted) {
       const checkpoint = row.checkpoint;
       if(checkpoint?.simple){
@@ -109,19 +113,19 @@ export class CouncilService implements OnModuleInit {
       if (checkpoint.simple.stage === 'independent' && memberId) await this.db.update(councilSessions).set({ checkpoint: {
         ...checkpoint, inflight: undefined, nextTurn: checkpoint.nextTurn + 1, simple: { ...checkpoint.simple,
           unavailable: [...checkpoint.simple.unavailable, { memberId, reason: 'Server restarted during this model request; result is unavailable and was not resent.' }] } } })
-        .where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
     }
     // Recovery changes lifecycle only. It never resumes model calls or touches order execution.
     await this.db.update(councilSessions).set({ status: 'paused', revision: sql`${councilSessions.revision} + 1`,
       checkpoint: sql`${councilSessions.checkpoint} - 'inflight'`,
       error: 'Server restarted. Resume this discussion explicitly.', updatedAt: new Date() })
-      .where(eq(councilSessions.status, 'running'));
+      .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.status, 'running')));
   }
 
   async listSessions(userId: string, filters: { scene?: string; topic?: string } = {}): Promise<CouncilSession[]> {
     const scene = filters.scene ? normalizeThread({ scene: filters.scene, ticker: 'AAPL' }).scene : undefined;
     const topic = typeof filters.topic === 'string' ? filters.topic.trim().slice(0, 240).replace(/[%_\\]/gu, '\\$&') : '';
-    const rows = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, userId),
+    const rows = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId),
       scene ? eq(councilSessions.scene, scene) : undefined, topic ? or(ilike(councilSessions.ticker, `%${topic}%`), ilike(councilSessions.subject, `%${topic}%`), ilike(councilSessions.title, `%${topic}%`)) : undefined))
       .orderBy(desc(councilSessions.updatedAt)).limit(100);
     return Promise.all(rows.map((row) => this.hydrate(userId, row)));
@@ -168,9 +172,49 @@ export class CouncilService implements OnModuleInit {
       { evidence: [], sourceRunId: null }, null, { ...thread, references, resolvedReferences, parentReportId: input.parentReportId ?? null });
     if (workflow || options?.independent) {
       [row] = await this.db.update(councilSessions).set({ checkpoint: { ...newCheckpoint(team.members, options), ...(workflow ? { workflow } : {}) } })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).returning();
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).returning();
     }
     return this.hydrate(userId, row);
+  }
+
+  /** Hiding a settled task never cancels, dispatches or erases its execution receipts. */
+  async deleteSession(owner: string, id: string, input: DeleteResearchConversationInput): Promise<ResearchDeletionResult> {
+    this.assertId(id);
+    const value = parseDeletion(deleteConversationSchema, input);
+    const inputHash = deletionHash('conversation', id, value);
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      const [receipt] = await tx.select().from(researchDeletionRequests).where(and(eq(researchDeletionRequests.owner, owner), eq(researchDeletionRequests.requestKey, value.requestKey)));
+      if (receipt) { assertDeletionReceipt(receipt.inputHash, inputHash); return receipt.result; }
+      const [row] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id), isNull(councilSessions.deletedAt))).for('update');
+      if (!row) throw new NotFoundException('Research conversation not found');
+      if (row.revision !== value.expectedRevision) throw new ConflictException('RESEARCH_DELETE_REVISION_CONFLICT');
+      const unsettled = () => new ConflictException('RESEARCH_DELETE_REQUIRES_SETTLEMENT');
+      if (row.status === 'running' || row.checkpoint?.inflight || row.checkpoint?.simple?.initializing || this.jobs.has(`${owner}:${id}`)) throw unsettled();
+      // A completed discussion can still own an explicit paid revision request.
+      const [revisionRequest] = await tx.select({ id: councilRevisionRequests.id }).from(councilRevisionRequests).where(and(
+        eq(councilRevisionRequests.owner, owner), eq(councilRevisionRequests.sessionId, id), eq(councilRevisionRequests.status, 'pending'))).limit(1);
+      if (revisionRequest) throw unsettled();
+      const attempts = await tx.select().from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner, owner), eq(councilMemberAttempts.sessionId, id)));
+      if (attempts.some(attempt => ['queued', 'running', 'unknown'].includes(attempt.status)
+        || attempt.failure?.recoveries.includes('check_existing'))) throw unsettled();
+      const tasks = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner), eq(councilResearchTasks.sessionId, id)));
+      if (tasks.some(task => ['running', 'uncertain'].includes(task.state)
+        || task.attempts.some(attempt => ['running', 'uncertain'].includes(attempt.state)))) throw unsettled();
+      const remote = row.checkpoint?.remote;
+      if (remote?.taskId) {
+        const task = await this.localAgents?.store.task(owner, remote.taskId).catch(() => null);
+        if (!task || !['completed', 'failed', 'cancelled'].includes(task.state)
+          || task.failure?.recoveries.includes('check_existing')
+          || ['LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_INTERRUPTED', 'LOCAL_PAUSED'].includes(task.error ?? '')) throw unsettled();
+      } else if (remote?.dispatchStarted) throw unsettled();
+      const deletedAt = new Date();
+      await tx.update(councilSessions).set({ deletedAt, revision: row.revision + 1, updatedAt: deletedAt })
+        .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id), isNull(councilSessions.deletedAt)));
+      const result: ResearchDeletionResult = { id, deleted: true, deletedAt: deletedAt.toISOString() };
+      await tx.insert(researchDeletionRequests).values({ owner, requestKey: value.requestKey, inputHash, result });
+      return result;
+    });
   }
 
   async getSession(userId: string, id: string): Promise<CouncilSession> {
@@ -189,7 +233,7 @@ export class CouncilService implements OnModuleInit {
     await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
       if (current.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
       if (details.replyToMessageId) {
@@ -214,7 +258,7 @@ export class CouncilService implements OnModuleInit {
         ...(resolved.length ? { references, resolvedReferences } : {}),
         ...(current.checkpoint?.workflow ? { checkpoint: await this.newCycleCheckpoint(current, tx) } : {}),
         status: current.status === 'running' || held ? current.status : 'idle' })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
     });
     return this.getSession(userId, id);
   }
@@ -225,7 +269,7 @@ export class CouncilService implements OnModuleInit {
     if (input.reportId) this.assertId(input.reportId);
     const row = await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, userId);
-      const [parent] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+      const [parent] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!parent) throw new NotFoundException('Council session not found');
       if (parent.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
       const messages = await tx.select().from(councilMessages).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, id)))
@@ -274,7 +318,7 @@ export class CouncilService implements OnModuleInit {
     const inputHash = createHash('sha256').update(JSON.stringify({ id, reportId, parentVersionId, sectionId: options.sectionId ?? null, generate: Boolean(options.generate) })).digest('hex');
     const prepared = await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, userId);
-      const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+      const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!session) throw new NotFoundException('Council session not found');
       if (options.generate) {
         const [prior] = await tx.select().from(councilRevisionRequests).where(and(eq(councilRevisionRequests.owner, userId), eq(councilRevisionRequests.requestKey, options.requestId!)));
@@ -318,7 +362,7 @@ export class CouncilService implements OnModuleInit {
       }
       return await this.db.transaction(async tx => {
         await lockMemoryOwner(tx, userId);
-        const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+        const [current] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
         if (!current || current.revision !== session.revision || current.status !== 'completed') throw new BadRequestException('Discussion changed while preparing the revision');
         await this.validatePinnedReferences(current);
         const sections = section ? parent.sections.map(item => item.id === section.id ? { ...item, content } : item)
@@ -357,7 +401,7 @@ export class CouncilService implements OnModuleInit {
   async pauseSession(userId: string, id: string): Promise<CouncilSession> {
     this.assertId(id);
     const row = await this.db.transaction(async tx => {
-      const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,userId),eq(councilSessions.id,id))).for('update');
+      const [current] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,userId),eq(councilSessions.id,id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
       const checkpoint = current.checkpoint?.simple ? { ...current.checkpoint, simple: { ...current.checkpoint.simple, stopped: true } } : current.checkpoint;
       const [paused] = await tx.update(councilSessions).set({ status:'paused', revision:current.revision+1, checkpoint, updatedAt:new Date() })
@@ -408,7 +452,7 @@ export class CouncilService implements OnModuleInit {
     if(input.action==='retry_member'&&member.agentId&&preferences?.memberSettings?.[member.agentId])member={...member,agentSettings:preferences.memberSettings[member.agentId]};
     if(input.action==='retry_member'&&member.executionMode==='local')await this.localAgents?.validate(owner,member.agentId!,member.agentSettings);
     const [active]=await this.db.update(councilSessions).set({status:'running',revision:session.revision+1,error:null,updatedAt:new Date()})
-      .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.revision,session.revision))).returning();
+      .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.revision,session.revision))).returning();
     if(!active)throw new BadRequestException('RESEARCH_REVISION_CHANGED');
     let selected:MemberAttempt|null;
     if(input.action==='reparse_existing'){
@@ -416,7 +460,7 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.id,attempt.id))).returning();selected=updated;
     }else selected=await store.claim({owner,sessionId:id,cycleId:attempt.cycleId,memberId:member.id,revision:active.revision,turn:attempt.turn,
       resourceKey:attempt.resourceKey,inputHash:attempt.inputHash,inputSnapshot:attempt.inputSnapshot,retry:true});
-    if(!selected){await this.db.update(councilSessions).set({status:session.status}).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.revision,active.revision)));return;}
+    if(!selected){await this.db.update(councilSessions).set({status:session.status}).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.revision,active.revision)));return;}
     const frozen=attempt.inputSnapshot;
     const assigned:SessionRow={...active,memberAttempt:selected,evidenceSnapshot:(frozen.commonEvidence as CouncilEvidence[]|undefined)??session.checkpoint!.simple?.commonEvidence??session.evidenceSnapshot,
       checkpoint:{...active.checkpoint!,nextTurn:selected.turn,simple:{...active.checkpoint!.simple!,stage:'independent',
@@ -434,14 +478,14 @@ export class CouncilService implements OnModuleInit {
           const automatic=active.checkpoint?.automaticTaskId??active.checkpoint?.simple?.automaticTaskId;
           if(automatic)await new AutomaticResearchBudgetService(this.db).reserveCall(owner,automatic);
           const counted=await this.db.update(councilSessions).set({checkpoint:sql`jsonb_set(${councilSessions.checkpoint},'{simple,calls}',to_jsonb(coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)+1))`})
-            .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id),sql`coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)<12`)).returning({id:councilSessions.id});
+            .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id),sql`coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)<12`)).returning({id:councilSessions.id});
           if(!counted.length)throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
           output=await this.runMember(owner,assigned,member,{memberId:member.id,phase:'opening'});
         }
         if(await this.acceptIndependentAttempt(owner,assigned,output)){
           // A recovered view supplements history; it never rewrites a completed synthesis.
           await this.db.transaction(async tx=>{
-          const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
+          const [current]=await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
           if(current?.status!=='running'||current.revision!==active.revision)return;
           // An overall opening awaiting its original barrier remains sealed until that single release.
           if(current.checkpoint?.simple?.overallDaily && current.checkpoint.simple.stage === 'waiting'
@@ -459,7 +503,7 @@ export class CouncilService implements OnModuleInit {
         await this.settleStoppedAttempt(owner,latest,failure.recoveries.includes('check_existing'));
       }finally{
         await this.db.update(councilSessions).set({status:session.status==='completed'?'completed':'paused',updatedAt:new Date()})
-          .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.status,'running'),eq(councilSessions.revision,active.revision)));
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id),eq(councilSessions.status,'running'),eq(councilSessions.revision,active.revision)));
       }
     };
     if(input.action==='reparse_existing')await run();else{const job=run();this.jobs.set(`${owner}:${id}`,job);void job.finally(()=>{if(this.jobs.get(`${owner}:${id}`)===job)this.jobs.delete(`${owner}:${id}`);}).catch(()=>undefined);}
@@ -487,7 +531,7 @@ export class CouncilService implements OnModuleInit {
     const legacyInputIncomplete=JSON.stringify(expected)!==JSON.stringify(provided);
     if(legacyInputIncomplete&&JSON.stringify(legacy)!==JSON.stringify(provided))throw new BadRequestException('SAVED_TASK_CONTEXT_MISMATCH');
     await this.db.transaction(async tx=>{
-      const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
+      const [current]=await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id))).for('update');
       if(current?.revision!==row.revision||current.status==='running')throw new BadRequestException('RESEARCH_REVISION_CHANGED');
       const [existing]=await tx.select().from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.sessionId,id),eq(councilMemberAttempts.cycleId,row.checkpoint!.cycleId),eq(councilMemberAttempts.memberId,memberId)));
       if(existing&&existing.taskId!==taskId)throw new BadRequestException('SAVED_TASK_CONTEXT_MISMATCH');
@@ -519,7 +563,7 @@ export class CouncilService implements OnModuleInit {
     const { row, started } = await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
       if (current.status === 'running') return { row: current, started: false };
       if (current.checkpoint?.simple?.overallDaily && (['completed', 'failed', 'paused'].includes(current.status) || current.checkpoint.simple.stopped)) {
@@ -543,7 +587,7 @@ export class CouncilService implements OnModuleInit {
         // Explicit follow-ups use current credentials/data, without erasing old reports or budget usage.
         ...(!resume && (!current.candidate || current.revision > 1)
           ? { evidenceSnapshot: [], sourceRunId: null, cacheKey: null } : {}) })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).returning();
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).returning();
       return { row: started, started: true };
     });
     if (!started) return this.hydrate(userId, row);
@@ -613,7 +657,7 @@ export class CouncilService implements OnModuleInit {
       const message = row.language === 'en'
       ? `Research requires at least ${required} more model API calls, but this task budget has ${remaining} remaining. No calls were started. Choose a smaller research goal or adjust Research budget before continuing; rework may add usage.`
       : `本次研究至少还需要 ${required} 次模型 API 调用，当前任务额度只剩 ${remaining} 次。尚未发起调用。请选择较小的研究目标，或在研究预算中调整后继续；返工可能增加用量。`;
-      await this.db.update(councilSessions).set({ error: message, updatedAt: new Date() }).where(and(eq(councilSessions.owner, row.owner),
+      await this.db.update(councilSessions).set({ error: message, updatedAt: new Date() }).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner),
         eq(councilSessions.id, row.id), eq(councilSessions.revision, row.revision)));
       throw new BadRequestException(message);
     }
@@ -660,7 +704,7 @@ export class CouncilService implements OnModuleInit {
     await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       const [session] = await tx.select().from(councilSessions)
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, report.sessionId))).for('update');
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, report.sessionId))).for('update');
       const [order] = await tx.select().from(paperOrders)
         .where(and(eq(paperOrders.owner, userId), eq(paperOrders.id, orderId)));
       if (!session || !order) throw new NotFoundException('Council session or paper order not found');
@@ -681,7 +725,7 @@ export class CouncilService implements OnModuleInit {
     const snapshot = await this.collectSnapshot(userId, candidate.ticker, profile.config.language ?? 'zh-CN', profile.config, candidate);
     const baseKey = cacheKey(userId, profile.id, profile.version, candidate, snapshot.evidence, snapshot.sourceRunId);
     const key = createHash('sha256').update(JSON.stringify({ baseKey, context })).digest('hex');
-    const rows = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, userId),
+    const rows = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId),
       eq(councilSessions.cacheKey, key), gte(councilSessions.createdAt, new Date(Date.now() - 24 * 3600_000))))
       .orderBy(desc(councilSessions.createdAt)).limit(8);
     const modelConfigured = (await Promise.all(this.members(profile.config)
@@ -702,7 +746,7 @@ export class CouncilService implements OnModuleInit {
       const checkpoint = newCheckpoint(this.members(profile.config), { independent: context.requireIndependentReview });
       if (context.automaticTaskId) checkpoint.automaticTaskId = context.automaticTaskId;
       if (checkpoint.simple) checkpoint.simple = { ...checkpoint.simple, commonEvidence: snapshot.evidence, commonMessageIds: [], startedAt: new Date().toISOString(), calls: 0 };
-      await this.db.update(councilSessions).set({ checkpoint }).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+      await this.db.update(councilSessions).set({ checkpoint }).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     }
     await this.runSession(userId, row.id);
     await this.jobs.get(`${userId}:${row.id}`);
@@ -729,7 +773,7 @@ export class CouncilService implements OnModuleInit {
     const job = this.execute(userId, id).catch(async () => {
       this.logger.error(`Council session ${id} could not finish`);
       await this.db.update(councilSessions).set({ status: 'failed', error: 'Council could not finish. Please retry.', updatedAt: new Date() })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id), eq(councilSessions.status, 'running')));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id), eq(councilSessions.status, 'running')));
     }).finally(() => { this.jobs.delete(key); });
     this.jobs.set(key, job);
     // The catch above persists a safe terminal status. Avoid an unhandled rejection if storage is down too.
@@ -760,7 +804,7 @@ export class CouncilService implements OnModuleInit {
         const snapshot = await this.collectSnapshot(userId, row.ticker, row.language, config, null, true, row);
         await this.db.transaction(async tx => {
           await lockMemoryOwner(tx, userId);
-          const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+          const [current] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
           const checkpoint = current?.checkpoint;
           if (current?.status !== 'running' || !checkpoint?.simple || checkpoint.cycleId !== row.checkpoint!.cycleId
             || checkpoint.simple.stockFactsPrepared || checkpoint.nextTurn !== 0) return;
@@ -768,7 +812,7 @@ export class CouncilService implements OnModuleInit {
             .map(item => [item.id, item])).values()].slice(0, 60);
           await tx.update(councilSessions).set({ evidenceSnapshot: commonEvidence, sourceRunId: snapshot.sourceRunId,
             checkpoint: { ...checkpoint, simple: { ...checkpoint.simple, commonEvidence, stockFactsPrepared: true } } })
-            .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+            .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
         });
         row = await this.requireSession(userId, id);
         if (row.status !== 'running' || !row.checkpoint) return;
@@ -777,14 +821,14 @@ export class CouncilService implements OnModuleInit {
         && this.members(row.profileSnapshot).every(member => member.executionMode === 'local')) {
         row = { ...row, checkpoint: { ...row.checkpoint, simple: { ...row.checkpoint.simple, commonEvidence: [...row.evidenceSnapshot] } } };
         await this.db.update(councilSessions).set({ checkpoint: row.checkpoint })
-          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
       }
       if (!row.evidenceSnapshot.length && row.checkpoint.simple?.commonEvidence === undefined && this.members(row.profileSnapshot).some((member) => member.executionMode !== 'local')) {
         const cycleId = row.checkpoint.cycleId;
         const snapshot = await this.collectSnapshot(userId, row.ticker, row.language, row.profileSnapshot, row.candidate, true, row);
         await this.db.update(councilSessions).set({ evidenceSnapshot: snapshot.evidence, sourceRunId: snapshot.sourceRunId,
           ...(row.checkpoint.simple ? { checkpoint: { ...row.checkpoint, simple: { ...row.checkpoint.simple, commonEvidence: snapshot.evidence } } } : {}) })
-          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id), eq(councilSessions.status, 'running'),
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id), eq(councilSessions.status, 'running'),
             sql`${councilSessions.checkpoint}->>'cycleId' = ${cycleId}`));
         row = await this.requireSession(userId, id);
         if (row.status !== 'running' || !row.checkpoint) return;
@@ -832,7 +876,7 @@ export class CouncilService implements OnModuleInit {
         if (!reparseExisting && row.checkpoint.simple) {
           if ((row.checkpoint.simple.calls ?? 0) >= 12) throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
           await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint}, '{simple,calls}', ${JSON.stringify((row.checkpoint.simple.calls ?? 0) + 1)}::jsonb)` })
-            .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+            .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
         }
         const output = reparseExisting ? await this.reparseDailyTurn(userId, row, member, turn) : await this.runMember(userId, row, member, turn);
         const recorded = await this.recordTurn(userId, row, turn, claimId, output);
@@ -856,26 +900,26 @@ export class CouncilService implements OnModuleInit {
         if (current.checkpoint?.simple?.stage === 'independent' && current.checkpoint.nextTurn === row.checkpoint?.nextTurn) {
           await this.db.transaction(async tx => {
             await lockMemoryOwner(tx, userId);
-            const [locked] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+            const [locked] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
             if (!locked?.checkpoint?.simple || locked.status !== 'running') return;
             await tx.update(councilSessions).set({ checkpoint: { ...locked.checkpoint, inflight: undefined, remote: undefined,
               nextTurn: locked.checkpoint.nextTurn + 1, simple: { ...locked.checkpoint.simple,
                 unavailable: [...locked.checkpoint.simple.unavailable, { memberId: turn.memberId, reason: code.startsWith('LOCAL_')
                   ? agentErrorMessage(code, row.language) : safeAnalysisError(error, row.language) }] } } })
-              .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+              .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
           });
           continue;
         }
         if (code.startsWith('LOCAL_')) {
           await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
-            const [locked] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
+            const [locked] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
             if (!locked?.checkpoint) return;
             const remote = locked.checkpoint.remote;
             await tx.update(councilSessions).set({ status: 'paused', error: agentErrorMessage(code, row.language), updatedAt: new Date(),
               checkpoint: { ...locked.checkpoint, inflight: undefined,
                 remote: code === 'LOCAL_CANCELLED' ? undefined : remote ? { ...remote, awaitingInput: code === 'LOCAL_INPUT_REQUIRED' || remote.awaitingInput } : undefined } })
-              .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+              .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
           });
           return;
         }
@@ -892,7 +936,7 @@ export class CouncilService implements OnModuleInit {
       await this.db.update(councilSessions).set({ status: 'paused', error: row.language === 'en'
         ? 'Steering changed repeatedly. Resume explicitly; completed turns and the task budget are retained.'
         : '引导内容多次变化，已暂停；继续时保留完成的发言和累计预算。', updatedAt: new Date() })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id), eq(councilSessions.status, 'running')));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id), eq(councilSessions.status, 'running')));
     }
   }
 
@@ -900,13 +944,13 @@ export class CouncilService implements OnModuleInit {
     return this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       const checkpoint = current?.checkpoint;
       if (!checkpoint || current.status !== 'running' || current.revision !== row.revision || checkpoint.inflight
         || checkpoint.cycleId !== row.checkpoint?.cycleId || checkpoint.nextTurn !== row.checkpoint.nextTurn) return null;
       const id = randomUUID();
       await tx.update(councilSessions).set({ checkpoint: { ...checkpoint, inflight: { id, turn: checkpoint.nextTurn, revision: row.revision } } })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return id;
     });
   }
@@ -936,7 +980,7 @@ export class CouncilService implements OnModuleInit {
         const automaticTaskId = checkpoint.automaticTaskId ?? checkpoint.simple?.automaticTaskId;
         if (automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(owner, automaticTaskId);
         const counted = await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint},'{simple,calls}',to_jsonb(coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)+1))` })
-          .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.status,'running'),eq(councilSessions.revision,row.revision),
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.status,'running'),eq(councilSessions.revision,row.revision),
             sql`coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)<12`)).returning({id:councilSessions.id});
         if (!counted.length) throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
         const output = await this.runMember(owner, assigned, member, { memberId: member.id, phase: 'opening' });
@@ -955,16 +999,16 @@ export class CouncilService implements OnModuleInit {
       ...latest.filter(a=>['completed','failed','cancelled','skipped'].includes(a.status)).map(a=>a.memberId)]);
     if (latest.some(a=>a.status==='unknown')) {
       await this.db.update(councilSessions).set({status:'paused',error:'正在确认原任务状态；已保留其他股友的观点。 / Confirming the original task; other views are retained.'})
-        .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.revision,row.revision))); return false;
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.revision,row.revision))); return false;
     }
     await this.db.update(councilSessions).set({checkpoint:sql`jsonb_set(${councilSessions.checkpoint},'{nextTurn}',${JSON.stringify(terminal.size)}::jsonb)`})
-      .where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.status,'running'),eq(councilSessions.revision,row.revision)));
+      .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.status,'running'),eq(councilSessions.revision,row.revision)));
     return selected.length>0 || terminal.size>=members.length;
   }
 
   private async markIndependentUnavailable(owner: string,row: SessionRow,memberId: string,code: string) {
     await this.db.transaction(async tx=>{
-      const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id))).for('update');
+      const [current]=await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,row.id))).for('update');
       if(current?.status!=='running'||current.revision!==row.revision||current.checkpoint?.cycleId!==row.checkpoint?.cycleId||!current.checkpoint?.simple)return;
       const unavailable=current.checkpoint.simple.unavailable.filter(u=>u.memberId!==memberId);
       await tx.update(councilSessions).set({checkpoint:{...current.checkpoint,simple:{...current.checkpoint.simple,
@@ -975,7 +1019,7 @@ export class CouncilService implements OnModuleInit {
   private async acceptIndependentAttempt(owner:string,row:SessionRow,output:MemberOutput):Promise<boolean> {
     const attempt=row.memberAttempt!;
     return this.db.transaction(async tx=>{
-      const [current]=await tx.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,row.id))).for('update');
+      const [current]=await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,row.id))).for('update');
       const [latest]=await tx.select().from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.id,attempt.id))).for('update');
       if(!current||!latest||current.status!=='running'||current.revision!==attempt.revision||current.checkpoint?.cycleId!==attempt.cycleId||!['queued','running'].includes(latest.status))return false;
       const [newer]=await tx.select({id:councilMemberAttempts.id}).from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.sessionId,row.id),eq(councilMemberAttempts.cycleId,attempt.cycleId),eq(councilMemberAttempts.memberId,attempt.memberId),sql`${councilMemberAttempts.attempt}>${attempt.attempt}`));
@@ -996,7 +1040,7 @@ export class CouncilService implements OnModuleInit {
 
   private async releaseTurn(userId: string, id: string, claimId: string): Promise<void> {
     await this.db.update(councilSessions).set({ checkpoint: sql`${councilSessions.checkpoint} - 'inflight'` })
-      .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id),
+      .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id),
         sql`${councilSessions.checkpoint}->'inflight'->>'id' = ${claimId}`));
   }
 
@@ -1004,17 +1048,17 @@ export class CouncilService implements OnModuleInit {
     return this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       const checkpoint = current?.checkpoint;
       if (!checkpoint || current.status !== 'running' || checkpoint.inflight?.id !== claimId || checkpoint.cycleId !== row.checkpoint?.cycleId) return false;
       if (turn.phase === 'summary' && checkpoint.simple && (checkpoint.simple.steeringRevision ?? 0) !== (row.checkpoint?.simple?.steeringRevision ?? 0)) {
         await tx.update(councilSessions).set({ checkpoint: { ...checkpoint, inflight: undefined, remote: undefined } })
-          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         return false;
       }
       if (output.member.executionMode === 'local' && (current.status !== 'running' || current.revision !== row.revision)) {
         await tx.update(councilSessions).set({ checkpoint: { ...checkpoint, inflight: undefined, remote: undefined } })
-          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         return false;
       }
       const contribution = output.contribution;
@@ -1026,7 +1070,7 @@ export class CouncilService implements OnModuleInit {
           memberId: output.member.id, executorIdentity: executor, contribution, evidence: output.sources ?? [],
           tokensUsed: output.tokens, taskId: output.taskId, externalUsageUnknown: output.externalUsageUnknown ? 'true' : null }).onConflictDoNothing();
         await tx.update(councilSessions).set({ updatedAt: new Date(), checkpoint: { ...checkpoint, inflight: undefined, remote: undefined,
-          nextTurn: checkpoint.nextTurn + 1 } }).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+          nextTurn: checkpoint.nextTurn + 1 } }).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         return true;
       }
       const publicClaims = checkpoint.simple ? await tx.select({ metadata: councilMessages.metadata }).from(councilMessages)
@@ -1081,7 +1125,7 @@ export class CouncilService implements OnModuleInit {
           ...publicClaims.filter(item=>item.metadata?.cycleId===checkpoint.cycleId).flatMap(item=>item.metadata?.reverseCheck?.evidenceIds??[]),
         ]) } : {}),
         checkpoint: nextCheckpoint })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return true;
     });
   }
@@ -1120,7 +1164,7 @@ export class CouncilService implements OnModuleInit {
   private async releaseIndependent(userId: string, row: SessionRow): Promise<void> {
     await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, userId);
-      const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+      const [current] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       const checkpoint = current?.checkpoint;
       if (!checkpoint?.simple || checkpoint.simple.stage !== 'independent' || current.status !== 'running') return;
       const members = this.members(current.profileSnapshot);
@@ -1157,7 +1201,7 @@ export class CouncilService implements OnModuleInit {
         evidenceSnapshot: reportExecutionEvidence([...(checkpoint.simple.commonEvidence ?? []), ...submissions.flatMap(item => item.evidence)]),
         checkpoint: { ...checkpoint, turns: [...checkpoint.turns, ...next], pendingResearch: [],
           simple: { ...checkpoint.simple, privateEvidence: undefined, stage: manager ? 'discussion' : 'waiting' } } })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     });
   }
 
@@ -1220,7 +1264,7 @@ export class CouncilService implements OnModuleInit {
     await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       if (!current || current.status !== 'running' || current.revision !== row.revision || current.checkpoint?.cycleId !== row.checkpoint!.cycleId) return;
       const [count] = await tx.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(councilMessages)
         .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id),
@@ -1289,7 +1333,7 @@ export class CouncilService implements OnModuleInit {
       : saved ?? { agentId: member.agentId, messageId: randomUUID(), turn: row.checkpoint.nextTurn,
         revision: row.revision, dispatchStarted: false, lastUserMessageId };
     if (!row.memberAttempt && (!saved || resumeInput)) await this.db.update(councilSessions).set({ checkpoint: { ...current.checkpoint!, remote } })
-      .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+      .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
     const dispatchStatus = typeof this.localAgents.status === 'function' ? await this.localAgents.status(userId).catch(() => null) : null;
     const dispatchedAgent = dispatchStatus?.items.find(item => item.id === member.agentId);
     const result = await this.localAgents.execute(userId, { agentId: member.agentId, messageId: remote.messageId,
@@ -1310,7 +1354,7 @@ export class CouncilService implements OnModuleInit {
         if(row.memberAttempt){if(!await attemptStore.update(userId,row.memberAttempt.id,{dispatchStarted:true}))throw new LocalAgentError('LOCAL_PAUSED');return;}
         const dispatched = { ...remote, lastUserMessageId, awaitingInput: false, dispatchStarted: true };
         const marked = await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint}, '{remote}', (${councilSessions.checkpoint}->'remote') || ${JSON.stringify(dispatched)}::jsonb)` })
-          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id),
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id),
             eq(councilSessions.status, 'running'), eq(councilSessions.revision, row.revision),
             sql`${councilSessions.checkpoint}->'remote'->>'messageId' = ${remote.messageId}`)).returning({ id: councilSessions.id });
         if (!marked.length) throw new LocalAgentError('LOCAL_PAUSED');
@@ -1319,10 +1363,10 @@ export class CouncilService implements OnModuleInit {
         if(row.memberAttempt){if(!await attemptStore.update(userId,row.memberAttempt.id,{taskId:ref.taskId,status:'running',startedAt:new Date()}))throw new LocalAgentError('LOCAL_PAUSED');return;}
         await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
-          const [latest] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+          const [latest] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
           if (latest?.checkpoint?.remote?.messageId !== remote.messageId) throw new Error('LOCAL_PAUSED');
           await tx.update(councilSessions).set({ checkpoint: { ...latest.checkpoint, remote: { ...remote, ...ref, lastUserMessageId, awaitingInput: false, dispatchStarted: true } } })
-            .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+            .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         });
       },
       // Structured task activity is read from the durable journal; no duplicate generic chat rows.
@@ -1369,7 +1413,7 @@ export class CouncilService implements OnModuleInit {
           detail: row.language === 'en' ? 'Use the pinned portfolio reports and constituent identities; ticker-only tools do not accept a portfolio.'
             : '请使用固定组合报告和其中的成分标的；单股工具不接受组合主题。' });
         await this.db.update(councilSessions).set({ checkpoint: { ...row.checkpoint, pendingResearch: [] } })
-          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id), eq(councilSessions.revision, row.revision)));
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id), eq(councilSessions.revision, row.revision)));
       }
       return;
     }
@@ -1377,7 +1421,7 @@ export class CouncilService implements OnModuleInit {
       const request = await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
         const [current] = await tx.select().from(councilSessions)
-          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
         const checkpoint = current?.checkpoint;
         if (current?.status !== 'running' || checkpoint?.cycleId !== row.checkpoint?.cycleId || !checkpoint.pendingResearch.length) return null;
         const [next, ...rest] = checkpoint.pendingResearch;
@@ -1385,7 +1429,7 @@ export class CouncilService implements OnModuleInit {
           && (next.kind !== 'web' || current.profileSnapshot.council?.webResearch === true);
         await tx.update(councilSessions).set({ checkpoint: { ...checkpoint, pendingResearch: rest,
           toolKindsUsed: allowed ? [...checkpoint.toolKindsUsed, next.kind] : checkpoint.toolKindsUsed } })
-          .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         return { ...next, allowed };
       });
       if (!request) return;
@@ -1412,7 +1456,7 @@ export class CouncilService implements OnModuleInit {
         await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
           const [current] = await tx.select().from(councilSessions)
-            .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+            .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
           if (current?.checkpoint?.cycleId !== row.checkpoint?.cycleId) return;
           const fresh = collected.map((item) => ({ ...item,
             ...(request.kind === 'web' ? { evidenceType: 'other' as const, role: 'news' as const } : {}),
@@ -1425,7 +1469,7 @@ export class CouncilService implements OnModuleInit {
             evidenceKind(item) === request.kind && item.sourceName !== 'Data Unavailable' && !fresh.some((next) => next.id === item.id))];
           await tx.update(councilSessions).set({ evidenceSnapshot: [...fresh, ...retained].slice(0, 40),
             checkpoint: { ...current.checkpoint, evidenceArchive: [...new Map(archive.map((item) => [item.id, item])).values()] } })
-            .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+            .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         });
       } catch {
         await this.recordAcquisition(userId, row, { source: 'Research tools', kind: request.kind, status: 'failed',
@@ -1440,7 +1484,7 @@ export class CouncilService implements OnModuleInit {
     const published = await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       if (!current || current.status !== 'running' || current.revision !== row.revision) return false;
       if(!error&&current.checkpoint?.simple?.researchOnly){
         const check=await this.dailyReverseCheck(userId,current,tx);
@@ -1507,7 +1551,7 @@ export class CouncilService implements OnModuleInit {
           ...(current.checkpoint.simple ? { simple: { ...current.checkpoint.simple, stage: 'completed' as const,
             outcome: await this.publicOutcome(tx, userId, current,report.summary) } } : {}),
           nextTurn: current.checkpoint.turns.length, pendingResearch: [], inflight: undefined } }) })
-        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
       return true;
     });
     const automaticTaskId = row.checkpoint?.automaticTaskId ?? row.checkpoint?.simple?.automaticTaskId;
@@ -1627,7 +1671,7 @@ export class CouncilService implements OnModuleInit {
   private async requireSession(userId: string, id: string): Promise<SessionRow> {
     this.assertId(id);
     const [row] = await this.db.select().from(councilSessions)
-      .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
+      .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
     if (!row) throw new NotFoundException('Council session not found');
     return row;
   }
@@ -1637,7 +1681,7 @@ export class CouncilService implements OnModuleInit {
       this.db.select().from(councilMessages)
         .where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id))).orderBy(councilMessages.createdAt),
       this.db.select().from(councilReports)
-        .where(and(eq(councilReports.owner, userId), eq(councilReports.sessionId, row.id))).orderBy(councilReports.version),
+        .where(and(councilReportSourceVisible(), eq(councilReports.owner, userId), eq(councilReports.sessionId, row.id))).orderBy(councilReports.version),
     ]);
     const resolvedReferences = this.documents ? await Promise.all((row.resolvedReferences ?? []).map(async reference => {
       try {

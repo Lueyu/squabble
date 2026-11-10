@@ -1,3 +1,4 @@
+import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -71,7 +72,7 @@ export class ChannelBriefsService {
         .from(councilReports).innerJoin(councilSessions, and(eq(councilSessions.owner, report.owner), eq(councilSessions.id, councilReports.sessionId)))
         .innerJoin(researchDocumentVersions, and(eq(researchDocumentVersions.owner, report.owner), eq(researchDocumentVersions.id, report.id)))
         .where(and(eq(councilReports.owner, report.owner), eq(councilReports.id, sourceId)));
-      if (!source || source.version.revokedAt || source.report.publicationOutcome !== 'succeeded' || source.session.status !== 'completed') continue;
+      if (!source || source.session.deletedAt || source.version.deletedAt || source.version.revokedAt || source.report.publicationOutcome !== 'succeeded' || source.session.status !== 'completed') continue;
       if(source.session.checkpoint?.simple?.contextDate&&source.session.checkpoint.simple.contextDate!==businessDate(new Date(),timezone))continue;
       const runtime = await readChannelRuntime(this.db, report.owner);
       const validUntil = new Date(report.createdAt.getTime() + 24 * 3600000).toISOString();
@@ -144,8 +145,8 @@ export class ChannelBriefsService {
     if (Date.parse(brief.expiresAt) <= Date.now()) return false;
     const [latest] = await this.db.select().from(channelReports).where(eq(channelReports.owner, owner)).orderBy(desc(channelReports.createdAt)).limit(1);
     if (!latest || latest.id !== brief.reportId || latest.revision !== brief.reportRevision) return false;
-    const [version] = await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, brief.reportId)));
-    if (!version || version.revokedAt) return false;
+    const version = await new ResearchDocumentsService(this.db).getVersion(owner, brief.reportId).catch(() => null);
+    if (!version || version.status !== 'valid' || version.sourceStatus !== 'available') return false;
     const runtime = await readChannelRuntime(this.db, owner);
     return runtime.current.strategyId === brief.compilation.strategyId && runtime.current.strategyRevision === brief.compilation.strategyRevision;
   }

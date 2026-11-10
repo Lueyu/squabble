@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { and, eq, sql } from 'drizzle-orm';
+import { isNull, and, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilMessages, councilSessions } from '../../database/council.schema';
 import { councilIndependentSubmissions, councilMemberAttempts, simpleCouncilRequests } from '../../database/simple-council.schema';
@@ -66,7 +66,7 @@ export class CouncilReportResumeService {
       requestKey: input.requestKey, expectedRevision: input.expectedRevision })).digest('hex');
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
-      const [row] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).for('update');
+      const [row] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).for('update');
       if (!row) throw new NotFoundException('Research conversation not found');
       const [prior] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, input.requestKey)));
       if (prior) {
@@ -90,7 +90,7 @@ export class CouncilReportResumeService {
         if (!(simple.commonEvidence ?? row.evidenceSnapshot).some(fact => fact.sourceName === 'Frozen owner context')) throw new BadRequestException('SAVED_OWNER_CONTEXT_UNAVAILABLE');
         await this.refreshReferences?.(row);
         const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint, error: null, updatedAt: new Date() })
-          .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
         await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });
         return { created: true, row: active };
       }
@@ -117,7 +117,7 @@ export class CouncilReportResumeService {
         await this.refreshReferences?.(row);
         const next: CouncilCheckpoint = { ...checkpoint, simple: { ...simple, stage: 'independent' } };
         const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint: next, error: null, updatedAt: new Date() })
-          .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
         await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });
         return { created: true, row: active };
       }
@@ -133,7 +133,7 @@ export class CouncilReportResumeService {
         if (!(simple.commonEvidence ?? row.evidenceSnapshot).some(fact => fact.sourceName === 'Frozen owner context')) throw new BadRequestException('SAVED_OWNER_CONTEXT_UNAVAILABLE');
         await this.refreshReferences?.(row);
         const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint, error: null, updatedAt: new Date() })
-          .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
         await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });
         return { created: true, row: active };
       }
@@ -158,7 +158,7 @@ export class CouncilReportResumeService {
       const digest = dailyReportContextHash(frozen, row);
       const activate = async (next: CouncilCheckpoint) => {
         const [active] = await tx.update(councilSessions).set({ status: 'running', revision: row.revision + 1, checkpoint: next, error: null, updatedAt: new Date() })
-          .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
+          .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))).returning();
         await tx.update(researchCurrentViews).set({ state: 'generating', error: null, updatedAt: new Date() }).where(and(
           eq(researchCurrentViews.owner, owner), eq(researchCurrentViews.taskId, id), eq(researchCurrentViews.taskKind, 'daily_research')));
         await tx.insert(simpleCouncilRequests).values({ owner, requestKey: input.requestKey, inputHash, sessionId: id });

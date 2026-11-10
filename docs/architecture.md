@@ -2,7 +2,7 @@
 
 Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent investing assistant: portfolio-aware research, coordinated agents, readable reports, a stock-friend channel and explicitly applied simulated strategies.
 
-**Structural review — 2026-11-10:** inspected `b7604b8` plus the imported-portfolio refinement working tree. All five diagrams were checked: new workspace routes, read-only daily/memory projections, persistent interviews, companion metadata and explicit execution frequency affect the system and strategy flows. Daily reading adds real/fill ledger consumers and exact-version research reading; notification configuration moves into Settings while channel publication remains source-fenced. Research independent submissions, saved-result recovery, immutable publication and real-ledger writer boundaries remain authoritative. This is a source review, not a release or deployed-instance certification.
+**Structural review — 2026-11-10:** inspected `4d55ace` plus the research-record and navigation working tree. All five diagrams were checked. Research now includes the persisted chat/history workspace and owner-fenced record tombstones; source availability reaches memory, final strategy execution and channel publication. Deleting an adopted report clears adoption without choosing another version. Immutable content, existing financial rows and execution snapshots remain retained. The real-ledger writer flow is unchanged. This is a source review, not a release or deployed-instance certification.
 
 The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
@@ -29,6 +29,8 @@ flowchart LR
     user["User"] --> web["React web client"]
     web -->|"HTTP API and polling"| auth["Nest auth and owner context"]
     auth --> experience["Research reports and current research"]
+    auth --> removal["Explicit report-version or settled-task deletion; receipts and tombstones"]
+    removal --> db
     auth --> comparison["Saved NAV and separate current account marks"]
     auth --> lookback["Current-position historical reference"]
     comparison --> lookback
@@ -95,6 +97,11 @@ flowchart TD
     dailyWorkspace["Daily workspace"] --> dailyFacts["Current saved ledger facts; read-only, not an archive"]
     dailyWorkspace --> reading
     historyList["Compact history list; exact saved version links"] --> reading
+    chat["Research workspace: large chat and persistent history sidebar"] --> request
+    historyList -->|"Confirmed selected version only"| remove["Owner/revision/receipt-fenced tombstone"]
+    chat -->|"Confirmed settled task only"| remove
+    remove --> sourceFence["Hide deleted sources; prevent legacy resurrection and new use"]
+    remove --> keep["Retain immutable content, other versions and frozen financial evidence"]
     dailyWorkspace -->|"Explicit generation request"| overallFacts["Freeze all account facts, gaps and bounded historical personal inputs"]
     overallFacts --> request
     request --> frozen["Complete frozen holdings, cash, limits and source times"]
@@ -165,7 +172,7 @@ flowchart TD
     ownedPaper["Owned simulation snapshot"] --> seed
     custom["Reviewed custom positions and cash"] --> seed
     seed --> create["Confirm named independent account; existing accounts unchanged"]
-    source["Exact report version, section or released opinion"] --> readable["Validate readable source; retain exact content and hash"]
+    source["Exact report version, section or released opinion"] --> readable["Validate visible source and task; retain exact content and hash"]
     readable --> typed["Validated typed proposal or bounded prose observations"]
     typed --> draft["Owner strategy library: editable draft"]
     idea["Original investor wording; fixed target account"] --> questions["Persist questions, suggestions, accepted answers and provenance"]
@@ -181,7 +188,7 @@ flowchart TD
     apply --> cancel["Cancel only this account's prior candidates and reservations"]
     authority --> runtime["One account policy, profile and compiled mandate"]
     runtime --> schedule["Account-scoped trigger, quote, market and review checks"]
-    schedule --> order["Final source, allocation, shared-cash and account-risk fences"]
+    schedule --> order["Final non-deleted source, allocation, shared-cash and account-risk fences"]
     frequency["Explicit once or per-exchange-trading-day frequency"] --> schedule
     frequency --> order
     order --> ledger["Paper positions, orders and fills"]
@@ -228,7 +235,7 @@ Report payload hashes, exact source-text hashes, strategy preview `strategyConte
 
 ```mermaid
 flowchart TD
-    report["Published report version and typed conditions"] --> brief["Compile current report briefs"]
+    report["Published report version and typed conditions"] --> brief["Compile briefs only from visible versions and tasks"]
     strategyChange["Strategy context for legacy report briefs"] --> brief
     select["Explicit account selection; no selection writes"] --> runtime
     brief --> crossings["Retain previous observation; only a new threshold crossing republishes"]
@@ -236,7 +243,7 @@ flowchart TD
     change["Background research finding"] --> seal["Validate and seal payload plus dependencies"]
     facts["Owner facts, evidence cards and exact anchors"] --> event
     facts --> seal
-    event --> gate["Registered template, slots and publication checks"]
+    event --> gate["Registered template, slots and live source checks under owner lock"]
     seal --> gate
     runtime["Account, enabled strategy and simulation revisions"] --> authority["Recheck monitored rule identity under owner fence"]
     authority --> gate

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import type { DeleteResearchDocumentVersionInput } from '../../../shared/research-deletion.interface';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { NeedLogin } from '../../common/platform';
@@ -20,6 +21,9 @@ export class ResearchDocumentsController {
   }
   @Get('versions/:id') view(@Req() request: Request, @Param('id') id: string) {
     return this.documents.view(request.userContext.userId, parseReportRequest(reportIdSchema, id));
+  }
+  @Post('versions/:id/delete') deleteVersion(@Req() request: Request, @Param('id') id: string, @Body() input: DeleteResearchDocumentVersionInput) {
+    return this.documents.deleteVersion(request.userContext.userId, id, input);
   }
   @Post('versions/:id/drafts') createDraft(@Req() request: Request, @Param('id') id: string, @Body() input: unknown) {
     return this.documents.createDraft(request.userContext.userId, parseReportRequest(reportIdSchema, id), parseReportRequest(revisionSchema, input));

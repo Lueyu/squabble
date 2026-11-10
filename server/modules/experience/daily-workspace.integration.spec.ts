@@ -18,7 +18,7 @@ test('daily workspace isolates owners, uses actual fill time, retains all fills 
   const client = postgres(url, { max: 4, onnotice: () => {}, connection: { search_path: namespace } });
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
-    for (const name of readdirSync('scripts/db').filter(name => /^\d\d_.*\.sql$/u.test(name) && !name.startsWith('02_') && (Number(name.slice(0, 2)) <= 45 || name.startsWith('47_'))).sort()) {
+    for (const name of readdirSync('scripts/db').filter(name => /^\d\d_.*\.sql$/u.test(name) && !name.startsWith('02_') && ((Number(name.slice(0, 2)) <= 45 || name.startsWith('49_')) || name.startsWith('47_'))).sort()) {
       await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     }
     const db = drizzle(client), owner = randomUUID(), other = randomUUID();

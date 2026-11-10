@@ -4,6 +4,7 @@ import { NeedLogin } from '../../common/platform/need-login.decorator';
 import { simpleExperienceEnvironmentEnabled } from '../../common/platform';
 import { SimpleCouncilService } from './simple-council.service';
 import type { CreateResearchConversationInput, ResearchConversationMessageInput, ResumeDailyReportInput } from '../../../shared/simple-conversation.interface';
+import type { DeleteResearchConversationInput } from '../../../shared/research-deletion.interface';
 import type { ResearchRecoveryInput } from '../../../shared/research-execution.interface';
 import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
 
@@ -24,6 +25,9 @@ export class ResearchConversationsController {
   @NeedLogin() @Post(':id/recovery') recovery(@Req() request:Request,@Param('id') id:string,@Body() input:ResearchRecoveryInput){return this.conversations.recover(request.userContext.userId,id,input);}
   @NeedLogin() @Post(':id/resume-report') resumeReport(@Req() request: Request, @Param('id') id: string, @Body() input: ResumeDailyReportInput) {
     return this.conversations.resumeReport(request.userContext.userId, id, input);
+  }
+  @NeedLogin() @Post(':id/delete') delete(@Req() request: Request, @Param('id') id: string, @Body() input: DeleteResearchConversationInput) {
+    return this.conversations.delete(request.userContext.userId, id, input);
   }
   @NeedLogin() @Post(':id/stop') stop(@Req() request:Request,@Param('id') id:string){return this.conversations.stop(request.userContext.userId,id);}
   @NeedLogin() @Get(':id/members/:memberId/result') result(@Req() request:Request,@Param('id') id:string,@Param('memberId') memberId:string){return this.conversations.memberResult(request.userContext.userId,id,memberId);}

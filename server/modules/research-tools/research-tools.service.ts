@@ -1,6 +1,7 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, lte, ne, or } from 'drizzle-orm';
+import { isNull, and, desc, eq, lte, ne, or } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { councilMessages, councilReports, councilSessions } from '../../database/council.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
@@ -126,7 +127,7 @@ export class ResearchToolsService {
       || !Number.isInteger(scope.revision) || scope.revision < 1 || !Number.isInteger(scope.turn) || scope.turn < 0
       || !/^[A-Z0-9][A-Z0-9.^-]{0,19}$/u.test(scope.ticker)) return null;
     const sessionQuery = database.select().from(councilSessions)
-      .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, scope.sessionId))).limit(1);
+      .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, scope.sessionId))).limit(1);
     const [row]: SessionRow[] = await (lock ? sessionQuery.for('update') : sessionQuery);
     if (!row || scope.expiresAt <= Date.now() || row.status !== 'running' || row.revision !== scope.revision
       || row.ticker !== scope.ticker || row.language !== scope.language || !row.checkpoint
@@ -180,7 +181,7 @@ export class ResearchToolsService {
         privateEvidence: { ...checkpoint.simple.privateEvidence,
           [scope.memberId]: [...(checkpoint.simple.privateEvidence?.[scope.memberId] ?? []), evidence] } } } }
         : { evidenceSnapshot: [...current.session.evidenceSnapshot, evidence] }), updatedAt: new Date() })
-        .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, scope.sessionId),
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, scope.sessionId),
           eq(councilSessions.revision, scope.revision)));
       assertActive();
     });
@@ -341,7 +342,7 @@ export class ResearchToolsService {
         summary: councilReports.summary, dissent: councilReports.dissent, nextReviewCondition: councilReports.nextReviewCondition,
         evidence: councilReports.evidence, createdAt: councilReports.createdAt })
         .from(councilReports).innerJoin(councilSessions, eq(councilReports.sessionId, councilSessions.id))
-        .where(and(eq(councilReports.owner, owner), eq(councilSessions.owner, owner), eq(councilSessions.ticker, scope.ticker),
+        .where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.ticker, scope.ticker),
           lte(councilReports.revision, councilSessions.revision),
           or(ne(councilReports.sessionId, scope.sessionId), lte(councilReports.revision, scope.revision))))
         .orderBy(desc(councilReports.createdAt), desc(councilReports.version)).limit(limit + 1),

@@ -223,7 +223,7 @@ export class UserInvestmentStrategyService {
         ticker: version.ticker, createdAt: version.createdAt, capturedAt, ...(executionPlan ? { executionPlan } : {}) };
     }
     const [row] = await tx.select({ message: councilMessages, session: councilSessions }).from(councilMessages)
-      .innerJoin(councilSessions, and(eq(councilSessions.id, councilMessages.sessionId), eq(councilSessions.owner, owner)))
+      .innerJoin(councilSessions, and(eq(councilSessions.id, councilMessages.sessionId), eq(councilSessions.owner, owner), isNull(councilSessions.deletedAt)))
       .where(and(eq(councilMessages.owner, owner), eq(councilMessages.id, source.messageId))).for('share');
     if (!row) throw new NotFoundException('Discussion message not found');
     const message = row.message;

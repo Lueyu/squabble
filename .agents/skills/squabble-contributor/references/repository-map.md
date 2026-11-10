@@ -10,7 +10,7 @@ Structure reviewed on **2026-11-10** against `98f073e` plus the V4 working tree.
 
 | Route | Current experience | Retained or shared surface |
 |---|---|---|
-| `/daily`, `/research` | `pages/Analysis/DailyReportPage.tsx`, `ResearchWorkspacePage.tsx` | Current saved daily facts, exact report versions and explicit research |
+| `/daily`, `/research` | `pages/Analysis/DailyReportPage.tsx`, `ResearchWorkspacePage.tsx` | Saved daily facts; persisted large research chat and history sidebar |
 | `/data`, `/memory` | `pages/Workspace/DataCenterPage.tsx`, `MemoryWorkspacePage.tsx` | Existing provider/import and thesis/version controls |
 | `/strategies`, `/strategies/new`, `/strategies/interviews/:interviewId` | `features/strategy-interview/` | Persisted clarification; existing combination confirmation remains execution authority |
 | `/settings/notifications`, `/settings/mcp` | `features/integrations/PaperIntegrationPanels.tsx` | Shared with retained Paper page; hidden Settings panels close portals |
@@ -86,3 +86,5 @@ In the table, abbreviated filenames are siblings of the fully qualified director
 Portfolio workspace review: current report actions select an account and save a disabled strategy allocation without applying it. `/paper?seedReal=1` opens a creation preview; it does not restart another account. Account CRUD/combination endpoints use `/api/ai-investment/accounts`; comparison uses `/api/ai-investment/comparison`; channel reads accept `accountId`. Legacy global-current operations fail on multi-account ambiguity and managed-account guards remain. Confirmed histories are immutable; deleting a draft keeps its tombstone. See the execution reference for exact transaction, budget, capacity and return-coverage contracts.
 
 V4 imported-portfolio refinement: `server/modules/portfolio-history/` owns current marks and public historical-price/FX caches (migration48), consumed by imports and saved comparison. `shared/portfolio-history.interface.ts` and `docs/portfolio-history-reference.md` define separate reference semantics. `HoldingsPage` renders saved rows before dashboard work. `/analysis` is only `ReportHistoryPage`; explicit current analysis is at `/research/portfolio`. Companion removal is `POST /api/ai-investment/accounts/:id/archive` and retains ledger/history.
+
+Research-record refinement: `features/research-workspace/` composes the sidebar/deletion UX with `ArchivedCouncilPage` in workspace mode; per-session drafts and uncertain request identities survive history selection. `features/research-history/DeleteReportRecord.tsx` deletes one selected version. Contracts are in `shared/research-deletion.interface.ts`; backend controllers remain research-documents and simple-council. Migration49 and `server/database/research-source-visibility.ts` extend source lifecycle into memory, strategy and channel guards. Assets tabs share the page inset; Settings retains the ordinary primary sidebar while adding a secondary menu.

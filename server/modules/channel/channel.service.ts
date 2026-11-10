@@ -1,3 +1,4 @@
+import { ResearchDocumentsService } from '../research-documents/research-documents.service';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
@@ -7,7 +8,6 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 import * as tables from '../../database/channel.schema';
 import { cashAccounts, holdings, paperAccounts, paperPositions } from '../../database/schema';
 import { councilMessages, councilSessions } from '../../database/council.schema';
-import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { investmentPolicies } from '../../database/investment-policy.schema';
 import { simulationCash } from '../../database/simulation-experiments.schema';
 import { userInvestmentStrategies } from '../../database/user-investment-strategies.schema';
@@ -96,7 +96,7 @@ export class ChannelService implements OnModuleInit {
       this.db.select().from(tables.channelReports).where(eq(tables.channelReports.owner, owner)).orderBy(desc(tables.channelReports.createdAt)).limit(1),
       this.db.select().from(tables.channelDeferredQuestions).where(eq(tables.channelDeferredQuestions.owner, owner)).orderBy(desc(tables.channelDeferredQuestions.createdAt)).limit(100),
       this.db.select().from(tables.channelSupplementRequests).where(eq(tables.channelSupplementRequests.owner, owner)).orderBy(desc(tables.channelSupplementRequests.createdAt)).limit(50),
-      this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.status, 'running'))),
+      this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.status, 'running'))),
       this.db.select().from(tables.channelFindings).where(eq(tables.channelFindings.owner, owner)).limit(100),
       this.db.select().from(tables.channelOutbox).where(and(eq(tables.channelOutbox.owner, owner), eq(tables.channelOutbox.destination, 'notification'), eq(tables.channelOutbox.state, 'pending'))).orderBy(desc(tables.channelOutbox.createdAt)).limit(20),
     ]);
@@ -355,8 +355,8 @@ export class ChannelService implements OnModuleInit {
         let invalid = !latest || latest.id !== brief.reportId || latest.revision !== brief.reportRevision
           || Boolean(brief.compilation && (brief.compilation.strategyId !== runtime.current.strategyId || brief.compilation.strategyRevision !== runtime.current.strategyRevision));
         if (z.string().uuid().safeParse(brief.reportId).success) {
-          const [source] = await tx.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, brief.reportId)));
-          invalid ||= !source || source.revokedAt !== null;
+          const source = await new ResearchDocumentsService(this.db).getVersionInTransaction(tx, owner, brief.reportId).catch(() => null);
+          invalid ||= !source || source.status !== 'valid' || source.sourceStatus !== 'available';
         }
         if (invalid) { await tx.update(tables.channelBriefs).set({ data: { ...stored.data, status: 'invalidated' } }).where(and(eq(tables.channelBriefs.owner, owner), eq(tables.channelBriefs.id, stored.id))); return null; }
       }

@@ -1,0 +1,145 @@
+.research-workspace-shell {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 20px;
+  height: calc(100dvh - 144px);
+  min-height: 540px;
+  min-width: 0;
+  padding: 24px;
+}
+
+.research-workspace-sidebar {
+  min-width: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+  padding: 16px 10px;
+}
+
+.research-workspace-sidebar header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 24px;
+}
+
+.research-workspace-sidebar h1 {
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.research-workspace-sidebar h2 {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  padding: 0 8px 12px;
+}
+
+.research-workspace-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.research-workspace-main > .research-room {
+  flex: 1;
+  height: auto;
+}
+
+.research-workspace-mobile-tools {
+  display: none;
+}
+
+.research-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.research-history-list li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 10px;
+}
+
+.research-history-list li:hover,
+.research-history-list li.is-selected {
+  background: var(--muted);
+}
+
+.research-history-select {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px 8px;
+  text-align: left;
+}
+
+.research-history-select strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.research-history-select span,
+.research-history-notice {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.research-history-notice {
+  padding: 8px;
+}
+
+.research-history-delete {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.research-history-delete:hover {
+  color: var(--destructive);
+}
+
+.research-workspace-drawer {
+  width: min(88vw, 340px);
+  overflow-y: auto;
+}
+
+@media (width < 900px) {
+  .research-workspace-shell {
+    display: block;
+    height: calc(100dvh - 128px);
+    min-height: 460px;
+    padding: 12px;
+  }
+
+  .research-workspace-sidebar {
+    display: none;
+  }
+
+  .research-workspace-main {
+    height: 100%;
+  }
+
+  .research-workspace-mobile-tools {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 10px;
+  }
+}

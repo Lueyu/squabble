@@ -1,3 +1,4 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, gt, inArray, isNull, lt, lte, ne, notExists, or, sql } from 'drizzle-orm';
@@ -75,8 +76,8 @@ export class ResearchArchiveService implements OnModuleInit, OnModuleDestroy {
           gt(researchArchiveJobs.leaseUntil, new Date()))).for('update');
         if (!job) return;
         const [source] = await tx.select({ report: councilReports, session: councilSessions }).from(councilReports)
-          .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, job.owner)))
-          .where(and(eq(councilReports.owner, job.owner), eq(councilReports.id, job.reportId),
+          .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), isNull(councilSessions.deletedAt), eq(councilSessions.owner, job.owner)))
+          .where(and(councilReportSourceVisible(), eq(councilReports.owner, job.owner), eq(councilReports.id, job.reportId),
             eq(councilReports.sessionId, job.sessionId), eq(councilReports.version, job.reportVersion)));
         if (!source) throw new Error('MEMORY_SOURCE_NOT_FOUND');
         const memoryId = await this.memory.archiveReportInTransaction(tx, job.owner, { sessionId: source.session.id,
@@ -159,8 +160,8 @@ export class ResearchArchiveService implements OnModuleInit, OnModuleDestroy {
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
       const rows = await tx.select({ report: councilReports, session: councilSessions }).from(councilReports)
-        .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, owner)))
-        .where(and(eq(councilReports.owner, owner), ne(councilReports.engine, 'basic'),
+        .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner)))
+        .where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), ne(councilReports.engine, 'basic'),
           or(isNull(councilReports.publicationOutcome), eq(councilReports.publicationOutcome, 'succeeded')),
           symbols ? inArray(sql<string>`upper(trim(${councilSessions.ticker}))`, symbols) : undefined, cursor ? gt(councilReports.id, cursor) : undefined,
           notExists(tx.select({ id: researchArchiveJobs.id }).from(researchArchiveJobs).where(and(eq(researchArchiveJobs.owner, owner),

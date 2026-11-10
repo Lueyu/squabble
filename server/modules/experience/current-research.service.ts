@@ -36,8 +36,8 @@ export class CurrentResearchService {
       .from(researchDocumentVersions).innerJoin(researchDocuments,and(eq(researchDocuments.id,researchDocumentVersions.reportId),eq(researchDocuments.owner,owner)))
       .leftJoin(portfolioAnalysisRuns,and(eq(portfolioAnalysisRuns.owner,owner),sql`${researchDocumentVersions.source}->>'type'='portfolio' AND ${portfolioAnalysisRuns.id}::text=${researchDocumentVersions.source}->>'id'`))
       .leftJoin(councilReports,and(eq(councilReports.owner,owner),sql`${researchDocumentVersions.source}->>'type'='council' AND ${councilReports.id}::text=${researchDocumentVersions.source}->>'id'`))
-      .leftJoin(councilSessions,and(eq(councilSessions.owner,owner),eq(councilSessions.id,councilReports.sessionId)))
-      .where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocuments.topicKey,'portfolio'),isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date())),
+      .leftJoin(councilSessions,and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,councilReports.sessionId)))
+      .where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocuments.topicKey,'portfolio'),isNull(researchDocumentVersions.deletedAt), isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date())),
         sql`${researchDocumentVersions.snapshot}->'overallDaily' IS NULL AND ${councilSessions.checkpoint}->'simple'->'overallDaily' IS NULL`,
         sql`((${portfolioAnalysisRuns.id} IS NOT NULL AND ${portfolioAnalysisRuns.route}->>'mode'<>'basic') OR (${councilReports.id} IS NOT NULL AND (${councilReports.publicationOutcome} IS NULL OR ${councilReports.publicationOutcome}='succeeded') AND ${councilReports.engine}<>'basic' AND ${councilSessions.scene}='portfolio_daily'))`,
         sql`coalesce(${researchDocumentVersions.snapshot}->>'businessDate', CASE WHEN ${portfolioAnalysisRuns.id} IS NOT NULL THEN to_char(coalesce(${portfolioAnalysisRuns.completedAt},${portfolioAnalysisRuns.createdAt}) AT TIME ZONE ${timezone},'YYYY-MM-DD') ELSE coalesce(${councilSessions.checkpoint}->'simple'->>'contextDate',to_char(${councilReports.createdAt} AT TIME ZONE ${timezone},'YYYY-MM-DD')) END)=${dateKey}`))
@@ -70,7 +70,7 @@ export class CurrentResearchService {
   async get(owner:string,topicKey:string,dateKey:string):Promise<CurrentResearchView> {
     const [view]=await this.db.select().from(researchCurrentViews).where(and(eq(researchCurrentViews.owner,owner),eq(researchCurrentViews.topicKey,topicKey),eq(researchCurrentViews.dateKey,dateKey)));
     let material:typeof researchDocumentVersions.$inferSelect|undefined;
-    const available=and(isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date())));
+    const available=and(sql`NOT EXISTS(SELECT 1 FROM council_reports r JOIN council_sessions s ON s.id=r.session_id AND s.owner=r.owner WHERE r.owner=${owner} AND r.id::text=${researchDocumentVersions.source}->>'id' AND ${researchDocumentVersions.source}->>'type'='council' AND s.deleted_at IS NOT NULL)`, isNull(researchDocumentVersions.deletedAt), isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date())));
     const formatting=['formatting_portfolio','formatting_daily_research'].includes(view?.taskKind??'');
     const returnedSource=formatting&&view?.taskId?await this.completedSource(this.db,owner,view.taskId):null;
     let returned:typeof researchDocumentVersions.$inferSelect|undefined;
@@ -78,7 +78,7 @@ export class CurrentResearchService {
       sql`${researchDocumentVersions.source}->>'type'=${returnedSource.type} AND ${researchDocumentVersions.source}->>'id'=${returnedSource.id}`)).orderBy(desc(researchDocumentVersions.createdAt)).limit(1);
     if(view?.currentDocumentId) [material]=await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,owner),eq(researchDocumentVersions.id,view.currentDocumentId),available));
     if(topicKey==='portfolio'&&material?.source?.type==='council'){
-      const [dailySource]=await this.db.select({checkpoint:councilSessions.checkpoint}).from(councilReports).innerJoin(councilSessions,and(eq(councilSessions.owner,owner),eq(councilSessions.id,councilReports.sessionId))).where(and(eq(councilReports.owner,owner),eq(councilReports.id,material.source.id)));
+      const [dailySource]=await this.db.select({checkpoint:councilSessions.checkpoint}).from(councilReports).innerJoin(councilSessions,and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,councilReports.sessionId))).where(and(eq(councilReports.owner,owner),eq(councilReports.id,material.source.id)));
       if(!dailySource?.checkpoint?.simple?.researchOnly)material=undefined;
     }
     if(topicKey==='portfolio'&&!material&&dateKey!=='current'){
@@ -103,7 +103,7 @@ export class CurrentResearchService {
     if(['portfolio','cancelling_portfolio'].includes(view?.taskKind??'')&&view?.taskId)[run]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,view.taskId)));
     let dailySession:typeof councilSessions.$inferSelect|undefined,dailyProgress:CurrentResearchView['progress'];
     if(view?.taskKind==='daily_research'&&view.taskId){
-      [dailySession]=await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner,owner),eq(councilSessions.id,view.taskId)));
+      [dailySession]=await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,view.taskId)));
       if(dailySession){
         const checkpoint=dailySession.checkpoint,total=(dailySession.profileSnapshot.council?.members.length??0)+2;
         const [completed]=await this.db.execute<{count:string}>(sql`SELECT count(*)::text AS count FROM council_independent_submissions WHERE owner=${owner} AND session_id=${dailySession.id} AND cycle_id=${checkpoint?.cycleId??''}`);
@@ -169,7 +169,7 @@ export class CurrentResearchService {
   private async completedSource(tx:ResearchDocumentsTransaction,owner:string,taskId:string):Promise<{type:'portfolio'|'council';id:string}|null>{
     const [run]=await tx.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,owner),eq(portfolioAnalysisRuns.id,taskId),eq(portfolioAnalysisRuns.status,'completed')));
     if(run?.report)return {type:'portfolio',id:run.id};
-    const [daily]=await tx.select({report:councilReports}).from(councilReports).innerJoin(councilSessions,and(eq(councilSessions.id,councilReports.sessionId),eq(councilSessions.owner,owner)))
+    const [daily]=await tx.select({report:councilReports}).from(councilReports).innerJoin(councilSessions,and(eq(councilSessions.id,councilReports.sessionId),isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner)))
       .where(and(eq(councilReports.owner,owner),eq(councilReports.sessionId,taskId),or(isNull(councilReports.publicationOutcome),eq(councilReports.publicationOutcome,'succeeded')),
         sql`${councilSessions.checkpoint}->'simple'->>'researchOnly'='true'`)).orderBy(desc(councilReports.createdAt)).limit(1);
     return daily?{type:'council',id:daily.report.id}:null;
@@ -230,7 +230,7 @@ export class CurrentResearchService {
           if(material.status==='revoked'||researchPresentation(null,material.sections).readingState!=='ready')continue;
           await this.db.transaction(async tx=>{
             await lockMemoryOwner(tx,row.owner);
-            const [visible]=await tx.select({id:researchDocumentVersions.id}).from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,row.owner),eq(researchDocumentVersions.id,material.id),isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date()))));
+            const [visible]=await tx.select({id:researchDocumentVersions.id}).from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner,row.owner),eq(researchDocumentVersions.id,material.id),isNull(researchDocumentVersions.deletedAt), isNull(researchDocumentVersions.revokedAt),lte(researchDocumentVersions.createdAt,new Date()),or(isNull(researchDocumentVersions.availableAt),lte(researchDocumentVersions.availableAt,new Date()))));
             if(!visible)return;
             const [restored]=await tx.update(researchCurrentViews).set({currentDocumentId:material.id,state:'ready',taskKind:source.type==='council'?'daily_research':'portfolio',error:null,updatedAt:new Date()})
               .where(and(eq(researchCurrentViews.id,row.id),eq(researchCurrentViews.state,'failed'),eq(researchCurrentViews.taskKind,row.taskKind),eq(researchCurrentViews.generationSequence,row.generationSequence))).returning();
@@ -257,7 +257,7 @@ export class CurrentResearchService {
       try {
         let status:string|undefined,sessionError:string|null=null,source:{type:'portfolio'|'council';id:string}|undefined;
         if(row.taskKind==='portfolio') {const [run]=await this.db.select().from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner,row.owner),eq(portfolioAnalysisRuns.id,row.taskId)));status=run?.status;if(status==='completed') source={type:'portfolio',id:row.taskId};}
-        else {const [session]=await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner,row.owner),eq(councilSessions.id,row.taskId)));status=session?.status;sessionError=session?.error??null;const [report]=await this.db.select().from(councilReports).where(and(eq(councilReports.owner,row.owner),eq(councilReports.sessionId,row.taskId))).orderBy(desc(councilReports.createdAt)).limit(1);if(report&&(!report.publicationOutcome||report.publicationOutcome==='succeeded'))source={type:'council',id:report.id};}
+        else {const [session]=await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,row.owner),eq(councilSessions.id,row.taskId)));status=session?.status;sessionError=session?.error??null;const [report]=await this.db.select().from(councilReports).where(and(eq(councilReports.owner,row.owner),eq(councilReports.sessionId,row.taskId))).orderBy(desc(councilReports.createdAt)).limit(1);if(session&&report&&(!report.publicationOutcome||report.publicationOutcome==='succeeded'))source={type:'council',id:report.id};}
         if(source) {
           const material=await this.documents.importSource(row.owner,source);
           if(researchPresentation(null,material.sections).readingState==='pending'){
@@ -278,7 +278,7 @@ export class CurrentResearchService {
       JOIN council_reports r ON r.research_version_id=v.id AND r.owner=v.owner
       JOIN council_sessions s ON s.id=r.session_id AND s.owner=r.owner AND s.status='completed'
       WHERE d.topic_key LIKE 'ticker:%'
-      AND v.revoked_at IS NULL AND v.created_at<=now() AND (v.available_at IS NULL OR v.available_at<=now())
+      AND s.deleted_at IS NULL AND v.deleted_at IS NULL AND v.revoked_at IS NULL AND v.created_at<=now() AND (v.available_at IS NULL OR v.available_at<=now())
       AND (r.publication_outcome IS NULL OR r.publication_outcome='succeeded')
       AND NOT EXISTS(SELECT 1 FROM simple_council_requests q WHERE q.owner=s.owner AND q.session_id=s.id AND q.request_key LIKE 'refresh:%')
       ORDER BY d.owner,d.topic_key,CASE WHEN d.topic_key='portfolio' THEN s.checkpoint->'simple'->>'contextDate' ELSE 'current' END,v.created_at DESC

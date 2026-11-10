@@ -4,7 +4,7 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "b7604b825bd0919081944a6481edae8c8280a232",
+    "commit": "4d55aced394ee8a17f27682466ac0794c4b66728",
     "workingTreeChanges": true,
     "reviewedAt": "2026-11-10",
     "scope": [
@@ -13,7 +13,8 @@
       "Strict threshold and exchange-trading-day frequency checks at candidate and final order boundaries",
       "Read-only daily and memory inventory; independent companion metadata and four frozen starting modes",
       "Explicit frozen overall daily research, immutable classification and same-cycle recovery without read-time dispatch or repeated opening usage",
-      "Imported current positions: quick first render, separate current marks/reference history, public cache leases, account archive and compact report list"
+      "Imported current positions: quick first render, separate current marks/reference history, public cache leases, account archive and compact report list",
+      "Research chat/history, exact-version and settled-task tombstones, memory/source availability at final execution and publication; aligned assets and unchanged primary Settings navigation"
     ]
   },
   "areas": [
@@ -93,7 +94,10 @@
         "client/src/pages/Today/",
         "client/src/pages/Analysis/",
         "shared/report-execution-plan.interface.ts",
-        "shared/research-document.interface.ts"
+        "shared/research-document.interface.ts",
+        "shared/research-deletion.interface.ts",
+        "client/src/features/research-history/",
+        "client/src/features/research-workspace/"
       ],
       "entrypoints": [
         "server/modules/experience/current-research.service.ts",
@@ -121,7 +125,11 @@
         "server/modules/experience/daily-workspace-research.service.ts",
         "client/src/pages/Analysis/DailyReportPage.tsx",
         "client/src/pages/Analysis/OverallDailyResearch.tsx",
-        "shared/daily-workspace.interface.ts"
+        "shared/daily-workspace.interface.ts",
+        "client/src/pages/Analysis/ResearchWorkspacePage.tsx",
+        "client/src/features/research-workspace/ResearchHistoryList.tsx",
+        "client/src/features/research-history/DeleteReportRecord.tsx",
+        "server/modules/research-documents/research-deletion.rules.ts"
       ],
       "references": [
         "references/repository-map.md",
@@ -309,7 +317,9 @@
         "Dockerfile",
         "docker-compose.yml",
         "scripts/db/42_user_strategy_runtime.sql",
-        "scripts/db/45_portfolio_workspace.sql"
+        "scripts/db/45_portfolio_workspace.sql",
+        "scripts/db/49_research_deletions.sql",
+        "server/database/research-source-visibility.ts"
       ],
       "references": [
         "references/development-and-tests.md",
@@ -427,6 +437,7 @@
       "knowledgeScenarioReview": "Independent read-only scenario review traced account-bound channel questions/pending results, complete migration replay and private instance backup/cutover/rollback from the canonical checkout when an installed copy is older. Corrected the stale channel GET side-effect paragraph and documented STRATEGY_TEST_DATABASE_URL for both new account channel suites. Final current-journey/channel/MCP scope documentation review checked 141 local links, balanced fences and all five architecture anchors; no live or paid operation was used."
     },
     "aiFriendV4": "Reviewed 98f073e plus V4 working tree on 2026-11-10. Five diagrams updated for new routes/read projections, interviews/frequency/seed provenance, Settings integration and daily ledger consumers. Research publication and real-ledger writer authority remain unchanged; no deployment is implied. Verification is recorded in the implementation plan and delivery notes, not inferred from this metadata.",
-    "importedPortfolioRefinement": "Reviewed b7604b8 plus working tree. Public market-data cache is the only new writer; actual NAV/research/order authority unchanged. Current mark null/date remain independent; archive serializes with final fills and retains history. All five flows reviewed; channel publication unchanged."
+    "importedPortfolioRefinement": "Reviewed b7604b8 plus working tree. Public market-data cache is the only new writer; actual NAV/research/order authority unchanged. Current mark null/date remain independent; archive serializes with final fills and retains history. All five flows reviewed; channel publication unchanged.",
+    "researchRecordRefinement": "Reviewed 4d55ace plus working tree. Research workspace reuses persisted conversations with per-task drafts and frozen uncertain request identities. Additive49 records owner-scoped deletion receipts and tombstones; deleting a selected version clears exact adoption and cannot resurrect through legacy sync, while deleting a settled task retains published report history. Source availability is checked in memory, strategy resolution/final execution and channel compilation/publication. Diagrams1-4 changed; diagram5's real ledger writers remain unchanged. Assets tabs share content insets and Settings preserves ordinary primary navigation. Verification and deployment evidence are recorded separately in docs/v4-research-records-plan.md."
   }
 }

@@ -106,10 +106,8 @@ test('memory preferences and submission records show real scope without inventin
   });
 });
 
-test('research question handoff does not send and later links preserve an unsent channel draft', async () => {
-  await scenario('pages/Analysis/ResearchWorkspacePage.tsx', '/research', () => {}, async ({ f, click, type, go, location }) => {
-    await type('Check concentration & sources');
-    await click('Continue to discussion');
+test('legacy channel question links do not send and preserve an unsent channel draft', async () => {
+  await scenario('pages/Analysis/ResearchWorkspacePage.tsx', '/council?question=Check%20concentration%20%26%20sources', () => {}, async ({ f, type, go, location }) => {
     assert.equal(location(), '/council?question=Check%20concentration%20%26%20sources');
     assert.equal(document.querySelector('#channel-question').value, 'Check concentration & sources');
     assert.equal(f.state.requests.length, 0, 'prefilling cannot dispatch a model or channel message');

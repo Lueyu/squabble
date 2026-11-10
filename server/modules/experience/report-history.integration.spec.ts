@@ -19,7 +19,7 @@ test('first AI report and latest same-day portfolio discussion are independent i
   const admin=postgres(url,{max:1,onnotice:()=>{}}),client=postgres(url,{max:4,onnotice:()=>{},connection:{search_path:namespace}});
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try{
-    for(const name of readdirSync('scripts/db').filter(n=>/^\d\d_.*\.sql$/u.test(n)&&!n.startsWith('02_')&&Number(n.slice(0,2))<=34).sort())await client.unsafe(readFileSync('scripts/db/'+name,'utf8'));
+    for(const name of readdirSync('scripts/db').filter(n=>/^\d\d_.*\.sql$/u.test(n)&&!n.startsWith('02_')&&(Number(n.slice(0,2))<=34 || n.startsWith('49_'))).sort())await client.unsafe(readFileSync('scripts/db/'+name,'utf8'));
     const owner=randomUUID(),db=drizzle(client),documents=new ResearchDocumentsService(db);
     const service=new CurrentResearchService(db,documents,{} as never,{} as never);
     const created=new Date('2026-11-06T01:00:00Z');

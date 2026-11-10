@@ -36,6 +36,7 @@ export const councilSessions = pgTable('council_sessions', {
   checkpoint: jsonb('checkpoint').$type<CouncilCheckpoint | null>(),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'date' }),
 }, (table) => [index('council_sessions_owner_created_idx').on(table.owner, table.createdAt),
   index('council_sessions_cache_idx').on(table.owner, table.cacheKey, table.createdAt)]);
 

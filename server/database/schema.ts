@@ -954,3 +954,4 @@ export * from './portfolio-value-points.schema';
 export * from './user-strategy-runtime.schema';
 export * from './strategy-interviews.schema';
 export * from './portfolio-history.schema';
+export * from './research-deletions.schema';

@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { SimpleCouncilService } from '../council/simple-council.service';
 import { DRIZZLE_DATABASE,type PostgresJsDatabase } from '../../common/platform';
-import { and,desc,eq,sql } from 'drizzle-orm';
+import { isNull, and,desc,eq,sql } from 'drizzle-orm';
 import { councilReports,councilSessions } from '../../database/council.schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
 import { ChannelService } from '../channel/channel.service';
@@ -37,9 +37,9 @@ export class DailyChannelResearchService {
   async stop(owner:string,id:string){await this.research.stop(owner,id);}
   async syncPublished():Promise<void>{
     const rows=await this.db.select({report:councilReports,session:councilSessions,version:researchDocumentVersions}).from(councilReports)
-      .innerJoin(councilSessions,and(eq(councilSessions.owner,councilReports.owner),eq(councilSessions.id,councilReports.sessionId)))
+      .innerJoin(councilSessions,and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,councilReports.owner),eq(councilSessions.id,councilReports.sessionId)))
       .innerJoin(researchDocumentVersions,and(eq(researchDocumentVersions.owner,councilReports.owner),eq(researchDocumentVersions.id,councilReports.researchVersionId)))
-      .where(and(eq(councilReports.publicationOutcome,'succeeded'),sql`${councilSessions.checkpoint}->'simple'->>'researchOnly'='true'`,
+      .where(and(isNull(councilSessions.deletedAt), isNull(researchDocumentVersions.deletedAt), eq(councilReports.publicationOutcome,'succeeded'),sql`${councilSessions.checkpoint}->'simple'->>'researchOnly'='true'`,
         sql`${councilSessions.checkpoint}->'simple'->'overallDaily' IS NULL AND ${researchDocumentVersions.snapshot}->'overallDaily' IS NULL`))
       .orderBy(desc(councilReports.createdAt)).limit(40);
     const publishedOwners=new Set<string>();

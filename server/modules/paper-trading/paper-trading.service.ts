@@ -1,3 +1,4 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 /**
  * @file server/modules/paper-trading/paper-trading.service.ts
  * @description AI paper-trading engine.
@@ -26,7 +27,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, desc, eq, gt, gte, or, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, gt, gte, or, sql } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import {
@@ -483,10 +484,10 @@ export class PaperTradingService {
       if (councilApproval) {
         // Serialize with user steering/pause and consume approval with the fill.
         const [session] = await tx.select().from(councilSessions).where(and(
-          eq(councilSessions.id, councilApproval.sessionId), eq(councilSessions.owner, userId),
+          eq(councilSessions.id, councilApproval.sessionId), isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId),
         )).for('update');
         const [report] = await tx.select().from(councilReports).where(and(
-          eq(councilReports.id, councilApproval.reportId), eq(councilReports.owner, userId),
+          eq(councilReports.id, councilApproval.reportId), councilReportSourceVisible(), eq(councilReports.owner, userId),
         )).for('update');
         const candidate = report?.candidate;
         if (!session || !report || !builderProfile || session.profileId !== builderProfile.id

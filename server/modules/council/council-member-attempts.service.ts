@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilSessions } from '../../database/council.schema';
 import { councilMemberAttempts } from '../../database/simple-council.schema';
@@ -21,7 +21,7 @@ export class CouncilMemberAttemptsService {
   }
   async claim(input: MemberClaim): Promise<MemberAttempt | null> {
     return this.db.transaction(async tx => {
-      const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, input.owner), eq(councilSessions.id, input.sessionId))).for('update');
+      const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, input.owner), eq(councilSessions.id, input.sessionId))).for('update');
       if (!session || session.status !== 'running' || session.revision !== input.revision || session.checkpoint?.cycleId !== input.cycleId) return null;
       const previous = await tx.select().from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner, input.owner),
         eq(councilMemberAttempts.sessionId, input.sessionId), eq(councilMemberAttempts.cycleId, input.cycleId))).orderBy(desc(councilMemberAttempts.attempt));
@@ -35,7 +35,7 @@ export class CouncilMemberAttemptsService {
   }
   async update(owner: string, id: string, change: Partial<Pick<MemberAttempt, 'taskId'|'dispatchStarted'|'rawText'|'tokensUsed'|'status'|'resultAcceptance'|'failure'|'startedAt'|'completedAt'>>): Promise<boolean> {
     const rows = await this.db.update(councilMemberAttempts).set({ ...change, updatedAt: new Date() }).where(and(eq(councilMemberAttempts.owner, owner), eq(councilMemberAttempts.id, id),
-      sql`exists(select 1 from council_sessions s where s.owner=${owner} and s.id=${councilMemberAttempts.sessionId} and s.status='running' and s.revision=${councilMemberAttempts.revision} and s.checkpoint->>'cycleId'=${councilMemberAttempts.cycleId}::text)`,
+      sql`exists(select 1 from council_sessions s where s.owner=${owner} and s.id=${councilMemberAttempts.sessionId} and s.deleted_at IS NULL and s.status='running' and s.revision=${councilMemberAttempts.revision} and s.checkpoint->>'cycleId'=${councilMemberAttempts.cycleId}::text)`,
       sql`${councilMemberAttempts.attempt}=(select max(a.attempt) from council_member_attempts a where a.owner=${owner} and a.session_id=${councilMemberAttempts.sessionId} and a.cycle_id=${councilMemberAttempts.cycleId} and a.member_id=${councilMemberAttempts.memberId})`)).returning({ id: councilMemberAttempts.id });
     return rows.length > 0;
   }
@@ -49,7 +49,7 @@ export class CouncilMemberAttemptsService {
         : { code: 'LOCAL_CANCELLED', stage: 'runtime', recoveries: ['retry_member'] },
       completedAt: uncertain ? null : new Date(), updatedAt: new Date() }).where(and(eq(councilMemberAttempts.owner, owner), eq(councilMemberAttempts.id, id),
       sql`${councilMemberAttempts.status} in ('queued','running','unknown')`,
-      sql`exists(select 1 from council_sessions s where s.owner=${owner} and s.id=${councilMemberAttempts.sessionId} and s.status='paused' and s.revision>${councilMemberAttempts.revision} and s.checkpoint->'simple'->>'stopped'='true')`));
+      sql`exists(select 1 from council_sessions s where s.owner=${owner} and s.id=${councilMemberAttempts.sessionId} and s.deleted_at IS NULL and s.status='paused' and s.revision>${councilMemberAttempts.revision} and s.checkpoint->'simple'->>'stopped'='true')`));
   }
   publicState(row: MemberAttempt): ResearchMemberState {
     return { memberId: row.memberId, attempt: row.attempt, ...(row.taskId ? { taskId: row.taskId } : {}), status: row.status,

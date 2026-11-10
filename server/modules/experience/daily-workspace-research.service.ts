@@ -39,7 +39,7 @@ export class DailyWorkspaceResearchService {
     const personalHistory = await this.db.transaction(async tx => {
       const rows = await tx.select({ version: researchDocumentVersions }).from(researchDocumentVersions)
         .innerJoin(researchDocuments, and(eq(researchDocuments.id, researchDocumentVersions.reportId), eq(researchDocuments.owner, owner)))
-        .where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocuments.topicKey, 'portfolio'), isNull(researchDocumentVersions.revokedAt),
+        .where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocuments.topicKey, 'portfolio'), isNull(researchDocumentVersions.deletedAt), isNull(researchDocumentVersions.revokedAt),
           lte(researchDocumentVersions.createdAt, now), or(isNull(researchDocumentVersions.availableAt), lte(researchDocumentVersions.availableAt, now)),
           sql`${researchDocumentVersions.snapshot} IS NOT NULL AND ${researchDocumentVersions.snapshot}->'overallDaily' IS NULL`,
           sql`${researchDocumentVersions.snapshot}->>'businessDate' <= ${date}`))
@@ -64,12 +64,12 @@ export class DailyWorkspaceResearchService {
   async read(owner: string, input?: string): Promise<OverallDailyResearchView> {
     if (!owner?.trim()) throw new UnauthorizedException();
     const date = dailyDate(input), now = new Date();
-    const [latest] = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner),
+    const [latest] = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner),
       sql`${councilSessions.checkpoint}->'simple'->'overallDaily'->>'date'=${date}`)).orderBy(desc(councilSessions.createdAt), desc(councilSessions.id)).limit(1);
     const rows = await this.db.select({ version: researchDocumentVersions, session: councilSessions }).from(councilReports)
-      .innerJoin(councilSessions, and(eq(councilSessions.owner, owner), eq(councilSessions.id, councilReports.sessionId)))
+      .innerJoin(councilSessions, and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, councilReports.sessionId)))
       .innerJoin(researchDocumentVersions, and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, councilReports.researchVersionId)))
-      .where(and(eq(councilReports.owner, owner), eq(councilReports.publicationOutcome, 'succeeded'), isNull(researchDocumentVersions.revokedAt),
+      .where(and(eq(councilReports.owner, owner), eq(councilReports.publicationOutcome, 'succeeded'), isNull(researchDocumentVersions.deletedAt), isNull(researchDocumentVersions.revokedAt),
         lte(researchDocumentVersions.createdAt, now), or(isNull(researchDocumentVersions.availableAt), lte(researchDocumentVersions.availableAt, now)),
         sql`${researchDocumentVersions.snapshot}->'overallDaily'->>'date'=${date}`))
       .orderBy(desc(councilReports.createdAt), desc(councilReports.id));

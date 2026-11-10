@@ -30,7 +30,7 @@ test('real offline Codex CLI events survive extraction, journal, Council parsing
   try{
     process.env.LOCAL_AGENTS_MODE='native';process.env.SERVER_HOST='127.0.0.1';
     await admin`CREATE SCHEMA ${admin(namespace)}`;
-    for(const name of readdirSync('scripts/db').filter(n=>/^\d+.*\.sql$/u.test(n)&&!n.startsWith('02_')&&Number(n.slice(0,2))<=34).sort())await client.unsafe(readFileSync(`scripts/db/${name}`,'utf8'));
+    for(const name of readdirSync('scripts/db').filter(n=>/^\d+.*\.sql$/u.test(n)&&!n.startsWith('02_')&&(Number(n.slice(0,2))<=34 || n.startsWith('49_'))).sort())await client.unsafe(readFileSync(`scripts/db/${name}`,'utf8'));
     const owner=randomUUID();await client`INSERT INTO users(id,username,password_hash) VALUES(${owner},'cli-chain-fixture','test')`;
     const data={response:{thesis:'A fictional issuer conclusion.',evidencePoints:['Evidence'],risks:['Risk'],nextChecks:['Check'],details:{basis:'SEGMENT_ONE',context:'SEGMENT_TWO',allocation:'SEGMENT_THREE',price:'SEGMENT_FOUR',sources:'SEGMENT_FIVE'}},
       sources:Array.from({length:7},(_,i)=>({id:`s${i}`,title:`Fixture source ${i}`,url:`https://issuer.example/filing/${i}`,content:`Fictional source excerpt ${i}`})),

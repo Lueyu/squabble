@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { isNull, and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase, simpleExperienceEnabled } from '../../common/platform';
@@ -39,7 +39,7 @@ export async function cancelInvestmentCandidates(tx: InvestmentTx, owner: string
   const ids = signals.filter(s => s.candidate.accountId === accountId).map(s => s.id);
   if (ids.length) await tx.update(strategySignals).set({ state: 'cancelled', reason, updatedAt: new Date() }).where(inArray(strategySignals.id, ids));
   if (ids.length) {
-    const openReviews = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.scene, 'trade_pre_review'), inArray(councilSessions.status, ['running', 'idle'])));
+    const openReviews = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.scene, 'trade_pre_review'), inArray(councilSessions.status, ['running', 'idle'])));
     for (const review of openReviews.filter(session => ids.some(id => session.subject.includes(`signal:${id};`)))) await tx.update(councilSessions).set({ status: 'paused', revision: review.revision + 1, error: reason, updatedAt: new Date() }).where(eq(councilSessions.id, review.id));
   }
   await tx.update(strategyReservations).set({ status: 'released', reason, updatedAt: new Date() }).where(and(eq(strategyReservations.owner, owner), eq(strategyReservations.accountId, accountId), eq(strategyReservations.status, 'active')));
@@ -397,7 +397,7 @@ export class InvestmentPolicyService {
       return this.idempotent(tx, owner, 'propose', request, async () => {
         const { account, policy } = await this.current(tx, owner);
         if (request.sessionId) {
-          const [session] = await tx.select({ id: councilSessions.id }).from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, request.sessionId)));
+          const [session] = await tx.select({ id: councilSessions.id }).from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, request.sessionId)));
           if (!session) throw new NotFoundException('Conversation not found');
         }
         // Explicit language only. General opinions remain research and never change permissions.

@@ -239,70 +239,8 @@
   padding: 0;
 }
 
-@media (width >= 768px) {
-  .app-shell-settings .app-sidebar {
-    width: 76px;
-  }
-
-  .app-shell-settings .app-brand {
-    justify-content: center;
-    padding-inline: 10px;
-  }
-
-  .app-shell-settings .app-brand-copy,
-  .app-shell-settings .app-nav-label,
-  .app-shell-settings .app-nav-link > span,
-  .app-shell-settings .app-user-copy,
-  .app-shell-settings .app-footer-actions > button > span {
-    display: none;
-  }
-
-  .app-shell-settings .app-nav {
-    padding: 4px 12px 12px;
-  }
-
-  .app-shell-settings .app-nav-link {
-    min-height: 42px;
-    justify-content: center;
-    padding: 10px;
-  }
-
-  .app-shell-settings .app-nav-link svg {
-    width: 19px;
-    height: 19px;
-  }
-
-  .app-shell-settings .app-nav-link[aria-current='page']::after {
-    display: none;
-  }
-
-  .app-shell-settings .app-nav-group + .app-nav-group {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid var(--sidebar-border);
-  }
-
-  .app-shell-settings .app-sidebar-footer {
-    margin-inline: 12px;
-  }
-
-  .app-shell-settings .app-user-block {
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  .app-shell-settings .app-footer-actions {
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .app-shell-settings .app-footer-actions > button {
-    width: 100%;
-    min-height: 34px;
-  }
-}
-
-@media (768px <= width <= 1100px) {
+/* Settings adds a secondary rail; the primary app navigation stays unchanged. */
+@media (1024px <= width <= 1100px) {
   .settings-sidebar {
     width: 210px;
   }
@@ -320,7 +258,8 @@
   }
 }
 
-@media (width < 768px) {
+/* Keep room for settings forms beside the full primary rail on small tablets. */
+@media (width < 1024px) {
   .settings-shell {
     flex-direction: column;
   }

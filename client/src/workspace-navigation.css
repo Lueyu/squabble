@@ -37,7 +37,9 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 12px 36px;
+
+  /* The shared page container supplies the same gutter as the content below. */
+  padding: 12px 0;
   border-bottom: 1px solid var(--border);
   background: var(--background);
 }
@@ -113,7 +115,7 @@
   .workspace-section-tabs {
     flex-wrap: nowrap;
     overflow-x: auto;
-    padding: 8px 16px;
+    padding: 8px 0;
   }
 
   .workspace-section-tabs a {

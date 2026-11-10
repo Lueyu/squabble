@@ -1,3 +1,4 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { councilReports, councilSessions } from '../../database/council.schema';
@@ -37,9 +38,9 @@ export async function loadComparisonEvidence(db: Pick<PostgresJsDatabase, 'selec
   return db.select({ evidence: researchMemoryEvidence, memory: researchMemories, ticker: councilSessions.ticker,
     reportEvidence: councilReports.evidence }).from(researchMemoryEvidence)
     .innerJoin(researchMemories, and(eq(researchMemories.id, researchMemoryEvidence.memoryId), eq(researchMemories.owner, owner)))
-    .innerJoin(councilReports, and(eq(councilReports.id, researchMemoryEvidence.reportId), eq(councilReports.owner, owner),
+    .innerJoin(councilReports, and(eq(councilReports.id, researchMemoryEvidence.reportId), councilReportSourceVisible(), eq(councilReports.owner, owner),
       eq(councilReports.version, researchMemoryEvidence.reportVersion), eq(councilReports.revision, researchMemoryEvidence.reportRevision)))
-    .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, owner),
+    .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner),
       eq(councilSessions.id, researchMemories.sessionId)))
     .where(and(eq(researchMemoryEvidence.owner, owner), or(...memories.map(memory => and(eq(researchMemories.ticker, memory.ticker), eq(researchMemories.market, memory.market)))), eq(researchMemories.excluded, false), isNull(researchMemories.deletedAt)));
 }

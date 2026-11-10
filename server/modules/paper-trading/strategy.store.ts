@@ -1,5 +1,6 @@
+import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm';
+import { isNull, and, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { builderProfiles, paperAccounts, paperPositions } from '../../database/schema';
 import { strategyOutbox, strategyPlans, strategyProtections, strategyRuntime, strategySignals, strategyTasks } from '../../database/strategy.schema';
@@ -74,13 +75,13 @@ export class StrategyStore {
     return this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, task.owner);
       if (researchFence.length) {
-        const sessions = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, task.owner),
+        const sessions = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, task.owner),
           inArray(councilSessions.id, researchFence.map(f => f.sessionId)))).orderBy(councilSessions.id).for('update');
         for (const fence of researchFence) {
           const session = sessions.find(s => s.id === fence.sessionId);
           if (!session || session.status !== 'completed' || session.revision !== fence.revision
             || session.checkpoint?.cycleId !== fence.cycleId || !task.sessionIds.includes(session.id) || !reportIds.includes(fence.reportId)) throw new Error('Research changed; plan discarded');
-          const [report] = await tx.select().from(councilReports).where(and(eq(councilReports.owner, task.owner),
+          const [report] = await tx.select().from(councilReports).where(and(councilReportSourceVisible(), eq(councilReports.owner, task.owner),
             eq(councilReports.id, fence.reportId), eq(councilReports.sessionId, fence.sessionId), eq(councilReports.revision, fence.revision)));
           const tasks = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, task.owner),
             eq(councilResearchTasks.sessionId, fence.sessionId), eq(councilResearchTasks.cycleId, fence.cycleId)));

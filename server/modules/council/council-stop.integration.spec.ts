@@ -19,7 +19,7 @@ test('stopping preserves uncertainty and settles confirmed attempts despite the 
   const client = postgres(process.env.COUNCIL_TEST_DATABASE_URL!, { max: 6, onnotice: () => {}, connection: { search_path: namespace } });
   try {
     await admin`CREATE SCHEMA ${admin(namespace)}`;
-    for (const name of readdirSync('scripts/db').filter(n => /^\d+.*\.sql$/u.test(n) && !n.startsWith('02_') && Number(n.slice(0, 2)) <= 34).sort()) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
+    for (const name of readdirSync('scripts/db').filter(n => /^\d+.*\.sql$/u.test(n) && !n.startsWith('02_') && (Number(n.slice(0, 2)) <= 34 || n.startsWith('49_'))).sort()) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     const owner = randomUUID(); await client`INSERT INTO users(id,username,password_hash) VALUES(${owner},'stop-fixture','test')`;
     const members = ['confirmed', 'uncertain', 'queued'].map((id, index) => ({ id, name: id, role: index === 2 ? 'manager' as const : 'researcher' as const, model: 'fast' as const, instructions: '', executionMode: 'local' as const, agentId: `native-${id}` }));
     const config = normalizeBuilderConfig({ name: 'Fixture', template: 'guard', tickers: ['AAPL'], minimumRating: 'Buy', customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1, notifyOnProposal: false, priceRules: [], council: { enabled: true, members } });

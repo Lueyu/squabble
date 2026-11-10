@@ -8,6 +8,9 @@ import { REPORT_EXECUTION_SECTION_ID, renderReportExecutionPlan } from '../paper
 import { researchDocuments, researchDocumentVersions, researchRevisionDrafts, researchDocumentStrategyUses, researchDocumentSubmissions, researchDocumentAdoptions } from '../../database/research-documents.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { capturePortfolioDailyFacts } from './portfolio-daily-facts';
+import { researchDeletionRequests } from '../../database/research-deletions.schema';
+import type { DeleteResearchDocumentVersionInput, ResearchDeletionResult } from '../../../shared/research-deletion.interface';
+import { assertDeletionReceipt, deletionHash, deleteVersionSchema, parseDeletion } from './research-deletion.rules';
 import { businessDate } from '../experience/simple-experience.rules';
 import { experiencePreferences } from '../../database/simple-experience.schema';
 import type { ReportSource, ReportReference, ResolvedReportReference, ResearchDocumentVersion, ResearchDocumentView,
@@ -33,7 +36,7 @@ export class ResearchDocumentsService {
     const strategyUseCount = sql<number>`(select count(distinct u.strategy_id)::int from research_document_strategy_uses u join research_document_versions v on v.id = u.version_id where u.owner = ${owner} and v.report_id = ${researchDocuments.id})`;
     const updatesAvailable = sql<boolean>`exists(select 1 from research_document_strategy_uses u join research_document_versions v on v.id = u.version_id where u.owner = ${owner} and v.report_id = ${researchDocuments.id} and u.version_id <> ${researchDocuments.latestVersionId})`;
     const category = sql<string>`case when ${researchDocumentVersions.snapshot}->>'experimentId' is not null or ${researchDocumentVersions.snapshot}->>'scene' = 'trade_post_review' then 'review' when ${researchDocumentVersions.kind} = 'deep' or (${researchDocumentVersions.kind} = 'council' and ${researchDocumentVersions.ticker} is not null and ${researchDocumentVersions.ticker} <> 'PORTFOLIO') then 'stock' else 'daily' end`;
-    const conditions = [eq(researchDocuments.owner, owner), eq(researchDocumentVersions.owner, owner)];
+    const conditions = [eq(researchDocuments.owner, owner), eq(researchDocumentVersions.owner, owner), isNull(researchDocumentVersions.deletedAt)];
     if (!query.history) conditions.push(eq(researchDocumentVersions.id, query.state === 'adopted' ? researchDocuments.adoptedVersionId : researchDocuments.latestVersionId));
     if (query.topic) conditions.push(eq(researchDocuments.topicKey, query.topic));
     if(query.source)conditions.push(sql`${researchDocumentVersions.source}->>'type'=${query.source}`);
@@ -53,7 +56,7 @@ export class ResearchDocumentsService {
         .from(researchDocumentVersions).innerJoin(researchDocuments, eq(researchDocuments.id, researchDocumentVersions.reportId))
         .where(and(...conditions)).orderBy(desc(researchDocumentVersions.createdAt), desc(researchDocumentVersions.id)).limit(query.limit).offset(query.offset),
       this.db.select({ total: count() }).from(researchDocumentVersions).innerJoin(researchDocuments, eq(researchDocuments.id, researchDocumentVersions.reportId)).where(and(...conditions)),
-      this.db.select({ key: researchDocuments.topicKey, count: count() }).from(researchDocuments).where(eq(researchDocuments.owner, owner)).groupBy(researchDocuments.topicKey),
+      this.db.select({ key: researchDocuments.topicKey, count: count() }).from(researchDocuments).where(and(eq(researchDocuments.owner, owner), isNotNull(researchDocuments.latestVersionId))).groupBy(researchDocuments.topicKey),
     ]);
     return { total: totals[0]?.total ?? 0, moreLegacySources, topics: topics.map(topic => ({ ...topic, label: topic.key.startsWith('ticker:') ? topic.key.slice(7) : 'Portfolio' })),
       items: await Promise.all(rows.map(async row => ({ id: row.version.id, reportId: row.version.reportId, version: row.version.version,
@@ -71,7 +74,7 @@ export class ResearchDocumentsService {
       this.db.select({ id: analysis.id }).from(analysis).where(and(eq(analysis.owner, owner), missing('daily', analysis.id))).orderBy(desc(analysis.createdAt)).limit(20),
       this.db.select({ id: deepReport.id }).from(deepReport).where(and(eq(deepReport.owner, owner), missing('deep', deepReport.id))).orderBy(desc(deepReport.createdAt)).limit(20),
       this.db.select({ id: portfolioAnalysisRuns.id }).from(portfolioAnalysisRuns).where(and(eq(portfolioAnalysisRuns.owner, owner), eq(portfolioAnalysisRuns.status, 'completed'), isNotNull(portfolioAnalysisRuns.report), missing('portfolio', portfolioAnalysisRuns.id))).orderBy(desc(portfolioAnalysisRuns.createdAt)).limit(20),
-      this.db.select({ id: councilReports.id }).from(councilReports).innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, owner)))
+      this.db.select({ id: councilReports.id }).from(councilReports).innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, owner), isNull(councilSessions.deletedAt)))
         .where(and(eq(councilReports.owner, owner), or(isNull(councilReports.publicationOutcome), eq(councilReports.publicationOutcome, 'succeeded')), missing('council', councilReports.id))).orderBy(desc(councilReports.createdAt)).limit(20),
     ]);
     const types: ReportSource['type'][] = ['daily', 'deep', 'portfolio', 'council'];
@@ -82,9 +85,9 @@ export class ResearchDocumentsService {
     // Earlier installs may already have an immutable archive without the round-card link.
     // Resolve by exact source identity, never by the session's latest document or current title.
     const unlinked = await this.db.select({ reportId: councilReports.id, versionId: researchDocumentVersions.id }).from(councilReports)
-      .innerJoin(councilSessions, and(eq(councilSessions.owner, owner), eq(councilSessions.id, councilReports.sessionId)))
+      .innerJoin(councilSessions, and(eq(councilSessions.owner, owner), eq(councilSessions.id, councilReports.sessionId), isNull(councilSessions.deletedAt)))
       .innerJoin(researchDocumentVersions, and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.kind, 'council'),
-        isNull(researchDocumentVersions.changeReason), isNull(researchDocumentVersions.revokedAt),
+        isNull(researchDocumentVersions.changeReason), isNull(researchDocumentVersions.revokedAt), isNull(researchDocumentVersions.deletedAt),
         sql`${researchDocumentVersions.source}->>'type'='council' AND ${researchDocumentVersions.source}->>'id'=${councilReports.id}::text`))
       .innerJoin(researchDocuments, and(eq(researchDocuments.owner, owner), eq(researchDocuments.id, researchDocumentVersions.reportId)))
       .where(and(eq(councilReports.owner, owner), isNull(councilReports.researchVersionId),
@@ -102,14 +105,14 @@ export class ResearchDocumentsService {
       exists(tx.select({ id: researchDocumentVersions.id }).from(researchDocumentVersions)
         .innerJoin(researchDocuments, and(eq(researchDocuments.owner, owner), eq(researchDocuments.id, researchDocumentVersions.reportId)))
         .where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, versionId), eq(researchDocumentVersions.kind, 'council'),
-          isNull(researchDocumentVersions.revokedAt), sql`${researchDocumentVersions.source}->>'type'='council' AND ${researchDocumentVersions.source}->>'id'=${reportId}`)))));
+          isNull(researchDocumentVersions.revokedAt), isNull(researchDocumentVersions.deletedAt), sql`${researchDocumentVersions.source}->>'type'='council' AND ${researchDocumentVersions.source}->>'id'=${reportId}`)))));
   }
   async sourceUpdates(owner: string, references: ReportReference[]): Promise<Array<{ versionId: string; latestVersionId: string; title: string }>> {
     this.owner(owner); const checked = parseReportRequest(reportReferencesSchema, references);
     if (!checked.length) return [];
     const rows = await this.db.select({ id: researchDocumentVersions.id, latest: researchDocuments.latestVersionId, title: researchDocuments.title })
       .from(researchDocumentVersions).innerJoin(researchDocuments, and(eq(researchDocuments.id, researchDocumentVersions.reportId), eq(researchDocuments.owner, owner)))
-      .where(and(eq(researchDocumentVersions.owner, owner), inArray(researchDocumentVersions.id, checked.map(ref => ref.versionId))));
+      .where(and(eq(researchDocumentVersions.owner, owner), isNull(researchDocumentVersions.deletedAt), inArray(researchDocumentVersions.id, checked.map(ref => ref.versionId))));
     return rows.flatMap(row => row.latest && row.latest !== row.id ? [{ versionId: row.id, latestVersionId: row.latest, title: row.title }] : []);
   }
   async withSubmission<T extends Record<string, unknown>>(owner: string, key: string, payload: unknown,
@@ -139,7 +142,7 @@ export class ResearchDocumentsService {
       createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
   }
   private async versionRow(tx: ResearchDocumentsTransaction, owner: string, id: string): Promise<VersionRow> {
-    const [row] = await tx.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, id))).limit(1);
+    const [row] = await tx.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, id), isNull(researchDocumentVersions.deletedAt))).limit(1);
     if (!row) throw new NotFoundException('REPORT_NOT_FOUND');
     return row;
   }
@@ -153,12 +156,17 @@ export class ResearchDocumentsService {
   }
   async listVersions(owner: string, reportId: string): Promise<ResearchDocumentVersion[]> {
     this.owner(owner); this.id(reportId);
-    const rows = await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.reportId, reportId))).orderBy(desc(researchDocumentVersions.version));
+    const rows = await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.reportId, reportId), isNull(researchDocumentVersions.deletedAt))).orderBy(desc(researchDocumentVersions.version));
     return Promise.all(rows.map(async row => this.version(row, await this.sourceStatus(this.db, owner, row.source))));
   }
   async resolveReferences(owner: string, references: ReportReference[]): Promise<ResolvedReportReference[]> {
     this.owner(owner); const checked = parseReportRequest(reportReferencesSchema, references);
-    return Promise.all(checked.map(async reference => resolveExactReference(await this.getVersion(owner, reference.versionId), reference)));
+    return Promise.all(checked.map(async reference => {
+      const version = await this.getVersion(owner, reference.versionId);
+      if (version.status === 'revoked') throw new ConflictException('REPORT_REVOKED');
+      if (version.sourceStatus === 'missing') throw new ConflictException('REPORT_SOURCE_MISSING');
+      return resolveExactReference(version, reference);
+    }));
   }
   /** Final execution fence. Caller holds lockMemoryOwner; source row locks last until its ledger transaction commits. */
   async assertExecutionSourcesInTransaction(tx: ResearchDocumentsTransaction, owner: string, references: ReportReference[], decisionAt: Date): Promise<ResolvedReportReference[]> {
@@ -220,7 +228,11 @@ export class ResearchDocumentsService {
         .where(and(eq(researchDocumentStrategyUses.owner, owner), eq(researchDocumentVersions.reportId, document.id))),
       this.db.select().from(researchDocumentAdoptions).where(and(eq(researchDocumentAdoptions.owner, owner), eq(researchDocumentAdoptions.reportId, document.id)))
         .orderBy(desc(researchDocumentAdoptions.createdAt))]);
-    const parent = version.parentVersionId ? await this.getVersion(owner, version.parentVersionId) : null;
+    // Removing an earlier version must not make its still-visible descendants unreadable.
+    const parent = version.parentVersionId ? await this.getVersion(owner, version.parentVersionId).catch(error => {
+      if (error instanceof NotFoundException) return null;
+      throw error;
+    }) : null;
     return { document: { id: document.id, title: document.title, kind: document.kind, ticker: document.ticker, parentReportId: document.parentReportId,
       latestVersionId: document.latestVersionId, adoptedVersionId: document.adoptedVersionId, strategyVersionIds: [...new Set(uses.map(use => use.versionId))] },
       version, versions, drafts: drafts.map(row => this.draft(row)), diff: parent ? diffSections(parent.sections, version.sections) : [],
@@ -241,7 +253,7 @@ export class ResearchDocumentsService {
     const { idempotencyKey, ...payload } = checked;
     const hash = contentHash(payload);
     const [existing] = await tx.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.idempotencyKey, idempotencyKey)));
-    if (existing) { assertIdempotency(existing.contentHash, hash); return this.version(existing); }
+    if (existing) { assertIdempotency(existing.contentHash, hash); if (existing.deletedAt) throw new NotFoundException('REPORT_NOT_FOUND'); return this.version(existing); }
     let document: typeof researchDocuments.$inferSelect | undefined;
     if (checked.reportId) {
       [document] = await tx.select().from(researchDocuments).where(and(eq(researchDocuments.owner, owner), eq(researchDocuments.id, checked.reportId))).for('update');
@@ -269,7 +281,8 @@ export class ResearchDocumentsService {
   }
   async importSource(owner: string, source: ReportSource): Promise<ResearchDocumentVersion> {
     this.owner(owner); parseReportRequest(reportSourceSchema, source);
-    return this.db.transaction(async tx => { await lockMemoryOwner(tx, owner); return this.importSourceInTransaction(tx, owner, source); });
+    const version = await this.db.transaction(async tx => { await lockMemoryOwner(tx, owner); return this.importSourceInTransaction(tx, owner, source); });
+    return this.getVersion(owner, version.id);
   }
   /** Call after acquiring lockMemoryOwner, before overwriting any mutable legacy source. */
   async importSourceInTransaction(tx: ResearchDocumentsTransaction, owner: string, source: ReportSource, metadata: SourceRegistrationMetadata = {}): Promise<ResearchDocumentVersion> {
@@ -345,7 +358,7 @@ export class ResearchDocumentsService {
       if (snapshot?.dailyFacts) fields = { dailyLedgerFacts: snapshot.dailyFacts, ...fields };
     } else {
       const query = tx.select({ report: councilReports, session: councilSessions }).from(councilReports)
-        .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, owner)))
+        .innerJoin(councilSessions, and(eq(councilSessions.id, councilReports.sessionId), eq(councilSessions.owner, owner), isNull(councilSessions.deletedAt)))
         .where(and(eq(councilReports.owner, owner), eq(councilReports.id, source.id)));
       const [row] = lock ? await query.for('share') : await query;
       if (!row || row.report.publicationOutcome === 'failed') throw new NotFoundException('REPORT_SOURCE_NOT_FOUND');
@@ -393,6 +406,9 @@ export class ResearchDocumentsService {
     this.owner(owner); this.id(id); const checked = validateRevision(input);
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
+      const [draft] = await tx.select().from(researchRevisionDrafts).where(and(eq(researchRevisionDrafts.owner, owner), eq(researchRevisionDrafts.id, id)));
+      if (!draft) throw new NotFoundException('REPORT_DRAFT_NOT_FOUND');
+      await this.versionRow(tx, owner, draft.parentVersionId);
       for (const reference of checked.sourceReferences ?? []) resolveExactReference(this.version(await this.versionRow(tx, owner, reference.versionId)), reference);
       const [row] = await tx.update(researchRevisionDrafts).set({ ...checked, sections: checked.sections ?? [{ id: 'revision', title: checked.title, content: checked.content }],
         revision: expectedRevision + 1, updatedAt: new Date() }).where(and(eq(researchRevisionDrafts.owner, owner), eq(researchRevisionDrafts.id, id),
@@ -458,6 +474,29 @@ export class ResearchDocumentsService {
     if (version.revokedAt) throw new ConflictException('REPORT_REVOKED');
     if (await this.sourceStatus(tx, owner, version.source) === 'missing') throw new ConflictException('REPORT_SOURCE_MISSING');
     await tx.insert(researchDocumentStrategyUses).values({ owner, versionId, strategyId }).onConflictDoNothing();
+  }
+  async deleteVersion(owner: string, id: string, input: DeleteResearchDocumentVersionInput): Promise<ResearchDeletionResult> {
+    this.owner(owner); this.id(id);
+    const value = parseDeletion(deleteVersionSchema, input);
+    const inputHash = deletionHash('version', id, value);
+    return this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      const [receipt] = await tx.select().from(researchDeletionRequests).where(and(eq(researchDeletionRequests.owner, owner), eq(researchDeletionRequests.requestKey, value.requestKey)));
+      if (receipt) { assertDeletionReceipt(receipt.inputHash, inputHash); return receipt.result; }
+      const row = await this.versionRow(tx, owner, id);
+      if (row.version !== value.expectedVersion) throw new ConflictException('RESEARCH_DELETE_REVISION_CONFLICT');
+      const deletedAt = new Date();
+      await tx.update(researchDocumentVersions).set({ deletedAt, revokedAt: row.revokedAt ?? deletedAt,
+        revocationReason: row.revocationReason ?? 'Deleted by owner' }).where(and(eq(researchDocumentVersions.owner, owner), eq(researchDocumentVersions.id, id)));
+      const [latest] = await tx.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner),
+        eq(researchDocumentVersions.reportId, row.reportId), isNull(researchDocumentVersions.deletedAt))).orderBy(desc(researchDocumentVersions.version)).limit(1);
+      await tx.update(researchDocuments).set({ latestVersionId: latest?.id ?? null,
+        adoptedVersionId: sql`CASE WHEN ${researchDocuments.adoptedVersionId} = ${id} THEN NULL ELSE ${researchDocuments.adoptedVersionId} END`,
+        ...(latest ? { title: latest.title } : {}) }).where(and(eq(researchDocuments.owner, owner), eq(researchDocuments.id, row.reportId)));
+      const result: ResearchDeletionResult = { id, deleted: true, deletedAt: deletedAt.toISOString() };
+      await tx.insert(researchDeletionRequests).values({ owner, requestKey: value.requestKey, inputHash, result });
+      return result;
+    });
   }
   async revoke(owner: string, versionId: string, reason: string): Promise<void> {
     this.owner(owner); this.id(versionId); if (!reason?.trim() || reason.length > 3000) throw new BadRequestException('REPORT_REVOCATION_REASON_REQUIRED');

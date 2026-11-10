@@ -53,12 +53,11 @@ test('data center shows configured availability without claiming fresh data', ()
   assert.equal(state.requests.length, 0);
 });
 
-test('research entry transfers a question for explicit sending and preserves old capability routes', () => {
+test('research room contains a composer and persistent history without capability link cards', () => {
   const { load, render } = fixture();
   const html = render(load('pages/Analysis/ResearchWorkspacePage.tsx').default);
-  assert.match(html, /without calling a model/);
-  for (const route of ['/research/portfolio', '/watchlist', '/settings/agents', '/analysis']) {
-    assert.ok(html.includes(`href="${route}"`));
-  }
+  assert.match(html, /Research history/);
+  assert.match(html, /Send question/);
+  assert.doesNotMatch(html, /Your research capabilities|Continue to discussion/);
   assert.match(html, /maxLength="2000"/i);
 });
