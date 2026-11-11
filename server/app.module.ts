@@ -46,6 +46,7 @@ import { ChannelModule } from './modules/channel/channel.module';
 import { DataLibraryModule } from './modules/data-library/data-library.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { ToolCapabilitiesModule } from './modules/tool-capabilities/tool-capabilities.module';
+import { TeamsModule } from './modules/teams/teams.module';
 
 /**
  * Root Nest module. Aggregates feature modules and installs the global
@@ -60,6 +61,7 @@ import { ToolCapabilitiesModule } from './modules/tool-capabilities/tool-capabil
     LlmBudgetModule,
     TelemetryModule,
     ToolCapabilitiesModule,
+    TeamsModule,
     HealthModule,
     SystemUpdateModule,
     ResearchDocumentsModule,

@@ -89,6 +89,9 @@ module.exports = tseslint.config(
       },
     },
   },
+  // Retained executors and readers consume neutral team context, never the Teams orchestration module.
+  { files: ['server/modules/research-runtime/**/*.ts', 'server/modules/council/**/*.ts', 'server/modules/research-memory/**/*.ts', 'server/modules/research-tools/**/*.ts'],
+    rules: { 'no-restricted-imports': ['error', { patterns: [{ regex: '(^|/)teams(/|$)', message: 'Use neutral shared/database team context rather than TeamsModule.' }] }] } },
   // Pages compose features. Features must stay reusable without pulling page
   // routing, polling or lifecycle state back into their own implementation.
   {
@@ -120,7 +123,7 @@ module.exports = tseslint.config(
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel|research-routing|research-runtime|research-tools|tool-connections|tool-actions|tool-capabilities)(/|$)',
+          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel|research-routing|research-runtime|research-tools|tool-connections|tool-actions|tool-capabilities|teams)(/|$)',
           message: 'Research core provides infrastructure to workflows and must not import them.',
         }],
       }],
@@ -132,7 +135,7 @@ module.exports = tseslint.config(
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel|research-routing|research-tools)(/|$)',
+          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel|research-routing|research-tools|teams)(/|$)',
           message: 'Tool infrastructure must not depend on investment workflows or their research-tool facade.',
         }],
       }],
@@ -143,7 +146,7 @@ module.exports = tseslint.config(
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel)(/|$)',
+          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel|teams)(/|$)',
           message: 'Research routing selects an executor independently of its feature consumers.',
         }],
       }],

@@ -48,6 +48,8 @@ import MemoryWorkspacePage from './pages/Workspace/MemoryWorkspacePage';
 import StrategyLibraryPage from './features/strategy-interview/StrategyLibraryPage';
 import NewStrategyInterviewPage from './features/strategy-interview/NewStrategyInterviewPage';
 import StrategyInterviewPage from './features/strategy-interview/StrategyInterviewPage';
+import { TeamsPage } from './pages/Teams/TeamsPage';
+import { TeamWorkspacePage } from './pages/Teams/TeamWorkspacePage';
 import TelemetryPage from './features/telemetry/TelemetryPage';
 import TelemetryRunPage from './features/telemetry/TelemetryRunPage';
 import { useSimpleExperience } from './hooks/use-simple-experience';
@@ -153,6 +155,8 @@ const RoutesComponent = () => {
             />
           }
         />
+        <Route path="teams" element={<TeamsPage />} />
+        <Route path="teams/:id" element={<TeamWorkspacePage />} />
         <Route path="holdings" element={<HoldingsPage />} />
         <Route path="daily" element={<DailyReportPage />} />
         <Route path="research" element={<ResearchWorkspacePage />} />

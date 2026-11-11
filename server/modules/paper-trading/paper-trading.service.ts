@@ -1,4 +1,5 @@
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
+import { copyTeamExecutionLinks } from '../../database/team-execution-links';
 /**
  * @file server/modules/paper-trading/paper-trading.service.ts
  * @description AI paper-trading engine.
@@ -399,6 +400,7 @@ export class PaperTradingService {
       let lockedPortfolioEquity: number | null = null;
       let protectiveStrategyStop = false;
       let strategyPlanId: string | null = null;
+      let teamAttributed = false;
       if (strategySignalId) {
         const [signal] = await tx.select().from(strategySignals).where(and(eq(strategySignals.id, strategySignalId),
           eq(strategySignals.owner, userId))).for('update');
@@ -407,6 +409,7 @@ export class PaperTradingService {
         const candidate = signal?.candidate;
         const investment = await investmentExecutionFence(tx, userId, lockedAccount.id, { ticker: dto.ticker, side: dto.side, market: price.market }, source, candidate);
         if (investment.block) return { memoryBlock: investment.block };
+        teamAttributed = Boolean(investment.policy?.baseConfig.teamDecisionRefs?.length);
         strategyRule = plan?.rules.find((rule) => rule.id === signal?.ruleId) ?? null;
         const now = Date.now();
         if (!signal || signal.state !== 'approved' || signal.orderId || !candidate || !plan || !strategyRule
@@ -680,6 +683,7 @@ export class PaperTradingService {
       const [order] = approvedPendingOrderId
         ? await tx.update(paperOrders).set(orderValues).where(and(eq(paperOrders.id, approvedPendingOrderId), eq(paperOrders.accountId, account.id))).returning()
         : await tx.insert(paperOrders).values(orderValues).returning();
+      if (teamAttributed && strategySignalId) await copyTeamExecutionLinks(tx, userId, 'signal', strategySignalId, 'order', order.id);
 
       if (strategySignalId && builderProfile) {
         await tx.update(strategySignals).set({ state: finalStatus === 'filled' ? 'filled' : 'blocked',
@@ -782,7 +786,7 @@ export class PaperTradingService {
         .set({ cashBalance: cashAfter.toFixed(2), updatedAt: new Date() })
         .where(eq(paperAccounts.id, account.id));
 
-      await tx.insert(paperTrades).values({
+      const [trade] = await tx.insert(paperTrades).values({
         owner: userId,
         accountId: account.id,
         orderId: order.id,
@@ -794,7 +798,8 @@ export class PaperTradingService {
         fee: (execution.fee * price.fxToUsd).toFixed(8),
         realizedPl: realizedPl === null ? null : realizedPl.toFixed(2),
         cashAfter: cashAfter.toFixed(2),
-      });
+      }).returning({ id: paperTrades.id });
+      if (teamAttributed) await copyTeamExecutionLinks(tx, userId, 'order', order.id, 'trade', trade.id);
 
       await tx.insert(paperEvents).values({
         owner: userId,

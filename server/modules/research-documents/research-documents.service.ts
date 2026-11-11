@@ -14,6 +14,7 @@ import { assertDeletionReceipt, deletionHash, deleteVersionSchema, parseDeletion
 import { businessDate } from '../experience/simple-experience.rules';
 import { experiencePreferences } from '../../database/simple-experience.schema';
 import { libraryEvidenceAvailable, libraryEvidenceReferences, libraryReferencesAvailable } from '../../database/data-library-visibility';
+import { assertReportVersionSources } from '../../database/report-source-fence';
 import type { DataLibraryReference } from '../../../shared/data-library.interface';
 import type { ReportSource, ReportReference, ResolvedReportReference, ResearchDocumentVersion, ResearchDocumentView,
   ResearchInputSnapshot, ResearchRevisionDraft, ResearchRevisionInput, SubmitResearchDocument, ResearchDocumentIndex, ResearchDocumentIndexQuery } from '../../../shared/research-document.interface';
@@ -175,6 +176,7 @@ export class ResearchDocumentsService {
   async assertExecutionSourcesInTransaction(tx: ResearchDocumentsTransaction, owner: string, references: ReportReference[], decisionAt: Date): Promise<ResolvedReportReference[]> {
     this.owner(owner); const checked = parseReportRequest(reportReferencesSchema, references);
     if (!Number.isFinite(decisionAt.getTime())) throw new BadRequestException('REPORT_INVALID_DECISION_TIME');
+    await assertReportVersionSources(tx, owner, checked, decisionAt);
     const active = new Set<string>(); const complete = new Map<string, ResearchDocumentVersion>();
     const inspect = async (reference: ReportReference, depth: number): Promise<ResolvedReportReference> => {
       if (active.has(reference.versionId) || depth > 50 || complete.size + active.size >= 100) throw new ConflictException('REPORT_REFERENCE_CHAIN_INVALID');
@@ -393,6 +395,8 @@ export class ResearchDocumentsService {
       fields = { summary: row.report.summary, dissent: row.report.dissent, nextReviewCondition: row.report.nextReviewCondition,
         evidence: row.report.evidence, researchStance: row.report.researchStance, thesisCandidates: row.report.thesisCandidates };
       snapshot = { businessDate:row.session.checkpoint?.simple?.contextDate??businessDate(row.report.createdAt,timezone),generatedAt:row.report.createdAt.toISOString(),evidence: row.report.evidence, inputRevision: row.report.revision, sessionId: row.session.id,
+        ...((row.session.teamContext??row.session.checkpoint?.teamContext)?{teamExecutionContext:row.session.teamContext??row.session.checkpoint?.teamContext,
+          inputRefs:(row.session.teamContext??row.session.checkpoint?.teamContext)?.inputSnapshot.inputRefs??[]}:{}),
         ...(row.session.checkpoint?.simple?.overallDaily ? { overallDaily: row.session.checkpoint.simple.overallDaily } : {}),
         scene: row.session.scene, subject: row.session.subject, period: row.session.period, references: row.session.references,
         resolvedReferences: row.session.resolvedReferences, parentSessionId: row.session.parentSessionId,

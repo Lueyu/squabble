@@ -13,6 +13,8 @@ import {
   combinationIdentity,
   simulationAccountPath,
 } from '@/utils/portfolio-workspace';
+import { TeamDecisionRefList, TeamDecisionSourcePanel } from './TeamDecisionSourcePanel';
+import { withRequestedTeamDecision } from './team-decision-context';
 import InvestmentStrategyEditor from './InvestmentStrategyEditor';
 import CombinationStrategyLibrary from './CombinationStrategyLibrary';
 import CombinationAllocationCard from './CombinationAllocationCard';
@@ -125,6 +127,7 @@ function CombinationEditor({
             : 'The current combination and its running or paused state stay unchanged until you review and apply the new revision.'}
         </span>
       </div>
+      <TeamDecisionSourcePanel editor={editor} />
       {stale && (
         <div
           role="alert"
@@ -141,6 +144,8 @@ function CombinationEditor({
               const next =
                 account.combination.draft?.allocations ??
                 account.combination.allocations;
+              const nextRefs = withRequestedTeamDecision(account.combination.draft?.teamDecisionRefs ?? account.combination.teamDecisionRefs ?? [], editor.decisionContext.ref);
+              editor.setTeamDecisionRefs(nextRefs);
               setExpectedRevision(account.combination.policyRevision);
               changed(next);
               setSavedIdentity(
@@ -148,6 +153,7 @@ function CombinationEditor({
                   account.id,
                   account.combination.policyRevision,
                   next,
+                  account.combination.draft?.teamDecisionRefs ?? account.combination.teamDecisionRefs ?? [],
                 ),
               );
             }}
@@ -283,6 +289,7 @@ function CombinationEditor({
               ? `将为「${account.name}」保存 ${preview.allocations.length} 个策略快照，启用预算合计 ${preview.allocatedPct}%。`
               : `Save ${preview.allocations.length} strategy snapshots for “${account.name}”, with ${preview.allocatedPct}% total enabled budget.`}
           </p>
+          {!!preview.teamDecisionRefs?.length && <div className="space-y-2 rounded-xl bg-muted/40 p-4"><h3 className="text-sm font-medium">{zh ? '本次应用的精确团队来源' : 'Exact team sources for this apply'}</h3><TeamDecisionRefList refs={preview.teamDecisionRefs} zh={zh} /></div>}
           {preview.issues.length > 0 && (
             <ul className="space-y-3">
               {preview.issues.map((issue, index) => (

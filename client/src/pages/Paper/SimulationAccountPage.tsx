@@ -44,6 +44,7 @@ import DecisionCard from './DecisionCard';
 import { limitLabels } from './StartInvestmentCard';
 import PortfolioComparisonPanel from '@/features/portfolio-comparison/PortfolioComparisonPanel';
 import { accountColor } from '@/features/portfolio-comparison/comparison-chart-options';
+import { holdingsHref } from '@/features/assets/account-context';
 import CompanionIdentity from '@/features/companions/CompanionIdentity';
 import AccountCompanionEditor from '@/features/companions/AccountCompanionEditor';
 
@@ -264,6 +265,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline"><Link to={holdingsHref(accountId)}>{zh ? '查看资产' : 'View assets'}</Link></Button>
             {data.status !== 'archived' && <Button variant="outline" onClick={() => setChoosingCompanion(true)}>{data.companionId ? zh ? '更换股友形象' : 'Change companion' : zh ? '选择股友' : 'Choose companion'}</Button>}
             <AccountStatusControl account={data} />
             {data.status !== 'archived' && (
@@ -436,6 +438,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
           </div>
         </TabsContent>
         <TabsContent value="holdings">
+          <Button asChild variant="outline" className="mb-4"><Link to={holdingsHref(accountId)}>{zh ? '在资产页查看持仓与现金' : 'View holdings and cash in Assets'}</Link></Button>
           <div className="overflow-x-auto rounded-xl border">
             <table className="w-full min-w-[520px] text-left text-sm">
               <thead className="bg-muted/40 text-xs text-muted-foreground">

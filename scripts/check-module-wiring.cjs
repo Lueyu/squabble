@@ -34,6 +34,13 @@ async function main() {
   const { EvidenceService } = require(path.join(compiled, 'modules/research-core/evidence.service'));
   const { PortfolioContextService } = require(path.join(compiled, 'modules/research-core/portfolio-context.service'));
   const toolingProviders = [
+    ['teams/teams.service', 'TeamsService'],
+    ['teams/team-version.service', 'TeamVersionService'],
+    ['teams/team-commission.service', 'TeamCommissionService'],
+    ['teams/team-commission.worker', 'TeamCommissionWorker'],
+    ['teams/team-decision.service', 'TeamDecisionService'],
+    ['teams/team-runtime-adapter', 'TeamRuntimeAdapter'],
+    ['paper-trading/portfolio-assets.service', 'PortfolioAssetsService'],
     ['telemetry/telemetry-diagnostics.service', 'TelemetryDiagnosticsService'],
     ['local-agents/local-agents.service', 'LocalAgentsService'],
     ['research-runtime/runtime-journal.service', 'RuntimeJournalService'],

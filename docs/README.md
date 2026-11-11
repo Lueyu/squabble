@@ -47,6 +47,10 @@ is needed for local Docker.
 
 - [Agent tooling design / Agent 工具体系设计](superpowers/specs/2026-11-11-agent-tooling-design.md) and [development plan / 开发计划](superpowers/plans/2026-11-11-agent-tooling-implementation.md): the foundation was implemented in PR93; see [acceptance limits](agent-tooling-validation.md). [Bundled capabilities](superpowers/specs/2026-11-11-bundled-capabilities-design.md) supersedes its E2B-first deployment choice with a required local container sandbox. 工具基础已由 PR93 实现；套件设计将默认计算改为必备本地沙箱，实际验证记录与设计承诺分开。
 
+### Team workspace · 团队模拟盘
+
+- [Team paper portfolios / 团队模拟盘审核入口](superpowers/specs/2026-11-12-team-paper-review.zh-CN.md): approved product and technical specifications, now implemented with editable organization canvases and 10 starting templates. 原型与详细方案已批准；实现入口见 [使用指南](team-workspace.md)，实际检查和限制见 [验证记录](team-workspace-validation.md)。
+
 ## Retained workflows and history · 保留流程与历史记录
 
 The retained analysis and Council APIs, report readers and advanced simulation

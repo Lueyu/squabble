@@ -16,6 +16,7 @@ import { expireInvestmentConstraints, type InvestmentTx, type PolicyRow } from '
 import { investmentOrderBlock, investmentSecurityKey } from './investment-policy.rules';
 import type { StrategyCandidate } from '../../../shared/strategy.interface';
 import type { AutonomousMandateInput } from '../../../shared/investment-policy.interface';
+import { assertConfirmedTeamPolicyAuthority } from '../../database/team-context';
 
 /** Runs after owner/account lock, before every automatic execution including protective/MCP/pending approvals.
  * Return a block instead of throwing so expiry invalidation can commit with the rejected execution. */
@@ -29,6 +30,10 @@ export async function investmentExecutionFence(tx: MemoryFenceTransaction, owner
   if (source === 'manual') return { policy: found, block: 'USER_STRATEGY_CONFIRMED_SCOPE_REQUIRED' };
   const policy = await expireInvestmentConstraints(tx as InvestmentTx, found, now);
   if (policy.status !== 'running' || !account.botEnabled) return { policy, block: 'INVESTMENT_PAUSED' };
+  if (order.side === 'buy' && policy.baseConfig.teamDecisionRefs?.length) {
+    try { await assertConfirmedTeamPolicyAuthority(tx as unknown as import('../../database/team-context').TeamDatabase, owner, accountId, policy.baseConfig); }
+    catch (error) { return { policy, block: error instanceof Error ? error.message : 'TEAM_SCOPE_REVOKED' }; }
+  }
   if (!candidate || candidate.parentPolicyId !== policy.id || candidate.parentPolicyRevision !== policy.revision) return { policy, block: 'INVESTMENT_AUTHORIZATION_CHANGED' };
   const block = investmentOrderBlock(policy.effectiveConfig, { ...order, protectiveStop: candidate.protectiveStop });
   if (block) return { policy, block };

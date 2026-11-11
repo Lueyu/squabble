@@ -42,6 +42,7 @@ import { ResearchDiscoveryService } from '../research-tools/research-discovery.s
 import { UserInvestmentStrategyService } from './user-investment-strategy.service';
 import { UserInvestmentStrategyController } from './user-investment-strategy.controller';
 import { ResearchRoutingModule } from '../research-routing/research-routing.module';
+import { PortfolioAssetsService } from './portfolio-assets.service';
 import { PortfolioWorkspaceService } from './portfolio-workspace.service';
 import { PortfolioWorkspaceController } from './portfolio-workspace.controller';
 import { PortfolioComparisonService } from './portfolio-comparison.service';
@@ -96,6 +97,7 @@ import { StrategyInterviewService } from './strategy-interview.service';
     ResearchDiscoveryService,
     UserInvestmentStrategyService,
     PortfolioWorkspaceService,
+    PortfolioAssetsService,
     PortfolioComparisonService,
     StrategyInterviewService,
   ],

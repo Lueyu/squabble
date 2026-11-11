@@ -6,6 +6,8 @@ import type { ResearchWorkflowConfig } from '../../../shared/research-workflow.i
 export interface DialogueTurn { memberId: string; phase: Exclude<CouncilPhase, 'progress'> }
 export interface ResearchRequest { kind: CouncilResearchKind; query?: string }
 export interface CouncilCheckpoint {
+  teamContext?: import('../../../shared/team-workspace.interface').TeamExecutionContext;
+  teamStartCommandId?: string;
   /** New cycles opt in; saved pre-upgrade cycles keep their original execution path. */
   toolRuntimeVersion?: 1;
   runtimePending?: import('../../../shared/research-runtime.interface').CouncilRuntimePending[];

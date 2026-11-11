@@ -23,6 +23,7 @@ import { seedRevision } from './simulation-experiments.rules';
 import { paperRiskDay } from './paper-risk-day';
 import type { AiInvestmentView, InvestmentConfig, InvestmentConstraint, InvestmentPolicy } from '../../../shared/investment-policy.interface';
 import type { SimulationSeed } from '../../../shared/simulation-experiment.interface';
+import { teamStrategyAuthority } from './team-strategy-transaction';
 
 export type InvestmentTx = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 export type PolicyRow = typeof investmentPolicies.$inferSelect;
@@ -34,7 +35,7 @@ export function investmentHash(value: unknown): string {
     ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([key, val]) => [key, canonical(val)])) : v;
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 }
-export async function cancelInvestmentCandidates(tx: InvestmentTx, owner: string, accountId: string, reason: string, cancelCycles = true) {
+export async function cancelInvestmentCandidates(tx: Pick<InvestmentTx, 'select' | 'update'>, owner: string, accountId: string, reason: string, cancelCycles = true) {
   const signals = await tx.select().from(strategySignals).where(and(eq(strategySignals.owner, owner), inArray(strategySignals.state, ['claimed', 'pending', 'reviewing', 'approved', 'wait'])));
   const ids = signals.filter(s => s.candidate.accountId === accountId).map(s => s.id);
   if (ids.length) await tx.update(strategySignals).set({ state: 'cancelled', reason, updatedAt: new Date() }).where(inArray(strategySignals.id, ids));
@@ -250,6 +251,7 @@ export class InvestmentPolicyService {
         const activate = async (snapshot: import('../../../shared/user-investment-strategy.interface').ConfirmedInvestmentStrategy) => {
           await cancelInvestmentCandidates(tx, owner, account.id, 'User applied a confirmed strategy; old results cannot execute');
           const portfolio = [{ strategyId: snapshot.id, strategyRevision: snapshot.revision, allocationPct: 100, enabled: true, snapshot }];
+          await teamStrategyAuthority(tx, owner, account.id, portfolio, []);
           const baseConfig = { ...policy.baseConfig, portfolio, userStrategy: snapshot, timezone: snapshot.content.timezone, limits: { ...policy.baseConfig.limits, ...(policy.baseConfig.portfolio === undefined ? snapshot.content.limits : {}) }, ...(availableReviewers?.members.length ? { reviewMembers: availableReviewers.members } : {}) };
           const effectiveConfig = effectiveInvestmentConfig(baseConfig, policy.constraintRecords);
           [saved] = await tx.update(investmentPolicies).set({ revision: policy.revision + 1, status: 'running', baseConfig, effectiveConfig, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id)).returning();

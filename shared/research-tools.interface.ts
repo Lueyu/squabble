@@ -17,6 +17,7 @@ export interface ResearchToolResult {
   data: unknown; sources: ResearchSource[]; asOf: string; truncated: boolean; errorCode?: string;
 }
 export interface ResearchToolScope {
+  teamId?: string;
   /** Server metadata discovery for a managed run; it does not authorize execution by itself. */
   managedRuntime?: true;
   runtimeScope?: AgentToolScope;

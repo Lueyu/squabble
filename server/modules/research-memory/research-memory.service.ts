@@ -1,3 +1,8 @@
+import type { TeamExecutionContext } from '../../../shared/team-workspace.interface';
+import { filterTeamMemory } from './research-memory.team';
+import { assertTeamExecutionFence, lockTeamOwner, type TeamDatabase } from '../../database/team-context';
+import { recordTeamThesisVersionLink } from '../../database/team-execution-links';
+import { assertReportVersionSources } from '../../database/report-source-fence';
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { libraryEvidenceAvailable, libraryEvidenceReferences } from '../../database/data-library-visibility';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
@@ -73,6 +78,10 @@ export class ResearchMemoryService {
   async archiveReportInTransaction(tx: Pick<PostgresJsDatabase, 'select' | 'insert' | 'update'>, owner: string,
     input: ArchiveResearchReport, intent: 'automatic' | 'manual' = 'automatic'): Promise<string | null> {
     this.owner(owner);
+    const [teamSource] = await tx.select({ context: councilSessions.teamContext, commissionId: councilSessions.teamCommissionId })
+      .from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, input.sessionId), isNull(councilSessions.deletedAt)));
+    if (teamSource?.commissionId && !teamSource.context) throw new BadRequestException('TEAM_SCOPE_REQUIRED');
+    if (teamSource?.context) await lockTeamOwner(tx as unknown as TeamDatabase, owner);
     await lockMemoryOwner(tx, owner);
     const [preferences] = await tx.select().from(researchMemoryPreferences).where(eq(researchMemoryPreferences.owner, owner)).for('share');
     if (intent === 'automatic' && !preferences.autoArchive) return null;
@@ -83,6 +92,7 @@ export class ResearchMemoryService {
       .where(and(eq(councilReports.id, input.report.id), councilReportSourceVisible(), eq(councilReports.owner, owner),
         eq(councilReports.sessionId, input.sessionId), eq(councilReports.version, input.report.version))).limit(1).for('update');
     if (!source) throw new NotFoundException('MEMORY_SOURCE_NOT_FOUND');
+    if (source.session.teamContext) await assertTeamExecutionFence(tx as unknown as TeamDatabase, owner, source.session.teamContext, { allowPublication: true });
     if (!await libraryEvidenceAvailable(tx, owner, source.report.evidence, true)) throw new BadRequestException('MEMORY_SOURCE_UNAVAILABLE');
     const eligible = await archivalEligibility(tx, owner, source.report, source.session);
     if (!eligible) throw new BadRequestException('MEMORY_SOURCE_NOT_COMPLETED');
@@ -131,6 +141,7 @@ export class ResearchMemoryService {
         const [version] = await tx.insert(researchThesisVersions).values({ owner, thesisId: thesis.id, version: 1, content,
           status, action: status === 'accepted' ? 'accept' : 'candidate', excluded: false, expiresAt: thesis.expiresAt, createdAt: created.createdAt }).returning();
         await bindThesisEvidence(tx, owner, version.id, content, evidence);
+        if (source.session.teamContext) await recordTeamThesisVersionLink(tx as unknown as TeamDatabase, owner, report, thesis.id, version.id, version.version, 'agent');
         await createThesisMonitors(tx, owner, thesis, created);
         if (status === 'accepted') await recordReviewedReplacement(tx, owner, thesis, created, report, workflow);
       }
@@ -265,6 +276,11 @@ export class ResearchMemoryService {
     if (current.version !== input.expectedVersion) throw new ConflictException('MEMORY_VERSION_CONFLICT');
     const memory = await this.memoryRow(owner, current.memoryId);
     const source = await this.sourceReport(owner, memory);
+    const [sourceSession] = await this.db.select({ context: councilSessions.teamContext, checkpoint: councilSessions.checkpoint,
+      commissionId: councilSessions.teamCommissionId }).from(councilSessions)
+      .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, memory.sessionId)));
+    const teamContext = sourceSession?.context ?? sourceSession?.checkpoint?.teamContext;
+    const requiresLiveEvidence = ['edit', 'confirm'].includes(input.action) || input.action === 'exclude' && input.excluded === false;
     const content = parsed.data.content ? normalizeThesisContent({ ...current.content, ...parsed.data.content, provenance: { origin: 'user' } }, 'user')
       : normalizeThesisContent(current.content);
     if (source) this.validateEvidence(content, source);
@@ -276,6 +292,7 @@ export class ResearchMemoryService {
       : input.action === 'expire' ? 'expired' : input.action === 'edit' && current.status === 'accepted' ? 'candidate' : current.status;
     const expiresAt = input.expiresAt === undefined ? current.expiresAt : input.expiresAt ? new Date(input.expiresAt) : null;
     await this.db.transaction(async tx => {
+      if (teamContext || sourceSession?.commissionId) await lockTeamOwner(tx as unknown as TeamDatabase, owner);
       await lockMemoryOwner(tx, owner);
       const [breach] = await tx.select({ id: researchMonitorEvents.id }).from(researchMonitorEvents).where(and(
         eq(researchMonitorEvents.owner, owner), eq(researchMonitorEvents.thesisId, id),
@@ -286,6 +303,15 @@ export class ResearchMemoryService {
       const [liveMemory] = await tx.select().from(researchMemories).where(and(eq(researchMemories.owner, owner), eq(researchMemories.id, memory.id))).for('share');
       const [liveSource] = await tx.select().from(councilReports).where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), eq(councilReports.id, memory.reportId))).for('share');
       if (!liveMemory || liveMemory.deletedAt || !liveSource) throw new BadRequestException('MEMORY_SOURCE_REQUIRED');
+      // A later owner review is a new historical action, not another dispatch or
+      // late agent publication under the original commission's deadline/binding.
+      // Affirmative changes still require live exact evidence; narrowing actions
+      // may retire an opinion even after its evidence has been withdrawn.
+      if ((teamContext || sourceSession?.commissionId) && requiresLiveEvidence) {
+        if (!teamContext || !liveSource.researchVersionId) throw new ConflictException('TEAM_SCOPE_REQUIRED');
+        await assertReportVersionSources(tx as unknown as TeamDatabase, owner,
+          [{ versionId: liveSource.researchVersionId }], new Date());
+      }
       const [updated] = await tx.update(researchTheses).set({ content, status, version: current.version + 1,
         excluded: input.excluded ?? current.excluded, expiresAt, updatedAt: new Date() })
         .where(and(eq(researchTheses.owner, owner), eq(researchTheses.id, id),
@@ -296,6 +322,7 @@ export class ResearchMemoryService {
         changeReason: parsed.data.changeReason ?? null, createdAt: updated.updatedAt }).returning();
       const evidence = await tx.select().from(researchMemoryEvidence).where(and(eq(researchMemoryEvidence.owner, owner), eq(researchMemoryEvidence.memoryId, memory.id)));
       await bindThesisEvidence(tx, owner, version.id, content, evidence);
+      if (teamContext) await recordTeamThesisVersionLink(tx as unknown as TeamDatabase, owner, liveSource, id, version.id, version.version, 'user');
       await createThesisMonitors(tx, owner, updated, memory);
       if (breach && !(parsed.data.changeReason && ['confirm', 'edit'].includes(input.action))) {
         const prior = await tx.select().from(researchMonitorEvents).where(and(eq(researchMonitorEvents.owner, owner),
@@ -333,13 +360,13 @@ export class ResearchMemoryService {
   }
 
   /** Reuse the caller's connection when it already holds a session transaction. */
-  async recallInTransaction(tx: MemoryDatabase, owner: string, query: ResearchMemoryQuery): Promise<ResearchMemoryRecall> {
-    return new ResearchMemoryService(tx, this.quotes).recall(owner, query);
+  async recallInTransaction(tx: MemoryDatabase, owner: string, query: ResearchMemoryQuery, teamContext?: TeamExecutionContext): Promise<ResearchMemoryRecall> {
+    return new ResearchMemoryService(tx, this.quotes).recall(owner, query, teamContext);
   }
 
   /** Serialize revocation with the last local handoff. The callback must not await remote work. */
   async withRecallHandoff(owner: string, frozen: ResearchMemoryRecall, query: ResearchMemoryQuery & { enabled?: boolean },
-    prepared: MemoryReference[], handoff: () => Promise<void>, validate?: (tx: MemoryDatabase) => Promise<void>): Promise<void> {
+    prepared: MemoryReference[], handoff: () => Promise<void>, validate?: (tx: MemoryDatabase) => Promise<void>, teamContext?: TeamExecutionContext): Promise<void> {
     this.owner(owner);
     await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
@@ -361,7 +388,7 @@ export class ResearchMemoryService {
         inArray(researchMemories.id, parents.map(item => item.id)))).orderBy(researchMemories.id).for('share');
       await tx.select({ id: researchTheses.id }).from(researchTheses).where(and(eq(researchTheses.owner, owner),
         inArray(researchTheses.id, theses.map(item => item.id)))).orderBy(researchTheses.id).for('share');
-      const current = await new ResearchMemoryService(tx, this.quotes).refreshRecall(owner, { ...frozen, items: pins }, query);
+      const current = await new ResearchMemoryService(tx, this.quotes).refreshRecall(owner, { ...frozen, items: pins }, query, teamContext);
       if (prepared.some(ref => !current.items.some(item => item.kind === ref.kind && item.id === ref.id && item.version === ref.version))) {
         throw new Error('MEMORY_CONTEXT_CHANGED');
       }
@@ -370,7 +397,7 @@ export class ResearchMemoryService {
     });
   }
 
-  async recall(owner: string, query: ResearchMemoryQuery & { enabled?: boolean }): Promise<ResearchMemoryRecall> {
+  async recall(owner: string, query: ResearchMemoryQuery & { enabled?: boolean }, teamContext?: TeamExecutionContext): Promise<ResearchMemoryRecall> {
     const { enabled, ...filters } = query;
     if (!memoryQuerySchema.safeParse(filters).success) throw new BadRequestException('MEMORY_INVALID_QUERY');
     const preferences = await this.getPreferences(owner);
@@ -385,10 +412,10 @@ export class ResearchMemoryService {
         items.push(this.thesisRecallItem(thesis, query.asOf));
       }
     }
-    return { ...rankMemoryRecall(items, query.query ?? query.topic ?? '', preferences), ...(query.asOf ? { asOf: query.asOf } : {}) };
+    return { ...rankMemoryRecall(await filterTeamMemory(this.db, owner, items, teamContext), query.query ?? query.topic ?? '', preferences), ...(query.asOf ? { asOf: query.asOf } : {}) };
   }
   /** A checkpoint pins IDs/versions, never authority. Resolve owner and live source for every prompt. */
-  async refreshRecall(owner: string, frozen: ResearchMemoryRecall, query?: ResearchMemoryQuery & { enabled?: boolean }): Promise<ResearchMemoryRecall> {
+  async refreshRecall(owner: string, frozen: ResearchMemoryRecall, query?: ResearchMemoryQuery & { enabled?: boolean }, teamContext?: TeamExecutionContext): Promise<ResearchMemoryRecall> {
     const cutoff = query?.asOf ?? frozen.asOf;
     if (query && !memoryQuerySchema.safeParse((({ enabled: _enabled, ...filters }) => filters)({ ...query, asOf: cutoff })).success
       || cutoff && !memoryQuerySchema.shape.asOf.safeParse(cutoff).success) throw new BadRequestException('MEMORY_INVALID_QUERY');
@@ -439,7 +466,7 @@ export class ResearchMemoryService {
       } catch (error) { if (!(error instanceof NotFoundException)) throw error; }
       omissions.push({ ...memoryReference(item), reason, ...(currentVersion ? { currentVersion } : {}) });
     }
-    const ranked = rankMemoryRecall(items, query?.query ?? query?.topic ?? '', preferences);
+    const ranked = rankMemoryRecall(await filterTeamMemory(this.db, owner, items, teamContext), query?.query ?? query?.topic ?? '', preferences);
     return { ...ranked, requested, omissions: [...omissions, ...redundant, ...(ranked.omissions ?? [])], ...(cutoff ? { asOf: cutoff } : {}) };
   }
 

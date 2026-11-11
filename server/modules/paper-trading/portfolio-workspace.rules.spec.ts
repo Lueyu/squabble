@@ -55,6 +55,11 @@ test('review hash binds account, policy, immutable content and budgets but not r
   a.snapshot.content.body = 'Changed investor intent';
   assert.notEqual(combinationHash(accountId, 2, [a, b]), hash);
 });
+test('combination confirmation binds exact team decision references',()=>{
+  const a=assignment(),accountId=randomUUID(),ref={proposalId:randomUUID(),proposalRevision:1,decisionId:randomUUID()};
+  assert.notEqual(combinationHash(accountId,1,[a]),combinationHash(accountId,1,[a],[ref]));
+  assert.notEqual(combinationHash(accountId,1,[a],[ref]),combinationHash(accountId,1,[a],[{...ref,proposalRevision:2}]));
+});
 test('combined authority preserves the tightest reviewed strategy caps without changing base account limits', () => {
   const a = assignment(); const b = assignment();
   a.snapshot.content.limits = { maxPositionPct: 8, maxDailyIncreasePct: 3, maxDailyTurnoverPct: 12, minCashPct: 20, maxOrderPct: 2 };

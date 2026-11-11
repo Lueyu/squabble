@@ -6,7 +6,9 @@ import { canonicalResearchTicker } from '../research-tools/research-valuation';
 import { thesisCandidateSchema } from '../research-memory/research-memory.requests';
 import { normalizeThesisContent, validateThesisReferences } from '../research-memory/research-memory.theses';
 
-export interface TaskPlan { key: ResearchTaskKind; dependencies: ResearchTaskKind[]; memberId: string; position: number }
+export interface TaskPlan { key: ResearchTaskKind; dependencies: ResearchTaskKind[]; memberId: string; position: number;
+  workKey?: string; dependencyWorkKeys?: string[]; reviewerMemberId?: string;
+  assignment?: import('../../../shared/team-workspace.interface').TeamWorkItem }
 export function validateWorkflowInput(input: { goal?: unknown; peers?: unknown; parallelism?: unknown; recallEnabled?: unknown }, ticker: string): ResearchWorkflowConfig | undefined {
   if (input.goal === undefined) return undefined; // Historical callers retain their serial dialogue.
   if (!['comprehensive', 'financials', 'peers', 'valuation'].includes(String(input.goal))) throw new BadRequestException('Invalid research goal');

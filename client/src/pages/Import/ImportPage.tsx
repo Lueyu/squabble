@@ -38,6 +38,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from 'react-i18next';
+import { ImportAccountBoundary } from '@/features/assets/AccountAssetsPage';
 import ScreenshotImport from './ScreenshotImport';
 import TransactionImport from './TransactionImport';
 
@@ -196,6 +197,10 @@ function rowsFromMatrix(
 /** localStorage helpers for screenshot settings live in screenshot-import.ts. */
 
 function ImportPage() {
+  return <ImportAccountBoundary><RealImportPage /></ImportAccountBoundary>;
+}
+
+function RealImportPage() {
   const { t } = useTranslation();
   const [mode, setMode] = useState<'csv' | 'ocr'>('ocr');
   return (

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { investmentSecurityKey } from './investment-policy.rules';
 import { PORTFOLIO_COMBINATION_MAX_SECURITIES, PORTFOLIO_COMPANION_IDS } from '../../../shared/portfolio-workspace.interface';
 import type { PortfolioCombinationIssue, PortfolioStrategyAssignment } from '../../../shared/portfolio-workspace.interface';
+import type { TeamDecisionRef } from '../../../shared/team-workspace.interface';
 
 export const workspaceCompanionSchema = z.object({
   companionId: z.enum(PORTFOLIO_COMPANION_IDS),
@@ -20,6 +21,7 @@ export const workspaceAllocationSchema = z.object({
 }).strict();
 export const workspaceCombinationSchema = workspaceMutationSchema.extend({
   allocations: z.array(workspaceAllocationSchema).max(30),
+  teamDecisionRefs: z.array(z.object({proposalId:z.string().uuid(),proposalRevision:z.number().int().positive(),decisionId:z.string().uuid()}).strict()).max(100).optional(),
 }).strict().refine(value => new Set(value.allocations.map(a => a.strategyId)).size === value.allocations.length,
   'Each strategy can be assigned only once')
   .refine(value => value.allocations.filter(a => a.enabled).reduce((sum, a) => sum + a.allocationPct, 0) <= 100 + 1e-8,
@@ -33,8 +35,8 @@ export function workspaceHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 }
 /** Ignore volatile preview-generation timestamps; bind persisted content and compiled authority. */
-export function combinationHash(accountId: string, policyRevision: number, allocations: PortfolioStrategyAssignment[]): string {
-  return workspaceHash({ accountId, policyRevision, allocations: [...allocations].sort((a, b) => a.strategyId.localeCompare(b.strategyId))
+export function combinationHash(accountId: string, policyRevision: number, allocations: PortfolioStrategyAssignment[], teamDecisionRefs:TeamDecisionRef[]=[]): string {
+  return workspaceHash({ accountId, policyRevision, ...(teamDecisionRefs.length?{teamDecisionRefs:[...teamDecisionRefs].sort((a,b)=>a.decisionId.localeCompare(b.decisionId))}:{}), allocations: [...allocations].sort((a, b) => a.strategyId.localeCompare(b.strategyId))
     .map(a => ({ strategyId: a.strategyId, strategyRevision: a.strategyRevision, allocationPct: a.allocationPct, enabled: a.enabled,
       content: a.snapshot.content, sources: a.snapshot.sources, contentHash: a.snapshot.preview.contentHash,
       directives: a.snapshot.preview.directives, mandateRules: a.snapshot.preview.mandateRules })) });

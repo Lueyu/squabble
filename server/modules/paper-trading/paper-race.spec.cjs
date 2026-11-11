@@ -9,6 +9,7 @@ const PaperTradingService = loadService('server/modules/paper-trading/paper-trad
   '../../database/schema': tables,
   '../../database/council.schema': {},
   '../../database/research-source-visibility': { councilReportSourceVisible: unexpectedStrategyMemory },
+  '../../database/team-execution-links': { copyTeamExecutionLinks: unexpectedStrategyMemory },
   '../../database/strategy.schema': {},
   '../notifications/notification.service': { NotificationService: class {} },
   '../../common/market-clock': { isMarketOpen: () => true },

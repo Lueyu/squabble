@@ -7,7 +7,10 @@ import type { CouncilEvidence } from '../modules/council/council.rules';
 import type { CouncilCheckpoint, CouncilMessageMetadata } from '../modules/council/council.types';
 
 export const councilSessions = pgTable('council_sessions', {
+  // Drizzle uses the first column to recognize absent left joins. Keep identity first.
   id: uuid('id').primaryKey().defaultRandom(),
+  teamCommissionId: uuid('team_commission_id'),
+  teamContext: jsonb('team_context').$type<import('../../shared/team-workspace.interface').TeamExecutionContext | null>(),
   owner: text('owner').notNull(),
   profileId: uuid('profile_id'),
   profileVersion: integer('profile_version').notNull(),

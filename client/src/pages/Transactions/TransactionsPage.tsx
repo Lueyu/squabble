@@ -85,13 +85,20 @@ import AddClosedDialog from './AddClosedDialog';
 import TransactionList from './TransactionList';
 
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
+import { AccountAssetsPage } from '@/features/assets/AccountAssetsPage';
 import { transactionCashDelta } from '@/utils/transaction-cash';
 
 /**
  * Transactions page component.
  */
 export default function TransactionsPage() {
+  return <AccountAssetsPage mode="transactions" real={<RealTransactionsPage />} />;
+}
+
+function RealTransactionsPage() {
   const { t, i18n } = useTranslation();
+  const [accountParams, setAccountParams] = useSearchParams();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [closed, setClosed] = useState<ClosedPosition[]>([]);
   const [realizedPl, setRealizedPl] = useState<RealizedPlSummary | null>(null);
@@ -102,12 +109,18 @@ export default function TransactionsPage() {
   const [txError, setTxError] = useState<string | null>(null);
   const [closedError, setClosedError] = useState<string | null>(null);
   const [realizedPlError, setRealizedPlError] = useState<string | null>(null);
-  const [tickerFilter, setTickerFilter] = useState('');
+  const [tickerFilter, setTickerFilter] = useState(() => accountParams.get('q') ?? '');
   const [addTxOpen, setAddTxOpen] = useState(false);
   const [addClosedOpen, setAddClosedOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [reconciling, setReconciling] = useState(false);
+
+  useEffect(() => {
+    const next = new URLSearchParams(accountParams);
+    if (tickerFilter) next.set('q', tickerFilter); else next.delete('q');
+    if (next.toString() !== accountParams.toString()) setAccountParams(next, { replace: true });
+  }, [tickerFilter]);
 
   /** Notify other pages that portfolio data changed (triggers refetch). */
   const notifyPortfolioUpdate = () => {
