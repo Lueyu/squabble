@@ -16,7 +16,7 @@ separates completed checks from final delivery gates.
 | Browser | Actual nonroot sandboxed Chromium and dynamic JavaScript passed with the exact Compose security profile. Existing real pinned-egress HTTPS fixture tests are a separate full-server gate. |
 | Capability/connection authority | Disposable PostgreSQL tests cover owner isolation, exact catalog/manifest CAS, unchanged discovery, candidate separation, idempotent grants, disabled-state persistence, source/late-result fences and exact public browser URL scope. |
 | Review regressions | Deterministic concurrent candidate replacement and stale generated-key/runtime-key backup tests both reproduced RED then passed2/2 after fixes. Review-required cards can revoke; source-host configuration preserves custom service registrations. |
-| Frontend | Full local client466/466, zero skips. Actual account first-visit and custom connection journey passed; desktop Chinese and mobile Chinese layouts have no content overflow. Mobile English exposed the explicit model-verification button's nowrap style; final-image verification of its narrow wrapping fix remains pending. |
+| Frontend | Full local client466/466, zero skips. Real account activation/custom connection journey and final-image Chinese/English1440/390px layouts passed. The discovered English model-verification nowrap overflow was reproduced, narrowly fixed and rechecked: content width equals scroll width335px on mobile and877px on desktop. |
 | Knowledge/static checks | Context15/15; structural check valid=true, no errors, expected semantic-drift warning. Architecture9/9. Initial complete precommit lint/typecheck/stylelint passed; final late-fix CI remains separate. |
 
 The initial PR90029f3 CI server run had1257 tests,1248 pass/9fail/no skips.
@@ -59,7 +59,37 @@ seven unadjusted historical rows as an immutable dataset. Its first statistics
 job failed explicitly and confirmed termination: the upstream midnight timestamp
 format was not accepted by the price template. That receipt is preserved while
 the narrow date-normalization fix is verified; this attempt is not counted as a
-passing compute chain or silently retried.
+passing compute chain or silently retried. The narrow fix then passed37/37 pinned
+analytics tests. After the worker image changed, the existing grant correctly
+required review; a stale-manifest request created zero jobs. The new manifest
+was explicitly approved through the actual UI. A distinct request over the same
+hash-verified dataset succeeded on local worker
+`sha256:21f3560368aba97e7b45ff74c8faa602e8dd8e53bbe80e94181bbb5dd6a49981`,
+with confirmed termination and five saved, hash-verified artifacts. Seven price
+rows yielded six observed returns. Without a trading calendar or known
+currency/unit, coverage stayed partial and annualized return/volatility/Sharpe/
+Sortino stayed null; no missing values were filled and dividends/splits were
+not claimed. The original failed receipt and prepared authority remain intact.
+
+The final tested app image is
+`sha256:8d326cd6ea9335d88a7b19d85f3403ca459df360d0d0b4c9d0e69be0850661ff`.
+Its before/after build context hash and independent comparison with clean
+commit `be7a16815918ef80ba15c6677660c84b63e7bc80` match:
+`461419b8c3dcd074c1fbb3dd4602959d866ecb7179a821816325df42aa7f4c40`
+over1,493 files. The image was built while the commit was being recorded, so
+the source hash is the content authority. All four capabilities remained
+available after the separately reviewed compute image update. Model/usage
+rows and portfolio/paper records were unchanged throughout owner API acceptance.
+
+The normal owner browser-source API also synchronized one anonymous public page
+with the actual Chromium collector. Its saved version records
+`acquisition=browser-rendered`, one section and1,289 UTF-8 bytes; the original
+source content hash and byte length were verified. A historical public-page
+phrase assertion in the temporary helper was corrected to use actual metadata
+and nonempty content, without another network request. The final owner audit
+matched all38 portfolio/paper/strategy/holding tables and found zero total rows
+across all six model/usage tables. Guarded API acceptance exited0; its receipt
+is `tmp/bundle-owner-api-20261111/complete.json`.
 
 Browser screenshots and guarded operator receipts are retained under ignored
 `output/playwright/` and `tmp/bundle-mcp-operator-20261111/`. No credentials are
@@ -76,8 +106,6 @@ separate from these focused checks.
 
 - Final release empty-volume whole-suite cold boot (the actual first-user
   activation in the source-built suite is already verified above).
-- Final-image bilingual desktop/mobile layout and corrected actual
-  public-data-to-local-statistics chain; public browser owner flow.
 - Final-head required CI, module wiring, memory/native/dev coverage and independent review.
 - Exact tested-head PR merge; published fixed image archive with anonymous
   digest verification and its own whole-suite acceptance.
