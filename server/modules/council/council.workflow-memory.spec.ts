@@ -40,13 +40,6 @@ test('real executor submissions match durable inventories across languages, refr
   const namespace = `workflow_memory_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(url, { max: 1, onnotice: () => {} });
   const client = postgres(url, { max: 5, onnotice: () => {}, connection: { search_path: namespace } });
-  async function waitForDatabaseClock(): Promise<void> {
-    // Archived fixtures use PostgreSQL timestamps; a VM clock can briefly lead the application visibility fence.
-    const [database] = await client<{ clock: number }[]>`SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS clock`;
-    const delay = database.clock - Date.now() + 5;
-    assert.ok(delay <= 5000, 'fixture database clock must be within five seconds of the application clock');
-    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-  }
   const original = axios.defaults.adapter;
   const directory = await mkdtemp(join(tmpdir(), 'squabble-memory-dispatch-'));
   const priorOrigin = process.env.SQUABBLE_DESKTOP_ORIGIN;
@@ -83,10 +76,8 @@ test('real executor submissions match durable inventories across languages, refr
         thesisCandidates: [{ claim: language === 'en' ? 'Revenue may grow if renewals hold.' : '续约保持时收入有望增长。',
           supportingEvidence: [{ evidenceId: 'filing' }], assumptions: ['Stable renewals'], indicators: ['Retention'],
           opposingEvidence: ['Customer concentration'], invalidationConditions: ['Revisit after two weaker periods.'], boundaryOrigin: 'stated' }] });
-      await waitForDatabaseClock();
       const thesis = (await memory.list(owner, { ticker: 'AAPL' })).theses[0];
       await memory.updateThesis(owner, thesis.id, { action: 'confirm', expectedVersion: 1, expiresAt: '2027-02-01T00:00:00.000Z' });
-      await waitForDatabaseClock();
       const frozen = await memory.recall(owner, { ticker: 'AAPL' });
       const selected = frozen.items[0];
       assert.equal(selected.content?.claim, thesis.claim);

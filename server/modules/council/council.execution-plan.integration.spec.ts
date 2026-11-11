@@ -21,13 +21,6 @@ const url=process.env.COUNCIL_TEST_DATABASE_URL;
 test('daily generation publishes and hands off an executable immutable proposal without another extraction call',{skip:!url},async()=>{
  const namespace=`report_plan_${randomUUID().replaceAll('-','')}`;
  const admin=postgres(url!,{max:1,onnotice:()=>{}}),client=postgres(url!,{max:6,onnotice:()=>{},connection:{search_path:namespace}});
- async function waitForDatabaseClock(): Promise<void> {
-  // Published fixtures use PostgreSQL timestamps; a VM clock can briefly lead the application visibility fence.
-  const [database] = await client<{ clock: number }[]>`SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS clock`;
-  const delay = database.clock - Date.now() + 5;
-  assert.ok(delay <= 5000, 'fixture database clock must be within five seconds of the application clock');
-  if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
- }
  await admin`CREATE SCHEMA ${admin(namespace)}`;
  try{
   for(const file of readdirSync('scripts/db').filter(n=>/^\d\d_.*\.sql$/u.test(n)&&!n.startsWith('02_')).sort())await client.unsafe(readFileSync(`scripts/db/${file}`,'utf8'));
@@ -56,7 +49,6 @@ test('daily generation publishes and hands off an executable immutable proposal 
   assert.match(version.sections.find(s=>s.id==='execution-strategy')!.content,/110/);assert.doesNotMatch(version.sections.find(s=>s.id==='execution-strategy')!.content,/"numericEvidence"/);
   const strategies=new UserInvestmentStrategyService(db,documents,{json:async()=>{extractions++;throw Error('Unexpected extraction');}} as never);
   const channel=new ChannelService(db,{} as never);await channel.onModuleInit();
-  await waitForDatabaseClock();
   const sync=new DailyChannelResearchService({} as never,db,channel,strategies);await sync.syncPublished();await sync.syncPublished();
   const workspace=await strategies.workspace(owner);assert.equal(workspace.drafts.length,1);const draft=workspace.drafts[0];
   assert.equal(draft.preview?.canConfirm,true);assert.equal(draft.preview?.directives[0].quantity,1);assert.equal(extractions,0);

@@ -23,13 +23,6 @@ test('explicit overall daily freezes all owner facts, seals independent work, re
   const url = process.env.EXPERIENCE_TEST_DATABASE_URL!, namespace = `overall_daily_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(url, { max: 1, onnotice: () => {} });
   const client = postgres(url, { max: 6, onnotice: () => {}, connection: { search_path: namespace } });
-  async function waitForDatabaseClock(): Promise<void> {
-    // Published fixtures use PostgreSQL timestamps; a VM clock can briefly lead the application visibility fence.
-    const [database] = await client<{ clock: number }[]>`SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS clock`;
-    const delay = database.clock - Date.now() + 5;
-    assert.ok(delay <= 5000, 'fixture database clock must be within five seconds of the application clock');
-    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-  }
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
     for (const file of readdirSync('scripts/db').filter(name => /^\d\d_.*\.sql$/u.test(name) && !name.startsWith('02_')).sort()) await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
@@ -73,7 +66,6 @@ test('explicit overall daily freezes all owner facts, seals independent work, re
     let captures = 0;
     const capture = overall.capture.bind(overall);
     overall.capture = async (...args) => { captures++; return capture(...args); };
-    await waitForDatabaseClock();
 
     await t.test('reads perform no model calls and strict request scope cannot override owner/facts', async () => {
       assert.equal((await overall.read(owner, day)).latest, null);
@@ -86,7 +78,6 @@ test('explicit overall daily freezes all owner facts, seals independent work, re
     for (let i = 0; i < 500 && ['idle', 'running'].includes(view.latest?.status ?? ''); i++) {
       await new Promise(resolve => setTimeout(resolve, 10)); view = await overall.read(owner, day);
     }
-    await waitForDatabaseClock(); view = await overall.read(owner, day);
     assert.equal(view.latest?.status, 'completed', view.latest?.error ?? 'not completed');
     assert.equal(view.reports.length, 1); assert.equal(captures, 1);
     assert.equal(prompts.filter(prompt => prompt.input.phase === 'opening').length, 3);
@@ -154,7 +145,6 @@ test('explicit overall daily freezes all owner facts, seals independent work, re
         await new Promise(resolve => setTimeout(resolve, 10)); failed = await overall.read(owner, day);
         if (!['idle', 'running'].includes(failed.latest?.status ?? '')) break;
       }
-      await waitForDatabaseClock(); failed = await overall.read(owner, day);
       assert.equal(failed.latest?.status, 'completed', failed.latest?.error ?? 'not completed');
       const [after] = await db.select().from(councilSessions).where(eq(councilSessions.id, id));
       assert.equal(after.checkpoint?.cycleId, before.checkpoint?.cycleId);
@@ -204,7 +194,6 @@ test('explicit overall daily freezes all owner facts, seals independent work, re
       for (let i = 0; i < 500 && ['idle', 'running'].includes(finished.latest?.status ?? ''); i++) {
         await new Promise(resolve => setTimeout(resolve, 10)); finished = await overall.read(other, day);
       }
-      await waitForDatabaseClock(); finished = await overall.read(other, day);
       assert.equal(finished.latest?.status, 'completed', finished.latest?.error ?? 'not completed');
       assert.equal(finished.reports.length, 1);
       const [after] = await db.select().from(councilSessions).where(eq(councilSessions.id, id));
