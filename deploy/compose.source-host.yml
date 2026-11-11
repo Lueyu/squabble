@@ -5,9 +5,37 @@ services:
     profiles: [container-app]
   db:
     profiles: [container-app]
-  docling:
-    ports: ["127.0.0.1:${HOST_DOCLING_PORT:-5002}:5002"]
   aktools:
     ports: ["127.0.0.1:${HOST_AKTOOLS_PORT:-8081}:8081"]
-  sandbox:
-    ports: ["127.0.0.1:${HOST_SANDBOX_PORT:-8093}:8093"]
+  source-host-relay:
+    image: ${SQUABBLE_SANDBOX_IMAGE:-squabble-sandbox:local}
+    entrypoint: ["node", "/opt/source-host-relay.cjs"]
+    command: []
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [tools, default]
+    mem_limit: 64m
+    pids_limit: 64
+    environment:
+      SANDBOX_LISTEN_HOST: ""
+      SANDBOX_PORT: ""
+      SANDBOX_STATE_DIR: ""
+      SANDBOX_TOKEN_FILE: ""
+    ports:
+      - "127.0.0.1:${HOST_DOCLING_PORT:-5002}:5002"
+      - "127.0.0.1:${HOST_SANDBOX_PORT:-8093}:8093"
+    volumes:
+      - ./deploy/source-host-relay.cjs:/opt/source-host-relay.cjs:ro
+    depends_on:
+      docling:
+        condition: service_healthy
+      sandbox:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "Promise.all([5002,8093].map(p=>fetch('http://127.0.0.1:'+p+'/health').then(async r=>{const d=await r.json();return r.ok&&(p===5002?d.ready===true&&d.modelsVerified===true:d.status==='ready')}))).then(v=>process.exit(v.every(Boolean)?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

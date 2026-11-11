@@ -4,6 +4,8 @@ Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent i
 
 **Structural review — 2026-11-11:** inspected `f077b3e` plus the agent-tooling working tree. All five diagrams were checked. Flows1–2 add a durable model/tool runtime, owner-approved outbound connectors, immutable datasets/private artifacts, local document services, anonymous browser research and isolated computation. Flows3–5 retain explicit strategy application, source-aware channel publication and real-ledger writers: tool approval authorizes one external action, never an investment-policy application or a financial fill. This is a source review, not a deployed-instance certification.
 
+**Source-host recovery review:** checked merged `0d88fc4` and the recovery changes. Flow1 adds an optional fixed-destination loopback relay for native Web servers while Docling and broker remain on the internal-only tools network. Flow2 retains its dispatch identity, budget and publication boundaries; cancelled HTTP bodies now require explicit stream cleanup. Flows3–5 retain their investment, channel and ledger authority. Actual platform and process-stability results are recorded separately from this source review.
+
 The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
 ## Module ownership
@@ -89,12 +91,17 @@ flowchart LR
     tools --> anonymous["Anonymous run-scoped local browser"]
     tools --> dataset["Complete immutable datasets and source policies"]
     dataset --> artifacts["Private hashed artifact storage"]
-    library --> docJobs["Durable Docling/MinerU jobs; optional local services"]
+    library --> docJobs["Durable document jobs; optional registered parsers"]
+    docJobs -->|"Container deployment"| docEngine["Prepared offline Docling"]
     docJobs --> artifacts
     tools --> compute["Required local sandbox; fixed QuantStats/Backtrader and exploratory jobs"]
     settingsTools --> packs["Reviewed capability packs; owner grants and cached readiness"]
     packs --> tools
-    compute --> broker["Private restricted broker; one isolated Linux container per job"]
+    compute -->|"Container deployment"| broker["Private restricted broker; one isolated Linux container per job"]
+    docJobs -.->|"Native Web deployment"| hostRelay["Loopback relay; two fixed worker destinations"]
+    compute -.->|"Native Web deployment"| hostRelay
+    hostRelay --> docEngine
+    hostRelay --> broker
     compute --> dataset
     compute --> artifacts
     controlled --> db

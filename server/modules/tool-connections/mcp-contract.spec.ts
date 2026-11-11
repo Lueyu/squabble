@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { McpClientAdapter } from './mcp-client.adapter';
 import { ToolTransportPolicy } from './tool-transport-policy';
 
-export async function fakeMcp() {
+export async function fakeMcp(options: { notificationBody?: string } = {}) {
   let schemaVersion = 1, calls = 0, authenticated = true, dropped = false, oversized = false;
   const methods: string[] = [];
   const server = createServer(async (req, res) => {
@@ -12,7 +12,7 @@ export async function fakeMcp() {
     if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const message = JSON.parse(Buffer.concat(chunks).toString('utf8')); methods.push(message.method);
-    if (!('id' in message)) { res.writeHead(202); res.end(); return; }
+    if (!('id' in message)) { res.writeHead(202); res.end(options.notificationBody); return; }
     let result: unknown;
     if (message.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: { listChanged: true } }, serverInfo: { name: 'fixture', version: '1' } };
     if (message.method === 'tools/list') result = { tools: [{ name: 'lookup', description: `lookup v${schemaVersion}`,
@@ -32,6 +32,18 @@ export async function fakeMcp() {
     expireAuth() { authenticated = false; }, dropCall() { dropped = true; }, oversize() { oversized = true; },
     close: () => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()); }) };
 }
+
+test('official MCP discovery cancels a real nonempty 202 notification response safely', async () => {
+  const fixture = await fakeMcp({ notificationBody: 'Accepted' });
+  const adapter = new McpClientAdapter(new ToolTransportPolicy([{ id: 'fixture', endpoint: fixture.endpoint }]));
+  try {
+    const descriptors = await adapter.discover({ id: 'fixture', provider: 'mcp', endpoint: fixture.endpoint, secret: 'fixture-secret' });
+    assert.equal(descriptors.length, 1);
+    assert.equal(fixture.calls, 0);
+    assert.ok(fixture.methods.includes('notifications/initialized'));
+    assert.ok(fixture.methods.includes('tools/list'));
+  } finally { await fixture.close(); }
+});
 
 test('official MCP client lists and calls exact frozen schemas; remote readOnly hint does not grant read permission', async () => {
   const fixture = await fakeMcp();
