@@ -6,6 +6,8 @@ export const toolConnections = pgTable('tool_connections', {
   transport: text('transport').notNull(), endpoint: text('endpoint'), secretEnc: text('secret_enc'),
   providerConfig: jsonb('provider_config').$type<{ connectedAccountId?: string; authConfigId?: string; toolVersions?: Record<string, string> }>(),
   revision: integer('revision').notNull().default(1), status: text('status').notNull().default('configured'),
+  managedPresetId: text('managed_preset_id'), candidateCatalogVersionId: uuid('candidate_catalog_version_id'),
+  lastDiscoveryAt: timestamp('last_discovery_at', { withTimezone: true }), lastDiscoveryCode: text('last_discovery_code'),
   allowedToolIds: jsonb('allowed_tool_ids').$type<string[]>().notNull().default([]),
   allowedDataClasses: jsonb('allowed_data_classes').$type<AgentDataClass[]>().notNull().default(['public']),
   toolEffects: jsonb('tool_effects').$type<Record<string, 'read' | 'compute' | 'external_write'>>().notNull().default({}),
@@ -13,7 +15,7 @@ export const toolConnections = pgTable('tool_connections', {
   oauthConfig: jsonb('oauth_config').$type<{ clientId: string; authorizationUrl: string; tokenUrl: string; scopes: string[] }>(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, table => [uniqueIndex('tool_connections_managed_identity').on(table.owner, table.managedPresetId)]);
 export const toolCatalogVersions = pgTable('tool_catalog_versions', {
   id: uuid('id').primaryKey(), owner: text('owner').notNull(), connectionId: uuid('connection_id').notNull(),
   connectionRevision: integer('connection_revision').notNull(), schemaHash: text('schema_hash').notNull(),

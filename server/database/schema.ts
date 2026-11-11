@@ -964,3 +964,4 @@ export * from './tool-actions.schema';
 export * from './tool-connections.schema';
 export * from './research-compute.schema';
 export * from './deep-agent-driver.schema';
+export * from './tool-capabilities.schema';

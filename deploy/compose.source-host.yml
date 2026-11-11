@@ -1,0 +1,13 @@
+# For a Windows/macOS source Web server: start dependencies with this override,
+# then `node deploy/configure-source-host.cjs` generates only private tool config.
+services:
+  app:
+    profiles: [container-app]
+  db:
+    profiles: [container-app]
+  docling:
+    ports: ["127.0.0.1:${HOST_DOCLING_PORT:-5002}:5002"]
+  aktools:
+    ports: ["127.0.0.1:${HOST_AKTOOLS_PORT:-8081}:8081"]
+  sandbox:
+    ports: ["127.0.0.1:${HOST_SANDBOX_PORT:-8093}:8093"]

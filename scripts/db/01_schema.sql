@@ -2171,3 +2171,46 @@ CREATE TABLE IF NOT EXISTS deep_agent_driver_checkpoints (
   transcript_hash text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(owner,run_id), FOREIGN KEY(owner,run_id) REFERENCES agent_runtime_runs(owner,id)
 );
+
+-- 59_capability_activation.sql
+-- Preparation facts are deployment-scoped; business grants remain owner-scoped.
+ALTER TABLE tool_connections ADD COLUMN IF NOT EXISTS managed_preset_id text;
+ALTER TABLE tool_connections ADD COLUMN IF NOT EXISTS candidate_catalog_version_id uuid;
+ALTER TABLE tool_connections ADD COLUMN IF NOT EXISTS last_discovery_at timestamptz;
+ALTER TABLE tool_connections ADD COLUMN IF NOT EXISTS last_discovery_code text;
+CREATE UNIQUE INDEX IF NOT EXISTS tool_connections_managed_identity ON tool_connections(owner, managed_preset_id);
+
+CREATE TABLE IF NOT EXISTS tool_capability_readiness (
+  pack_id text PRIMARY KEY,
+  manifest_hash text NOT NULL,
+  ready boolean NOT NULL DEFAULT false,
+  facts jsonb NOT NULL DEFAULT '{}',
+  reason_code text,
+  checked_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS tool_capability_grants (
+  owner text NOT NULL,
+  pack_id text NOT NULL,
+  revision integer NOT NULL DEFAULT 1,
+  enabled boolean NOT NULL DEFAULT false,
+  manifest_hash text NOT NULL,
+  data_classes jsonb NOT NULL DEFAULT '["public"]',
+  public_network boolean NOT NULL DEFAULT false,
+  connection_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(owner, pack_id),
+  CONSTRAINT tool_capability_pack CHECK (pack_id IN ('documents','market_data','browser','compute'))
+);
+
+-- 60_local_compute.sql
+-- Existing receipts retain their original provider. New default selection is application-owned.
+ALTER TABLE research_compute_jobs ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'e2b';
+ALTER TABLE research_compute_jobs ADD COLUMN IF NOT EXISTS provider_identity jsonb NOT NULL DEFAULT '{}';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='research_compute_provider_check'
+    AND conrelid='research_compute_jobs'::regclass) THEN
+    ALTER TABLE research_compute_jobs ADD CONSTRAINT research_compute_provider_check
+      CHECK(provider IN ('e2b','local-container'));
+  END IF;
+END $$;

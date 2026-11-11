@@ -34,6 +34,7 @@ import type { CouncilEvidence } from './council.rules';
 import type { MemberAttempt } from './council-member-attempts.service';
 import { CouncilMemberAttemptsService } from './council-member-attempts.service';
 import { councilMemberAttempts, councilRecoveryRequests } from '../../database/simple-council.schema';
+import { frozenPublicBrowserStartUrls } from './council-browser-scope';
 
 type Session = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 export class ResearchRuntimeSuspended extends Error {
@@ -246,7 +247,7 @@ export class CouncilToolRuntimeService {
       const run = await this.journal.create({ identity, driver, frozenInput, initialRequest: request,
         policy: { loopOwner: 'runtime', maxModelRequestsPerStep: 1, sdkRetries: 0, sdkToolExecution: false, sdkToolApproval: false,
           providerExecutedWrites: false, fallback: null, maxSteps: 6, maxTools: 24, memberAttemptId: row.memberAttempt?.id ?? null,
-          sourceVersions, dataClasses } });
+          sourceVersions, dataClasses, publicBrowserStartUrls: frozenPublicBrowserStartUrls(input.evidence) } });
       retained = await this.journal.read(owner, run.id);
     }
     const run = retained, frozen = run.frozenInput as RuntimeFrozenInputSnapshot;

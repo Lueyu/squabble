@@ -3,6 +3,20 @@ import type { ResearchDocumentLocator } from '../../../../shared/research-artifa
 export interface DocumentElement { text: string; locator: ResearchDocumentLocator; extractionConfidence: 'unknown' }
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+/** Markdown exporters may omit page furniture. Index its original text while retaining the unmodified export and locators. */
+export function documentSearchText(markdown: string, elements: readonly DocumentElement[]): string {
+  const normalize = (text: string) => text.replace(/\s+/gu, ' ').trim();
+  const exported = new Set([...markdown.split(/\r?\n/gu), ...markdown.split(/\n\s*\n/gu)].map(normalize));
+  const seen = new Set<string>(), supplements: string[] = [];
+  for (const element of elements) {
+    // Docling table containers contain serialized geometry, not prose. Their cells remain in Markdown/structured artifacts.
+    if (element.locator.elementId.startsWith('#/tables/') && !(element.locator.kind === 'docx' && element.locator.cellId)) continue;
+    const text = normalize(element.text);
+    if (!text || seen.has(text) || exported.has(text)) continue;
+    seen.add(text); supplements.push(element.text);
+  }
+  return [markdown, ...supplements].filter(Boolean).join('\n\n');
+}
 export function extractDocumentElements(raw: unknown, format: 'pdf' | 'docx'): DocumentElement[] {
   const document = object(raw), pages = object(document.pages);
   const middle = document.schema === 'docvortex.middle' ? document : Object.values(document).map(object).find(value => value.schema === 'docvortex.middle');

@@ -202,4 +202,21 @@ Browser collection: install the pinned Chromium via `npx playwright install chro
 
 ## Agent telemetry verification
 
+Bundled tooling adds `server/modules/tool-capabilities/*.spec.ts` to the server
+suite, using disposable `RESEARCH_TEST_DATABASE_URL` and
+`TOOL_CONNECTIONS_TEST_DATABASE_URL`. Include migrations59–60 in fresh/upgrade/
+replay fixtures. Candidate discovery, exact catalog CAS, idempotent grants,
+revoke/re-enable and final publication fences require database execution.
+
+`npm run test:bundle` includes deployment contracts and sandbox protocol tests;
+the actual Docker test requires `SANDBOX_REAL_TESTS=1` and built analytics image.
+An intentional real-engine skip is not a successful sandbox acceptance. Run
+`node --test workers/sandbox/broker.integration.spec.cjs` with that flag; preserve
+unknown-cleanup receipts until exact labeled resources are reconciled. Full
+bundle checks also execute the actual twenty-document corpus, Chromium sandbox
+and real MCP against a unique Compose project with empty volumes. See
+`docs/bundle-packaging-validation.md` and `workers/sandbox/VALIDATION.md` for
+measured evidence, remaining gates and platform-specific limits. Never use
+personal DB, paid model credentials or portfolio records as these fixtures.
+
 Run `npm run test:telemetry` with `TELEMETRY_TEST_DATABASE_URL` pointing to a disposable PostgreSQL16 database. Include migration52 in fresh/upgrade checks. Test owner/source-deletion isolation, historical revision/cycle grouping, unknown usage, ratios and pagination, feedback upserts, metadata redaction, export failure and no paid retries. UI acceptance uses fictional intercepted APIs at 1440px/390px with real filters, run links and feedback; unknown/empty/failure states must not show Figma sample data. Full lint/Web build, client/server/local-agent, wiring, architecture and context checks still apply. See `docs/agent-telemetry.md`.

@@ -22,17 +22,20 @@ async function database() {
   const client = postgres(url, { max: 4, onnotice: () => {}, connection: { search_path: namespace } });
   await admin.unsafe(`CREATE SCHEMA ${namespace}`);
   await client.unsafe(readFileSync('scripts/db/56_tool_connections.sql', 'utf8'));
+  await client.unsafe(readFileSync('scripts/db/59_capability_activation.sql', 'utf8'));
   return { db: drizzle(client), close: async () => { await client.end(); await admin.unsafe(`DROP SCHEMA ${namespace} CASCADE`); await admin.end(); } };
 }
 
 class FixtureAdapter implements TrustedToolAdapter {
   readonly provider = 'mcp';
   calls = 0;
+  description = 'fixture lookup';
+  includeExtra = false;
   async discover(connection: ToolAdapterConnection) {
     const descriptor = nativeDescriptor(connection.id, 'lookup', { type: 'object', additionalProperties: false,
-      properties: { query: { type: 'string' } }, required: ['query'] }, 'fixture lookup');
+      properties: { query: { type: 'string' } }, required: ['query'] }, this.description);
     descriptor.effect = 'external_write';
-    return [descriptor];
+    return this.includeExtra ? [nativeDescriptor(connection.id, 'new_tool', { type: 'object', properties: {} }, 'Unapproved new tool'), descriptor] : [descriptor];
   }
   async invoke(connection: ToolAdapterConnection, _tool, args, context: ToolAdapterContext) {
     await context.beforeDispatch?.(); this.calls++;
@@ -40,6 +43,105 @@ class FixtureAdapter implements TrustedToolAdapter {
       usage: null, observedAt: new Date().toISOString(), dataAsOf: null };
   }
 }
+
+test('catalog confirmation cannot replace a newer unapproved candidate discovered at the same permission revision', async () => {
+  process.env.SETTINGS_ENCRYPTION_KEY = 'candidate-cas-fixture-key';
+  const fixture = await database(), owner = randomUUID();
+  class CandidateAdapter extends FixtureAdapter {
+    extraDescription = 'Candidate A';
+    override async discover(connection: ToolAdapterConnection) {
+      const tools = await super.discover(connection);
+      for (const tool of tools) if (tool.name === 'new_tool') tool.description = this.extraDescription;
+      return tools;
+    }
+  }
+  const adapter = new CandidateAdapter(), policy = new ToolTransportPolicy([{ id: 'fixture', endpoint: 'http://127.0.0.1:54321/mcp' }]);
+  const service = new ToolConnectionsService(fixture.db, [adapter], policy);
+  let entered!: () => void, resume!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const released = new Promise<void>(resolve => { resume = resolve; });
+  class PausedConfirmation extends ToolConnectionsService {
+    override async catalog(...args: Parameters<ToolConnectionsService['catalog']>) {
+      const value = await super.catalog(...args);
+      entered(); await released;
+      return value;
+    }
+  }
+  try {
+    const connection = await service.create(owner, { provider: 'mcp', endpoint: 'http://127.0.0.1:54321/mcp' });
+    const initial = await service.discover(owner, connection.id);
+    await service.enable(owner, connection.id, { revision: initial.connection.revision, catalogVersionId: initial.catalog.id,
+      schemaHash: initial.catalog.schemaHash, toolIds: initial.catalog.descriptors.map(tool => tool.id), dataClasses: ['public'] });
+    adapter.includeExtra = true;
+    const candidateA = await service.discover(owner, connection.id);
+    const confirmation = new PausedConfirmation(fixture.db, [adapter], policy).enable(owner, connection.id, {
+      revision: candidateA.connection.revision, catalogVersionId: candidateA.catalog.id, schemaHash: candidateA.catalog.schemaHash,
+      toolIds: candidateA.catalog.descriptors.map(tool => tool.id), dataClasses: ['public'],
+    });
+    await waiting;
+    adapter.extraDescription = 'Candidate B has different behavior';
+    const candidateB = await service.discover(owner, connection.id);
+    assert.equal(candidateB.connection.revision, candidateA.connection.revision);
+    resume();
+    await assert.rejects(confirmation, /TOOL_(CONNECTION_REVISION_CHANGED|CATALOG_RECONFIRMATION_REQUIRED)/u);
+    assert.equal((await service.detail(owner, connection.id)).candidateCatalogVersionId, candidateB.catalog.id);
+  } finally { resume(); await fixture.close(); }
+});
+
+test('unchanged discovery preserves active grants and changed metadata remains a separate candidate', async () => {
+  process.env.SETTINGS_ENCRYPTION_KEY = 'tool-catalog-refresh-test-key';
+  const fixture = await database(), adapter = new FixtureAdapter(), owner = randomUUID();
+  const service = new ToolConnectionsService(fixture.db, [adapter], new ToolTransportPolicy([{ id: 'fixture', endpoint: 'http://127.0.0.1:54321/mcp' }]));
+  try {
+    const created = await service.create(owner, { provider: 'mcp', endpoint: 'http://127.0.0.1:54321/mcp' });
+    const found = await service.discover(owner, created.id);
+    const enabled = await service.enable(owner, created.id, { revision: found.connection.revision,
+      catalogVersionId: found.catalog.id, schemaHash: found.catalog.schemaHash,
+      toolIds: found.catalog.descriptors.map(tool => tool.id), dataClasses: ['public'], effects: { [found.catalog.descriptors[0].id]: 'read' } });
+    const unchanged = await service.discover(owner, created.id);
+    assert.equal(unchanged.connection.revision, enabled.revision, 'metadata observation must not change permission authority');
+    assert.equal(unchanged.connection.catalogVersionId, enabled.catalogVersionId);
+    assert.deepEqual(unchanged.connection.allowedToolIds, enabled.allowedToolIds);
+    assert.equal((await service.freezeCatalog(owner)).descriptors.length, 1);
+    adapter.description = 'changed tool contract';
+    const changed = await service.discover(owner, created.id);
+    assert.equal(changed.connection.catalogVersionId, enabled.catalogVersionId);
+    assert.equal(changed.connection.candidateCatalogVersionId, changed.catalog.id);
+    assert.notEqual(changed.catalog.id, enabled.catalogVersionId);
+    assert.equal(changed.connection.status, 'reconfirmation_required');
+    assert.equal((await service.freezeCatalog(owner)).descriptors.length, 0);
+    assert.equal(adapter.calls, 0, 'discovery never invokes a business tool');
+  } finally { await fixture.close(); }
+});
+
+test('added catalog tools remain ungranted while unchanged active tools retain their frozen authority', async () => {
+  process.env.SETTINGS_ENCRYPTION_KEY = 'catalog-additions-test-key-123';
+  const fixture = await database(), adapter = new FixtureAdapter(), owner = randomUUID();
+  const service = new ToolConnectionsService(fixture.db, [adapter], new ToolTransportPolicy([{ id: 'fixture', endpoint: 'http://127.0.0.1:54321/mcp' }]));
+  try {
+    const created = await service.create(owner, { provider: 'mcp', endpoint: 'http://127.0.0.1:54321/mcp' });
+    const found = await service.discover(owner, created.id);
+    const enabled = await service.enable(owner, created.id, { revision: found.connection.revision,
+      catalogVersionId: found.catalog.id, schemaHash: found.catalog.schemaHash,
+      toolIds: [found.catalog.descriptors[0].id], dataClasses: ['public'] });
+    const frozen = await service.freezeCatalog(owner);
+    adapter.includeExtra = true;
+    const changed = await service.discover(owner, created.id);
+    assert.equal(changed.connection.revision, enabled.revision);
+    assert.equal(changed.connection.status, 'configured');
+    assert.equal((await service.freezeCatalog(owner)).descriptors.length, 1);
+    const review = await service.reviewCatalog(owner, created.id);
+    assert.deepEqual(review.changes.added, [`${created.id}:new_tool`]);
+    assert.deepEqual(review.changes.changed, []);
+    assert.equal(review.active?.id, frozen.descriptors[0].catalogVersionId);
+    assert.equal(review.candidate?.id, changed.catalog.id);
+    await service.invokeFrozen(owner, frozen.descriptors[0], enabled.revision, { query: 'public filing' }, { invocationId: randomUUID() });
+    assert.equal(adapter.calls, 1);
+    const again = await service.discover(owner, created.id);
+    assert.equal(again.catalog.id, changed.catalog.id, 'unchanged candidate observation is also a no-op');
+    assert.deepEqual(again.connection.allowedToolIds, enabled.allowedToolIds);
+  } finally { await fixture.close(); }
+});
 
 test('connections persist encrypted credentials, isolate owners, require exact catalogs, freeze permissions and revoke dispatch', async () => {
   process.env.SETTINGS_ENCRYPTION_KEY = 'tool-connections-isolated-test-key';

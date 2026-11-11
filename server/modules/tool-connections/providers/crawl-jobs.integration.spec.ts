@@ -31,6 +31,7 @@ test('Firecrawl saves remote identity/limits before returning; cancel acknowledg
   process.env.SETTINGS_ENCRYPTION_KEY = 'crawl-test-isolated-encryption-key';
   await admin.unsafe(`CREATE SCHEMA ${namespace}`);
   await client.unsafe(readFileSync('scripts/db/56_tool_connections.sql', 'utf8'));
+  await client.unsafe(readFileSync('scripts/db/59_capability_activation.sql', 'utf8'));
   const db = drizzle(client), policy = new CrawlPolicy([]), adapter = new FirecrawlAdapter(new ProviderHttp(policy));
   const service = new ToolConnectionsService(db, [adapter], policy), owner = randomUUID();
   try {

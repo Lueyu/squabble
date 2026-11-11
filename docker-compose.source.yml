@@ -1,8 +1,31 @@
 services:
   app:
     build: .
-    image: squabble-local-source:dev
+    image: squabble-app:local
     environment:
       SQUABBLE_UPDATE_MODE: "off"
   updater:
     profiles: [managed-updates]
+  bundle-init:
+    image: squabble-app:local
+    build: .
+  docling:
+    build:
+      context: .
+      dockerfile: workers/documents/Dockerfile
+    image: squabble-docling:local
+  aktools:
+    build:
+      context: .
+      dockerfile: workers/aktools/Dockerfile
+    image: squabble-aktools:local
+  analytics-image:
+    build:
+      context: .
+      dockerfile: workers/analytics/Dockerfile
+    image: squabble-analytics:local
+  sandbox:
+    build:
+      context: .
+      dockerfile: workers/sandbox/Dockerfile
+    image: squabble-sandbox:local

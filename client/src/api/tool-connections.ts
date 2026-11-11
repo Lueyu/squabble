@@ -3,6 +3,8 @@ import type { AgentToolConnection, AgentToolDescriptor, AgentDataClass } from '@
 
 export interface ToolConnectionView extends AgentToolConnection { endpoint: string | null; hasCredential: boolean; toolEffects: Record<string, string>; authKind: 'none' | 'bearer' | 'oauth' }
 export interface ToolCatalogView { id: string; schemaHash: string; descriptors: AgentToolDescriptor[]; connectionRevision: number }
+export interface ToolCatalogReviewView { active: ToolCatalogView | null; candidate: ToolCatalogView | null;
+  changes: { added: string[]; removed: string[]; changed: string[] } }
 export interface CreateToolConnection {
   provider: string; endpoint?: string; credential?: string;
   oauth?: { clientId: string; authorizationUrl: string; tokenUrl: string; scopes: string[] };
@@ -18,7 +20,26 @@ export interface ToolActionView {
 const BASE = '/api/tool-connections';
 export async function listToolConnections() { return (await http.get<ToolConnectionView[]>(BASE)).data; }
 export async function createToolConnection(body: CreateToolConnection) { return (await http.post<ToolConnectionView>(BASE, body)).data; }
+/** Saving is durable even if the subsequent metadata check fails; never create a duplicate on discovery failure. */
+export async function saveToolConnectionWithDiscovery(body: CreateToolConnection) {
+  const connection = await createToolConnection(body);
+  return discoverSavedToolConnection(connection);
+}
+export async function discoverSavedToolConnection(connection: ToolConnectionView) {
+  if (connection.status !== 'configured') return { connection, catalog: null, discoveryError: null };
+  try {
+    const discovered = await discoverToolConnection(connection.id);
+    return { ...discovered, discoveryError: null };
+  } catch (error) {
+    return { connection, catalog: null, discoveryError: toolRequestError(error) };
+  }
+}
+export async function prepareAuthorizedToolConnection(id: string) {
+  const connection = (await http.get<ToolConnectionView>(`${BASE}/${encodeURIComponent(id)}`)).data;
+  return discoverSavedToolConnection(connection);
+}
 export async function getToolCatalog(id: string) { return (await http.get<ToolCatalogView | null>(`${BASE}/${id}/catalog`)).data; }
+export async function getToolCatalogReview(id: string) { return (await http.get<ToolCatalogReviewView>(`${BASE}/${id}/catalogs`)).data; }
 export async function discoverToolConnection(id: string) { return (await http.post<{ connection: ToolConnectionView; catalog: ToolCatalogView }>(`${BASE}/${id}/discover`)).data; }
 export async function enableToolConnection(id: string, body: { revision: number; catalogVersionId: string; schemaHash: string;
   toolIds: string[]; dataClasses: AgentDataClass[]; effects?: Record<string, string> }) {

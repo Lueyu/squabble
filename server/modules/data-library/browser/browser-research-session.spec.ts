@@ -81,7 +81,10 @@ async function fixture(maxPages = 3, overrides: Partial<BrowserResearchDependenc
   const spki = createHash('sha256').update(new X509Certificate(cert).publicKey.export({ type: 'spki', format: 'der' })).digest('base64');
   const authority: BrowserResearchAuthority = {
     assert: async candidate => {
-      assert.deepEqual(candidate, binding);
+      // Scope is added as actions are authorized; it is separate from the fixed run identity.
+      const { dataClasses, ...identity } = candidate;
+      assert.deepEqual(identity, binding);
+      assert.deepEqual(dataClasses ?? [], []);
       if (!valid) throw new Error('SOURCE_UNAVAILABLE');
     },
   };

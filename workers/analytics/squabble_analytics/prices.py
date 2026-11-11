@@ -1,6 +1,7 @@
 """Fixed, explicit price-to-return conversion; raw price levels are never returns."""
 from datetime import date
 from math import isfinite
+from re import fullmatch
 
 
 def _field(row, path):
@@ -14,6 +15,10 @@ def _field(row, path):
 
 def _day(value):
     text = str(value)
+    # AKTools serializes daily labels as timezone-free pandas midnight values.
+    # Keep that stated date; intraday values and offsets remain invalid.
+    if fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T00:00:00(?:[.]0{1,9})?", text):
+        text = text[:10]
     if len(text) == 8 and text.isdigit():
         text = f"{text[:4]}-{text[4:6]}-{text[6:]}"
     return date.fromisoformat(text).isoformat()

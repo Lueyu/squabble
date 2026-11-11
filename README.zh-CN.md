@@ -30,7 +30,7 @@
 
 - **每日研究与轻量频道。** 独立调查与单独的反向核查沉在可阅读报告里。频道提供有来源的短句、可展开证据及单事实追问。[频道使用说明](docs/channel-workbench.md)。
 - **按确认策略运行模拟盘。** 复制已记录的持仓和现金，审阅策略后明确应用到模拟盘。当前规则、待应用建议与实际成交分别展示，已有高级工具仍可使用。
-- **模型与工具按需接入。** 出站 MCP、搜索、浏览器、文档与计算适配共用持久回执、预算及来源权限。外部写入先审阅可编辑预览，未知结果不会静默重发。各供应商需显式配置，见[配置和验收边界](docs/agent-tooling.md)。
+- **基础工具随部署准备，自定义工具按需接入。** Web 套件包含资料 OCR、公开金融查询、Chromium 和必备本地容器沙箱。一次确认能力权限，也可添加自定义 MCP 或云服务。工具共用持久回执、预算和来源权限，外部写入需精确预览确认。见[配置和验收边界](docs/agent-tooling.md)。
 - **数据只属于你。** 自托管。默认不向外部上报遥测。桌面版和源码本地工作区无需吵股登录，账号模式仍可选用。
 
 ## 安装
@@ -45,15 +45,15 @@
 
 ### 网页版（Docker）
 
-需要 [Git](https://git-scm.com/downloads) 和 [Docker Desktop](https://docs.docker.com/get-docker/)。
+需要支持 Linux 容器的 [Docker 与 Compose](https://docs.docker.com/get-docker/)。从成功的 [Bundled Web images](https://github.com/Lueyu/squabble/actions/workflows/bundle.yml) 运行下载并解压 `squabble-bundle-linux-amd64` 产物，其中包含固定镜像 digest 和完整部署文件。在解压目录执行：
 
 ```bash
-git clone https://github.com/Lueyu/squabble.git
-cd squabble
 docker compose up -d
 ```
 
 打开 **http://localhost:3000**，注册第一个账号。
+
+进入“设置 → 工具”，确认本地处理及公开联网权限后启用能力。无需安装 Python、OCR 模型或浏览器，也无需 E2B 账号。开发者从源码构建使用 `docker compose -f docker-compose.yml -f docker-compose.source.yml up -d --build`。旧桌面安装包尚未包含这套新工具；平台支持以实际验收为准。[部署说明](deploy/README.bundle.md)。
 
 数据库默认为空。想体验虚构演示数据，改用 `docker compose -f docker-compose.demo.yml up -d --build`。
 

@@ -20,6 +20,7 @@ async function fixture() {
   const client = postgres(url, { max: 4, onnotice: () => {}, connection: { search_path: namespace } });
   await admin.unsafe(`CREATE SCHEMA ${namespace}`);
   await client.unsafe(readFileSync('scripts/db/56_tool_connections.sql', 'utf8'));
+  await client.unsafe(readFileSync('scripts/db/59_capability_activation.sql', 'utf8'));
   await client.unsafe(readFileSync('scripts/db/17_research_memory.sql', 'utf8'));
   await client.unsafe(readFileSync('scripts/db/55_tool_actions.sql', 'utf8'));
   process.env.SETTINGS_ENCRYPTION_KEY = 'tool-actions-isolated-test-encryption-key';

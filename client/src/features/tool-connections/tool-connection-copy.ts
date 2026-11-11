@@ -1,11 +1,12 @@
 import { useTranslation } from 'react-i18next';
 
 export const TOOL_CONNECTION_COPY = {
-  en: { title: 'Tool connections', description: 'Choose the external services and exact tools available to research.',
+  en: { title: 'Tools and capabilities', description: 'Enable prepared local capabilities and connect additional tools when needed.',
     create: 'Add connection', provider: 'Service', endpoint: 'HTTPS MCP endpoint', credential: 'API key or bearer token',
     optionalKey: 'Optional for a public MCP server. Saved encrypted on this server.', save: 'Save connection', loading: 'Loading connections…',
     empty: 'No external services connected.', discover: 'Discover tools', discoverHint: 'Discovery contacts the service and reads its catalog. It does not run a business tool. Discovery charges may be unknown.',
     catalog: 'Review catalog', enabled: 'Enabled tools', approveCatalog: 'Enable selected versions', disconnect: 'Disconnect',
+    changes: 'Review changes from the active catalog', added: 'Added', removed: 'Removed', changed: 'Changed',
     keySaved: 'Credential saved', noKey: 'No saved credential', verified: 'Last verified', never: 'Not verified', revision: 'Revision',
     public: 'Public information', private_material: 'Private research material', portfolio: 'Portfolio information', application: 'Connected application data',
     data: 'Information allowed to leave this server', dataHint: 'These permissions apply to this connection. Each research run still uses its own scope and limits.',
@@ -26,11 +27,12 @@ export const TOOL_CONNECTION_COPY = {
     budgetHint: 'Provider charges remain unknown until usage is reported. Local limits do not guarantee a provider monetary cap.',
     status: { unconfigured: 'Disconnected', configured: 'Configured', authorization_required: 'Authorization required', discovered: 'Catalog ready for review',
       restricted: 'Restricted', unavailable: 'Unavailable', reconfirmation_required: 'Catalog changed · review required' } },
-  zh: { title: '工具连接', description: '为研究选择外部服务，并启用经过审阅的具体工具版本。',
+  zh: { title: '工具与能力', description: '开启已准备的本地能力，按需添加自己的工具和云服务。',
     create: '添加连接', provider: '服务', endpoint: 'HTTPS MCP 地址', credential: 'API 密钥或 Bearer 令牌',
     optionalKey: '公开 MCP 服务可留空。凭据在本服务器加密保存。', save: '保存连接', loading: '正在读取连接…',
     empty: '尚未连接外部服务。', discover: '发现工具', discoverHint: '发现会联系服务并读取目录，不运行业务工具。发现操作的计费可能未知。',
     catalog: '审阅工具目录', enabled: '已启用工具', approveCatalog: '启用所选版本', disconnect: '断开连接',
+    changes: '核对相较已启用目录的变化', added: '新增', removed: '移除', changed: '已修改',
     keySaved: '已保存凭据', noKey: '未保存凭据', verified: '最后验证', never: '尚未验证', revision: '修订',
     public: '公开信息', private_material: '私有研究资料', portfolio: '持仓信息', application: '已连接应用中的数据',
     data: '允许向此服务发送的信息', dataHint: '这些权限仅适用于当前连接；每次研究仍受各自的范围与额度限制。',

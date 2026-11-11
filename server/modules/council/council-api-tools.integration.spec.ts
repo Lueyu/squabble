@@ -48,7 +48,7 @@ test('production SDK/tool/journal roundtrip binds own evidence before parse, rej
   try {
     await admin.unsafe(`create schema ${namespace}`);
     await client.unsafe(readFileSync('scripts/db/01_schema.sql', 'utf8'));
-    for (const file of ['53_agent_tool_runtime.sql', '54_research_artifacts.sql', '55_tool_actions.sql', '56_tool_connections.sql']) {
+    for (const file of ['53_agent_tool_runtime.sql', '54_research_artifacts.sql', '55_tool_actions.sql', '56_tool_connections.sql', '59_capability_activation.sql']) {
       await client.unsafe(readFileSync(`scripts/db/${file}`, 'utf8'));
     }
     const db = drizzle(client), owner = randomUUID();

@@ -21,6 +21,8 @@ test('tooling fresh/upgrade catalogs match and replay preserves unknown receipts
   assert.ok(start > 0);
   const additions = registry.slice(start);
   assert.ok(additions.includes('58_deep_agent_driver.sql'));
+  assert.ok(additions.includes('59_capability_activation.sql'));
+  assert.ok(additions.includes('60_local_compute.sql'));
   const normalize = (value: unknown): unknown => JSON.parse(JSON.stringify(value)
     .replaceAll(fresh + '.', '').replaceAll(upgrade + '.', ''));
   const catalog = async (name: string): Promise<unknown> => normalize({
@@ -46,6 +48,7 @@ test('tooling fresh/upgrade catalogs match and replay preserves unknown receipts
       cash: (await client.query('SELECT * FROM cash_accounts')).rows, accounts: (await client.query('SELECT * FROM paper_accounts')).rows });
     const before = await ledger();
     for (const file of additions) await client.query(readFileSync(`scripts/db/${file}`, 'utf8'));
+    await client.query(`INSERT INTO tool_capability_grants(owner,pack_id,revision,enabled,manifest_hash,data_classes) VALUES ($1,'documents',4,false,'fixed-manifest','["private_material"]')`, [owner]);
     await client.query(`INSERT INTO agent_runtime_runs(id,owner,identity_hash,identity,driver,frozen_input_hash,frozen_input_enc,policy,state) VALUES ($1,$2,'identity','{}','controlled','frozen','ciphertext','{}','provider_unknown')`, [run, owner]);
     await client.query(`INSERT INTO agent_runtime_steps(id,owner,run_id,step_index,dispatch_key,request_hash,request_enc,model,state) VALUES ($1,$2,$3,0,'dispatch','request','private-request','fixture','provider_unknown')`, [step, owner, run]);
     await client.query(`INSERT INTO agent_tool_invocations(id,owner,run_id,step_id,tool_call_id,tool_id,catalog_version_id,arguments_hash,arguments_enc,state,remote_receipt) VALUES ($1,$2,$3,$4,'call','tool','catalog','hash','private-arguments','provider_unknown','{"remoteId":"known-remote"}')`, [invocation, owner, run, step]);
@@ -55,7 +58,8 @@ test('tooling fresh/upgrade catalogs match and replay preserves unknown receipts
     const receipts = async (): Promise<unknown> => ({ run: (await client.query('SELECT * FROM agent_runtime_runs')).rows,
       steps: (await client.query('SELECT * FROM agent_runtime_steps')).rows, invocations: (await client.query('SELECT * FROM agent_tool_invocations')).rows,
       budgets: (await client.query('SELECT * FROM agent_tool_budget_reservations')).rows, actions: (await client.query('SELECT * FROM tool_actions')).rows,
-      compute: (await client.query('SELECT * FROM research_compute_jobs')).rows });
+      compute: (await client.query('SELECT * FROM research_compute_jobs')).rows,
+      capabilityGrants: (await client.query('SELECT * FROM tool_capability_grants')).rows });
     const pending = await receipts();
     for (let pass = 0; pass < 2; pass++) for (const file of additions) await client.query(readFileSync(`scripts/db/${file}`, 'utf8'));
     assert.deepEqual(await ledger(), before);

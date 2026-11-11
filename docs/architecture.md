@@ -14,7 +14,9 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 | `research-routing` | Select a usable configured research executor | Uses research-core and local-agent readiness; starts no task itself |
 | `research-runtime` | Durable single-step model loop, dispatch receipts, recovery, capability probes and selectable controlled/Deep Agents drivers | Uses research-core's model step; orchestration supplies owner/source and final-parser ports |
 | `tool-connections`, `tool-actions` | Outbound MCP/provider catalogs, encrypted credentials, tool budgets and persistent external-write previews | Never import Council; runtime dispatch rechecks exact catalog, source and approval revisions |
-| `research-artifacts`, `research-compute` | Immutable dataset rows, private hashed files and isolated fixed-template analytics | Compute consumes complete owned dataset versions; neither module creates portfolio trades |
+| `research-artifacts`, `research-compute` | Immutable dataset rows, private hashed files and isolated analytics | Compute consumes complete owned dataset versions; neither module creates portfolio trades |
+| `tool-capabilities` | Reviewed packs, cached deployment readiness and owner activation revisions | Health checks never invoke business tools; feature dispatch and publication recheck grants |
+| `workers/sandbox` | Restricted deployment broker and per-job Linux container lifecycle | Only the broker controls Docker; jobs have no network, host paths or application credentials |
 | `data-library` | Owned materials, encrypted subscriptions, version extraction, retrieval and financial-provider queries | Uses existing financial/settings adapters; never creates research tasks or ledger entries |
 | `council`, `experience` | Research workflow, current-report projection and scheduling | Consume shared research services and retained history where required |
 | `portfolio-history` | Current marks and current-position historical references with public price/FX cache | Reads owned ledger inputs; writes only market-data caches; never imports research orchestration |
@@ -89,7 +91,10 @@ flowchart LR
     dataset --> artifacts["Private hashed artifact storage"]
     library --> docJobs["Durable Docling/MinerU jobs; optional local services"]
     docJobs --> artifacts
-    tools --> compute["Configured E2B sandbox; fixed QuantStats/Backtrader worker"]
+    tools --> compute["Required local sandbox; fixed QuantStats/Backtrader and exploratory jobs"]
+    settingsTools --> packs["Reviewed capability packs; owner grants and cached readiness"]
+    packs --> tools
+    compute --> broker["Private restricted broker; one isolated Linux container per job"]
     compute --> dataset
     compute --> artifacts
     controlled --> db
@@ -129,7 +134,7 @@ V5 keeps these eight destinations. `/research` owns chat history and the strateg
 
 `GET /api/daily-workspace?date=` reads personal saved facts, all owned simulation facts and exact research versions using a repeatable-read, read-only transaction. This projection is not itself a frozen published report. `GET /api/research-memory/inventory` is an owner-only paginated source inventory; existing thesis lifecycle/version controls retain their authority. Provider configuration, import receipts, notification channels and scoped MCP sessions are composed into explicit workspaces without claiming new connection health or model adoption metrics.
 
-`/settings/tools` configures outbound tool access; `/settings/mcp` retains the separate inbound scoped-session integration. Tools are enabled by exact catalog/schema/effect and data classes, not by a global MCP switch. Local private endpoints require an operator-owned exact-endpoint registry. No arbitrary stdio command is accepted. API tool calling is enabled only after an explicit charged compatibility probe; reading settings never probes a model. See [tool operations](agent-tooling.md).
+`/settings/tools` shows bundled capability preparation and owner grants, with optional outbound connections and advanced model-tool settings. `/settings/mcp` retains the separate inbound scoped-session integration. Exact catalog/schema/effect and data-class permissions remain authoritative. Local private endpoints come from the reviewed deployment registry. API tool calling is enabled only after an explicit charged compatibility probe; reading settings never probes a model. Unchanged discovery preserves permission revisions; changed metadata becomes a candidate requiring review. See [tool operations](agent-tooling.md).
 
 <a id="research-report"></a>
 ## 2. Research and immutable reports
@@ -167,6 +172,8 @@ flowchart TD
     approved --> toolReceipt["Exact invocation receipt; revalidate source and permissions"]
     toolBatch --> toolReceipt
     toolReceipt --> dispatch
+    toolBatch --> packGrant["Recheck exact owner capability revision before dispatch and publication"]
+    packGrant --> localSandbox["Required local per-job container; immutable data and image identity"]
     received --> localParse["Final domain parser and bound evidence snapshot"]
     localParse --> sealed
     dispatch --> unknown["Unresolved provider outcome; never automatic resend"]
@@ -391,6 +398,8 @@ Cash confirmation is an explicit request with expected timestamps and an idempot
 `server/modules/experience/portfolio-metrics.service.ts` combines recorded holdings/cash, quote/FX data and value points. UI coverage and dates matter: recorded balances are not broker synchronization, quote retrieval does not establish exchange-live execution, and missing data is not zero. Preserve these distinctions when changing asset totals or returns. The actual-NAV comparison reader consumes saved value points and their flow/cash/position fingerprints without calling the valuation writer. Separate current marks and historical references can populate only public market-data caches, never NAV, holdings, cash or trade rows. Flow or baseline changes can preserve visible equity while invalidating a comparable return.
 
 ## Maintaining this architecture
+
+Bundled capability review against e18b5fe plus this working tree checked all five flows. Flows1–2 add deployment readiness, persistent owner grants, candidate catalogs and the private per-job Docker broker. Flows3–5 retain explicit strategy application, source-sealed channel publication and real ledger writers: a local backtest or exploratory output is a research artifact, and activating a capability creates no investment execution authority. Old E2B jobs keep their original provider for cleanup; local failure never reroutes to cloud. Platform/container acceptance is recorded separately in the bundle validation record.
 
 The tooling review also checked flows3–5: fixed-template backtests produce hypothetical artifacts only; app-write confirmation does not activate a strategy; channel publication still requires its original source seal; real holdings, cash and transaction writers remain the existing explicit import/ledger services. These boundaries are unchanged by migrations53–58.
 

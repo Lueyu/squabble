@@ -11,21 +11,28 @@ import { canonicalJson, hashContent } from '../../research-artifacts/research-ar
 import { AktoolsProvider } from './aktools.provider';
 import { TushareProvider } from './tushare.provider';
 import type { FinancialProviderQuery } from './financial-provider.interface';
+import { ToolCapabilityGrantsService } from '../../tool-capabilities/tool-capability-grants.service';
 
 @Injectable()
 export class FinancialDatasetService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    @Optional() private readonly connections?: ToolConnectionsService) {}
+    @Optional() private readonly connections?: ToolConnectionsService,
+    @Optional() private readonly grants?: ToolCapabilityGrantsService) {}
   private async aktools(owner: string) {
     const endpoint = process.env.FINANCIAL_AKTOOLS_MCP_URL;
     if (!endpoint || !this.connections) throw new Error('AKTOOLS_CONNECTION_REQUIRED');
-    const candidates = (await this.connections.list(owner)).filter(connection => connection.provider === 'mcp' &&
+    const managed = await this.connections.managed(owner, 'aktools');
+    const grant = managed ? await this.grants?.require(owner, 'market_data', ['public']) : null;
+    if (managed && !grant || !managed && process.env.TOOL_CAPABILITIES_BUNDLE_ENABLED === 'true') throw new Error('TOOL_CAPABILITY_DISABLED');
+    const candidates = managed ? [managed] : (await this.connections.list(owner)).filter(connection => connection.provider === 'mcp' &&
       connection.endpoint === new URL(endpoint).href && connection.status === 'configured');
     if (candidates.length !== 1) throw new Error('AKTOOLS_CONNECTION_REQUIRED');
-    const connection = candidates[0], catalog = await this.connections.freezeCatalog(owner);
+    const connection = candidates[0];
+    if (connection.endpoint !== new URL(endpoint).href || connection.status !== 'configured') throw new Error('AKTOOLS_CONNECTION_REQUIRED');
+    const catalog = await this.connections.freezeCatalog(owner, managed ? 'aktools' : undefined);
     const tool = catalog.descriptors.find(descriptor => descriptor.connectionId === connection.id && descriptor.name === 'get_data');
     if (!tool || tool.effect !== 'read' || !tool.dataClasses.includes('public')) throw new Error('AKTOOLS_READ_PERMISSION_REQUIRED');
-    return { connection, catalog, tool };
+    return { connection, catalog, tool, grant };
   }
   async available(owner: string): Promise<boolean> { try { await this.aktools(owner); return true; } catch { return false; } }
   async query(owner: string, input: DataFinancialQuery, secret: string | null): Promise<Pick<DataFinancialQueryResult,
@@ -46,6 +53,7 @@ export class FinancialDatasetService {
       if (name !== 'get_data') throw new Error('AKTOOLS_OPERATION_REJECTED');
       const result = await this.connections!.invokeFrozen(owner, ak.tool, ak.catalog.connectionRevisions[ak.connection.id], args,
         { invocationId: randomUUID(), beforeDispatch: async () => {
+          if (ak.grant) await this.grants!.requireCurrent(owner, 'market_data', ak.grant.revision, ['public']);
           const [current] = await this.db.select().from(financialDataConnections).where(and(eq(financialDataConnections.owner, owner),
             eq(financialDataConnections.provider, input.provider)));
           if (!current?.enabled || current.updatedAt.getTime() !== before.updatedAt.getTime()) throw new Error('PROVIDER_CONNECTION_CHANGED');
@@ -54,10 +62,15 @@ export class FinancialDatasetService {
     }) : new TushareProvider(secret ?? '');
     const result = await provider.query(request);
     if (ak) {
+      if (ak.grant) await this.grants!.requireCurrent(owner, 'market_data', ak.grant.revision, ['public']);
       const current = await this.connections!.detail(owner, ak.connection.id);
       if (current.revision !== ak.connection.revision || current.status !== 'configured') throw new Error('PROVIDER_CONNECTION_CHANGED');
     }
     return this.db.transaction(async tx => {
+      if (ak?.grant) {
+        // Hold owner authority through the publishing transaction so concurrent revoke wins or waits.
+        await this.grants!.requireCurrent(owner, 'market_data', ak.grant.revision, ['public'], tx);
+      }
       const [current] = await tx.select().from(financialDataConnections).where(and(eq(financialDataConnections.owner, owner),
         eq(financialDataConnections.provider, input.provider))).for('share');
       if (!current?.enabled || current.secretEnc !== before.secretEnc || current.updatedAt.getTime() !== before.updatedAt.getTime()) throw new Error('PROVIDER_CONNECTION_CHANGED');

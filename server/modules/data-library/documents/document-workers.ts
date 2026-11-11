@@ -5,15 +5,18 @@ import type { DocumentExtractor } from './document-client.interface';
 import { DoclingClient } from './docling-client';
 import { MineruClient } from './mineru-client';
 import { LocalDocumentHttp } from './local-document-http';
+import { readFileSync } from 'node:fs';
 
 /** Endpoints and credentials come only from deployer configuration, never upload/request bodies. */
 export function configuredDocumentExtractors(): DocumentExtractor[] {
   const allowed = (process.env.DOCUMENT_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
   const extractors: DocumentExtractor[] = [];
+  const doclingKey = process.env.DOCUMENT_DOCLING_KEY_FILE ? readFileSync(process.env.DOCUMENT_DOCLING_KEY_FILE, 'utf8').trim() : process.env.DOCUMENT_DOCLING_KEY;
+  const mineruKey = process.env.DOCUMENT_MINERU_KEY_FILE ? readFileSync(process.env.DOCUMENT_MINERU_KEY_FILE, 'utf8').trim() : process.env.DOCUMENT_MINERU_KEY;
   if (process.env.DOCUMENT_DOCLING_URL) extractors.push(new DoclingClient(new LocalDocumentHttp(
-    process.env.DOCUMENT_DOCLING_URL, process.env.DOCUMENT_DOCLING_KEY, allowed)));
+    process.env.DOCUMENT_DOCLING_URL, doclingKey, allowed)));
   if (process.env.DOCUMENT_MINERU_URL) extractors.push(new MineruClient(new LocalDocumentHttp(
-    process.env.DOCUMENT_MINERU_URL, process.env.DOCUMENT_MINERU_KEY, allowed, 'bearer')));
+    process.env.DOCUMENT_MINERU_URL, mineruKey, allowed, 'bearer')));
   return extractors;
 }
 @Injectable()

@@ -7,8 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToolConnectionCopy } from './tool-connection-copy';
 
-export function ToolCatalogReview({ connection, catalog, pending, onEnable }: {
+export function ToolCatalogReview({ connection, catalog, pending, onEnable, changes }: {
   connection: ToolConnectionView; catalog: ToolCatalogView; pending: boolean;
+  changes?: { added: string[]; removed: string[]; changed: string[] };
   onEnable: (toolIds: string[], dataClasses: AgentDataClass[], effects: Record<string, string>) => void;
 }) {
   const copy = useToolConnectionCopy(), [selected, setSelected] = useState<string[]>(connection.allowedToolIds);
@@ -17,6 +18,10 @@ export function ToolCatalogReview({ connection, catalog, pending, onEnable }: {
     [catalog.id, connection.revision, connection.allowedToolIds, connection.allowedDataClasses, connection.toolEffects]);
   return <div className="space-y-4 border-t pt-4">
     <div><h3 className="font-semibold">{copy.catalog}</h3><p className="mt-1 break-all text-xs text-muted-foreground">{catalog.schemaHash}</p></div>
+    {changes && <div className="space-y-1 break-words rounded-lg bg-muted p-3 text-sm">
+      <p>{copy.changes}</p>
+      {(['added', 'removed', 'changed'] as const).map(kind => changes[kind].length > 0 && <p key={kind}>{copy[kind]}: {changes[kind].join(', ')}</p>)}
+    </div>}
     {connection.provider === 'mcp' && <p className="text-sm text-muted-foreground">{copy.effectsHint}</p>}
     <div className="divide-y rounded-lg border">{catalog.descriptors.map(tool => <div key={tool.id} className="space-y-3 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">

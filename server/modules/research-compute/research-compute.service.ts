@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -14,6 +14,9 @@ import { ANALYTICS_DEPENDENCIES, assertDatasetComputeInput, computeRequestSchema
 import type { ComputeRequest } from './compute-policy';
 import { backtestDatasetIds, parseBacktestParameters } from './backtest-contract';
 import { summarizeComputeResult } from './compute-result-summary';
+import { LocalContainerAdapter } from './local-container.adapter';
+import type { ComputeProvider, ComputeProviderName } from './compute-provider';
+import { ToolCapabilityGrantsService } from '../tool-capabilities/tool-capability-grants.service';
 
 interface PreparedCompute {
   manifest: Record<string, unknown>; files: Array<{ name: string; base64: string }>;
@@ -21,16 +24,27 @@ interface PreparedCompute {
   retentionUntil: string | null; datasetVersionIds: string[]; contentHashes: Record<string, string>;
   maxRuntimeMs: number; kind: ComputeRequest['kind']; code: string;
   policyHashes: Record<string, string>;
+  provider?: ComputeProviderName; capabilityRevision?: number;
 }
 
-/** Cloud execution accepts only server-read immutable datasets; summaries are never a compute input. */
+/** Providers accept only server-read immutable datasets; summaries are never a compute input. */
 @Injectable()
 export class ResearchComputeService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    private readonly jobs: ComputeJobsService, private readonly sandbox: E2bAdapter,
-    private readonly artifacts: ResearchArtifactsService) {}
+    private readonly jobs: ComputeJobsService, @Inject(LocalContainerAdapter) private readonly sandbox: ComputeProvider,
+    private readonly artifacts: ResearchArtifactsService,
+    @Optional() @Inject(E2bAdapter) private readonly legacyCloud?: E2bAdapter,
+    @Optional() private readonly grants?: ToolCapabilityGrantsService) {}
 
-  configuration() { return { provider: 'e2b', status: this.sandbox.status(), template: this.sandbox.template(),
+  // The injected default is always local. A caller can explicitly inject E2B for historical fixtures.
+  private get provider(): ComputeProviderName { return this.sandbox.provider; }
+  private providerFor(name: string): ComputeProvider {
+    if (name === this.provider) return this.sandbox;
+    if (name === 'e2b' && this.legacyCloud) return this.legacyCloud;
+    throw new Error('COMPUTE_PROVIDER_UNAVAILABLE');
+  }
+
+  configuration() { return { provider: this.provider, status: this.sandbox.status(), template: this.sandbox.template(),
     dependencyVersions: ANALYTICS_DEPENDENCIES, maxRuntimeMs: 120_000, maxDailyJobs: 10,
     network: 'disabled', costsKnown: false }; }
 
@@ -49,7 +63,7 @@ export class ResearchComputeService {
       const inputs = [];
       for (const id of request.datasetVersionIds) {
         const input = await readDataset(tx, owner, id);
-        assertDatasetComputeInput(input.metadata, input.rows, request.expectedContentHashes[id]);
+        assertDatasetComputeInput(input.metadata, input.rows, request.expectedContentHashes[id], this.provider);
         if (scope && input.metadata.dataClasses.some(value => !scope.allowedDataClasses.includes(value))) throw new Error('COMPUTE_DATA_CLASS_DENIED');
         if (scope && [input.metadata.sourceVersion, ...input.metadata.dependencies].some(ref => !scope.sourceVersions.some(
           allowed => hashContent(allowed) === hashContent(ref)))) throw new Error('COMPUTE_SOURCE_SCOPE_DENIED');
@@ -81,7 +95,8 @@ export class ResearchComputeService {
       const manifest = { version: 1, kind: request.kind, templateId, templateVersion: '1',
         codeHash, codePath: 'code.py', seed: request.seed, parameters: request.parameters,
         effectiveDataClasses: dataClasses, permittedUses, sourceVersions: dependencies,
-        dependencies: { ...ANALYTICS_DEPENDENCIES, e2bTemplate: this.sandbox.template()?.version ?? 'unconfigured' },
+        provider: this.provider,
+        dependencies: { ...ANALYTICS_DEPENDENCIES, sandboxImage: this.sandbox.template()?.version ?? 'unconfigured' },
         limits: { maxRuntimeMs: request.maxRuntimeMs, maxOutputBytes: 16 * 1024 * 1024 },
         datasets: inputs.map((input, ordinal) => ({ datasetVersionId: input.metadata.id, contentHash: input.metadata.contentHash,
           fileSha256: createHash('sha256').update(files[ordinal].data).digest('hex'), path: files[ordinal].name,
@@ -91,16 +106,20 @@ export class ResearchComputeService {
       return { manifest, files: files.map(file => ({ name: file.name, base64: file.data.toString('base64') })),
         dependencies, dataClasses, permittedUses, retentionUntil, datasetVersionIds: request.datasetVersionIds,
         contentHashes: request.expectedContentHashes, maxRuntimeMs: request.maxRuntimeMs, kind: request.kind, code,
-        policyHashes: Object.fromEntries(inputs.map(input => [input.metadata.id,
+        provider: this.provider, policyHashes: Object.fromEntries(inputs.map(input => [input.metadata.id,
           hashContent({ dataClasses: input.metadata.dataClasses, license: input.metadata.license })])) };
     });
   }
 
   private async revalidate(owner: string, input: PreparedCompute, scope?: AgentToolScope): Promise<void> {
+    if (input.provider === 'local-container') {
+      if (!this.grants || input.capabilityRevision === undefined) throw new Error('TOOL_CAPABILITY_DISABLED');
+      await this.grants.requireCurrent(owner, 'compute', input.capabilityRevision, input.dataClasses);
+    }
     await this.db.transaction(async tx => {
       for (const id of input.datasetVersionIds) {
         const current = await readDataset(tx, owner, id);
-        assertDatasetComputeInput(current.metadata, current.rows, input.contentHashes[id]);
+        assertDatasetComputeInput(current.metadata, current.rows, input.contentHashes[id], input.provider ?? 'e2b');
         if (hashContent({ dataClasses: current.metadata.dataClasses, license: current.metadata.license }) !== input.policyHashes[id]) {
           throw new Error('COMPUTE_INPUT_POLICY_CHANGED');
         }
@@ -122,12 +141,18 @@ export class ResearchComputeService {
   async run(owner: string, raw: unknown, scope?: AgentToolScope, signal?: AbortSignal) {
     if (signal?.aborted) throw new Error('COMPUTE_CANCELLED');
     const request = computeRequestSchema.parse(raw);
-    if (this.sandbox.status() !== 'configured') throw new Error('E2B_UNCONFIGURED');
-    const prepared = await this.prepare(owner, request, scope);
+    if (this.sandbox.status() !== 'configured') throw new Error(this.provider === 'e2b' ? 'E2B_UNCONFIGURED' : 'LOCAL_SANDBOX_UNCONFIGURED');
+    if (this.provider === 'local-container') await (this.sandbox as LocalContainerAdapter).readiness();
+    let prepared = await this.prepare(owner, request, scope);
+    if (this.provider === 'local-container') {
+      if (!this.grants) throw new Error('TOOL_CAPABILITY_DISABLED');
+      prepared.capabilityRevision = (await this.grants.require(owner, 'compute', prepared.dataClasses)).revision;
+    }
     const job = await this.jobs.create(owner, { runId: request.runId, requestKey: request.requestKey,
       requestHash: hashContent(request), kind: request.kind, maxRuntimeMs: request.maxRuntimeMs, payload: prepared,
       sourceVersionIds: prepared.dependencies.map(ref => ref.sourceVersionId), datasetVersionIds: prepared.datasetVersionIds,
-      retentionUntil: prepared.retentionUntil });
+      retentionUntil: prepared.retentionUntil, provider: this.provider,
+      providerIdentity: { template: this.sandbox.template(), protocolVersion: 1 } });
     if (signal?.aborted) { await this.jobs.cancel(owner, job.id); return this.jobs.receipt(owner, job.id); }
     if (!await this.jobs.claim(owner, job.id)) return this.status(owner, job.id);
     const saved: ResearchArtifact[] = [];
@@ -145,10 +170,18 @@ export class ResearchComputeService {
       return true;
     };
     try {
-      // Re-read after the durable creation intent and immediately before cloud egress.
+      // Replays can claim an older queued intent. Its encrypted payload and authority are immutable.
+      prepared = await this.jobs.input(owner, job.id) as PreparedCompute;
+      if (!Array.isArray(prepared.datasetVersionIds) || prepared.kind !== job.kind
+        || prepared.maxRuntimeMs !== job.maxRuntimeMs || (prepared.provider ?? 'e2b') !== job.provider
+        || job.provider !== this.provider) throw new Error('COMPUTE_FROZEN_CONTEXT_CHANGED');
+      const provider = this.providerFor(job.provider);
+      const expectedTemplate = job.providerIdentity?.template;
+      if (!expectedTemplate || hashContent(expectedTemplate) !== hashContent(provider.template())) throw new Error('COMPUTE_PROVIDER_IDENTITY_CHANGED');
+      // Re-read after durable creation intent and immediately before provider dispatch.
       await this.revalidate(owner, prepared, scope);
       if (!await shouldContinue()) throw new ComputeE2bError('COMPUTE_CANCELLED', null, true);
-      const execution = await this.sandbox.run({ jobId: job.id, manifest: prepared.manifest,
+      const execution = await provider.run({ jobId: job.id, manifest: prepared.manifest,
         files: prepared.files.map(file => ({ name: file.name, data: Buffer.from(file.base64, 'base64') })),
         maxRuntimeMs: prepared.maxRuntimeMs, maxOutputBytes: 16 * 1024 * 1024 },
       id => this.jobs.created(owner, job.id, id), shouldContinue);
@@ -183,6 +216,10 @@ export class ResearchComputeService {
       stdout: execution.stdout, stderr: execution.stderr }, async tx => {
         if (signal?.aborted) throw new Error('COMPUTE_CANCELLED');
         await this.assertParent(scope, tx);
+        if (prepared.provider === 'local-container') {
+          if (!this.grants || prepared.capabilityRevision === undefined) throw new Error('TOOL_CAPABILITY_DISABLED');
+          await this.grants.requireCurrent(owner, 'compute', prepared.capabilityRevision, prepared.dataClasses, tx);
+        }
         if (signal?.aborted) throw new Error('COMPUTE_CANCELLED');
       });
       if (!accepted) {
@@ -210,8 +247,8 @@ export class ResearchComputeService {
   async cleanup(owner: string, id: string) {
     const job = await this.jobs.read(owner, id);
     if (job.sandboxId && !job.terminationConfirmed) {
-      try { await this.sandbox.kill(job.sandboxId); await this.jobs.confirmTermination(owner, id); }
-      catch { await this.jobs.fail(owner, id, 'E2B_CLEANUP_UNKNOWN', false); }
+      try { await this.providerFor(job.provider).kill(job.sandboxId); await this.jobs.confirmTermination(owner, id); }
+      catch { await this.jobs.fail(owner, id, job.provider === 'e2b' ? 'E2B_CLEANUP_UNKNOWN' : 'LOCAL_CLEANUP_UNKNOWN', false); }
     }
     return this.jobs.receipt(owner, id);
   }

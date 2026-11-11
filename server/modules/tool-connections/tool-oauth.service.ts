@@ -64,7 +64,7 @@ export class ToolOAuthService {
       token = parsedToken.data.access_token;
     } catch { throw new BadRequestException('TOOL_OAUTH_TOKEN_EXCHANGE_FAILED'); }
     const [saved] = await this.db.update(toolConnections).set({ secretEnc: encryptSecret(token, toolEncryptionKey()), revision: connection.revision + 1,
-      status: 'configured', allowedToolIds: [], catalogVersionId: null, verifiedAt: null, updatedAt: new Date() })
+      status: 'configured', allowedToolIds: [], catalogVersionId: null, candidateCatalogVersionId: null, verifiedAt: null, updatedAt: new Date() })
       .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, connection.id), eq(toolConnections.revision, state.connectionRevision))).returning();
     if (!saved) throw new ConflictException('TOOL_CONNECTION_REVISION_CHANGED');
     return { connectionId: saved.id, authorized: true };

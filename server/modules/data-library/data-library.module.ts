@@ -11,7 +11,8 @@ import { DocumentJobsService, DOCUMENT_EXTRACTORS } from './document-jobs.servic
 import { DocumentWorkers, configuredDocumentExtractors } from './documents/document-workers';
 import { FinancialDatasetService } from './providers/financial-dataset.service';
 import { ToolConnectionsModule } from '../tool-connections/tool-connections.module';
-@Module({ imports: [QuoteModule, ResearchArtifactsModule, ToolConnectionsModule], controllers: [DataLibraryController],
+import { ToolCapabilitiesModule } from '../tool-capabilities/tool-capabilities.module';
+@Module({ imports: [QuoteModule, ResearchArtifactsModule, ToolConnectionsModule, ToolCapabilitiesModule], controllers: [DataLibraryController],
   providers: [DataLibraryService, DataFinancialService, DataBrowserService, FinnhubEvidenceService, SecEvidenceService,
     DocumentJobsService, DocumentWorkers, FinancialDatasetService, { provide: DOCUMENT_EXTRACTORS, useFactory: configuredDocumentExtractors }],
   exports: [DataLibraryService, DataFinancialService, DataBrowserService, DocumentJobsService] })

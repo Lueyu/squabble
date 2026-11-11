@@ -37,7 +37,7 @@ async function fixture(run: (state: Awaited<ReturnType<typeof setup>>) => Promis
   try {
     await admin.unsafe(`create schema ${namespace}`);
     await client.unsafe(readFileSync('scripts/db/01_schema.sql', 'utf8'));
-    for (const name of ['53_agent_tool_runtime.sql', '54_research_artifacts.sql', '55_tool_actions.sql', '56_tool_connections.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
+    for (const name of ['53_agent_tool_runtime.sql', '54_research_artifacts.sql', '55_tool_actions.sql', '56_tool_connections.sql', '59_capability_activation.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     await run(await setup(client));
   } finally { await client.end(); await admin.unsafe(`drop schema ${namespace} cascade`); await admin.end(); }
 }

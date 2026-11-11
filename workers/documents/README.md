@@ -1,5 +1,25 @@
 # Local document workers
 
+## Default prepared Web bundle
+
+The default Web suite ships the immutable official Docling Serve CPU image
+recorded in `base-image.json`, extended by this directory's `Dockerfile`. It
+already contains locked Python dependencies and OCR/layout/table models; startup
+does not install packages or download weights. Build records every model file's
+SHA-256 and actual `pip freeze` inside `/opt/squabble`; startup verifies those
+files before readiness. The default adapter selects RapidOCR Chinese (`iso:zh`)
+on CPU. A private authenticated gateway exposes only the three adapter route
+families; the raw API binds container loopback and has no Internet route.
+
+Use the [bundle guide](../../deploy/README.bundle.md) for one-command release or
+source builds. The older top-level requirements below document the separate
+engine API matrix. **The existing PyPI-based Docling lock contains CUDA packages
+and is not the default CPU image lock.** The digest-pinned official CPU image's
+own frozen lock is authoritative for the shipped environment. MinerU remains
+optional and is not started by the default suite.
+
+## Separate optional engine installations
+
 The server adapters target Docling Serve **1.38.2** and MinerU **4.2.0** on
 Python **3.12.12**. Each engine needs its own virtual environment. The checked-in
 top-level requirements pin the API release matrix. The checked-in
@@ -87,9 +107,12 @@ Install `requirements-fixtures.txt`; supply a local CJK font path. The corpus
 covers digital and scanned PDFs, rotation, signs/units, a two-page table, DOCX,
 and malformed/oversized inputs. Generated files and gold are synthetic, CC0.
 Gold records describe expected contents, not measured engine performance.
-Real side-service acceptance must run both pinned engines on this same corpus
-and report page/locator coverage, numeric agreement, failures, and latency
-before enabling any document-type quality claim.
+Each deployed engine must run this same corpus and report page/locator coverage,
+numeric agreement, failures, and latency before enabling its document-type
+quality claim. The default Docling measurement is recorded in
+`acceptance.linux-amd64.jsonl` and the [packaging acceptance](../../docs/bundle-packaging-validation.md).
+Optional MinerU requires a separate record; Docling measurements do not establish
+MinerU compatibility or quality.
 
 Backup `RESEARCH_ARTIFACT_ROOT` together with the database and encryption keys.
 `ResearchArtifactsService.manifest(owner)` is an internal backup index and must

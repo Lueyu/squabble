@@ -20,10 +20,13 @@ import { ResearchComputeService } from './research-compute.service';
 import { ComputeCleanupService } from './compute-cleanup.service';
 import { RuntimeJournalService } from '../research-runtime/runtime-journal.service';
 import { canonicalHash } from '../../common/agent-contract';
+import { LocalContainerAdapter } from './local-container.adapter';
+import type { ToolCapabilityGrantsService } from '../tool-capabilities/tool-capability-grants.service';
 
 async function fixture(run: (f: {
   owner: string; request: Record<string, unknown>; client: ReturnType<typeof postgres>; sourceId: string;
   createService: (factory: ComputeSandboxFactory) => ResearchComputeService;
+  createLocalService: (local: LocalContainerAdapter, grants?: ToolCapabilityGrantsService) => ResearchComputeService;
   jobs: ComputeJobsService; db: ReturnType<typeof drizzle>;
 }) => Promise<void>) {
   const url = process.env.RESEARCH_TEST_DATABASE_URL;
@@ -61,7 +64,10 @@ async function fixture(run: (f: {
     const createService = (factory: ComputeSandboxFactory) => new ResearchComputeService(db,
       jobs, new E2bAdapter({ apiKey: 'fake-only', templateId: 'fake-template', templateVersion: '1' }, factory),
       new ResearchArtifactsService(db, new PrivateArtifactStorage(directory)));
-    await run({ owner, request, client, sourceId: source.id, createService, jobs, db });
+    const createLocalService = (local: LocalContainerAdapter, grants?: ToolCapabilityGrantsService) => new ResearchComputeService(db,
+      jobs, local, new ResearchArtifactsService(db, new PrivateArtifactStorage(directory)),
+      new E2bAdapter(null), grants);
+    await run({ owner, request, client, sourceId: source.id, createService, createLocalService, jobs, db });
   } finally {
     await client.end(); await admin.unsafe(`drop schema ${ns} cascade`); await admin.end();
     await rm(directory, { recursive: true, force: true });
@@ -76,6 +82,82 @@ const outputs = { files: [{ name: 'result.json', mime: 'application/json', sizeB
 const read = async (path: string) => new ReadableStream<Uint8Array>({ start(controller) {
   controller.enqueue(path.endsWith('outputs.json') ? Buffer.from(JSON.stringify(outputs)) : data); controller.close();
 } });
+
+test('private local compute uses research permission and records its provider without cloud egress', async () => fixture(async f => {
+  let creates = 0, finalTransaction = false;
+  const grants = { require: async () => ({ revision: 1, dataClasses: ['portfolio'] }),
+    requireCurrent: async (_owner, _pack, _revision, _classes, tx) => { if (tx) finalTransaction = true; } } as unknown as ToolCapabilityGrantsService;
+  const local = Object.assign(new LocalContainerAdapter(null), { status: () => 'configured' as const,
+    template: () => ({ id: 'fixture', version: 'sha256:fixture' }),
+    readiness: async () => ({ status: 'ready' as const, provider: 'local-container' as const, protocolVersion: 1 as const, imageId: 'sha256:fixture' }),
+    run: async (input, created) => {
+      const sandboxId = `local:${randomUUID()}:${input.jobId}`;
+      creates += 1; await created(sandboxId);
+      return { files: [{ name: 'result.json', mime: 'application/json', sha256: createHash('sha256').update(data).digest('hex'), data }],
+        stdout: '', stderr: '', sandboxId, terminationConfirmed: true as const };
+    } });
+  await f.client`update research_source_policies set permitted_uses='["research"]'::jsonb where owner=${f.owner}`;
+  const result = await f.createLocalService(local, grants).run(f.owner, f.request);
+  assert.equal(result.state, 'succeeded'); assert.equal(result.provider, 'local-container');
+  assert.equal(creates, 1); assert.equal(finalTransaction, true);
+}));
+
+test('local default refuses dispatch without a compute capability grant', async () => fixture(async f => {
+  let creates = 0;
+  const local = Object.assign(new LocalContainerAdapter(null), { status: () => 'configured' as const,
+    readiness: async () => ({ status: 'ready' as const, provider: 'local-container' as const, protocolVersion: 1 as const, imageId: 'sha256:fixture' }),
+    run: async () => { creates += 1; throw new Error('must not run'); } });
+  await assert.rejects(f.createLocalService(local).run(f.owner, f.request), /TOOL_CAPABILITY_DISABLED/);
+  assert.equal(creates, 0);
+}));
+
+test('a queued retry keeps the original capability revision after revoke and re-enable', async () => fixture(async f => {
+  let revision = 1, creates = 0;
+  const grants = { require: async () => ({ revision, dataClasses: ['portfolio'] }),
+    requireCurrent: async (_owner, _pack, expected) => { if (expected !== revision) throw new Error('TOOL_CAPABILITY_REVISION_CHANGED'); } } as unknown as ToolCapabilityGrantsService;
+  const local = Object.assign(new LocalContainerAdapter(null), { status: () => 'configured' as const,
+    template: () => ({ id: 'fixture', version: 'sha256:fixture' }),
+    readiness: async () => ({ status: 'ready' as const, provider: 'local-container' as const, protocolVersion: 1 as const, imageId: 'sha256:fixture' }),
+    run: async (input, created) => {
+      creates += 1; const sandboxId = `local:${randomUUID()}:${input.jobId}`; await created(sandboxId);
+      return { files: [{ name: 'result.json', mime: 'application/json', sha256: createHash('sha256').update(data).digest('hex'), data }],
+        stdout: '', stderr: '', sandboxId, terminationConfirmed: true as const };
+    } });
+  const claim = f.jobs.claim.bind(f.jobs);
+  f.jobs.claim = async () => false;
+  const service = f.createLocalService(local, grants);
+  const queued = await service.run(f.owner, f.request);
+  assert.equal(queued.state, 'queued');
+  revision = 3; // Disabling and then re-enabling changes the authority revision.
+  f.jobs.claim = claim;
+  const retried = await service.run(f.owner, f.request).catch(() => null);
+  assert.equal(creates, 0, 'An existing queued job must not dispatch using newly granted authority');
+  assert.equal(retried?.state, 'failed');
+  assert.equal((await f.jobs.input(f.owner, queued.id) as { capabilityRevision: number }).capabilityRevision, 1);
+}));
+
+test('queued compute freezes its image and source policy instead of rebuilding the payload', async () => {
+  for (const change of ['image', 'source-policy']) await fixture(async f => {
+    let imageId = 'sha256:first', creates = 0;
+    const grants = { require: async () => ({ revision: 1, dataClasses: ['portfolio'] }), requireCurrent: async () => {} } as unknown as ToolCapabilityGrantsService;
+    const local = Object.assign(new LocalContainerAdapter(null), { status: () => 'configured' as const,
+      template: () => ({ id: 'fixture', version: imageId }),
+      readiness: async () => ({ status: 'ready' as const, provider: 'local-container' as const, protocolVersion: 1 as const, imageId }),
+      run: async (input, created) => {
+        creates += 1; const sandboxId = `local:${randomUUID()}:${input.jobId}`; await created(sandboxId);
+        return { files: [{ name: 'result.json', mime: 'application/json', sha256: createHash('sha256').update(data).digest('hex'), data }],
+          stdout: '', stderr: '', sandboxId, terminationConfirmed: true as const };
+      } });
+    const claim = f.jobs.claim.bind(f.jobs); f.jobs.claim = async () => false;
+    const service = f.createLocalService(local, grants), queued = await service.run(f.owner, f.request);
+    if (change === 'image') imageId = 'sha256:next';
+    else await f.client`update research_source_policies set permitted_uses='["research"]'::jsonb where owner=${f.owner}`;
+    f.jobs.claim = claim;
+    const retried = await service.run(f.owner, f.request).catch(() => null);
+    assert.equal(creates, 0, change); assert.equal(retried?.state, 'failed', change);
+    assert.equal(((await f.jobs.read(f.owner, queued.id)).providerIdentity.template as { version: string }).version, 'sha256:first');
+  });
+});
 
 test('complete private dataset survives durable cloud job, artifacts, replay and source revocation', async () => fixture(async f => {
   let creates = 0, fullRows = 0, kills = 0;

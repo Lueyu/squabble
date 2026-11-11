@@ -23,7 +23,9 @@ services:
       retries: 20
 
   app:
-    image: ${SQUABBLE_APP_IMAGE:-ghcr.io/lueyu/squabble:stable}
+    # Release archives replace local tags with anonymously verified digests.
+    # Developers use docker-compose.source.yml to build the complete suite.
+    image: ${SQUABBLE_APP_IMAGE:-squabble-app:local}
     pull_policy: missing
     restart: unless-stopped
     labels:
@@ -50,8 +52,21 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_PROJECT_URL: ${LANGFUSE_PROJECT_URL:-}
-      SQUABBLE_UPDATE_MODE: ${SQUABBLE_UPDATE_MODE:-docker}
+      SQUABBLE_UPDATE_MODE: ${SQUABBLE_UPDATE_MODE:-off}
       SQUABBLE_UPDATE_BACKUP_DIR: /app/.backups
+      RESEARCH_ARTIFACT_ROOT: /app/.data/research-artifacts
+      TOOL_CAPABILITIES_BUNDLE_ENABLED: "true"
+      DOCUMENT_DOCLING_URL: http://docling:5002
+      DOCUMENT_DOCLING_KEY_FILE: /app/.capability-secrets/docling-token
+      DOCUMENT_ALLOWED_ORIGINS: http://docling:5002
+      TOOL_CAPABILITIES_DOCLING_HEALTH_URL: http://docling:5002/health
+      FINANCIAL_AKTOOLS_MCP_URL: http://aktools:8081/mcp
+      FINANCIAL_AKTOOLS_MCP_TOKEN_FILE: /app/.capability-secrets/aktools-token
+      TOOL_CAPABILITIES_AKTOOLS_HEALTH_URL: http://aktools:8081/health
+      TOOL_MCP_LOCAL_SERVICES_JSON: '[{"id":"aktools","endpoint":"http://aktools:8081/mcp"}]'
+      SANDBOX_BROKER_URL: http://sandbox:8093
+      SANDBOX_BROKER_TOKEN_FILE: /app/.capability-secrets/sandbox-token
+      COMPUTE_CLEANUP_WORKER_ENABLED: "true"
       # AGENT_GATEWAY_TOKEN: "dev-agent-token-change-me"
       # Optional: LLM key for running real multi-agent analyses.
       # DOUBAO_API_KEY: ""
@@ -61,7 +76,20 @@ services:
       - settings-secrets:/app/.secrets
       - local-agents-data:/app/.local-agents
       - update-backups:/app/.backups
+      - research-artifacts:/app/.data/research-artifacts
+      - capability-secrets:/app/.capability-secrets:ro
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./deploy/chromium-seccomp.json
+    shm_size: 256mb
+    mem_limit: 3g
+    cpus: 2
+    pids_limit: 512
+    networks: [default, tools]
     depends_on:
+      bundle-init:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
     healthcheck:
@@ -69,8 +97,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+      start_period: 120s
 
   updater:
+    # The old app-only updater must not independently drift a complete bundle.
+    profiles: [legacy-app-only-updates]
     image: containrrr/watchtower:1.6.0
     restart: unless-stopped
     command: ["--http-api-update", "--label-enable", "--scope", "${COMPOSE_PROJECT_NAME:-squabble-local}"]
@@ -86,8 +117,118 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: "false"
 
+  bundle-init:
+    image: ${SQUABBLE_APP_IMAGE:-squabble-app:local}
+    user: "0:0"
+    entrypoint: ["node", "/app/deploy/bundle-init.cjs"]
+    restart: "no"
+    network_mode: none
+    volumes:
+      - settings-secrets:/app/.secrets
+      - local-agents-data:/app/.local-agents
+      - update-backups:/app/.backups
+      - research-artifacts:/app/.data/research-artifacts
+      - capability-secrets:/app/.capability-secrets
+      - docling-credentials:/credentials/docling
+      - aktools-credentials:/credentials/aktools
+      - sandbox-credentials:/credentials/sandbox
+
+  docling:
+    image: ${SQUABBLE_DOCLING_IMAGE:-squabble-docling:local}
+    restart: unless-stopped
+    user: "1001:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [tools]
+    mem_limit: 4g
+    cpus: 2
+    pids_limit: 256
+    tmpfs: ["/tmp:size=512m,uid=1001,gid=1000,mode=1770"]
+    volumes: ["docling-credentials:/run/secrets:ro"]
+    depends_on:
+      bundle-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5002/health',timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 24
+      start_period: 60s
+
+  aktools:
+    image: ${SQUABBLE_AKTOOLS_IMAGE:-squabble-aktools:local}
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [tools, default]
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 128
+    tmpfs: ["/tmp:size=128m,uid=1000,gid=1000", "/home/aktools:size=32m,uid=1000,gid=1000"]
+    volumes: ["aktools-credentials:/run/secrets:ro"]
+    depends_on:
+      bundle-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health',timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 20s
+
+  analytics-image:
+    image: ${SQUABBLE_ANALYTICS_IMAGE:-squabble-analytics:local}
+    entrypoint: ["python", "-c", "import pandas, quantstats, backtrader"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=64m,uid=10001,gid=10001"]
+
+  sandbox:
+    image: ${SQUABBLE_SANDBOX_IMAGE:-squabble-sandbox:local}
+    restart: unless-stopped
+    environment:
+      SANDBOX_LISTEN_HOST: 0.0.0.0
+      SANDBOX_PORT: 8093
+      SANDBOX_TOKEN_FILE: /run/secrets/sandbox-token
+      SANDBOX_STATE_DIR: /var/lib/squabble-sandbox
+      SANDBOX_IMAGE: ${SQUABBLE_ANALYTICS_IMAGE:-squabble-analytics:local}
+    networks: [tools]
+    mem_limit: 256m
+    pids_limit: 128
+    volumes:
+      # Deliberately restricted to the trusted broker; never mounted in app/jobs.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sandbox-credentials:/run/secrets:ro
+      - sandbox-state:/var/lib/squabble-sandbox
+    depends_on:
+      bundle-init:
+        condition: service_completed_successfully
+      analytics-image:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8093/health').then(async r=>process.exit(r.ok&&(await r.json()).status==='ready'?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+networks:
+  tools:
+    internal: true
+
 volumes:
   dpa-data:
   settings-secrets:
   local-agents-data:
   update-backups:
+  research-artifacts:
+  sandbox-state:
+  capability-secrets:
+  docling-credentials:
+  aktools-credentials:
+  sandbox-credentials:

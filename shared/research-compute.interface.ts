@@ -3,6 +3,7 @@ import type { RuntimeDatasetSnapshotRef } from './research-runtime.interface';
 
 export interface ResearchComputeManifest {
   version: 1;
+  provider?: 'local-container' | 'e2b';
   runId: string;
   datasets: RuntimeDatasetSnapshotRef[];
   codeHash: string;
@@ -42,6 +43,7 @@ export interface ResearchBacktestRequest {
 
 export interface ResearchComputeResult {
   jobId: string;
+  provider?: 'local-container' | 'e2b';
   manifestHash: string;
   status: 'succeeded' | 'partial' | 'failed' | 'cancelled' | 'provider_unknown';
   verification: 'validated' | 'exploratory' | 'unverified';

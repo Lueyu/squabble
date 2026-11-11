@@ -1,0 +1,12 @@
+{
+  "platform": "linux/amd64",
+  "python": "3.12.15",
+  "image": "ghcr.io/docling-project/docling-serve-cpu@sha256:7b31b3c2efa17534dfcffb61665b71bbc959ad309b5b7ed82c3bbdcc63cc3d58",
+  "upstreamTagAtVerification": "v1.38.2",
+  "compressedLayerBytes": 2217541197,
+  "upstreamSourceCommit": "9c058dbb58f61021e3a16e37edb8a7527b2cb2d4",
+  "runtimeModelManifest": "/opt/squabble/model-manifest.json",
+  "runtimePackageManifest": "/opt/squabble/python-packages.txt",
+  "defaultOcr": { "engine": "rapidocr", "language": "iso:zh", "device": "cpu" },
+  "verified": "registry manifest and upstream build history; actual model execution is recorded separately"
+}
