@@ -9,7 +9,7 @@ export function materialState(state: DataLibraryState, zh: boolean) {
 }
 
 export function operationLabel(operation: DataFinancialOperation, zh: boolean) {
-  return ({ quote: ['行情', 'Quote'], 'daily-history': ['历史日线', 'Daily history'], financials: ['财报与基本面', 'Financials'], news: ['新闻', 'News'] })[operation][zh ? 0 : 1];
+  return ({ quote: ['行情', 'Quote'], 'daily-history': ['历史日线', 'Daily history'], financials: ['财报与基本面', 'Financials'], news: ['新闻', 'News'], 'trading-calendar': ['交易日历', 'Trading calendar'] })[operation][zh ? 0 : 1];
 }
 
 export function dataTime(value: string | null | undefined, language: string) {

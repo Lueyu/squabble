@@ -62,6 +62,8 @@ import { normalizeThread, freezeThreadContext, threadPromptContext, isPortfolioT
 import { readableResearch } from '../../../shared/research-reading';
 import { dailyResearchPrompt, dailyResearchTurns, renderDailyReverseCheck, reportExecutionEvidence } from './council.daily';
 import { createReportObservationPlan, parseReportExecutionPlan } from '../paper-trading/report-execution-plan';
+import { CouncilToolRuntimeService, ResearchRuntimeSuspended } from './council-tool-runtime.service';
+import type { CouncilRuntimeRecoveryInput } from '../../../shared/research-runtime.interface';
 
 type SessionRow = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 type ReportRow = typeof councilReports.$inferSelect;
@@ -87,6 +89,7 @@ export class CouncilService implements OnModuleInit {
     @Optional() private readonly memory?: ResearchMemoryService,
     @Optional() private readonly researchTools?: ResearchToolsService,
     @Optional() private readonly documents?: ResearchDocumentsService,
+    @Optional() private readonly toolRuntime?: CouncilToolRuntimeService,
   ) {
     this.workflow = new CouncilWorkflow(db, { llm, localAgents, memory, tools: researchTools,
       validateReferences: row => this.validatePinnedReferences(row),
@@ -103,6 +106,16 @@ export class CouncilService implements OnModuleInit {
     const interrupted = await this.db.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.status, 'running')));
     for (const row of interrupted) {
       const checkpoint = row.checkpoint;
+      const runtimePending = this.toolRuntime ? await this.toolRuntime.interrupted(row.owner, row) : [];
+      if (runtimePending.length) {
+        await this.db.update(councilSessions).set({ status: 'paused', checkpoint: { ...checkpoint!, inflight: undefined, runtimePending },
+          error: '研究运行已保存；请明确恢复原运行。 / Saved research run; explicitly recover the original run.', updatedAt: new Date() })
+          .where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
+        for (const pending of runtimePending) if (pending.attemptId) await this.db.update(councilMemberAttempts).set({ status: 'unknown',
+          failure: { code: `RUNTIME_${pending.state.toUpperCase()}`, stage: 'runtime', recoveries: [] }, updatedAt: new Date() })
+          .where(and(eq(councilMemberAttempts.owner, row.owner), eq(councilMemberAttempts.id, pending.attemptId)));
+        continue;
+      }
       if(checkpoint?.simple){
         const attempts=await new CouncilMemberAttemptsService(this.db).list(row.owner,row.id,checkpoint.cycleId);
         for(const attempt of attempts.filter(a=>['queued','running'].includes(a.status)))await this.db.update(councilMemberAttempts).set({
@@ -412,8 +425,11 @@ export class CouncilService implements OnModuleInit {
     const row = await this.db.transaction(async tx => {
       const [current] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,userId),eq(councilSessions.id,id))).for('update');
       if (!current) throw new NotFoundException('Council session not found');
+      const controlled = this.toolRuntime ? await tx.execute(sql`select id from agent_runtime_runs where owner=${userId}
+        and identity->>'sessionId'=${id} and identity->>'cycleId'=${current.checkpoint?.cycleId ?? ''}
+        and state not in ('accepted','cancelled','settled_unknown') limit 1`) : [];
       const checkpoint = current.checkpoint?.simple ? { ...current.checkpoint, simple: { ...current.checkpoint.simple, stopped: true } } : current.checkpoint;
-      const [paused] = await tx.update(councilSessions).set({ status:'paused', revision:current.revision+1, checkpoint, updatedAt:new Date() })
+      const [paused] = await tx.update(councilSessions).set({ status:'paused', revision:current.revision+(controlled.length ? 0 : 1), checkpoint, updatedAt:new Date() })
         .where(eq(councilSessions.id,id)).returning();
       if (checkpoint?.simple) await tx.update(councilMemberAttempts).set({ status:'unknown',
         failure:{code:'LOCAL_DISPATCH_UNCERTAIN',stage:'runtime',recoveries:['check_existing']},updatedAt:new Date() })
@@ -421,6 +437,12 @@ export class CouncilService implements OnModuleInit {
       return paused;
     });
     const attempts = await new CouncilMemberAttemptsService(this.db).list(userId,id,row.checkpoint?.cycleId);
+    await this.toolRuntime?.cancelSession(userId, id);
+    if (this.toolRuntime && row.checkpoint) {
+      const runtimePending = await this.toolRuntime.interrupted(userId, row);
+      await this.db.update(councilSessions).set({ checkpoint: { ...row.checkpoint, runtimePending } })
+        .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, id), eq(councilSessions.revision, row.revision)));
+    }
     for (const attempt of attempts.filter(a=>a.status==='unknown')) {
       if (attempt.taskId && attempt.resourceKey.startsWith('local:')) await this.localAgents?.cancelTask(userId,attempt.taskId).catch(()=>undefined);
       await this.settleStoppedAttempt(userId,attempt,attempt.dispatchStarted);
@@ -429,15 +451,36 @@ export class CouncilService implements OnModuleInit {
   }
 
   private async settleStoppedAttempt(owner:string, attempt:MemberAttempt, uncertain:boolean):Promise<void> {
+    if (uncertain && attempt.taskId && this.toolRuntime && /^[\da-f-]{36}$/iu.test(attempt.taskId)
+      && await this.toolRuntime.settled(owner, attempt.taskId)) uncertain = false;
     if (uncertain && attempt.resourceKey.startsWith('local:') && attempt.taskId && this.localAgents) {
       const task=await this.localAgents.store.task(owner,attempt.taskId).catch(()=>null);
       if(task&&['completed','failed','cancelled'].includes(task.state)&&task.error!=='LOCAL_DISPATCH_UNCERTAIN'
         &&!(task.error==='LOCAL_INTERRUPTED'&&(task.runtimeEntered||task.commandEmitted))) uncertain=false;
     }
     await new CouncilMemberAttemptsService(this.db).settleStopped(owner,attempt.id,uncertain);
+    if (!uncertain && attempt.taskId && this.toolRuntime) await this.db.transaction(async tx => {
+      const [session] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner),
+        eq(councilSessions.id, attempt.sessionId))).for('update');
+      if (session?.status !== 'paused' || !session.checkpoint?.simple?.stopped || !session.checkpoint.runtimePending?.length) return;
+      await tx.update(councilSessions).set({ checkpoint: { ...session.checkpoint,
+        runtimePending: session.checkpoint.runtimePending.filter(item => item.runId !== attempt.taskId) } })
+        .where(eq(councilSessions.id, session.id));
+    });
   }
 
   async recoverMember(owner:string,id:string,input:ResearchRecoveryInput):Promise<void>{
+    const current = await this.requireSession(owner, id);
+    if (input.runtimeTarget && ['check_existing', 'reparse_existing'].includes(input.action)) {
+      if (!current.checkpoint?.runtimePending?.some(item => item.memberId === input.memberId && item.runId === input.runtimeTarget!.runId)) {
+        throw new ConflictException('RUNTIME_TARGET_CHANGED');
+      }
+      return this.recoverRuntime(owner, id, { action: input.action as 'check_existing' | 'reparse_existing', requestKey: input.requestKey,
+        expectedRevision: input.expectedRevision, runtimeTarget: input.runtimeTarget });
+    }
+    if (input.runtimeTarget || current.checkpoint?.runtimePending?.some(item => item.memberId === input.memberId)) {
+      throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
+    }
     const reserved=await new CouncilRecoveryService(this.db).reserve(owner,id,input);
     if(!reserved.created||!reserved.attempt)return;
     const {session,attempt}=reserved;const store=new CouncilMemberAttemptsService(this.db);
@@ -486,8 +529,9 @@ export class CouncilService implements OnModuleInit {
           output={member,...parsed,tokens:selected!.tokensUsed,taskId:selected!.taskId??undefined,replyToMessageId:null,externalUsageUnknown:member.executionMode==='local'};
         }else{
           const automatic=active.checkpoint?.automaticTaskId??active.checkpoint?.simple?.automaticTaskId;
-          if(automatic)await new AutomaticResearchBudgetService(this.db).reserveCall(owner,automatic);
-          const counted=await this.db.update(councilSessions).set({checkpoint:sql`jsonb_set(${councilSessions.checkpoint},'{simple,calls}',to_jsonb(coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)+1))`})
+          const controlled = Boolean(this.toolRuntime && await this.toolRuntime.eligible(owner, assigned, member));
+          if(!controlled && automatic)await new AutomaticResearchBudgetService(this.db).reserveCall(owner,automatic);
+          const counted=controlled ? [{ id }] : await this.db.update(councilSessions).set({checkpoint:sql`jsonb_set(${councilSessions.checkpoint},'{simple,calls}',to_jsonb(coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)+1))`})
             .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,id),sql`coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)<12`)).returning({id:councilSessions.id});
           if(!counted.length)throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
           output=await this.runMember(owner,assigned,member,{memberId:member.id,phase:'opening'});
@@ -517,6 +561,32 @@ export class CouncilService implements OnModuleInit {
       }
     };
     if(input.action==='reparse_existing')await run();else{const job=run();this.jobs.set(`${owner}:${id}`,job);void job.finally(()=>{if(this.jobs.get(`${owner}:${id}`)===job)this.jobs.delete(`${owner}:${id}`);}).catch(()=>undefined);}
+  }
+
+  async recoverRuntime(owner: string, id: string, input: CouncilRuntimeRecoveryInput): Promise<void> {
+    if (!this.toolRuntime) throw new BadRequestException('RESEARCH_RUNTIME_UNAVAILABLE');
+    if (await this.toolRuntime.recover(owner, id, input)) {
+      const active = this.jobs.get(`${owner}:${id}`);
+      if (active) void active.then(() => this.launch(owner, id)).catch(() => this.logger.error('Saved runtime continuation could not launch'));
+      else this.launch(owner, id);
+    }
+  }
+
+  private async parkRuntime(owner: string, row: SessionRow, error: ResearchRuntimeSuspended): Promise<void> {
+    if (!this.toolRuntime) return;
+    const pending = await this.toolRuntime.pending(owner, error.runId);
+    await this.db.transaction(async tx => {
+      const [current] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt),
+        eq(councilSessions.owner, owner), eq(councilSessions.id, row.id))).for('update');
+      if (current?.status !== 'running' || current.revision !== row.revision
+        || current.checkpoint?.cycleId !== row.checkpoint?.cycleId) return;
+      const runtimePending = [...(current.checkpoint!.runtimePending ?? []).filter(item => item.runId !== pending.runId), pending];
+      await tx.update(councilSessions).set({ checkpoint: { ...current.checkpoint!, runtimePending }, updatedAt: new Date() })
+        .where(eq(councilSessions.id, row.id));
+      if (pending.attemptId) await tx.update(councilMemberAttempts).set({ status: 'unknown',
+        failure: { code: `RUNTIME_${pending.state.toUpperCase()}`, stage: pending.state === 'failed' ? 'parse' : 'runtime', recoveries: [] },
+        updatedAt: new Date() }).where(and(eq(councilMemberAttempts.owner, owner), eq(councilMemberAttempts.id, pending.attemptId)));
+    });
   }
 
   /** Controlled migration helper, deliberately absent from HTTP. Never dispatches a provider. */
@@ -558,6 +628,7 @@ export class CouncilService implements OnModuleInit {
   async runSession(userId: string, id: string, retryKeys?: ResearchTaskKind[]): Promise<CouncilSession> {
     this.assertId(id);
     const previous = await this.requireSession(userId, id);
+    if (previous.checkpoint?.runtimePending?.length) throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
     if (previous.checkpoint?.simple?.overallDaily && ['completed', 'failed', 'paused'].includes(previous.status)) {
       throw new ConflictException('OVERALL_DAILY_RESUME_REQUIRED');
     }
@@ -616,6 +687,7 @@ export class CouncilService implements OnModuleInit {
 
   async resumeDailyReport(owner: string, id: string, input: ResumeDailyReportInput): Promise<CouncilSession> {
     this.assertId(id);
+    if ((await this.requireSession(owner, id)).checkpoint?.runtimePending?.length) throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
     const result = await new CouncilReportResumeService(this.db, this.localAgents, row => this.validatePinnedReferences(row)).reserve(owner, id, input);
     if (result.created) {
       const active = this.jobs.get(`${owner}:${id}`);
@@ -883,8 +955,9 @@ export class CouncilService implements OnModuleInit {
         }
         const reparseExisting = Boolean(row.checkpoint.remote?.reparseExisting);
         const automaticTaskId = row.checkpoint.automaticTaskId ?? row.checkpoint.simple?.automaticTaskId;
-        if (!reparseExisting && automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(userId, automaticTaskId);
-        if (!reparseExisting && row.checkpoint.simple) {
+        const controlled = Boolean(this.toolRuntime && await this.toolRuntime.eligible(userId, row, member));
+        if (!controlled && !reparseExisting && automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(userId, automaticTaskId);
+        if (!controlled && !reparseExisting && row.checkpoint.simple) {
           if ((row.checkpoint.simple.calls ?? 0) >= 12) throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
           await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint}, '{simple,calls}', ${JSON.stringify((row.checkpoint.simple.calls ?? 0) + 1)}::jsonb)` })
             .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id)));
@@ -906,6 +979,13 @@ export class CouncilService implements OnModuleInit {
         }
       } catch (error) {
         if (claimId) await this.releaseTurn(userId, id, claimId);
+        if (error instanceof ResearchRuntimeSuspended) {
+          await this.parkRuntime(userId, row, error);
+          await this.db.update(councilSessions).set({ status: 'paused', error: '工具研究已暂停；请查看已保存状态。 / Tool research paused; review its saved state.' })
+            .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id),
+              eq(councilSessions.status, 'running'), eq(councilSessions.revision, row.revision)));
+          return;
+        }
         const current = await this.requireSession(userId, id);
         const code = error instanceof Error ? error.message : '';
         if (current.checkpoint?.simple?.stage === 'independent' && current.checkpoint.nextTurn === row.checkpoint?.nextTurn) {
@@ -975,6 +1055,9 @@ export class CouncilService implements OnModuleInit {
     const selected: Array<{ member: CouncilMember; attempt: MemberAttempt }> = [];
     for (const member of members) {
       if (selected.length >= 2) break;
+      const resuming = checkpoint.runtimePending?.find(item => item.memberId === member.id && item.resumeRequested && item.attemptId);
+      const original = resuming ? attempts.find(item => item.id === resuming.attemptId && item.status === 'running' && item.revision === row.revision) : undefined;
+      if (original) { selected.push({ member, attempt: original }); continue; }
       if (attempts.some(a => a.memberId === member.id) || submissions.some(s => s.memberId === member.id)
         || checkpoint.simple!.unavailable.some(u => u.memberId === member.id)) continue;
       const resourceKey = member.executionMode === 'local' ? `local:${member.agentId}` : `api:${member.connectionId ?? 'default'}`;
@@ -989,14 +1072,20 @@ export class CouncilService implements OnModuleInit {
       const assigned: SessionRow = { ...row, memberAttempt: attempt, checkpoint: { ...checkpoint, nextTurn: attempt.turn } };
       try {
         const automaticTaskId = checkpoint.automaticTaskId ?? checkpoint.simple?.automaticTaskId;
-        if (automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(owner, automaticTaskId);
-        const counted = await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint},'{simple,calls}',to_jsonb(coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)+1))` })
+        const controlled = Boolean(this.toolRuntime && await this.toolRuntime.eligible(owner, assigned, member));
+        if (!controlled && automaticTaskId) await new AutomaticResearchBudgetService(this.db).reserveCall(owner, automaticTaskId);
+        const counted = controlled ? [{ id: row.id }] : await this.db.update(councilSessions).set({ checkpoint: sql`jsonb_set(${councilSessions.checkpoint},'{simple,calls}',to_jsonb(coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)+1))` })
           .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner,owner),eq(councilSessions.id,row.id),eq(councilSessions.status,'running'),eq(councilSessions.revision,row.revision),
             sql`coalesce((${councilSessions.checkpoint}->'simple'->>'calls')::integer,0)<12`)).returning({id:councilSessions.id});
         if (!counted.length) throw new Error('AUTOMATIC_TASK_CALL_LIMIT');
         const output = await this.runMember(owner, assigned, member, { memberId: member.id, phase: 'opening' });
         if(!await this.acceptIndependentAttempt(owner, assigned, output))await this.settleStoppedAttempt(owner,attempt,false);
       } catch (error) {
+        if (error instanceof ResearchRuntimeSuspended) {
+          await this.parkRuntime(owner, assigned, error);
+          await this.settleStoppedAttempt(owner, await store.get(owner, attempt.id), true);
+          return;
+        }
         const latest = await store.get(owner, attempt.id);
         const parse = latest.rawText !== null; const failure = safeExecutionFailure(error, parse ? 'parse' : latest.dispatchStarted ? 'runtime' : 'preflight');
         await store.settle(owner, attempt.id, { status: failure.recoveries.includes('check_existing') ? 'unknown' : parse ? 'completed' : 'failed',
@@ -1006,6 +1095,13 @@ export class CouncilService implements OnModuleInit {
       }
     }));
     const latest = await store.list(owner,row.id,checkpoint.cycleId);
+    const pendingRuntime = (await this.requireSession(owner, row.id)).checkpoint?.runtimePending;
+    if (pendingRuntime?.length) {
+      await this.db.update(councilSessions).set({ status: 'paused', error: '工具研究已暂停；已保留其他股友完成的观点。 / Tool research paused; completed member views are retained.' })
+        .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, row.id),
+          eq(councilSessions.status, 'running'), eq(councilSessions.revision, row.revision)));
+      return false;
+    }
     const terminal = new Set([...submissions.map(s=>s.memberId), ...checkpoint.simple!.unavailable.map(u=>u.memberId),
       ...latest.filter(a=>['completed','failed','cancelled','skipped'].includes(a.status)).map(a=>a.memberId)]);
     if (latest.some(a=>a.status==='unknown')) {
@@ -1044,7 +1140,9 @@ export class CouncilService implements OnModuleInit {
         completedAt:new Date(),updatedAt:new Date(),tokensUsed:output.tokens})
         .where(eq(councilMemberAttempts.id,attempt.id));
       const simple=current.checkpoint.simple!;
-      await tx.update(councilSessions).set({updatedAt:new Date(),checkpoint:{...current.checkpoint,simple:{...simple,unavailable:simple.unavailable.filter(u=>u.memberId!==output.member.id)}}}).where(eq(councilSessions.id,row.id));
+      await tx.update(councilSessions).set({updatedAt:new Date(),checkpoint:{...current.checkpoint,
+        runtimePending: current.checkpoint.runtimePending?.filter(item => item.runId !== output.taskId),
+        simple:{...simple,unavailable:simple.unavailable.filter(u=>u.memberId!==output.member.id)}}}).where(eq(councilSessions.id,row.id));
       return true;
     });
   }
@@ -1081,6 +1179,7 @@ export class CouncilService implements OnModuleInit {
           memberId: output.member.id, executorIdentity: executor, contribution, evidence: output.sources ?? [],
           tokensUsed: output.tokens, taskId: output.taskId, externalUsageUnknown: output.externalUsageUnknown ? 'true' : null }).onConflictDoNothing();
         await tx.update(councilSessions).set({ updatedAt: new Date(), checkpoint: { ...checkpoint, inflight: undefined, remote: undefined,
+          runtimePending: checkpoint.runtimePending?.filter(item => item.runId !== output.taskId),
           nextTurn: checkpoint.nextTurn + 1 } }).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         return true;
       }
@@ -1097,6 +1196,7 @@ export class CouncilService implements OnModuleInit {
         memberName: output.member.name, revision: row.revision, tokensUsed: output.tokens, content: contribution.content,
         metadata: { cycleId: checkpoint.cycleId, turn: checkpoint.nextTurn, phase: turn.phase, memberId: output.member.id,
           ...publicMetadata, taskId: output.taskId, referenceSnapshot: row.references,
+          externalUsageUnknown: output.externalUsageUnknown,
           replyToMessageId: output.replyToMessageId, evidenceIds: contribution.evidenceIds,
           reasoningSummary: contribution.reasoningSummary, questions: contribution.questions, response: contribution.response } });
       if (output.member.executionMode === 'local') await tx.update(councilMessages).set({ metadata: {
@@ -1108,6 +1208,7 @@ export class CouncilService implements OnModuleInit {
       } }).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, row.id),
         sql`${councilMessages.metadata}->>'cycleId' = ${checkpoint.cycleId}`, sql`(${councilMessages.metadata}->>'turn')::int = ${checkpoint.nextTurn}`));
       let nextCheckpoint = { ...checkpoint, inflight: undefined, remote: undefined,
+        runtimePending: checkpoint.runtimePending?.filter(item => item.runId !== output.taskId),
         nextTurn: checkpoint.nextTurn + (turn.phase === 'summary' ? 0 : 1),
         pendingResearch: turn.phase === 'summary' ? [] : contribution.researchRequests };
       const correction = checkpoint.simple?.inputCorrection;
@@ -1251,6 +1352,25 @@ export class CouncilService implements OnModuleInit {
         return latest.status === 'running' && latest.revision === row.revision;
       } };
     const taskId = `model:${row.checkpoint!.cycleId}:${row.checkpoint!.nextTurn}:${row.revision}`;
+    if (this.toolRuntime && await this.toolRuntime.eligible(userId, row, member)) {
+      let contribution: DiscussionContribution | undefined;
+      const controlled = await this.toolRuntime.execute({ owner: userId, row, member, prompt, context: data,
+        evidence: row.checkpoint?.simple?.stage === 'independent' ? row.checkpoint.simple.commonEvidence ?? row.evidenceSnapshot : row.evidenceSnapshot,
+        shouldContinue: options.shouldContinue,
+        validate: async (text, sources) => {
+          if (row.memberAttempt) await new CouncilMemberAttemptsService(this.db).update(userId, row.memberAttempt.id, { rawText: text, dispatchStarted: true });
+          contribution = parseContribution(JSON.parse(text), new Set(sources.map(item => item.id)), turn, row.candidate);
+        },
+        activity: async (name, state) => this.recordActivity(userId, row, { id: randomUUID(), kind: 'task', status: state,
+          summary: row.language === 'en' ? `${name}: ${state}` : `${name}：${state === 'running' ? '正在执行' : state === 'succeeded' ? '已完成' : '未完成'}`,
+          at: new Date().toISOString(), taskId, sessionId: row.id, memberId: member.id, memberName: member.name,
+          turn: row.checkpoint!.nextTurn, revision: row.revision, sequence: 0 }),
+      });
+      if (!contribution) throw new Error('RUNTIME_CONTRIBUTION_NOT_VALIDATED');
+      return { member, taskId: controlled.runId, contribution, sources: controlled.sources, tokens: controlled.tokens,
+        externalUsageUnknown: controlled.usageUnknown,
+        replyToMessageId: data.conversation.at(-1)?.id ?? messages.filter(item => item.role === 'user').at(-1)?.id ?? null };
+    }
     const started = Date.now();
     const activity = (status: ResearchEvent['status'], summary: string) => this.recordActivity(userId, row, {
       id: randomUUID(), kind: 'task', status, summary, at: new Date().toISOString(), taskId, sessionId: row.id,

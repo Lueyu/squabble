@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import { Client } from 'pg';
 
 const url = process.env.EXPERIENCE_TEST_DATABASE_URL ?? process.env.RESEARCH_TEST_DATABASE_URL;
-const files = ['37_asset_ledger_integrity.sql', '39_user_investment_strategies.sql', '40_transaction_imports.sql', '41_portfolio_value_points.sql', '42_user_strategy_runtime.sql', '43_channel_workbench.sql', '44_strategy_draft_deletion.sql', '45_portfolio_workspace.sql', '46_strategy_interviews.sql', '47_portfolio_companions.sql','48_portfolio_history.sql', '49_research_deletions.sql', '50_data_library.sql', '51_browser_sources.sql', '52_agent_telemetry.sql'];
+const startup = [...readFileSync('server/common/platform/database.provider.ts', 'utf8').matchAll(/'(\d\d_[^']+\.sql)'/gu)].map(match => match[1]);
+const files = startup.slice(startup.indexOf('37_asset_ledger_integrity.sql'));
 const identifier = (name: string) => '"' + name.replaceAll('"', '""') + '"';
 
 test('fresh install and repeated asset/report/strategy upgrades have identical catalogs and preserve existing ledgers', { skip: !url }, async () => {

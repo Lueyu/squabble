@@ -44,7 +44,8 @@ const context = z.discriminatedUnion('kind', [z.object({ kind: z.literal('portfo
   z.object({ kind: z.literal('stock'), ticker: z.string().trim().min(1).max(120) }).strict(),
   z.object({ kind: z.literal('report'), documentId: z.uuid() }).strict(), z.object({ kind: z.literal('decision'), orderId: z.uuid() }).strict()]);
 const skillId = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u).nullable().optional();
-const createSchema = z.object({ message, requestKey: key, context: context.optional(), skillId }).strict();
+const createSchema = z.object({ message, requestKey: key, context: context.optional(), skillId,
+  toolPolicy: z.strictObject({ webResearch: z.boolean() }).optional() }).strict();
 const messageSchema = z.object({ message, requestKey: key, replyTo: z.uuid().optional(), skillId }).strict();
 const renameSchema = z.object({ title: z.string().trim().min(1).max(160), requestKey: key }).strict();
 type InternalOptions = { automaticTaskId?: string; researchOnly?: boolean;
@@ -151,7 +152,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
         automaticTaskId: options.automaticTaskId,researchOnly:options.researchOnly,overallDaily,initializing,skills };
       const config = normalizeBuilderConfig({ name: 'Research conversation', template: 'guard', tickers: [frozen.ticker], minimumRating: 'Buy',
         customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1, notifyOnProposal: false, priceRules: [], language: 'zh-CN' });
-      config.council = { enabled: true, members, webResearch: false };
+      config.council = { enabled: true, members, webResearch: value.toolPolicy?.webResearch === true };
       const [session] = await tx.insert(councilSessions).values({ owner, profileVersion: 1, profileSnapshot: config,
         ticker: frozen.ticker, scene: frozen.scene, title: overallInput ? frozen.label : [...value.message].slice(0, 48).join(''), subject: value.message.slice(0, 240),
         references: frozen.references, resolvedReferences: frozen.resolvedReferences, evidenceSnapshot: frozen.evidence,
@@ -193,6 +194,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       revision:row.revision,tokensUsed:item.tokensUsed,createdAt:item.submittedAt.toISOString(),actualExecutor:item.executorIdentity,phase:'opening',cycleId:item.cycleId,
       response:item.contribution.response,claims:item.contribution.claims,evidenceIds:item.contribution.evidenceIds,externalUsageUnknown:item.externalUsageUnknown==='true'}));
     return { ...session, mode: sources.size > 1 ? 'team' : sources.size ? 'single' : 'unavailable', actualExecutors,
+      runtimePending: row.checkpoint?.runtimePending,
       skills: simple?.skills?.map(({ id, version }) => ({ id, version, title: researchSkillTitle(id, row.language) })),
       initializing:simple?.initializing===true,
       messages:[...session.messages,...preliminary],
@@ -221,6 +223,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       if (!row) throw new NotFoundException('Research conversation not found');
       const [prior] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
       if (prior) { this.same(prior.inputHash, inputHash); return false; }
+      if (row.checkpoint?.runtimePending?.length) throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
       if (row.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
       const selectedId = row.checkpoint?.simple?.skills?.at(-1)?.id ?? null;
       if (row.status === 'running' && value.skillId !== undefined && value.skillId !== selectedId) {
@@ -354,8 +357,17 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
   }
   async recover(owner:string,id:string,input:ResearchRecoveryInput){
     parse(z.uuid(),id);
-    const value=parse(z.object({memberId:z.string().min(1).max(100),action:z.enum(['check_existing','reparse_existing','retry_member','fix_configuration']),requestKey:key,expectedRevision:z.number().int().min(1)}).strict(),input);
+    const value=parse(z.object({memberId:z.string().min(1).max(100),action:z.enum(['check_existing','reparse_existing','retry_member','fix_configuration']),requestKey:key,expectedRevision:z.number().int().min(1),
+      runtimeTarget: z.strictObject({ runId: z.uuid(), stepId: z.uuid().optional(), expectedCursor: z.number().int().min(0) }).optional() }).strict(),input);
     await this.council.recoverMember(owner,id,value);return this.get(owner,id);
+  }
+  async recoverRuntime(owner: string, id: string, input: import('../../../shared/research-runtime.interface').CouncilRuntimeRecoveryInput) {
+    parse(z.uuid(), id);
+    const value = parse(z.strictObject({ action: z.enum(['check_existing', 'resume_approval', 'reparse_existing', 'close_unknown']),
+      requestKey: key, expectedRevision: z.number().int().min(1), runtimeTarget: z.strictObject({
+        runId: z.uuid(), stepId: z.uuid().optional(), expectedCursor: z.number().int().min(0) }) }), input);
+    await this.council.recoverRuntime(owner, id, value);
+    return this.get(owner, id);
   }
   async resumeReport(owner: string, id: string, input: ResumeDailyReportInput): Promise<ResearchConversationView> {
     parse(z.uuid(), id);

@@ -41,7 +41,7 @@ export function responseGuidance(language: string): string {
 }
 
 export function newCheckpoint(members: CouncilMember[], options?: { independent?: boolean }): CouncilCheckpoint {
-  if (options?.independent) return { cycleId: randomUUID(), turns: members.map(member => ({ memberId: member.id, phase: 'opening' })),
+  if (options?.independent) return { toolRuntimeVersion: 1, cycleId: randomUUID(), turns: members.map(member => ({ memberId: member.id, phase: 'opening' })),
     nextTurn: 0, toolKindsUsed: [], pendingResearch: [],
     simple: { stage: members.length ? 'independent' : 'waiting', supplementRounds: 0, executors: [], unavailable: [] } };
   const reviewers = members.filter((member) => member.role !== 'manager');
@@ -52,7 +52,7 @@ export function newCheckpoint(members: CouncilMember[], options?: { independent?
   // With only two people the moderator also asks the independent challenge.
   if (reviewers.length === 1) turns.push({ memberId: manager.id, phase: 'challenge' });
   turns.push({ memberId: reviewers[0].id, phase: 'response' }, { memberId: manager.id, phase: 'summary' });
-  return { cycleId: randomUUID(), turns, nextTurn: 0, toolKindsUsed: [], pendingResearch: [] };
+  return { toolRuntimeVersion: 1, cycleId: randomUUID(), turns, nextTurn: 0, toolKindsUsed: [], pendingResearch: [] };
 }
 
 export function discussionPrompt(turn: DialogueTurn, language: 'zh-CN' | 'en', hasCandidate: boolean): string {

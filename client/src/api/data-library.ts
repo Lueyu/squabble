@@ -4,7 +4,7 @@ import type {
   DataBrowserStatus, DataFinancialTestResult, DataLibraryFileUpload, DataLibraryList, DataLibrarySource,
   DataLibrarySourceCreate,
   DataLibrarySourceDetail, DataLibrarySourceKind, DataLibrarySourceUpdate, DataLibrarySyncJob,
-  DataLibrarySyncResult, DataLibraryVersion,
+  DataLibrarySyncResult, DataLibraryVersion, DataDocumentStatus,
 } from '@shared/data-library.interface';
 
 const base = '/api/data-library';
@@ -23,6 +23,13 @@ export const dataLibraryApi = {
   remove: async (id: string) => (await http.delete(sourcePath(id))).data,
   upload: async (input: DataLibraryFileUpload) => (await http.post(`${base}/files`, input)).data,
   file: async (id: string) => (await http.get<Blob>(`${sourcePath(id)}/file`, { responseType: 'blob' })).data,
+  documentStatus: async (id: string, versionId?: string) =>
+    (await http.get<DataDocumentStatus>(`${sourcePath(id)}/document`, { params: { versionId } })).data,
+  reparseDocument: async (id: string, extractor: string) =>
+    (await http.post(`${sourcePath(id)}/document/reparse`, { extractor })).data,
+  cancelDocument: async (id: string) => (await http.post(`${base}/document-jobs/${encodeURIComponent(id)}/cancel`)).data,
+  artifact: async (id: string) => (await http.get<Blob>(`/api/research-artifacts/${encodeURIComponent(id)}/download`, { responseType: 'blob' })).data,
+  dataset: async (id: string) => (await http.get<Blob>(`${base}/datasets/${encodeURIComponent(id)}/download`, { responseType: 'blob' })).data,
   sync: async (id: string) => (await http.post<DataLibrarySyncResult>(`${sourcePath(id)}/sync`, {}, { timeout: 90000 })).data,
   browserStatus: async (id: string) => (await http.get<DataBrowserStatus>(`${sourcePath(id)}/browser`)).data,
   openBrowser: async (id: string) =>

@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "engineAcceptance": "not_run",
+  "fontSha256": "9b1959db3b3abeb7efdaec26edf7dfe871a6039de8d614af7248575207be629e",
+  "cases": [
+    {
+      "file": "01-english.pdf",
+      "sha256": "a548de9e4e0a4ecce3fb0cc93d9c1917cdb26efb87888f047928e186d1358b5c",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "1200",
+        "2025"
+      ],
+      "flags": [],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "02-minus.pdf",
+      "sha256": "96dc3596b972dc9687ed73c2cb61510edc195f3bb954b88f6ea35b4c2a2b9611",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "-120.50",
+        "2024"
+      ],
+      "flags": [
+        "negative"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "03-parentheses.pdf",
+      "sha256": "88107cb8ebe978168806533cd47cde392f2059956c0a95f1f36ddace2d3968c8",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "(120.50)",
+        "millions"
+      ],
+      "flags": [
+        "parenthesized_negative"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "04-zero.pdf",
+      "sha256": "80ee706e1fa8868a775e8a61b40adba748897670a7982299d36e50e2331afe04",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "0"
+      ],
+      "flags": [
+        "zero_is_known"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "05-decimals.pdf",
+      "sha256": "0e9c8e118273ddf9a7d539c4492dcc1730963e2bbfe359c5127a815a084c01c8",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "10000000000000001.23",
+        "0.00001"
+      ],
+      "flags": [
+        "precision"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "06-rotated.pdf",
+      "sha256": "99c6a49fbfdb190a0d08f78c5359b833127d070ade809a0e1eae712fc8352203",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "250"
+      ],
+      "flags": [
+        "rotation_90"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "07-year.pdf",
+      "sha256": "3b216a96a440b0fc88d5953fcaf0eb233bccdf933a36705d92a060365a8b022f",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "2023",
+        "2024",
+        "2025",
+        "100",
+        "90",
+        "110"
+      ],
+      "flags": [
+        "year_columns"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "08-total.pdf",
+      "sha256": "1662e8e2740a2dd1a788df53f2d699e3d0b696c5c0dd6893fca61c8a267e540b",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "10",
+        "20",
+        "30"
+      ],
+      "flags": [
+        "total_verified_by_gold"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "09-bad-total.pdf",
+      "sha256": "ff2f257bbbcfd6b3768f405a79e2e94746dec7dc618e7fec8928c931b4e956e8",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "10",
+        "20",
+        "35"
+      ],
+      "flags": [
+        "total_discrepancy_preserve_original"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "10-printed-label.pdf",
+      "sha256": "ddea4f687aabaaa039ab05745bd847859e900506c39c4df3a2708b1361ed152b",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "iii",
+        "40"
+      ],
+      "flags": [
+        "physical_page_1_printed_iii"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "11-cross-page.pdf",
+      "sha256": "bcc0575cda70c4d3dc40120e5a14dbdce44572b1af05e84734daac577d93520b",
+      "kind": "digital_pdf",
+      "expectedText": [
+        "2025",
+        "10",
+        "20",
+        "30"
+      ],
+      "flags": [
+        "cross_page_table",
+        "2_physical_pages"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "12-chinese-scan.pdf",
+      "sha256": "f209337caf8878fd67ea147984cd4f0516f52d30ddeef8fc73cfa528541d2e75",
+      "kind": "scanned_pdf",
+      "expectedText": [
+        "2025",
+        "120",
+        "20",
+        "万元"
+      ],
+      "flags": [
+        "chinese_ocr",
+        "unit"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "13-scan-minus.pdf",
+      "sha256": "1fa9d00d976fd76a272568d31f1b05445af38d14f24eb4a1f19a3bc246210ba6",
+      "kind": "scanned_pdf",
+      "expectedText": [
+        "125.50",
+        "万元",
+        "2024"
+      ],
+      "flags": [
+        "unicode_minus",
+        "chinese_ocr"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "14-scan-rotated.pdf",
+      "sha256": "6d8174e3a8b017d4bb8ed1c53816bc3f4e0107ec3f6b4da02d9afd15f7185304",
+      "kind": "scanned_pdf",
+      "expectedText": [
+        "300",
+        "万元"
+      ],
+      "flags": [
+        "rotated_scan",
+        "chinese_ocr"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "15-paragraph.docx",
+      "sha256": "4aab0094153e960311a23c621bd7f5c20a3db0e77f48cb8e7b92cbc3824b14f6",
+      "kind": "docx",
+      "expectedText": [
+        "自制段落样本 2025 年 收入 600 万元"
+      ],
+      "flags": [
+        "element_ids_no_physical_pages"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "16-table.docx",
+      "sha256": "2b0813da825c5f85e06eed9840beac41333003272a9afdb0cb050f57c8001512",
+      "kind": "docx",
+      "expectedText": [
+        "Fictional table with stable cells"
+      ],
+      "flags": [
+        "element_ids_no_physical_pages"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "17-signs.docx",
+      "sha256": "d62bea6fb48f9488946cd578ffd82bc19a8f70c11d56a655c3985b1e3cdbaa24",
+      "kind": "docx",
+      "expectedText": [
+        "Loss (75.25) USD million; cash -12.50"
+      ],
+      "flags": [
+        "element_ids_no_physical_pages"
+      ],
+      "expectedState": "parsed",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "18-encrypted.pdf",
+      "sha256": "b80427ebfe06541664490c2943522a1c01432bde2c08c5297f55e7c6d7b53b67",
+      "kind": "pdf",
+      "expectedText": [],
+      "flags": [
+        "encrypted"
+      ],
+      "expectedState": "rejected_or_password_required",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "19-corrupt.pdf",
+      "sha256": "c8eb69382583fc4b64d6763a25c98c7305a14f152c91ca3800360bbe75d09d68",
+      "kind": "pdf",
+      "expectedText": [],
+      "flags": [
+        "corrupt"
+      ],
+      "expectedState": "rejected",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    },
+    {
+      "file": "20-oversized.pdf",
+      "sha256": "38e6425a4cafde79002c2ae16e48fcecff927ac783daafcd21fe294e3ebe5c10",
+      "kind": "pdf",
+      "expectedText": [],
+      "flags": [
+        "over_8_mib"
+      ],
+      "expectedState": "rejected_before_upload",
+      "engineMeasured": false,
+      "license": "CC0-1.0"
+    }
+  ]
+}

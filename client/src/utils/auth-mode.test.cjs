@@ -160,6 +160,7 @@ test('local settings hides account security on desktop and mobile and redirects 
   for (const mode of ['local', 'account']) {
     const imports = { react, 'react/jsx-runtime': { jsx, jsxs: jsx }, 'react-i18next': language,
       '@/api/auth-mode': { getAuthMode: () => mode }, './settings-navigation': navigation,
+      '@/features/tool-connections/tool-connection-copy': { useToolConnectionCopy: () => ({ title: 'Tools', description: 'Tools settings' }) },
       '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
       'react-router-dom': { NavLink: 'NavLink', useNavigate: () => () => {} },
     };

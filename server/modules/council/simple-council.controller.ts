@@ -25,6 +25,10 @@ export class ResearchConversationsController {
   @NeedLogin() @Get(':id') get(@Req() request: Request, @Param('id') id: string) { return this.conversations.get(request.userContext.userId, id); }
   @NeedLogin() @Post(':id/messages') message(@Req() request: Request, @Param('id') id: string, @Body() input: ResearchConversationMessageInput) { return this.conversations.addMessage(request.userContext.userId, id, input); }
   @NeedLogin() @Post(':id/recovery') recovery(@Req() request:Request,@Param('id') id:string,@Body() input:ResearchRecoveryInput){return this.conversations.recover(request.userContext.userId,id,input);}
+  @NeedLogin() @Post(':id/runtime-recovery') runtimeRecovery(@Req() request: Request, @Param('id') id: string,
+    @Body() input: import('../../../shared/research-runtime.interface').CouncilRuntimeRecoveryInput) {
+    return this.conversations.recoverRuntime(request.userContext.userId, id, input);
+  }
   @NeedLogin() @Post(':id/resume-report') resumeReport(@Req() request: Request, @Param('id') id: string, @Body() input: ResumeDailyReportInput) {
     return this.conversations.resumeReport(request.userContext.userId, id, input);
   }

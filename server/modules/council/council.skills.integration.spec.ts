@@ -184,7 +184,8 @@ test('chat skill choice is pinned, idempotent, submitted to real execution and l
       resourceKey: 'local:fixture', inputHash: 'fixture-hash', inputSnapshot: {}, status: 'running' }).returning();
     const parallelScope = { ...scope, revision: row.revision, memberId: secondMember.id, turn: 1, attemptId: attempt.id };
     const available = await tools.bundle(owner, parallelScope);
-    assert.deepEqual(available.descriptors.map(tool => tool.name).sort(), ['search_data_library', 'read_browser_source', 'get_discussion_context', 'get_research_memory'].sort());
+    assert.deepEqual(available.descriptors.map(tool => tool.name).sort(), ['search_data_library', 'read_browser_source',
+      'get_discussion_context', 'get_research_memory', 'get_portfolio_quotes', 'get_portfolio_financials'].sort());
     assert.equal((await tools.call(other, parallelScope, { callId: 'foreign-attempt', name: 'get_discussion_context', arguments: {} })).status, 'cancelled');
     await db.update(councilMemberAttempts).set({ status: 'completed' }).where(eq(councilMemberAttempts.id, attempt.id));
     assert.equal((await tools.call(owner, parallelScope, { callId: 'closed-attempt', name: 'get_discussion_context', arguments: {} })).status, 'cancelled');

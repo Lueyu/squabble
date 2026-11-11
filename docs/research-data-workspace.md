@@ -22,7 +22,10 @@ The request and execution attempt pin the selected version. A running attempt
 cannot quietly switch its skill. The chat shows public research summaries, actual
 tool receipts and skill-loading records. API snapshot mode does not invent native
 tool calls; absence of a tool record is not represented as a successful call.
-Private model reasoning is not exposed or reconstructed.
+Private model reasoning is not exposed or reconstructed. Explicitly enabled API
+tool mode now records durable model steps, tool receipts and external-action
+approvals. Snapshot-only connections retain their existing behavior. Configure
+outbound capabilities in `/settings/tools`; see [tool operations](agent-tooling.md).
 
 Strategy interviews preserve the user's original wording, clarifying answers and
 accepted revisions. A strategy saved in the sidebar is a draft. Applying it still
@@ -34,7 +37,7 @@ requires an explicit account, a fresh preview and the existing confirmation fenc
 The former `/settings/data` address redirects to Financial sources.
 
 - **Library:** write a page, add a website or upload text, HTML, JSON, RSS/Atom,
-  PPTX and PNG/JPEG/WebP files. Files are limited to 8 MiB; web responses to 4 MiB.
+  PPTX, PDF, DOCX and PNG/JPEG/WebP files. Files are limited to 8 MiB; web responses to 4 MiB.
   Original files and immutable extracted versions are retained. Select a version
   before choosing **Research this version**. Editing a page makes a new version;
   an uploaded text file remains an original attachment.
@@ -51,7 +54,10 @@ The former `/settings/data` address redirects to Financial sources.
   fundamentals, and Alpha Vantage end-of-day quotes/history expose their actual
   supported operations. Save credentials and test or query in place. Provider
   timestamps, coverage and errors accompany results. Alpha Vantage is not used as
-  a real-time execution-price source.
+  a real-time execution-price source. Optional Tushare and owner-approved AKTools
+  MCP add explicitly supported market/exchange queries. Complete immutable
+  dataset rows are saved before a labelled preview is returned; its sample is
+  not the calculation input. Provider coverage remains explicit.
 
 Images are stored without OCR. Their user-written descriptions can be searched;
 the app does not claim to have read pixels. PPTX text preserves slide locations.
@@ -59,6 +65,13 @@ HTML is rendered as text, never as executable source markup. Site acquisition
 checks public DNS/IP addresses on every redirect, pins the resolved address for
 the request, bounds time/bytes and never forwards credentials to another origin.
 Write-only credentials are encrypted separately and never become research evidence.
+
+PDF/DOCX parsing is an asynchronous optional local Docling/MinerU job. Missing
+engines remain visibly unconfigured. Parse status, numeric-validation status and
+original text are distinct. PDF references use physical pages and printed labels;
+DOCX uses element identifiers without fabricated page numbers. Text/locator
+previews do not claim rendered page-image coverage. Exact source versions and
+content hashes follow datasets, private artifacts and later computations.
 
 The library uses PostgreSQL for originals, versions and a search index. It does
 not require a separate vector database. This implementation makes no claim about
@@ -85,3 +98,7 @@ report and memory paths must preserve the same source dependencies.
 图片保存原件和说明，不冒充已完成 OCR；网站邮箱密码登录需要适配实际登录流程，
 不能把它当作 HTTP Basic。定时同步要求应用保持运行。金融数据覆盖范围与延迟以返回
 结果和供应商权限为准；日终报价不会被标成实时行情。
+
+PDF/DOCX 原件可先保存，再由可选本地解析服务异步处理。未配置引擎会明确显示不可用；
+解析与数字核对分别展示。PDF 区分物理页与印刷页码，DOCX 使用元素定位，不编造页码。
+工具连接、外发权限及写入确认在“设置 → 工具”管理，配置或查看页面不会自动调用模型。

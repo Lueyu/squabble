@@ -9,6 +9,10 @@ import { LocalAgentsModule } from '../local-agents/local-agents.module';
 import { ResearchDocumentsModule } from '../research-documents/research-documents.module';
 import { SimpleCouncilService } from './simple-council.service';
 import { DataLibraryModule } from '../data-library/data-library.module';
+import { ResearchRuntimeModule } from '../research-runtime/research-runtime.module';
+import { ToolConnectionsModule } from '../tool-connections/tool-connections.module';
+import { CouncilToolRuntimeService } from './council-tool-runtime.service';
+import { ToolActionsModule } from '../tool-actions/tool-actions.module';
 import {
   ResearchConversationsController,
   ResearchExecutionController,
@@ -24,13 +28,16 @@ import {
     ResearchToolsModule,
     ResearchDocumentsModule,
     DataLibraryModule,
+    ResearchRuntimeModule,
+    ToolConnectionsModule,
+    ToolActionsModule,
   ],
   controllers: [
     CouncilController,
     ResearchConversationsController,
     ResearchExecutionController,
   ],
-  providers: [CouncilService, SimpleCouncilService],
+  providers: [CouncilService, SimpleCouncilService, CouncilToolRuntimeService],
   exports: [CouncilService, SimpleCouncilService],
 })
 export class CouncilModule {}

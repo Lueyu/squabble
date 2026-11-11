@@ -1,10 +1,10 @@
 # Squabble Agent 工具体系设计审阅稿
 
-状态：待用户审阅。日期：2026-11-11（Asia/Shanghai）。代码基线：main `f077b3ee4b719d043db53bb3f132e985ef32a12a`。
+状态：用户已授权实施、测试后合并及本地部署；本次审查修正纳入实施契约。日期：2026-11-11（Asia/Shanghai）。原设计代码基线：main `f077b3ee4b719d043db53bb3f132e985ef32a12a`，实际实施以实施分支的 main 基线及锁文件为准。
 
 本文定义外部模型 API 驱动研究 Agent 所需的运行层、工具连接、金融数据、文档解析、计算、浏览器与外部应用能力。用户已选择**混合部署**：资料、PDF、浏览器会话尽量留在本地；搜索、计算沙箱和应用连接使用成熟云服务。完整范围包含本次讨论的所有能力，按阶段验收，避免一次切换全部研究流程。
 
-配套文档：[开发计划](../plans/2026-11-11-agent-tooling-implementation.md)。本稿获审阅通过后才进入实现；服务采购、真实账号授权、生产切换和实盘交易不由本文代替授权。
+配套文档：[开发计划](../plans/2026-11-11-agent-tooling-implementation.md)、[审查处理记录](../review-resolution.md)。用户已同意实施，并授权完成测试后合并及本地部署。服务采购、真实账号授权、真实付费样本和实盘交易仍须各自已有的明确授权，不能从代码实施授权推导。
 
 ## 1. 产品目标和完成定义
 
@@ -127,6 +127,8 @@ flowchart TD
 
 默认后端用 AI SDK 适配模型消息、工具 schema 和流式结果；每次只执行一个模型 step。数据库运行器控制多 step、工具执行、预算、取消和恢复，关闭 SDK 隐式重试，不开启第二个不受控自动执行循环。
 
+一个模型 step 严格对应一个实际模型 HTTP 请求和一个 dispatchKey。工具内部需要模型时建立独立 child dispatch，不能在同 step 中暗藏第二次请求。SDK 的 tool.execute、toolApproval 和自动多步循环均关闭；所有工具执行及写入审批只能在运行器 dispatch 入口拦截。不能接受供应商代执行的写工具，因为它绕过本地预览、审批和唯一派发权。
+
 Deep Agents 作为后续独立 runtime driver，使用其支持的 LangChain 模型适配。单次 run 冻结一种 driver，不能把 AI SDK 循环嵌进 Deep Agents 再套一层 Council 自动循环。其计划、子 Agent、文件上下文可复用，但每次模型调用和工具调用仍须穿过相同预算与授权入口；子 Agent 只能得到父 run 的权限子集，不能自行读取全局 MCP 或宿主机目录。
 
 如 driver 无法在实际发送前拦截计费请求、禁用隐藏重试、限制子任务和绑定来源，则该连接显示不支持受控执行，不能仅因框架演示能运行就启用。Deep Agents 的兼容验收属于完整计划，不以默默降级代替交付。
@@ -168,6 +170,7 @@ export interface AgentToolDescriptor {
 
 - Run 绑定 owner、session、cycle、revision、member、turn、executionAttempt、driver 和 frozenInputHash。
 - 单股研究允许自身证券及明确申请的有限同行；组合研究绑定冻结持仓清单、账户与现金范围，可逐只查询。不得因为 ticker 是 PORTFOLIO 而完全禁用行情/财报，也不得允许任意工具读取全用户账户。
+- 冻结输入包含 datasetVersionIds、每版内容 hash，以及完整持仓、现金和来源事实的私有 payload 快照及 hash；证券代码清单仅是工具权限范围，不能代替数值快照。frozenInputHash 绑定整个快照（含版本引用），恢复和计算使用同一内容。
 - 搜索 query 允许实体名、公开主题和经批准的资料摘录；完整持仓、私密笔记和账号标识不会被默认拼入外部搜索。
 - 每次工具开始及最终归档/发布前，复验 owner、来源启停/删除、精确版本、session revision、租约 token、权限修订和预算。
 - 独立研究成员互不读取未解封的观点；共享公共事实缓存可复用，另一成员的判断不能作为自己的独立原始证据。
@@ -179,6 +182,8 @@ API运行结束后，服务端按run/attempt重新读取本成员工具产生的
 每个模型连接保存能力记录：普通文本、JSON、原生工具调用、并行工具调用、结构化输出、取消/查询支持、最近验证时间和验证方法。配置里的模型名称不构成验证。
 
 无原生工具能力的连接可保留旧文本研究。受控 JSON-action 适配仅对经过契约测试的连接显式启用，采用同样的 schema、权限和调用上限，不能通过执行模型输出的任意文本模拟工具。
+
+JSON-action 使用固定的 final/tool_calls 联合格式。非法 JSON、非法 action schema、未知工具、非法参数和重复 toolCallId 均先保存原响应，再形成带稳定调用身份的结构化 tool-result；可识别的模型 callId 保留，无法识别时采用本 step 固定的服务端合成身份。重复 callId 拒绝整个歧义批次。反馈只能进入下一次显式、有界、重新检查预算的模型 step，不启动隐藏 JSON 修复请求，不把协议错误当成远端工具已执行。
 
 网络/认证发现不启动研究；模型工具兼容样本会消耗模型调用，必须由用户显式启动并展示预算。生产启用前至少有一次该连接的工具往返验证，离线假供应商通过不冒充真实兼容。
 
@@ -192,22 +197,31 @@ stateDiagram-v2
     queued --> running
     running --> waiting_approval
     waiting_approval --> running: 有效确认
+    waiting_approval --> waiting_approval: 编辑预览，更新 revision/hash
     waiting_approval --> cancelled: 拒绝或过期
     running --> provider_unknown: 已发送但结果未知
     provider_unknown --> result_received: 查询或迟到结果核验
     provider_unknown --> failed: 已确认远端终止
+    provider_unknown --> settled_unknown: 用户关闭，费用仍未知
     running --> result_received
     result_received --> accepted: 本地校验与归档
     result_received --> failed: 内容无效但保留原结果
+    result_received --> cancelled: 归档前停止
+    failed --> result_received: 已存响应本地重解析并追加审计
     running --> cancelling
     cancelling --> cancelled: 确认结束
     cancelling --> provider_unknown: 远端状态未确认
     accepted --> [*]
     failed --> [*]
     cancelled --> [*]
+    settled_unknown --> [*]
 ```
 
 区分 provider 完成、结果已收到、本地接受和报告发布。模型已经回答而本地解析失败，可从已存结果重新解析，不产生新的供应商请求。
+
+failed 仅在已存完整响应且新增解析审计时允许本地 reparse，不能转回 running 重发原请求。settled_unknown 表示用户工作流已关闭，不表示供应商结果或费用已确认；保留旧预留，迟到账单可追加幂等修正，但不能重新发布结果。所有取消意图持久保存；未知调用迟到成功只保存受保护的结果和结算事实，不清除停止意图。
+
+预览正文、收件人或附件的本地编辑在 waiting_approval 自环完成，生成新 revision/hash、清除旧确认并重新开始有效期，不重跑模型。实际改变研究目标需要新的模型 step 和派发身份。混合只读与写入批次先执行合规的只读调用并保存各自 receipt，再停放写入；恢复确认只执行获批写入，已保存的只读调用（含失败/partial）不自动重跑。
 
 | 拟新增/扩展记录 | 关键字段及唯一性 |
 |---|---|
@@ -230,9 +244,11 @@ P1运行日志使用数据库内有界的私有文本/JSON保存模型请求、�
 
 当前存在模型 token 预算、自动研究调用次数和会话次数限制；它们不是重复收费，但每个真实模型 HTTP 调用必须在各自约束下只计一次。新运行路径在统一 dispatch 事务中写唯一 dispatchKey、预留费用与调用额度，取消外层旧 turn 对该路径的重复计数；旧路径保持既有语义。
 
+“外层重复计数”仅指同一真实请求的冗余记账，不取消独立的 token、自动研究和会话限制。模型 reserve 以 owner+dispatchKey 唯一，同 key 同 requestHash 复用原 receipt，同 key 改参冲突。每次工具 invocation 独立预留，available = limit - settled - sum(in-flight reservations)；未知及 settled_unknown 调用仍占原预留，只有提供方事实才能结算或释放。原币种不同的金额不得直接相加。
+
 每一次模型 step 都是独立计费请求，不按一个成员 turn 只记一次。输入预算包括工具schema、tool-call与tool-result消息，不只统计文本content。模型输出多个只读工具请求可有界并行；工具自身再调用模型时必须建立 child dispatch 并计入总额度。
 
-工具用量与模型 token 分开记账，支持按次数、credits、秒和资源计费。保留计费原币种，只有采用明确汇率和时点时才做展示换算；未知价格/用量显示未知，不计作零。禁止因一次请求失败自动换供应商再付费。
+工具用量与模型 token 分开记账，支持按次数、credits、秒和资源计费。保留计费原币种，只有采用明确汇率和时点时才做展示换算；未知价格/用量显示未知，不计作零。fallback 只能来自明确配置且对用户可见的独立路由；每次调用使用新派发身份并重新检查预算，不允许错误触发的自动换供应商付费。旧 unknown 请求及可能费用继续保留。
 
 预算分为供应商实际强制的上限、本地按价格估算的预留和调用次数/页数/秒数等操作额度。连接没有可靠金额上界时，只能在用户明确授权的操作额度内运行并显示“金额未知”；要求严格金额上限的任务拒绝该连接。取消可能有延迟，本地停止阈值不能宣传为远端绝不超支的保证。
 

@@ -1,6 +1,6 @@
 # Squabble Agent 工具体系开发计划审阅稿
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking. 本文待用户审阅通过后执行，当前复选框均表示未来工作。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking. 本文已获用户授权实施；未勾选项表示尚未交付的验收要求。
 
 **Goal:** 让 Squabble 的 API Agent 在可追溯、可恢复、有预算与权限边界的运行层中使用既有工具及成熟外部工具，覆盖金融数据、文档、计算、搜索、浏览器和应用连接。
 
@@ -9,6 +9,15 @@
 **Tech Stack:** 现有 React、NestJS、TypeScript、PostgreSQL/Drizzle、Zod、Playwright；官方 MCP TypeScript SDK、AI SDK；AKTools/AKShare、Tushare、Docling/MinerU；E2B 与固定 Python 分析模板；Tavily、Exa、Firecrawl、Browserbase、Composio；后续 Deep Agents/LangChain。兼容版本在 P0 验证并锁定。
 
 **配套设计：**[总体设计](../specs/2026-11-11-agent-tooling-design.md)。代码基线 `f077b3ee4b719d043db53bb3f132e985ef32a12a`；混合部署已由用户选择。文件路径除特别说明外相对仓库根目录；标为“新增”的路径是实施目标，不表示当前已经存在。
+
+**授权状态（2026-11-11）：**用户已同意实施本计划、采纳审查修正，并授权通过测试后合并及本地部署。阶段审阅用于展示具体证据与未验证项；不重复请求已给出的代码实施、合并或本地部署授权。付费样本、真实第三方账号授权和采购仍按各自明确授权执行。[审查处理记录](../review-resolution.md) 是下列工作包的补充验收依据。
+
+**实现阅读入口：**当前工作树新增模块/API/运维说明见[工具运维指南](../../agent-tooling.md)，
+工作包交付与未验收边界见[实施验收记录](../../agent-tooling-validation.md)，
+结构与边界见[架构五图](../../architecture.md)。本文的待验收清单保留原始要求；
+适配器离线测试、真实供应商连通、研究质量指标和部署验证必须分别记录，不因代码存在而全部勾选。
+真实本地 Docling/MinerU 的20份语料/数字一致率、双语检索质量、付费供应商及 OAuth/MCP/
+Composio/E2B 联调、完整 FX/公司行动及跨市场数据覆盖尚不可由夹具测试替代。
 
 ## 1. 实施边界与里程碑
 
@@ -74,9 +83,13 @@
 
 - [ ] 建立模型/工具两轮往返、并行调用、错误schema、流式中断、usage未知、重复toolCallId的固定响应样本。
 - [ ] 将设计第5节 descriptor 和第6节状态定义为共享契约；输入schema限制深度/大小，禁止外部远程 `$ref`。
+- [ ] 状态覆盖 result_received 归档前取消、已存响应失败后本地 reparse 审计、provider_unknown 关闭为 settled_unknown 且未知预留保留；审批编辑为 waiting_approval 自环并更新 revision/hash，研究目标变化才新增模型 step。
+- [ ] 固定混合调用批次的只读优先、写入停放及恢复不重读规则；JSON-action 错误变成稳定 call 身份的结构化 tool-result，只有有界显式下一 step 可以纠正。
+- [ ] 冻结 datasetVersionIds、内容 hash 与完整持仓/现金/来源 payload 快照；证券 allowlist 不替代快照。
 - [ ] 定义旧asOf:string与新timing.observedAt/completedAt、provenance.dataAsOf:string|null的显式兼容；旧工具语义保留，新数据时间未知不填抓取时间。测试旧native消费者可读取，新金融/估值/回测不能误用外层时间通过时效验证。
 - [ ] 选定并锁定 Node/TS/Zod、MCP SDK、AI SDK/provider 的兼容版本；明确只用官方MCP client承接连接，不同时启动AI SDK的第二套MCP连接。
 - [ ] 以fake HTTP证明模型adapter每次step只发一次请求，关闭自动retry、fallback、JSON修复付费调用和自动多step。
+- [ ] SDK tool.execute/toolApproval 关闭，禁止 provider-executed writes；写入审批仅在运行器 dispatch 入口实施。显式配置的可见 fallback 为独立新派发，不能由网络错误触发自动付费。
 - [ ] 核对 Docling/MinerU/Python/E2B/QuantStats/Deep Agents 的模块格式、Python版本、部署依赖与开源许可证，记录供应商官方来源；不开真实账号。
 - [ ] 运行以下测试，预期schema非法/身份冲突被拒绝，合法fixture序列化往返一致；记录真实失败，不用catch将其伪装成功。
 
@@ -115,6 +128,7 @@ export interface RuntimeIdentity {
 - [ ] 先加入A01/A02/A05/A06的失败测试：两worker领取同step、同key改参、派发前后崩溃、响应保存后解析失败、停止后的迟到结果。
 - [ ] 建立run、step、invocation、连接/catalog等增量表与owner唯一约束；opening可关联memberAttempt，后续turn不复用缺少turn维度的旧唯一键。
 - [ ] 实现事务领取、leaseToken、heartbeat、cursor、完整响应先保存后解析；旧run不自动迁移成新driver。
+- [ ] 持久保存 cancel intent，迟到结果不把已停止的 unknown run 恢复为可归档状态；解析审计追加而非覆盖，accept 仅接受目标 step 的已验证结果。
 - [ ] P1先把有界私有请求/响应和小工具结果存数据库，明确大小上限和inline存储版本；超限在dispatch前拒绝，不依赖W07 artifact服务。W07增加引用式存储时保持旧receipt可读。
 - [ ] 恢复只读取receipt或查询已支持的远端job；未知同步模型请求不自动重发。明确“本地返回已存”“本地解析失败”“远端结果未知”的不同动作。
 - [ ] 增量迁移从空库、当前schema升级、第二次完整启动各验证一遍；迁移不得调度研究、创建预算或修改账户余额。
@@ -138,6 +152,7 @@ node node_modules/tsx/dist/cli.mjs --tsconfig tsconfig.node.json --test --test-c
 - [ ] 派发协调器通过中立预算接口使用已有自动研究预算，不能为复用一个service导入整个paper-trading模块形成依赖环；在wiring和静态边界中覆盖该连接。
 - [ ] token预估覆盖工具schema、toolCalls、toolResults和历史消息；原子冻结持仓/现金不可通过静默裁剪让请求适配预算。
 - [ ] 新增工具额度预留与实际用量结算；DeepSeek已有task/day计数仅由一个入口负责，避免adapter内外重复reserve。
+- [ ] 工具 invocation 唯一预留，available=limit-settled-inflight；unknown 和 settled_unknown 预留保留至提供方事实。外层去重仅移除冗余记账，三类独立预算限制均保留；晚到 usage 使用幂等修正审计。
 - [ ] 区分供应商强制上限、本地估算和操作额度；无可靠金额上界时只能使用用户已授权的次数/页数/秒数预算并显示金额未知，严格金额上限任务拒绝该连接。测试远端取消延迟，不能承诺本地阈值保证无超支。
 - [ ] 实现unknown后续usage修正账、已知币种和价格快照；重复回调不重结算，未知不计零，不静默修改用户默认额度。
 - [ ] 加预算不足的启动前检查及结束输出预留；验证额度耗尽时保存阶段结果并说明尚未完成的步骤。
@@ -418,9 +433,9 @@ npm run test:wiring
 | A01 | 模型提出两轮工具，再给最终回答 | 每轮有实际receipt，结果进入下一轮，最终引用可打开 |
 | A02 | 同key重试或同key改参、两个worker竞争 | 同内容复用一条receipt；改参冲突；仅一个外发 |
 | A03 | 一个turn内部3次模型调用 | 三个dispatch、三次实际HTTP，各预算计数一次 |
-| A04 | SDK收到429/500、无效JSON | 无隐藏付费重试/修复；已返回文本保留 |
+| A04 | SDK收到429/500、无效JSON/action/schema、未知tool、重复callId | 无隐藏付费重试/修复；原响应保留，结构化tool-result带稳定身份，仅有界显式下一step可修正 |
 | A05 | reserve后、发送后、响应落库后分别崩溃 | 分别安全取消/未知/本地重解析，不笼统重跑 |
-| A06 | 用户停止后远端迟到成功；opening后summary失败 | 迟到仅结算不发布；恢复目标run/step精确，旧cursor冲突，不重跑opening |
+| A06 | 收到结果后停止；unknown关闭；失败后本地reparse；opening后summary失败 | 取消不归档；settled_unknown保留账务不确定性和后补；reparse无新HTTP且保留审计；恢复目标精确，不重跑opening |
 | A07 | 预算不足、unknown费用后补、价格未知 | 预检或有界停止；只补一次账，不无依据退款；严格金额上限拒绝无价格上界连接 |
 | A08 | 工具schema改变、name冲突、catalog新增 | 固定版本，冲突可辨，新工具不自动启用 |
 | A09 | DNS重绑定、跨host重定向、私网URL、超大schema | dispatch前或受控传输中拒绝，不泄露凭据 |
@@ -434,7 +449,7 @@ npm run test:wiring
 | A17 | 采集/解析/计算期间停用/删除来源；私密数据生成图表后外发 | 取消后续使用，迟到提交拒绝，不经cache复活；派生产物继承最严格外发限制 |
 | A18 | 中文15题、英文15题固定搜索任务 | 分语言记录命中/正文/支持率/延迟/成本；关键数值和单位错误0，引用支持率目标≥95% |
 | A19 | 虚构登录站点、表单、私网跳转、浏览器崩溃；云后端真实限额测试 | 来源隔离、写入受控、会话可回收；云导航/重定向/子资源/下载策略独立验证，不继承本地结果 |
-| A20 | 用户尚未确认外部草稿 | 零外部写入，预览准确显示目标/内容/附件 |
+| A20 | 用户未确认草稿；混合read/write；waiting时编辑正文 | 零未批准写入；read先运行且恢复不重读；编辑仅更新预览revision/hash，不重跑模型，旧确认失效 |
 | A21 | 重复确认或修改目标后提交旧确认 | 一条本地执行receipt；旧hash拒绝 |
 | A22 | Composio已执行但本地timeout | 状态unknown，无自动重试；核验后才标完成 |
 | A23 | 删除来源后的memory/report/trace下载 | 遵守既有可见性，历史快照不凭空改变且原文不复活 |
@@ -478,4 +493,4 @@ git diff --check
 - [ ] 生产切换前以当前实际实例定位和匹配备份为依据，不照抄旧路径或PID。
 - [ ] 用户验收后决定启用范围；关闭新能力后仍可读取原报告、使用旧研究路径和既有模拟盘。
 
-本计划在审阅前不执行上述步骤。审阅建议先看总体设计第16节的决策，再看本计划第1节的阶段范围及第20节的验收标准。
+本计划已获用户授权实施。各阶段据实际产物、测试结果及未验证限制推进；不能把离线契约通过写成全部服务已上线。审查修正与原设计共同构成验收依据。

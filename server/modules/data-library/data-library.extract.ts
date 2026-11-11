@@ -91,18 +91,18 @@ export function extractJson(input: string): ExtractedDocument {
   if (!sections.length) throw new DataLibraryError('NO_CONTENT');
   return result(sections);
 }
-function guardZip(buffer: Buffer) {
+export function guardZip(buffer: Buffer, invalidCode = 'INVALID_PPTX') {
   // Validate the central directory sizes before any decompression (JSZip alone does not enforce a byte budget).
   let end = -1;
   for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65_557); i--) {
     if (buffer.readUInt32LE(i) === 0x06054b50) { end = i; break; }
   }
-  if (end < 0) throw new DataLibraryError('INVALID_PPTX');
+  if (end < 0) throw new DataLibraryError(invalidCode);
   const entries = buffer.readUInt16LE(end + 10), size = buffer.readUInt32LE(end + 12);
   let pos = buffer.readUInt32LE(end + 16), total = 0;
   if (entries > 2000 || pos + size > end) throw new DataLibraryError('ARCHIVE_TOO_LARGE');
   for (let i = 0; i < entries; i++) {
-    if (pos + 46 > buffer.length || buffer.readUInt32LE(pos) !== 0x02014b50) throw new DataLibraryError('INVALID_PPTX');
+    if (pos + 46 > buffer.length || buffer.readUInt32LE(pos) !== 0x02014b50) throw new DataLibraryError(invalidCode);
     const packed = buffer.readUInt32LE(pos + 20), unpacked = buffer.readUInt32LE(pos + 24);
     total += unpacked;
     if (unpacked > 8 * 1024 * 1024 || total > 32 * 1024 * 1024 || unpacked > Math.max(1, packed) * 250) throw new DataLibraryError('ARCHIVE_TOO_LARGE');
@@ -165,6 +165,10 @@ export async function extractPptx(buffer: Buffer): Promise<ExtractedDocument> {
 export async function extractDocument(format: DataLibraryFormat, buffer: Buffer, description = ''): Promise<ExtractedDocument> {
   if (buffer.length > MAX_FILE_BYTES) throw new DataLibraryError('FILE_TOO_LARGE');
   if (format === 'image') return { ...textDocument(description), state: 'needs-text' };
+  if (format === 'pdf' || format === 'docx') {
+    if (format === 'docx') guardZip(buffer, 'INVALID_DOCX');
+    return { rawContent: '', text: '', sections: [], state: 'needs-text' };
+  }
   if (format === 'pptx') return extractPptx(buffer);
   const text = buffer.toString('utf8');
   if (format === 'html') return extractHtml(text);

@@ -16,6 +16,16 @@ import { EvidenceService, type EvidenceInput } from '../research-core/evidence.s
 import { ResearchMemoryService } from '../research-memory/research-memory.service';
 import type { CouncilEvidence } from '../council/council.rules';
 import type { QuoteResponse } from '@shared/api.interface';
+import type { AgentToolDescriptor } from '@shared/agent-tooling.interface';
+import type { AgentToolResultEnvelope } from '@shared/agent-tooling.interface';
+import type { DataFinancialOperation, DataFinancialProvider } from '@shared/data-library.interface';
+import { toAgentToolEnvelope } from '../../common/agent-contract';
+import { frozenPortfolioInstruments, requireFrozenInstrument } from './portfolio-tool-scope';
+import { DataDatasetService } from '../data-library/data-dataset.service';
+import { ResearchComputeToolsService } from '../research-compute/research-compute-tools.service';
+import { BrowserResearchService } from '../data-library/browser/browser-research.module';
+import { agentRuntimeRuns } from '../../database/agent-tooling.schema';
+import { z } from 'zod';
 import type { ResearchSource, ResearchToolBundle, ResearchToolDescriptor, ResearchToolRequest,
   ResearchToolResult, ResearchToolScope, ResearchValuationRequest, ResearchValuationQuote } from '@shared/research-tools.interface';
 import type { ResearchMemoryRecall } from '@shared/research-memory.interface';
@@ -32,14 +42,20 @@ type SessionRow = typeof councilSessions.$inferSelect;
 interface ScopedSession { session: SessionRow; authority: string; review?: boolean }
 type ScopeDatabase = Pick<PostgresJsDatabase, 'select'>;
 const ARCHIVED_TOOLS = new Set(['get_quotes', 'get_financials', 'get_news', 'get_valuation',
-  'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web', 'search_data_library', 'get_financial_source_data', 'read_browser_source']);
-const PORTFOLIO_TOOLS = new Set(['get_discussion_context', 'get_research_memory', 'search_data_library', 'read_browser_source']);
+  'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web', 'search_data_library', 'get_financial_source_data', 'read_browser_source',
+  'get_portfolio_quotes', 'get_portfolio_financials', 'read_dataset_summary', 'run_statistics', 'run_backtest', 'browser_research']);
+const PORTFOLIO_TOOLS = new Set(['get_discussion_context', 'get_research_memory', 'search_data_library', 'read_browser_source',
+  'get_portfolio_quotes', 'get_portfolio_financials', 'read_dataset_summary', 'run_statistics', 'run_backtest', 'browser_research']);
 interface CallOptions { signal?: AbortSignal; shouldContinue?: () => Promise<boolean>;
   telemetryContext?: { runId: string; sourceId: string; parentId: string } }
 interface HandlerInput extends Partial<ResearchValuationRequest> {
   limit?: number; query?: string; asOf?: string; sourceId?: string;
-  provider?: 'alpha-vantage' | 'public' | 'finnhub' | 'sec';
-  operation?: 'quote' | 'daily-history' | 'financials';
+  provider?: DataFinancialProvider; operation?: DataFinancialOperation;
+  instrumentId?: string; market?: 'CN' | 'HK' | 'US'; exchange?: string; offset?: number;
+  from?: string; to?: string; adjustment?: 'unadjusted' | 'forward' | 'backward';
+  datasetVersionId?: string; sampleSize?: number; action?: 'navigate' | 'read' | 'next' | 'expand' | 'screenshot' | 'close';
+  datasetVersionIds?: string[];
+  url?: string; index?: number;
 }
 interface SavedReport {
   savedAt: number; data: Record<string, unknown>; source: ResearchSource; truncated: boolean;
@@ -48,6 +64,7 @@ class ScopeEnded extends Error {}
 
 @Injectable()
 export class ResearchToolsService {
+  private readonly runtimeBrowsers = new Map<string, { sessionId: string; leaseToken: string }>();
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly quotes: QuoteService,
@@ -56,10 +73,20 @@ export class ResearchToolsService {
     @Optional() private readonly library?: DataLibraryService,
     @Optional() private readonly financial?: DataFinancialService,
     @Optional() private readonly telemetry?: TelemetryCaptureService,
+    @Optional() private readonly datasets?: DataDatasetService,
+    @Optional() private readonly compute?: ResearchComputeToolsService,
+    @Optional() private readonly browsers?: BrowserResearchService,
   ) {}
 
+  private availableDefinition(tool: ResearchToolDefinition, managed = false): boolean {
+    if (tool.name === 'read_dataset_summary') return Boolean(this.datasets);
+    if (tool.name === 'run_statistics' || tool.name === 'run_backtest') return Boolean(managed && this.compute);
+    if (tool.name === 'browser_research') return Boolean(managed && this.browsers);
+    return true;
+  }
+
   descriptors(): ResearchToolDescriptor[] {
-    return RESEARCH_TOOLS.filter((tool: ResearchToolDefinition) => tool.kind !== 'web').map(toolDescriptor);
+    return RESEARCH_TOOLS.filter((tool: ResearchToolDefinition) => tool.kind !== 'web' && this.availableDefinition(tool)).map(toolDescriptor);
   }
 
   async isCurrent(owner: string, scope: ResearchToolScope): Promise<boolean> {
@@ -73,7 +100,9 @@ export class ResearchToolsService {
       return { descriptors: [], snapshot: JSON.stringify(result) };
     }
     return { descriptors: RESEARCH_TOOLS.filter((tool: ResearchToolDefinition) => (tool.kind !== 'web' || scope.webResearch)
-      && (scope.ticker !== 'PORTFOLIO' || PORTFOLIO_TOOLS.has(tool.name)))
+      && this.availableDefinition(tool, Boolean(scope.managedRuntime || scope.runtimeScope))
+      && (scope.ticker !== 'PORTFOLIO' || PORTFOLIO_TOOLS.has(tool.name))
+      && (scope.ticker === 'PORTFOLIO' || !tool.name.startsWith('get_portfolio_')))
       .map(toolDescriptor), snapshot: JSON.stringify(result) };
   }
 
@@ -129,7 +158,7 @@ export class ResearchToolsService {
           outputTokens: null, totalTokens: null, estimatedCostUsd: null, errorCode: null, attempt: 1, traceId: null };
         captureTelemetry(this.telemetry, owner, telemetrySpan);
         started = true;
-        if (tool.name === 'read_browser_source') {
+        if (['read_browser_source', 'browser_research', 'run_statistics', 'run_backtest'].includes(tool.name)) {
           // Long browser reads retain the same live research authority and stop
           // promptly when a task is paused, superseded or deleted.
           collectionPoll = setInterval(() => {
@@ -221,10 +250,12 @@ export class ResearchToolsService {
 
   /** Read-only tools may archive their server-produced results, never caller-supplied facts or live memory/report copies. */
   private async archiveProviderResult(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
-    result: ResearchToolResult, authority: string, assertActive: () => void): Promise<ResearchToolResult> {
+    result: ResearchToolResult, authority: string, assertActive: () => void, external = false): Promise<ResearchToolResult> {
     const dependencyOnly = ['get_research_report', 'get_research_memory', 'get_discussion_context'].includes(tool.name);
+    if (tool.name === 'browser_research' && result.data && typeof result.data === 'object'
+      && 'closed' in result.data && result.data.closed === true) return boundedResult(result);
     const derivedReferences = dependencyOnly ? libraryEvidenceReferences(result.data) : [];
-    if ((!ARCHIVED_TOOLS.has(tool.name) && !derivedReferences.length) || !['succeeded', 'partial'].includes(result.status)
+    if ((!external && !ARCHIVED_TOOLS.has(tool.name) && !derivedReferences.length) || !['succeeded', 'partial'].includes(result.status)
       || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return boundedResult(result);
     const id = randomUUID();
     const metadata = toolEvidenceMetadata(result.data, tool.name);
@@ -232,7 +263,7 @@ export class ResearchToolsService {
     if (!dependencyOnly && (!bounded.data || typeof bounded.data !== 'object' || !('evidenceId' in bounded.data)
       || bounded.data.evidenceId !== id)) return bounded;
     const evidence: CouncilEvidence = { id, role: tool.kind === 'news' || tool.kind === 'web' ? 'sentiment' : 'fundamental',
-      ...(['search_data_library', 'read_browser_source'].includes(tool.name) ? { libraryReferences: this.libraryReferences(result.data) }
+      ...(['search_data_library', 'read_browser_source', 'get_financial_source_data', 'get_portfolio_financials', 'read_dataset_summary', 'run_statistics', 'run_backtest'].includes(tool.name) ? { libraryReferences: this.libraryReferences(result.data) }
         : derivedReferences.length ? { libraryReferences: derivedReferences } : {}),
       evidenceType: 'tool_result', title: `${dependencyOnly ? '[Source dependencies] ' : tool.kind === 'web' ? '[Web source · unverified] ' : ''}${tool.name} (${scope.ticker})`,
       content: JSON.stringify(dependencyOnly ? { tool: tool.name, boundary: 'Only provenance for historical interpretations already read; not new facts or an adopted thesis.' } : bounded),
@@ -261,8 +292,92 @@ export class ResearchToolsService {
     return bounded;
   }
 
+  /** Server-side adapters use the same member isolation and source acceptance as built-in tools. */
+  async acceptExternalResult(owner: string, scope: ResearchToolScope, descriptor: AgentToolDescriptor,
+    result: ResearchToolResult): Promise<ResearchToolResult> {
+    if (descriptor.effect === 'external_write') return result;
+    const current = await this.currentSession(owner, scope);
+    if (!current) throw new ScopeEnded();
+    const active = () => { if (scope.expiresAt <= Date.now()) throw new ScopeEnded(); };
+    return this.archiveProviderResult({ name: descriptor.id, description: descriptor.description,
+      source: `External tool: ${descriptor.name}`, timeoutMs: descriptor.timeoutMs,
+      input: z.strictObject({}), openWorld: true }, owner, scope, result, current.authority, active, true);
+  }
+
+  runtimeEnvelope(result: ResearchToolResult, invocationId: string): AgentToolResultEnvelope {
+    const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    const data = object(result.data), dataset = object(data.dataset), timing = object(object(data.data).timing);
+    if (data.state === 'provider_unknown' || result.errorCode === 'RESEARCH_TIMEOUT') throw new Error('RUNTIME_TOOL_PROVIDER_UNKNOWN');
+    const businessTime = timing.dataAsOf ?? data.dataAsOf ?? null;
+    const envelope = toAgentToolEnvelope(result, { invocationId, observedAt: result.asOf,
+      completedAt: new Date().toISOString(), dataAsOf: typeof businessTime === 'string' ? businessTime : null });
+    if (typeof dataset.datasetVersionId === 'string') envelope.datasetVersionId = dataset.datasetVersionId;
+    if (typeof dataset.rowCount === 'number') envelope.coverage = {
+      status: object(dataset.coverage).status === 'complete' ? 'complete' : 'partial', totalRows: dataset.rowCount,
+      returnedRows: typeof dataset.sampleSize === 'number' ? dataset.sampleSize : 0,
+      sampleSize: typeof dataset.sampleSize === 'number' ? dataset.sampleSize : 0, missing: [] };
+    const sources = Array.isArray(data.sourceVersions) ? data.sourceVersions : [data.sourceVersion];
+    envelope.provenance.sourceVersions = sources.flatMap(value => {
+      const source = object(value);
+      return typeof source.sourceId === 'string' && typeof source.sourceVersionId === 'string' && typeof source.contentHash === 'string'
+        ? [{ sourceId: source.sourceId, sourceVersionId: source.sourceVersionId, contentHash: source.contentHash }] : [];
+    });
+    const artifacts = data.artifacts ?? object(data.result).artifacts;
+    if (Array.isArray(artifacts)) envelope.artifactRefs = artifacts.flatMap(value => {
+      const artifact = object(value);
+      return typeof artifact.artifactId === 'string' && typeof artifact.sha256 === 'string'
+        ? [{ artifactId: artifact.artifactId, sha256: artifact.sha256 }] : [];
+    });
+    return envelope;
+  }
+
   private async handle(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
     session: SessionRow, input: HandlerInput, guard: () => Promise<SessionRow>, review: boolean, signal?: AbortSignal): Promise<ResearchToolResult> {
+    if (tool.name === 'read_dataset_summary') {
+      if (!this.datasets || !input.datasetVersionId) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
+      const metadata = await this.datasets.read(owner, input.datasetVersionId), sample = await this.datasets.summary(owner, input.datasetVersionId, input.sampleSize ?? 12);
+      await guard();
+      return { status: metadata.coverage.status === 'complete' ? 'succeeded' : 'partial', data: { ...sample,
+        dataset: sample.summary, dataAsOf: metadata.timing.dataAsOf, sourceVersion: metadata.sourceVersion,
+        libraryReference: { sourceId: metadata.sourceVersion.sourceId, versionId: metadata.sourceVersion.sourceVersionId } },
+        sources: [{ title: `${metadata.provider}: ${metadata.operation}`, fetchedAt: metadata.timing.fetchedAt }],
+        asOf: new Date().toISOString(), truncated: sample.summary.truncated };
+    }
+    if (tool.name === 'run_statistics' || tool.name === 'run_backtest') {
+      if (!this.compute || !scope.runtimeScope) return researchFailure('unavailable', 'RESEARCH_MANAGED_RUNTIME_REQUIRED');
+      const result = await this.compute.invoke(owner, tool.name === 'run_statistics' ? 'statistics' : 'backtest', input, scope.runtimeScope, signal);
+      await guard();
+      const metadata = this.datasets ? await Promise.all((input.datasetVersionIds ?? []).map(id => this.datasets.read(owner, id))) : [];
+      return { ...result, data: { ...(result.data && typeof result.data === 'object' ? result.data : {}),
+        libraryReferences: metadata.map(item => ({ sourceId: item.sourceVersion.sourceId, versionId: item.sourceVersion.sourceVersionId })),
+        sourceVersions: metadata.flatMap(item => [item.sourceVersion, ...item.dependencies]) },
+        sources: metadata.map(item => ({ title: `${item.provider}: ${item.operation}`, fetchedAt: item.timing.fetchedAt })) };
+    }
+    if (tool.name === 'browser_research') {
+      if (!this.browsers || !scope.runtimeScope || !input.action) return researchFailure('unavailable', 'RESEARCH_MANAGED_RUNTIME_REQUIRED');
+      const managed = scope.runtimeScope;
+      const [run] = await this.db.select().from(agentRuntimeRuns).where(and(eq(agentRuntimeRuns.owner, owner), eq(agentRuntimeRuns.id, managed.runId)));
+      if (!run) return researchFailure('unavailable', 'RESEARCH_SCOPE_EXPIRED');
+      const binding = { owner, runId: run.id, leaseToken: managed.leaseToken, runRevision: run.frozenInputHash };
+      const key = `${owner}:${run.id}`, prior = this.runtimeBrowsers.get(key);
+      if (prior && prior.leaseToken !== managed.leaseToken) {
+        this.runtimeBrowsers.delete(key);
+        return researchFailure('unavailable', 'BROWSER_SESSION_REQUIRES_NEW_RESEARCH');
+      }
+      if (input.action === 'close') {
+        if (prior) await this.browsers.close(binding, prior.sessionId);
+        this.runtimeBrowsers.delete(key);
+        return { status: 'succeeded', data: { closed: true }, sources: [], asOf: new Date().toISOString(), truncated: false };
+      }
+      const opened = prior ?? await this.browsers.open(binding, managed.sourceVersions, signal);
+      this.runtimeBrowsers.set(key, { sessionId: opened.sessionId, leaseToken: managed.leaseToken });
+      const command = input.action === 'navigate' ? { action: 'navigate' as const, url: input.url ?? '' }
+        : input.action === 'next' || input.action === 'expand' ? { action: input.action, index: input.index ?? 0 } : { action: input.action };
+      const snapshot = await this.browsers.act(binding, opened.sessionId, command, signal);
+      await guard();
+      return { status: 'succeeded', data: { ...snapshot, ...(snapshot.artifact ? { artifacts: [snapshot.artifact] } : {}) },
+        sources: [{ title: snapshot.title ?? 'Browser source', url: snapshot.url, fetchedAt: snapshot.observedAt }], asOf: snapshot.observedAt, truncated: false };
+    }
     if (tool.name === 'read_browser_source') return this.browserSource(owner, input.sourceId, guard, signal);
     if (tool.name === 'search_data_library') {
       if (!this.library || !input.query) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
@@ -275,10 +390,42 @@ export class ResearchToolsService {
     }
     if (tool.name === 'get_financial_source_data') {
       if (!this.financial || !input.provider || !input.operation) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
-      const result = await this.financial.query(owner, { provider: input.provider, symbol: scope.ticker, operation: input.operation });
+      const result = await this.financial.query(owner, { provider: input.provider, symbol: scope.ticker, operation: input.operation,
+        ...(input.market ? { market: input.market } : {}), ...(input.exchange ? { exchange: input.exchange } : {}),
+        ...(input.from ? { from: input.from } : {}), ...(input.to ? { to: input.to } : {}), ...(input.adjustment ? { adjustment: input.adjustment } : {}) });
       await guard();
       return { status: result.status, data: result, sources: result.sources, asOf: result.asOf ?? result.observedAt,
-        truncated: false, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
+        truncated: result.dataset?.truncated ?? false, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
+    }
+    if (tool.name === 'get_portfolio_quotes' || tool.name === 'get_portfolio_financials') {
+      if (scope.ticker !== 'PORTFOLIO') return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
+      const frozen = frozenPortfolioInstruments(session.checkpoint?.simple?.commonEvidence ?? session.evidenceSnapshot,
+        scope.runtimeScope?.allowedInstrumentIds ?? scope.frozenInstrumentIds);
+      if (tool.name === 'get_portfolio_financials') {
+        if (!this.financial || !input.instrumentId || !input.provider || !input.operation) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
+        let target;
+        try { target = requireFrozenInstrument(frozen, input.instrumentId); }
+        catch { return researchFailure('unavailable', 'RESEARCH_INSTRUMENT_OUT_OF_SCOPE'); }
+        if (input.exchange && input.exchange !== target.exchange) return researchFailure('unavailable', 'RESEARCH_FROZEN_EXCHANGE_REQUIRED');
+        if (['aktools', 'tushare'].includes(input.provider) && target.market === 'CN' && !target.exchange) return researchFailure('unavailable', 'RESEARCH_FROZEN_EXCHANGE_REQUIRED');
+        const result = await this.financial.query(owner, { provider: input.provider, symbol: target.ticker, market: target.market,
+          operation: input.operation, ...(target.exchange ? { exchange: target.exchange } : target.market === 'HK' ? { exchange: 'HKEX' } : {}),
+          ...(input.from ? { from: input.from } : {}), ...(input.to ? { to: input.to } : {}), ...(input.adjustment ? { adjustment: input.adjustment } : {}) });
+        await guard();
+        return { status: result.status, data: result, sources: result.sources, asOf: result.observedAt,
+          truncated: result.dataset?.truncated ?? false, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
+      }
+      const offset = input.offset ?? 0, selected = frozen.slice(offset, offset + (input.limit ?? 10));
+      const results: Array<{ instrumentId: string; result: ResearchToolResult }> = [];
+      for (const instrument of selected) {
+        await guard(); results.push({ instrumentId: instrument.instrumentId,
+          result: await this.quote({ ...scope, ticker: instrument.ticker }, tool.source) });
+      }
+      await guard();
+      return { status: results.length && results.every(item => item.result.status === 'succeeded') ? 'succeeded' : 'partial',
+        data: { instruments: results, coverage: { totalInstruments: frozen.length, offset, returned: results.length,
+          nextOffset: offset + selected.length < frozen.length ? offset + selected.length : null } },
+        sources: results.flatMap(item => item.result.sources), asOf: new Date().toISOString(), truncated: false };
     }
     if (tool.name === 'get_quotes') return this.quote(scope, tool.source);
     if (tool.name === 'get_research_report') return this.reports(owner, scope, input.limit ?? 1);
@@ -328,6 +475,15 @@ export class ResearchToolsService {
   }
 
   private libraryReferences(value: unknown): Array<{ sourceId: string; versionId: string }> {
+    if (value && typeof value === 'object' && 'libraryReferences' in value && Array.isArray(value.libraryReferences)) {
+      return value.libraryReferences.flatMap(ref => ref && typeof ref === 'object' && typeof ref.sourceId === 'string' && typeof ref.versionId === 'string'
+        ? [{ sourceId: ref.sourceId, versionId: ref.versionId }] : []);
+    }
+    if (value && typeof value === 'object' && 'libraryReference' in value && value.libraryReference
+      && typeof value.libraryReference === 'object' && 'sourceId' in value.libraryReference && 'versionId' in value.libraryReference
+      && typeof value.libraryReference.sourceId === 'string' && typeof value.libraryReference.versionId === 'string') {
+      return [{ sourceId: value.libraryReference.sourceId, versionId: value.libraryReference.versionId }];
+    }
     if (!value || typeof value !== 'object' || !('items' in value) || !Array.isArray(value.items)) return [];
     return value.items.flatMap(item => item && typeof item === 'object' && typeof item.sourceId === 'string'
       && typeof item.versionId === 'string' ? [{ sourceId: item.sourceId, versionId: item.versionId }] : []);

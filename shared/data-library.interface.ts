@@ -1,7 +1,9 @@
 /** Data-library responses never expose credentials or encrypted secrets. */
 export const dataLibraryKinds = ['page', 'website', 'slides', 'image', 'file'] as const;
 export type DataLibrarySourceKind = typeof dataLibraryKinds[number];
-export const dataLibraryFormats = ['text', 'html', 'rss', 'json', 'pptx', 'image'] as const;
+import type { ResearchDocumentLocator } from './research-artifact.interface';
+import type { ResearchDatasetSummary } from './research-dataset.interface';
+export const dataLibraryFormats = ['text', 'html', 'rss', 'json', 'pptx', 'image', 'pdf', 'docx'] as const;
 export type DataLibraryFormat = typeof dataLibraryFormats[number];
 export const dataLibraryAuthKinds = ['none', 'cookie', 'bearer', 'basic'] as const;
 export type DataLibraryAuthKind = typeof dataLibraryAuthKinds[number];
@@ -60,23 +62,37 @@ export interface DataLibrarySearchItem extends DataLibraryReference {
   locator: string; excerpt: string; observedAt: string; validity: 'current';
 }
 export interface DataLibrarySearchResult { items: DataLibrarySearchItem[]; asOf: string; truncated: boolean }
-export const dataFinancialProviders = ['public', 'sec', 'finnhub', 'alpha-vantage'] as const;
+export const dataFinancialProviders = ['public', 'sec', 'finnhub', 'alpha-vantage', 'aktools', 'tushare'] as const;
 export type DataFinancialProvider = typeof dataFinancialProviders[number];
-export const dataFinancialOperations = ['quote', 'daily-history', 'financials', 'news'] as const;
+export const dataFinancialOperations = ['quote', 'daily-history', 'financials', 'news', 'trading-calendar'] as const;
 export type DataFinancialOperation = typeof dataFinancialOperations[number];
 export interface DataFinancialConnection {
   provider: DataFinancialProvider; name: string; description: string; capabilities: DataFinancialOperation[];
   markets: string[]; requiresKey: boolean; enabled: boolean; configured: boolean; needsReentry: boolean;
   hasApiKey: boolean; maskedApiKey?: string; lastTestAt: string | null;
   lastTestOk: boolean | null; lastTestCode: string | null;
+  unavailableReason?: string;
 }
 export interface DataFinancialQuery {
   provider: DataFinancialProvider; symbol: string; operation: DataFinancialOperation;
+  market?: 'CN' | 'HK' | 'US'; exchange?: string; from?: string; to?: string;
+  adjustment?: 'unadjusted' | 'forward' | 'backward';
 }
 export interface DataFinancialQueryResult extends DataFinancialQuery {
   status: 'succeeded' | 'partial' | 'unavailable' | 'failed'; data: unknown;
   observedAt: string; asOf: string; freshness: 'end-of-day' | 'provider-timestamp' | 'filing';
   sources: Array<{ title: string; url?: string; fetchedAt: string }>;
   errorCode?: string;
+  dataset?: ResearchDatasetSummary;
+  libraryReference?: DataLibraryReference;
+  sourceVersion?: import('./agent-tooling.interface').AgentSourceVersionRef;
 }
 export interface DataFinancialTestResult { ok: boolean; code: string; testedAt: string; sample?: DataFinancialQueryResult }
+
+export interface DataDocumentStatus {
+  extractors: Array<{ id: string; version: string }>;
+  job: { id: string; state: string } | null;
+  extraction: { extractor: string; extractorVersion: string; originalHash: string; artifactId: string;
+    elements: Array<{ text: string; locator: ResearchDocumentLocator; extractionConfidence: 'unknown' }>;
+    numericValidation: 'unknown' | 'verified' | 'needs_review' } | null;
+}

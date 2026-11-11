@@ -12,6 +12,9 @@ import { DataLibraryError, fetchLibraryUrl, publicSourceUrl } from './data-libra
 import { extractDocument, type ExtractedDocument, MAX_FILE_BYTES, textDocument } from './data-library.extract';
 import { DataBrowserService } from './data-browser.service';
 import { BrowserSourceError } from './browser/browser-source.types';
+import { DocumentJobsService } from './document-jobs.service';
+import { ResearchDerivedCleanupService } from '../research-artifacts/research-derived-cleanup.service';
+import { validateDocumentUpload } from './documents/document-client.interface';
 type SourceRow = typeof sources.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
 type JobRow = typeof jobs.$inferSelect;
@@ -30,7 +33,9 @@ export class DataLibraryService implements OnModuleInit, OnModuleDestroy {
   private readonly pendingSyncs = new Map<string, AbortController>();
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     @Optional() @Inject('DATA_LIBRARY_FETCH') private readonly fetchSource?: typeof fetchLibraryUrl,
-    @Optional() private readonly browser?: DataBrowserService) {}
+    @Optional() private readonly browser?: DataBrowserService,
+    @Optional() private readonly documentJobs?: DocumentJobsService,
+    @Optional() private readonly derivedCleanup?: ResearchDerivedCleanupService) {}
   onModuleInit() {
     if (process.env.DATA_LIBRARY_SYNC_DISABLED === 'true') return;
     this.timer = setInterval(() => { void this.runDue().catch(() => undefined); }, 60_000); this.timer.unref();
@@ -180,7 +185,10 @@ export class DataLibraryService implements OnModuleInit, OnModuleDestroy {
     const ext = name.split('.').pop()?.toLowerCase();
     let format: DataLibraryFormat, kind: DataLibrarySourceKind, mime: string;
     if (ext === 'pptx') { format = 'pptx'; kind = 'slides'; mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'; }
-    else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext ?? '')) {
+    else if (ext === 'pdf' || ext === 'docx') {
+      format = ext; kind = 'file'; mime = ext === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      validateDocumentUpload({ fileName: name, data: buffer, mime: ext === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext ?? '')) {
       format = 'image'; kind = 'image';
       const png = buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
       const jpg = buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255;
@@ -191,11 +199,22 @@ export class DataLibraryService implements OnModuleInit, OnModuleDestroy {
       kind = 'file'; mime = 'text/plain; charset=utf-8';
     } else throw new BadRequestException('UNSUPPORTED_FILE_TYPE');
     const doc = await extractDocument(format, buffer, p.description);
-    return this.db.transaction(async tx => {
+    const saved = await this.db.transaction(async tx => {
       const [row] = await tx.insert(sources).values({ owner, kind, format, title: p.title, description: p.description ?? '', fileName: name,
         mimeType: mime, fileData: p.data }).returning();
       return this.view(await this.persistVersion(tx, row, doc, buffer.length));
     });
+    if (format === 'pdf' || format === 'docx') {
+      const extractor = this.documentJobs?.available()[0];
+      if (extractor) {
+        try { await this.documentJobs!.start(owner, saved.id, extractor.id, 'document-default-v1'); }
+        catch { await this.db.update(sources).set({ lastErrorCode: 'DOCUMENT_SUBMISSION_UNAVAILABLE' }).where(eq(sources.id, saved.id)); }
+        return this.view(await this.row(owner, saved.id));
+      }
+      await this.db.update(sources).set({ lastErrorCode: 'DOCUMENT_EXTRACTOR_UNAVAILABLE' }).where(eq(sources.id, saved.id));
+      return { ...saved, lastErrorCode: 'DOCUMENT_EXTRACTOR_UNAVAILABLE' };
+    }
+    return saved;
   }
   async file(owner: string, id: string) {
     const row = await this.row(owner, id, true); if (!row.fileData) throw new NotFoundException('DATA_FILE_NOT_FOUND');
@@ -213,11 +232,13 @@ export class DataLibraryService implements OnModuleInit, OnModuleDestroy {
         .where(and(eq(jobs.owner, owner), eq(jobs.sourceId, id), eq(jobs.state, 'running')));
     });
     await this.cancelSync(owner, id);
+    await this.derivedCleanup?.purgeSource(owner, id);
     return { deleted: true };
   }
   private async cancelSync(owner: string, id: string) {
     for (const [key, controller] of this.pendingSyncs) if (key.startsWith(`${owner}:${id}:`)) controller.abort();
     await this.browser?.cancel(owner, id);
+    await this.documentJobs?.cancelSource(owner, id);
   }
   async sync(owner: string, id: string, options: { signal?: AbortSignal } = {}): Promise<DataLibrarySyncResult> {
     this.owner(owner);

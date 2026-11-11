@@ -12,3 +12,13 @@ docs
 *.tsbuildinfo
 screenshots
 output
+tmp
+temp
+.data
+.local-agents
+.playwright-cli
+workers/**/.venv
+workers/**/.pytest_cache
+workers/**/.ruff_cache
+**/__pycache__
+**/*.pyc

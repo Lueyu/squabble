@@ -30,6 +30,25 @@ existing instance, not `npm run dev` or an ignored temporary helper.
 
 ## Choose checks by changed behavior
 
+Agent tooling (migrations53–58) uses `RESEARCH_TEST_DATABASE_URL` plus
+`TOOL_CONNECTIONS_TEST_DATABASE_URL`, both disposable PostgreSQL16. Include
+`research-runtime/*.spec.ts`, `research-runtime/drivers/*.spec.ts`,
+`tool-connections/*.spec.ts`, `tool-connections/providers/*.spec.ts`,
+`tool-actions/*.spec.ts`, `research-artifacts/*.spec.ts`,
+`research-compute/*.spec.ts`, `research-core/model-step.spec.ts`,
+`research-tools/research-portfolio.integration.spec.ts`,
+`council/council-api-tools*.integration.spec.ts`, `data-library/documents/*.spec.ts`,
+`data-library/providers/*.spec.ts` and new dataset/document integration cases.
+They test actual SDK/MCP and durable database paths with fake transports, including
+approval edits, unknown calls, zero usage, source revocation and late receipts.
+Browser fixtures use actual Chromium. Python analytics uses actual pinned
+QuantStats/Backtrader: `uv sync --project workers/analytics --frozen`, then
+`uv run --project workers/analytics python -m pytest workers/analytics/tests -q`.
+Do not replace missing live OCR/cloud prerequisites with a skipped “pass.”
+Explicit provider probes can charge money; status GETs and driver preferences
+must not send model requests. New settings/artifact flows need fictional UI
+acceptance at desktop1440/mobile390. See `docs/agent-tooling.md` for limits.
+
 V5 data-library tests are included in `test:server` and require the disposable
 `RESEARCH_TEST_DATABASE_URL`. They exercise source ownership/version lifecycle,
 SSRF/redirect and extraction limits, credential isolation, sync recovery and actual

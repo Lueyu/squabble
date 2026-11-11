@@ -1,0 +1,8 @@
+# Exact top-level release matrix; resolve a platform-specific hashed wheel lock before image deployment.
+docling-serve==1.38.2
+docling-core==2.104.0
+docling-ibm-models==4.0.4
+docling-jobkit==3.9.1
+docling-mcp==3.3.0
+docling-parse==7.23.0
+docling-slim==2.142.1
