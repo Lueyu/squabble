@@ -42,6 +42,10 @@ is needed for local Docker.
 - [Deployment and recovery runbook](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md): inspect and update an existing private instance.
 - [Security](../SECURITY.md): private vulnerability reporting.
 
+### Pending review · 待审阅方案
+
+- [Agent tooling design / Agent 工具体系设计](superpowers/specs/2026-11-11-agent-tooling-design.md) and [development plan / 开发计划](superpowers/plans/2026-11-11-agent-tooling-implementation.md): proposed API Agent runtime, MCP clients, financial data, document parsing, computation, browsing and app connections. These are review drafts, not implemented capabilities. 两份文档为待审阅方案，混合部署方向已确认，实施在用户审阅后开始。
+
 ## Retained workflows and history · 保留流程与历史记录
 
 The retained analysis and Council APIs, report readers and advanced simulation
