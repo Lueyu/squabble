@@ -216,6 +216,16 @@ the original account/DB/model settings and private credential files. Desktop
 installers remain paused; future macOS/arm64 qualification is separate from a
 Windows Docker Desktop Linux-container test.
 
+The source-host override uses a restricted relay with two fixed worker
+destinations. Docker Desktop may retain configured bindings without actually
+publishing ports for an internal-only network, so a healthy worker or Compose
+configuration alone is insufficient evidence. Verify actual authenticated
+loopback reachability and capability preparation while Docling and broker remain
+internal-only. The relay has no keys, socket, arbitrary destination or application
+state. Do not attach the engines to an Internet-enabled bridge to obtain host
+access. A metadata refresh must survive cancelled MCP notification bodies as
+well as return HTTP health; check process stability after the refresh.
+
 Follow `docs/self-hosting.md` (and its Chinese counterpart). Root Compose is
 `squabble-local`; demo uses a different project. Back up DB, `settings-secrets`
 and `local-agents-data`, preserving any environment-supplied secrets and

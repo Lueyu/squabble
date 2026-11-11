@@ -1,10 +1,52 @@
 import { Injectable } from '@nestjs/common';
 import { request as httpsRequest } from 'node:https';
-import { request as httpRequest } from 'node:http';
-import { Readable, Transform } from 'node:stream';
+import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { normalizePublicLlmBaseUrl, publicHttpsAgent } from '../settings/settings-security';
 
 export interface RegisteredToolService { id: string; endpoint: string }
+
+/** A cancelled Web body must stop its HTTP source before a pending read can publish. */
+function boundedResponseBody(response: IncomingMessage, maxBytes: number): ReadableStream<Uint8Array> {
+  const input = response[Symbol.asyncIterator]();
+  let bytes = 0, closed = false;
+  let controller: ReadableStreamDefaultController<Uint8Array>;
+  const fail = (error: Error) => {
+    if (closed) return;
+    closed = true;
+    controller.error(error);
+    response.destroy();
+  };
+  const aborted = () => fail(new Error('TOOL_NETWORK_ERROR'));
+  // Keep an error listener until HTTP close, including cancellation before the first pull.
+  response.on('error', fail);
+  response.once('aborted', aborted);
+  response.once('close', () => {
+    if (!response.complete) aborted();
+    response.off('error', fail);
+    response.off('aborted', aborted);
+  });
+  return new ReadableStream<Uint8Array>({
+    start(value) { controller = value; },
+    async pull() {
+      if (closed) return;
+      try {
+        const next = await input.next();
+        // Cancellation can close the controller while the HTTP read is pending.
+        if (closed) return;
+        if (next.done) { closed = true; controller.close(); return; }
+        const chunk = Buffer.isBuffer(next.value) ? next.value : Buffer.from(next.value);
+        bytes += chunk.length;
+        if (bytes > maxBytes) { fail(new Error('TOOL_OUTPUT_LIMIT')); return; }
+        controller.enqueue(chunk);
+      } catch (error) { fail(error instanceof Error ? error : new Error('TOOL_NETWORK_ERROR')); }
+    },
+    cancel() {
+      if (closed) return;
+      closed = true;
+      response.destroy();
+    },
+  });
+}
 
 /** Private endpoints are deployment configuration, never an owner supplied exception. */
 export function registeredToolServices(): RegisteredToolService[] {
@@ -59,20 +101,14 @@ export class ToolTransportPolicy {
         for (const [key, value] of Object.entries(response.headers)) {
           if (value !== undefined) responseHeaders.set(key, Array.isArray(value) ? value.join(', ') : value);
         }
-        let bytes = 0;
-        const bounded = new Transform({ transform(chunk: Buffer, _encoding, done) {
-          bytes += chunk.length;
-          if (bytes > maxBytes) done(new Error('TOOL_OUTPUT_LIMIT'));
-          else done(null, chunk);
-        } });
-        response.on('error', error => bounded.destroy(error));
-        bounded.on('close', () => response.destroy());
-        response.pipe(bounded);
         const status = response.statusCode ?? 500;
         if (status === 204 || status === 205 || init.method === 'HEAD') {
+          let bytes = 0;
+          response.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > maxBytes) response.destroy(); });
+          response.on('error', reject);
           response.resume(); resolve(new Response(null, { status, headers: responseHeaders }));
         } else {
-          resolve(new Response(Readable.toWeb(bounded) as ReadableStream<Uint8Array>, { status, headers: responseHeaders }));
+          resolve(new Response(boundedResponseBody(response, maxBytes), { status, headers: responseHeaders }));
         }
       });
       request.setTimeout(30_000, () => request.destroy(new Error('TOOL_NETWORK_TIMEOUT')));

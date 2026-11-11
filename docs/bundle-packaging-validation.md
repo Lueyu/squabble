@@ -202,6 +202,40 @@ source images, not a published archive. The later downloaded archive must use
 its own distinct project and new volumes. Private test credentials were neither
 printed nor retained in the metadata receipts.
 
+## Source-host relay recovery
+
+Actual Docker Desktop source-host deployment exposed a publication failure:
+Docling/broker on the internal-only network had requested host port bindings but
+no effective published ports. AKTools, which already has public network access,
+published correctly. The source-host override now uses the existing prepared
+broker Node image as a separate fixed-destination TCP relay, mounting only the
+checked-in relay script read-only. This belongs to the full source release;
+the standard container archive remains unchanged.
+
+The relay binds only deployment-selected loopback host ports and forwards to
+the fixed `docling:5002` and `sandbox:8093` destinations. It runs uid1000, read-only,
+with all capabilities dropped, no-new-privileges, 64 MiB memory and 64 PIDs, and
+no credentials or Docker socket. Each port admits 32 connections, uses 64 KiB
+stream watermarks, and enforces 5-second connection, 30-second idle and
+120-second total connection deadlines. Pipe backpressure and half-close preserve
+large response bytes; cancellation and shutdown close the original upstream.
+
+Missing relay tests first failed RED. The corrected Docling health-payload
+regression separately failed RED before using `ready/modelsVerified` for Docling
+and `status` for broker. **6/6** relay and **13/13** combined packaging contracts
+then passed. Actual fresh synthetic project
+`squabble-relay-acceptance-20261111` passed Compose `--wait` on Docker Desktop.
+Host loopback ports 54842/54843/54844 returned actual Docling/AKTools/broker
+health; unauthenticated private requests were rejected with 401, scoped auth
+bytes were preserved, and disallowed/unknown routes remained 404. No jobs were
+created. Both isolated engines still lacked default gateways and could not
+connect to `1.1.1.1:443`; neither received a published port. The relay had only
+its one read-only script bind. No personal deployment or credentials were changed
+by this synthetic acceptance.
+Actual relay runtime reported uid1000, no `/run/secrets` or Docker socket,
+cgroup memory limit **67,108,864 bytes** and observed peak **28,557,312 bytes**.
+All synthetic relay project services were stopped afterward; volumes were retained.
+
 ## Remaining actual checks
 
 The six cached local suite images contain **73 unique unpacked chain layers**,

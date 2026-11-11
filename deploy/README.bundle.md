@@ -49,8 +49,10 @@ docker compose -f docker-compose.demo.yml up -d --build
 Its demo overrides are merged inside the include list so included resources do
 not conflict with the outer Compose model.
 
-For an existing Windows/macOS **source Web server**, start only dependencies and
-export generated credentials into private files without editing endpoints:
+For an existing Windows/macOS **source Web server**, use the full source checkout
+or a verified source release. This mode is not included in the container-only
+release archive. Start only dependencies and export generated credentials into
+private files without editing endpoints:
 
 ```sh
 docker compose -p squabble-tools -f docker-compose.yml -f docker-compose.source.yml -f deploy/compose.source-host.yml up -d --build
@@ -60,7 +62,12 @@ node deploy/configure-source-host.cjs squabble-tools
 The export script preserves existing DB/model/account settings in `.env`, creates
 one `.env.before-bundle` backup, writes only tool configuration and never prints
 tokens. Start/restart the source Web server through the normal project workflow.
-Only the source-host override publishes internal services, all on loopback.
+Only the source-host override publishes tool access, all on loopback. AKTools
+publishes directly. A bounded fixed-destination TCP relay forwards only the
+Docling and broker ports; those engines retain their internal-only network and
+have no default gateway. The relay runs nonroot and read-only, with no secrets
+or Docker socket, and mounts only its checked-in source script read-only.
+It cannot select another upstream from request bytes, CLI arguments or environment.
 The container application and its database are both inactive in this mode; the
 existing source server continues to use its existing database.
 

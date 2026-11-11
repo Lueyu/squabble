@@ -152,5 +152,5 @@ jobs:
         env:
           BUNDLE_TEST_APP_IMAGE: squabble-ci-app:local
         run: |
-          node --test deploy/bundle-contract.spec.cjs deploy/release-bundle.spec.cjs deploy/configure-source-host.spec.cjs
+          node --test deploy/bundle-contract.spec.cjs deploy/release-bundle.spec.cjs deploy/configure-source-host.spec.cjs deploy/source-host-relay.spec.cjs
           python -m unittest discover -s deploy -p test_bundle_gateway.py

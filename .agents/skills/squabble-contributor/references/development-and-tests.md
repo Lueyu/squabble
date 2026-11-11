@@ -49,6 +49,15 @@ Explicit provider probes can charge money; status GETs and driver preferences
 must not send model requests. New settings/artifact flows need fictional UI
 acceptance at desktop1440/mobile390. See `docs/agent-tooling.md` for limits.
 
+Transport lifecycle changes include `tool-connections/tool-transport.spec.ts`:
+exercise nonempty HTTP202 notification cancellation, partial reads, aborts and
+response limits on supported Node versions. Preserve pinned DNS, TLS, exact
+private-service allowlists and redirect rejection. Source-host deployment needs
+actual Docker Desktop loopback reachability through the fixed relay plus proof
+that worker networks remain internal-only; a configuration-only port assertion
+does not establish connectivity. Use fictional services/accounts for invocation
+checks, then metadata-only checks on an authorized personal deployment.
+
 V5 data-library tests are included in `test:server` and require the disposable
 `RESEARCH_TEST_DATABASE_URL`. They exercise source ownership/version lifecycle,
 SSRF/redirect and extraction limits, credential isolation, sync recovery and actual

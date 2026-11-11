@@ -505,7 +505,10 @@
         "workers/sandbox/broker.cjs",
         "deploy/README.bundle.md",
         "scripts/db/59_capability_activation.sql",
-        "scripts/db/60_local_compute.sql"
+        "scripts/db/60_local_compute.sql",
+        "server/modules/tool-connections/tool-transport-policy.ts",
+        "deploy/compose.source-host.yml",
+        "deploy/source-host-relay.cjs"
       ],
       "references": [
         "references/repository-map.md",
@@ -575,6 +578,10 @@
       "scope": "Inspected runtime/model-step/Council binding, tool catalogs/actions, dataset/artifact/document/provider paths, compute and driver boundaries. Diagrams1-2 add frozen single-step dispatch, private receipts, explicit write approval, versioned data and optional local/cloud tools. Diagrams3-5 checked: no tool approval grants investment policy authority; backtests are hypothetical artifacts; existing channel source seals and real-ledger writers retain authority. New source/license revocation and late-result fences apply before acceptance. No deployed-instance or live-provider certification is implied.",
       "acceptanceLimits": "Actual local Chromium and pinned analytics fixtures are separate from real cloud/MCP/OAuth/Composio/E2B compatibility, Docling/MinerU twenty-document engine/numeric quality, bilingual retrieval quality and complete market/FX/corporate-action coverage. Linux document dependency hashes are resolved; model hashes and actual engine acceptance remain required.",
       "knowledgeValidation": "Documentation task: test:context 15 passed, zero failures/skips; check:context valid=true with no structural errors and expected semantic-review drift warning. Six public Markdown entrypoints checked with no missing local links; five architecture anchors/Mermaid blocks reviewed. Product CI, live providers, deployment and global skill sync are separate root delivery work."
+    },
+    "sourceHostRecovery": {
+      "baseline": "0d88fc4f9e1954d305aee6dcda96ab9a97958b2d",
+      "scope": "Source-host deployment uses a fixed-destination loopback relay while workers remain internal-only. Transport cancellation explicitly converges HTTP and Web stream lifecycles without changing endpoint/DNS/TLS/size limits. Diagram1 adds the optional native-host route; diagrams2-5 retain dispatch, budget, publication, investment and ledger authority. Actual process/connectivity acceptance is separate from structural review."
     },
     "bundledCapabilities": {
       "baseline": "e18b5febf61daf830100351051f216973a0b1599",
