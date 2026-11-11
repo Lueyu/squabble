@@ -48,3 +48,5 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 ## Agent 运行分析
 
 `/telemetry` 提供总览、成员比较、运行列表、Trace 与反馈/质量视图；`shared/telemetry.interface.ts` 定义未知值与统计口径。`server/modules/telemetry/` 读取所属用户来源并尊重删除墓碑，迁移52持久化观测元数据和反馈。模型/本地助手/工具的采集不改变执行结果。Langfuse 默认不启用，只有显式配置后导出元数据；不得将提示词、回答、持仓或密钥写入导出。详见 `docs/agent-telemetry.md`；使用临时 `TELEMETRY_TEST_DATABASE_URL` 运行 `npm run test:telemetry`，浏览界面不能触发研究。
+
+本地 Agent 诊断通过 `shared/telemetry-diagnostics.interface.ts` 分别表达进程证据、公开活动、结果验收和发布状态；认证快照读取持续复验 owner 与来源可见性。`server/local-agents/` 和 Companion 只传固定安全元数据，runtime handoff 不代表 CLI 已启动。静默、缺失或截断的历史不能推断成失败或完整链路，诊断页不能隐式恢复或重新派发任务。

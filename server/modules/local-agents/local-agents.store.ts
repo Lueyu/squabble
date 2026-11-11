@@ -1,8 +1,8 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CompanionPoll, CompanionPollResult, LocalAgentProvider, NativeAgentConfiguration, NativeAgentStatus } from '../../../shared/local-agents.interface';
-import { LocalAgentError, nativeFailureCode, type LocalAgentHandoff } from './local-agents.types';
+import type { CompanionPoll, CompanionPollResult, LocalAgentActivityCapability, LocalAgentProvider, NativeAgentConfiguration, NativeAgentStatus } from '../../../shared/local-agents.interface';
+import { LocalAgentError, nativeFailureCode, type LocalAgentHandoff, type LocalAgentTaskDiagnostics } from './local-agents.types';
 import { parseNativeAgentConfiguration, validateNativeAgentConfiguration } from './local-agents.requests';
 import type { ResearchActivity, ResearchEventPage } from '../../../shared/research-events.interface';
 import type { ResearchToolBundle, ResearchToolRequest, ResearchToolResult, ResearchToolScope } from '../../../shared/research-tools.interface';
@@ -10,9 +10,15 @@ import { appendResearchEvents, recordTaskLifecycle } from './research-journal';
 import { researchFailure } from '../research-tools/research-tools.output';
 import type { NativeAgentImage } from '../../../shared/native-image.interface';
 import { nativeImageCapability, validateNativeImage } from '../../local-agents/native-image';
+import type { NativeDiagnosticEvent } from '../../../shared/local-agent-diagnostics.interface';
+import { appendNativeDiagnostics } from './diagnostic-journal';
+import { safeFailureValue } from '../../local-agents/failures';
+import { nativeActivityCapability } from '../../local-agents/activity';
 
 export interface AgentTask {
   failure?: import('../../../shared/research-execution.interface').SafeFailure;
+  diagnostics?: NativeDiagnosticEvent[]; diagnosticsTruncated?: boolean;
+  activityCapability?: LocalAgentActivityCapability;
   activityContext?: import('../../../shared/research-execution.interface').ResearchTaskActivityContext;
   hasImage?: boolean;
   researchScope?: ResearchToolScope; researchBundle?: ResearchToolBundle;
@@ -246,6 +252,58 @@ export class LocalAgentStore {
     return this.access(false, (state) => Object.values(state.tasks).find((task) => task.owner === owner && task.messageId === messageId));
   }
   task(owner: string, id: string): Promise<AgentTask> { return this.access(false, (state) => ownedTask(state, owner, id)); }
+  private diagnosticMetadata(state: State, task: AgentTask): LocalAgentTaskDiagnostics {
+    const scope = task.activityContext ?? task.researchScope;
+    const device = task.deviceId ? state.devices.find(item => item.id === task.deviceId && item.owner === task.owner) : undefined;
+    const failure = safeFailureValue(task.failure);
+    return { taskId: task.id, agentId: task.agentId, provider: task.provider, executionMode: task.deviceId ? 'companion' : 'native',
+      state: task.state, createdAt: new Date(task.createdAt).toISOString(), updatedAt: new Date(task.updatedAt).toISOString(),
+      commandEmitted: task.commandEmitted === true, runtimeEntered: task.runtimeEntered === true,
+      configuredModel: task.agentSettings?.model ?? null, observedModel: null,
+      ...(!task.deviceId ? { activityCapability: nativeActivityCapability(task.provider) }
+        : task.activityCapability ? { activityCapability: task.activityCapability } : {}),
+      companionLastSeenAt: device?.lastSeen ? new Date(device.lastSeen).toISOString() : null,
+      ...(scope ? { activityContext: { sessionId: scope.sessionId, revision: scope.revision, memberId: scope.memberId,
+        memberName: scope.memberName, turn: scope.turn, language: scope.language,
+        ...('cycleId' in scope && typeof scope.cycleId === 'string' ? { cycleId: scope.cycleId } : {}),
+        ...('attempt' in scope && typeof scope.attempt === 'number' ? { attempt: scope.attempt } : {}) } } : {}),
+      diagnostics: task.diagnostics ?? [], diagnosticsTruncated: task.diagnosticsTruncated === true,
+      events: task.events ?? [], eventsTruncated: task.eventsTruncated === true,
+      ...(failure ? { failure } : {}), ...(task.error ? { error: task.error } : {}) };
+  }
+  taskDiagnostics(owner: string, id: string): Promise<LocalAgentTaskDiagnostics> {
+    return this.readDiagnosticState(state => this.diagnosticMetadata(state, ownedTask(state, owner, id)));
+  }
+  listTaskDiagnostics(owner: string, selector: { sessionId: string; revision: number; cycleId?: string }): Promise<LocalAgentTaskDiagnostics[]> {
+    return this.readDiagnosticState(state => Object.values(state.tasks).filter(task => {
+      const scope = task.activityContext ?? task.researchScope;
+      return task.owner === owner && scope?.sessionId === selector.sessionId && scope.revision === selector.revision
+        && (selector.cycleId === undefined || 'cycleId' in scope && scope.cycleId === selector.cycleId);
+    }).sort((a, b) => a.createdAt - b.createdAt).slice(-128).map(task => this.diagnosticMetadata(state, task)));
+  }
+  /** Inspection must not initialize the journal or run startup interruption recovery. */
+  private readDiagnosticState<T>(read: (state: State) => T): Promise<T> {
+    const result = this.tail.then(async () => {
+      if (this.loaded) return structuredClone(read(this.state));
+      const snapshot: State = { nativeProviders: [], devices: [], tasks: {} };
+      try {
+        const connections = JSON.parse(await readFile(join(this.root, 'connections.json'), 'utf8')) as State;
+        if (Array.isArray(connections.devices)) snapshot.devices = connections.devices;
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      let names: string[] = [];
+      try { names = await readdir(join(this.root, 'tasks')); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      for (const name of names) {
+        if (!/^[a-f0-9-]{36}\.json$/u.test(name)) continue;
+        const task = JSON.parse(await readFile(join(this.root, 'tasks', name), 'utf8')) as AgentTask;
+        if (`${task.id}.json` !== name || !task.owner || !task.state) fail('LOCAL_STATE_INVALID');
+        snapshot.tasks[task.id] = task;
+      }
+      return structuredClone(read(snapshot));
+    });
+    this.tail = result.catch(() => undefined);
+    return result;
+  }
   imageFor(owner: string, id: string): Promise<NativeAgentImage> {
     return this.access(false, state => {
       const task = ownedTask(state, owner, id);
@@ -349,6 +407,13 @@ export class LocalAgentStore {
 
   appendEvents(owner: string, id: string, events: ResearchActivity[]): Promise<void> {
     return this.access(true, state => appendResearchEvents(ownedTask(state, owner, id), events));
+  }
+  appendDiagnostics(owner: string, id: string, events: NativeDiagnosticEvent[]): Promise<void> {
+    return this.access(true, state => appendNativeDiagnostics(ownedTask(state, owner, id), events));
+  }
+  noteCaptureLoss(owner: string, id: string, kind: 'diagnostics' | 'events'): Promise<void> {
+    return this.access(true, state => { const task = ownedTask(state, owner, id);
+      if (kind === 'diagnostics') task.diagnosticsTruncated = true; else task.eventsTruncated = true; });
   }
 
   eventsForSession(owner: string, sessionId: string): Promise<ResearchEventPage> {
@@ -477,6 +542,11 @@ export class LocalAgentStore {
         if (!task || task.deviceId !== device.id || task.owner !== device.owner) continue;
         if (recordLateUncertainty(task, update)) continue;
         if (!['running', 'cancelling'].includes(task.state)) continue;
+        appendNativeDiagnostics(task, update.diagnostics ?? []);
+        if (update.diagnostics?.length) task.runtimeEntered = true;
+        if (update.diagnosticsTruncated) task.diagnosticsTruncated = true;
+        if (update.eventsTruncated) task.eventsTruncated = true;
+        if (update.activityCapability) task.activityCapability = update.activityCapability;
         if (!task.hasImage) appendResearchEvents(task, update.events ?? []);
         if (task.state === 'cancelling' && update.state === 'running') continue;
         if (task.state === 'cancelling' && update.state === 'completed') {
@@ -490,6 +560,7 @@ export class LocalAgentStore {
           if (update.text !== undefined && (!task.hasImage || update.state === 'completed')) task.text = update.text;
           if (update.usageTokens !== undefined) task.usageTokens = update.usageTokens;
           if (update.state === 'failed') task.error = update.error ?? 'LOCAL_TASK_FAILED';
+          if (update.failure) task.failure = safeFailureValue(update.failure);
           if (update.state === 'cancelled') task.error = 'LOCAL_CANCELLED';
         }
         task.updatedAt = now;

@@ -8,6 +8,8 @@ Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent i
 
 The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
+**Local diagnostic review — 2026-11-11:** inspected `b9f1feb` plus this diagnostic change. Flows1–2 add owner/source-validated diagnostic snapshots of retained native/Companion task evidence, public activity and separate application acceptance. Actual process launch is distinct from runtime handoff; missing observations stay unknown. Recovery links retain the original research controls. Flows3–5 keep the same strategy, channel and real-ledger writers; diagnostic reads cannot authorize execution or recreate a deleted source.
+
 ## Module ownership
 
 | Boundary | Responsibility | Dependency direction |
@@ -56,6 +58,8 @@ flowchart LR
     overallCommand --> council
     auth --> memory["Owner-scoped memory inventory and existing thesis lifecycle"]
     auth --> telemetry["Owner-scoped Agent run analysis and explicit feedback"]
+    telemetry --> diagnosticRead["Read-only diagnostic snapshots; exact run/task identity and source visibility"]
+    diagnosticRead --> native
     telemetry --> db
     core --> capture["Metadata-only model/native/tool capture"]
     native --> capture
@@ -156,6 +160,8 @@ flowchart TD
     browserVersion --> materialPin
     activity["Actual tool and skill receipts; public research summaries"] --> chat["Readable per-member chat activity"]
     activity --> observed["Operational metadata; separate from truncated chat projection"]
+    processEvidence["Native/Companion preflight, spawn, exit and bounded public task journal"] --> observed
+    returned -. "Execution completion differs from acceptance" .-> observed
     observed --> telemetryRead["Owned run/attempt/span queries; source tombstones still apply"]
     today["Research reports: facts and current report"] --> request["Owner, business date and request receipt"]
     dailyWorkspace["Daily workspace"] --> dailyFacts["Current saved ledger facts; read-only, not an archive"]

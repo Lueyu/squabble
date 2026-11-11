@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { NativeLaunch } from './resolver';
 import { NativeProviderFailure } from './failures';
+import type { NativeDiagnosticEvent } from '../../shared/local-agent-diagnostics.interface';
+import { diagnostic } from './diagnostics';
 
 export interface NativeProcessOptions {
   cwd: string;
@@ -13,8 +15,9 @@ export interface NativeProcessOptions {
   maxOutputBytes: number;
   onLine?: (line: string) => void;
   onStderrLine?: (line: string) => void;
+  onDiagnostic?: (event: NativeDiagnosticEvent) => void;
 }
-export interface NativeProcessResult { code: number; stdout: string; stderr: string }
+export interface NativeProcessResult { code: number; stdout: string; stderr: string; outputBytes?: number; stderrBytes?: number }
 /** Internal output is retained only to recover an accepted remote task; never use it in UI errors. */
 export class NativeProcessFailure extends Error {
   constructor(message: string, readonly result: NativeProcessResult) { super(message); }
@@ -50,6 +53,9 @@ export function executeNativeProcess(launch: NativeLaunch, args: string[], optio
     let partial: string = '';
     let stderrPartial: string = '';
     let bytes: number = 0;
+    let outputBytes = 0;
+    let stderrBytes = 0;
+    let firstOutput = false;
     let killTimer: NodeJS.Timeout | undefined;
     let closeTimer: NodeJS.Timeout | undefined;
     const decoder: StringDecoder = new StringDecoder('utf8');
@@ -64,8 +70,11 @@ export function executeNativeProcess(launch: NativeLaunch, args: string[], optio
       if (!failure) clearTimeout(killTimer);
       options.signal?.removeEventListener('abort', cancel);
       child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy();
-      if (failure) reject(new NativeProcessFailure(failure.message, { code, stdout, stderr }));
-      else resolve({ code, stdout, stderr });
+      const result = { code, stdout, stderr, outputBytes, stderrBytes };
+      diagnostic(options.onDiagnostic, { stage: 'process', status: failure?.message === 'NATIVE_AGENT_CANCELLED' ? 'cancelled'
+        : failure || code !== 0 ? 'failed' : 'succeeded', exitCode: code, outputBytes, stderrBytes });
+      if (failure) reject(new NativeProcessFailure(failure.message, result));
+      else resolve(result);
     };
     const stop = (code: string): void => {
       if (failure || completed) return;
@@ -78,8 +87,13 @@ export function executeNativeProcess(launch: NativeLaunch, args: string[], optio
     const cancel = (): void => stop('NATIVE_AGENT_CANCELLED');
     const timer: NodeJS.Timeout = setTimeout(() => stop('NATIVE_AGENT_TIMEOUT'), options.timeoutMs);
     options.signal?.addEventListener('abort', cancel, { once: true });
-    const recordBytes = (chunk: Buffer): boolean => {
+    const recordBytes = (chunk: Buffer, stderr = false): boolean => {
       bytes += chunk.length;
+      if (stderr) stderrBytes += chunk.length; else outputBytes += chunk.length;
+      if (!firstOutput) {
+        firstOutput = true;
+        diagnostic(options.onDiagnostic, { stage: 'output', status: 'running', outputBytes, stderrBytes });
+      }
       if (bytes > options.maxOutputBytes) { stop('NATIVE_AGENT_OUTPUT_LIMIT'); return false; }
       return !failure;
     };
@@ -95,7 +109,7 @@ export function executeNativeProcess(launch: NativeLaunch, args: string[], optio
       catch (error) { stop(callbackFailure(error)); }
     });
     child.stderr.on('data', (chunk: Buffer) => {
-      if (!recordBytes(chunk)) return;
+      if (!recordBytes(chunk, true)) return;
       const text = stderrDecoder.write(chunk);
       stderr += text;
       if (!options.onStderrLine) return;
@@ -105,6 +119,7 @@ export function executeNativeProcess(launch: NativeLaunch, args: string[], optio
       try { for (const line of lines) if (line.trim()) options.onStderrLine(line.trim()); }
       catch (error) { stop(callbackFailure(error)); }
     });
+    child.once('spawn', () => diagnostic(options.onDiagnostic, { stage: 'process', status: 'running' }));
     child.once('error', () => { failure ??= new Error('NATIVE_AGENT_LAUNCH_FAILED'); finish(-1); });
     child.once('close', (code: number | null) => {
       const tail = decoder.end(); const stderrTail = stderrDecoder.end();

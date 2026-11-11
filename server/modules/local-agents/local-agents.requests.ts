@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LOCAL_AGENT_PROVIDERS, type CompanionPoll, type LocalAgentProvider, type NativeAgentConfiguration,
+import { COMPANION_FAILURE_CODES, LOCAL_AGENT_PROVIDERS, type CompanionPoll, type LocalAgentProvider, type NativeAgentConfiguration,
   type NativeAgentStatus } from '../../../shared/local-agents.interface';
 import { providerCatalog } from '../../../shared/local-agent-catalog';
 import { LocalAgentError } from './local-agents.types';
@@ -38,6 +38,19 @@ const activity = z.object({ id: z.string().min(1).max(128), kind: z.enum(['task'
   toolName: z.string().max(101).optional(), callId: z.string().max(128).optional(), durationMs: z.number().finite().min(0).max(600_000).optional(),
   sources: z.array(z.object({ title: z.string().max(160), url: z.string().max(2048).optional(), fetchedAt: z.string().max(40) }).strict()).max(8).optional(),
 }).strict();
+const diagnostic = z.object({ id: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u), stage: z.enum(['preflight', 'process', 'output', 'result']),
+  status: z.enum(['running', 'succeeded', 'failed', 'cancelled', 'interrupted']),
+  at: z.string().max(40).refine(value => Number.isFinite(Date.parse(value))), code: z.enum(COMPANION_FAILURE_CODES).optional(),
+  exitCode: z.number().int().min(-2147483648).max(4294967295).optional(), outputBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  stderrBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(), terminalEvent: z.boolean().optional(),
+}).strict();
+const failure = z.object({ code: z.enum(COMPANION_FAILURE_CODES), stage: z.enum(['preflight', 'dispatch', 'runtime', 'parse']),
+  fieldPath: z.string().max(160).regex(/^[A-Za-z0-9_. ()–-]+$/u).optional(),
+  expectedType: z.string().max(120).regex(/^[A-Za-z0-9_. ()–-]+$/u).optional(), actualType: z.string().max(80).regex(/^[A-Za-z0-9_. ()–-]+$/u).optional(),
+  exitCode: z.number().int().min(-2147483648).max(4294967295).optional(), outputBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  stderrBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(), terminalEvent: z.boolean().optional(),
+  recoveries: z.array(z.enum(['check_existing', 'reparse_existing', 'retry_member', 'fix_configuration'])).max(4),
+}).strict();
 const pollRequest = z.object({
   agents: z.array(z.object({ provider, state: z.enum(['not_installed', 'login_required', 'ready', 'error']), version: z.string().max(120).optional(),
     imageInput: z.boolean().optional(),
@@ -48,7 +61,9 @@ const pollRequest = z.object({
   })).max(LOCAL_AGENT_PROVIDERS.length),
   updates: z.array(z.object({ id: z.string().uuid(), state: z.enum(['running', 'completed', 'failed', 'cancelled']),
     events: z.array(activity).max(64).optional(),
-    error: z.enum(['LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED', 'LOCAL_VERSION_UNSUPPORTED', 'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_TOOL_ISOLATION_FAILED', 'LOCAL_USAGE_LIMIT', 'LOCAL_RATE_LIMIT', 'LOCAL_IMAGE_UNSUPPORTED', 'LOCAL_INVALID_INPUT']).optional(),
+    diagnostics: z.array(diagnostic).max(64).optional(), diagnosticsTruncated: z.boolean().optional(), eventsTruncated: z.boolean().optional(),
+    activityCapability: z.enum(['tools', 'starts_only', 'phases', 'none']).optional(),
+    failure: failure.optional(), error: z.enum(COMPANION_FAILURE_CODES).optional(),
     progress: z.string().max(500).optional(), text: z.string().max(512_000).refine((value) => Buffer.byteLength(value) <= 512_000).optional(),
     usageTokens: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional() }).strict()).max(16),
 }).strict();

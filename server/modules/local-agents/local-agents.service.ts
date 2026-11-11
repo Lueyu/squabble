@@ -88,6 +88,10 @@ export class LocalAgentsService implements OnModuleDestroy {
       commandEmitted: task.commandEmitted === true, runtimeEntered: task.runtimeEntered === true,
       outputBytes: task.text ? Buffer.byteLength(task.text) : 0 };
   }
+  getTaskDiagnostics(owner: string, taskId: string) { return this.store.taskDiagnostics(owner, taskId); }
+  listTaskDiagnostics(owner: string, selector: { sessionId: string; revision: number; cycleId?: string }) {
+    return this.store.listTaskDiagnostics(owner, selector);
+  }
   async cancelTask(owner: string, id: string) {
     const state = await this.store.cancel(owner, id); this.running.get(id)?.abort.abort(); return state;
   }
@@ -210,8 +214,11 @@ export class LocalAgentsService implements OnModuleDestroy {
           agentSettings: task.agentSettings, ...(image ? { image } : {}),
           ...(task.researchBundle ? { researchTools: { ...task.researchBundle,
             call: (request: ResearchToolRequest, signal: AbortSignal) => this.callResearchTool(task.owner, task.id, request, signal) } } : {}),
-          onEvent: event => { if (!image) progressWrites = progressWrites.then(() => this.store.appendEvents(task.owner, task.id, [event])); },
-          onProgress: (text: string) => { if (!image) progressWrites = progressWrites.then(() => this.store.update(task.owner, task.id, { progress: text.slice(0, 500) })); } });
+          onDiagnostic: event => { progressWrites = progressWrites.then(() => this.store.appendDiagnostics(task.owner, task.id, [event]))
+            .catch(() => this.store.noteCaptureLoss(task.owner, task.id, 'diagnostics').catch(() => undefined)); },
+          onEvent: event => { if (!image) progressWrites = progressWrites.then(() => this.store.appendEvents(task.owner, task.id, [event]))
+            .catch(() => this.store.noteCaptureLoss(task.owner, task.id, 'events').catch(() => undefined)); },
+          onProgress: (text: string) => { if (!image) progressWrites = progressWrites.then(() => this.store.update(task.owner, task.id, { progress: text.slice(0, 500) })).catch(() => undefined); } });
           const running = this.running.get(task.id); if (running) running.entered = true;
           // Completion is awaited outside the local handoff/fence, never inside a database transaction.
           void execution.catch(() => undefined);
@@ -308,7 +315,7 @@ export class LocalAgentsService implements OnModuleDestroy {
       if (task.commandEmitted) await recordSubmission('companion-command');
       if (task.runtimeEntered) await recordSubmission('runtime');
       if (task.state === 'completed') return { taskId: task.id, contextId: task.id, text: task.text || '', usageTokens: task.usageTokens ?? null };
-      if (task.state === 'failed' || task.state === 'cancelled') throw new LocalAgentError(task.error || 'LOCAL_TASK_FAILED', task.id, task.id);
+      if (task.state === 'failed' || task.state === 'cancelled') throw new LocalAgentError(task.error || 'LOCAL_TASK_FAILED', task.id, task.id, task.failure);
       if (task.state === 'staged') throw new LocalAgentError('LOCAL_DISPATCH_UNCERTAIN', task.id, task.id);
       if (!await options.shouldContinue()) {
         const cancellation = await this.store.cancel(owner, task.id);

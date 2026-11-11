@@ -5,7 +5,7 @@ import { nativeChildEnv } from './environment';
 import { NativeEventCollector } from './events';
 import { launchNativeLogin } from './login';
 import { executeNativeProcess, NativeProcessFailure, type NativeProcessResult } from './process';
-import { readOpenCodeDiagnostic, detectNetworkFailure } from './failures';
+import { readOpenCodeDiagnostic, detectNetworkFailure, safeExecutionFailure } from './failures';
 import { resolveNativeCommand, type NativeLaunch, type NativeResolverOptions } from './resolver';
 import { createNativeWorkspace } from './workspace';
 import { authenticationState, configuredModels, configuredDefaultModel, defaultCapabilities, geminiMetadata, kimiCredentialEnv, kimiMetadata, parseModels, supportsAntigravity } from './metadata';
@@ -17,12 +17,15 @@ import { createResearchToolBridge, type NativeResearchTools, type ResearchToolBr
 import { injectResearchTools, isolateCodexResearch, researchSnapshotPrompt, researchToolCapability } from './tool-config';
 import type { NativeAgentImage } from '../../shared/native-image.interface';
 import { attachNativeImage, nativeImageCapability, validateNativeImage } from './native-image';
+import type { NativeDiagnosticEvent } from '../../shared/local-agent-diagnostics.interface';
+import { diagnostic, observe } from './diagnostics';
 
 export interface NativeRunOptions {
   root: string; signal: AbortSignal; onProgress: (text: string) => void; agentSettings?: NativeAgentConfiguration;
   researchTools?: NativeResearchTools;
   image?: NativeAgentImage;
   onEvent?: (event: ResearchActivity) => void;
+  onDiagnostic?: (event: NativeDiagnosticEvent) => void;
 }
 export interface NativeRuntimeOptions extends NativeResolverOptions {
   authTimeoutMs?: number; runTimeoutMs?: number; maxOutputBytes?: number;
@@ -89,15 +92,22 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
       await launchNativeLogin(provider, command(provider), options);
     },
     async runNativeAgent(provider: LocalAgentProvider, prompt: string, run: NativeRunOptions): Promise<{ text: string; usageTokens: number | null }> {
-      if (run.signal.aborted) throw new Error('NATIVE_AGENT_CANCELLED');
-      if (!prompt.trim() || Buffer.byteLength(prompt, 'utf8') > 256 * 1024) throw new Error('NATIVE_AGENT_INVALID_PROMPT');
-      const image = run.image === undefined ? undefined : validateNativeImage(run.image);
-      if (image && !nativeImageCapability(provider)) throw new Error('NATIVE_AGENT_IMAGE_UNSUPPORTED');
-      const settings: NativeAgentConfiguration = normalizedConfiguration(run.agentSettings);
-      const launch: NativeLaunch = command(provider);
-      const workspace = await createNativeWorkspace(run.root);
+      let preflight = true;
+      let workspace: Awaited<ReturnType<typeof createNativeWorkspace>> | undefined;
+      let collector: NativeEventCollector | undefined;
+      let terminalEvent = false;
+      let outputSeen = false;
+      const evidence: { exitCode?: number; outputBytes?: number; stderrBytes?: number } = {};
+      diagnostic(run.onDiagnostic, { stage: 'preflight', status: 'running' });
       let bridge: ResearchToolBridge | undefined;
       try {
+        if (run.signal.aborted) throw new Error('NATIVE_AGENT_CANCELLED');
+        if (!prompt.trim() || Buffer.byteLength(prompt, 'utf8') > 256 * 1024) throw new Error('NATIVE_AGENT_INVALID_PROMPT');
+        const image = run.image === undefined ? undefined : validateNativeImage(run.image);
+        if (image && !nativeImageCapability(provider)) throw new Error('NATIVE_AGENT_IMAGE_UNSUPPORTED');
+        const settings: NativeAgentConfiguration = normalizedConfiguration(run.agentSettings);
+        const launch: NativeLaunch = command(provider);
+        workspace = await createNativeWorkspace(run.root);
         const probe: NativeProbe = probeFor(launch, provider, settings.model);
         const tools = !image && run.researchTools && (run.researchTools.snapshot.trim() || run.researchTools.descriptors.length) ? run.researchTools : undefined;
         let capability: ResearchToolCapability = researchToolCapability(provider);
@@ -123,15 +133,32 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
           try { invocation = await isolateCodexResearch(invocation, probe, workspace.cwd, run.signal); }
           catch { throw new Error(run.signal.aborted ? 'NATIVE_AGENT_CANCELLED' : 'NATIVE_AGENT_TOOL_ISOLATION_FAILED'); }
         }
-        if (tools) run.onEvent?.({ id: `${provider}-research-capability`, kind: 'capability',
+        if (tools) observe(run.onEvent, { id: `${provider}-research-capability`, kind: 'capability',
           status: bridge ? 'succeeded' : 'unavailable', at: new Date().toISOString(),
           summary: bridge ? 'Task-scoped research tools available' : capability.reason === 'version_unsupported'
             ? 'CLI version is not verified for research tools; using read-only evidence snapshot'
             : 'Isolated research tools are not available for this runtime; using read-only evidence snapshot' });
+        diagnostic(run.onDiagnostic, { stage: 'preflight', status: 'succeeded' });
+        preflight = false;
         const processOptions = { cwd: workspace.cwd, env: invocation.env, input: invocation.input, signal: run.signal,
-          timeoutMs: options.runTimeoutMs ?? 10 * 60 * 1000, maxOutputBytes: options.maxOutputBytes ?? 4 * 1024 * 1024 };
-        if (provider === 'doubao') return await runDoubao(launch, invocation.args, processOptions, run.root, run.onProgress, run.onEvent);
-        const collector: NativeEventCollector = new NativeEventCollector(provider, run.onProgress, run.onEvent);
+          timeoutMs: options.runTimeoutMs ?? 10 * 60 * 1000, maxOutputBytes: options.maxOutputBytes ?? 4 * 1024 * 1024,
+          onDiagnostic: (event: NativeDiagnosticEvent) => {
+            if (event.stage === 'output') { if (outputSeen) return; outputSeen = true; }
+            if (event.stage === 'process' && event.status !== 'running') {
+              evidence.exitCode = event.exitCode;
+              evidence.outputBytes = (evidence.outputBytes ?? 0) + (event.outputBytes ?? 0);
+              evidence.stderrBytes = (evidence.stderrBytes ?? 0) + (event.stderrBytes ?? 0);
+            }
+            observe(run.onDiagnostic, event);
+          } };
+        if (provider === 'doubao') {
+          const result = await runDoubao(launch, invocation.args, processOptions, run.root,
+            text => observe(run.onProgress, text), event => observe(run.onEvent, event));
+          terminalEvent = true;
+          diagnostic(run.onDiagnostic, { stage: 'result', status: 'succeeded', ...evidence, terminalEvent });
+          return result;
+        }
+        collector = new NativeEventCollector(provider, run.onProgress, run.onEvent);
         const result = await executeNativeProcess(launch, invocation.args, { ...processOptions, onLine: (line: string) => collector.read(line),
           ...(provider === 'opencode' ? { onStderrLine: readOpenCodeDiagnostic } : {}) });
         if (result.code !== 0) {
@@ -139,8 +166,17 @@ export function createNativeRuntime(options: NativeRuntimeOptions = {}) {
           throw new NativeProcessFailure(networkCode ?? 'NATIVE_AGENT_FAILED', result);
         }
         collector.completeProcess();
-        return collector.result();
-      } finally { try { await bridge?.close(); } finally { await workspace.dispose(); } }
+        const value = collector.result();
+        diagnostic(run.onDiagnostic, { stage: 'result', status: 'succeeded', ...evidence, terminalEvent: collector.terminalEvent });
+        return value;
+      } catch (error) {
+        const failure = { ...safeExecutionFailure(error, preflight ? 'preflight' : 'runtime'), ...evidence,
+          ...(!preflight ? { terminalEvent: collector?.terminalEvent ?? terminalEvent } : {}) };
+        diagnostic(run.onDiagnostic, { stage: preflight ? 'preflight' : 'result',
+          status: run.signal.aborted ? 'cancelled' : 'failed', code: failure.code, ...evidence,
+          ...(!preflight ? { terminalEvent: failure.terminalEvent } : {}) });
+        throw Object.assign(error instanceof Error ? error : new Error('NATIVE_AGENT_FAILED'), { failure });
+      } finally { try { await bridge?.close(); } finally { await workspace?.dispose(); } }
     },
   };
 }

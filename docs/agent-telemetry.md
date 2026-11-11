@@ -14,6 +14,20 @@ The `/telemetry` workspace connects operational facts, research delivery and use
 
 运行完成率只针对已结束、未取消且结果明确的运行；P95 只使用可测量的已完成耗时。调用用量已结算不等于业务执行成功，交付接受不等于报告被用户采纳。预算预占不是供应商实际账单，未知 token 或价格不能显示为零。筛选和图表使用 API 返回的同一时间范围，并保留数据覆盖说明。默认范围是最近七天；趋势按 UTC 日期分桶，列表与时间选择按浏览器本地时区显示，UTC 日期标签不再次转换为本地午夜。
 
+## Local Agent diagnostics · 本地 Agent 诊断
+
+Run detail separates local execution, public activity, result acceptance and report publication. The diagnostic view reads retained native/Companion task metadata and the authoritative research records. It does not launch a CLI, probe a personal provider, recover a task or retry research. Authenticated snapshot reads refresh active diagnostics every two seconds; each request revalidates owner and source visibility. A disconnected page can read the latest persisted snapshot again without resending work.
+
+执行详情分别显示本地执行状态、公开工具活动、结果验收和报告发布。诊断视图连接已保留的 native/Companion 任务元数据与权威研究记录；读取和重连不会重新下发任务。活动记录按实际任务、修订、周期和尝试关联，不能用成员名称推断归属。诊断恢复入口返回原研究会话，继续使用已有的显式恢复流程。
+
+New executions record fixed operational evidence when observable: preflight, actual process launch, first output, process exit, output byte counts and protocol completion. A queued/running journal entry or runtime handoff alone does not prove that the CLI started or that a model request reached its provider. The configured model and an observed model remain separate. No private reasoning, command arguments, stdout/stderr text, prompts, holdings or credentials appear in diagnostic events or downloads.
+
+新增执行会在可观测时记录准备检查、进程实际启动、首次输出、进程退出、输出字节数和协议结束信息。任务标记“运行中”不等于进程已经启动，更不等于模型请求已经送达。进程状态、Companion 心跳、最近公开活动各自显示；长时间静默只说明没有收到新活动，不自动判定卡死。CLI 完成也不等于应用已接受结果：解析失败优先保留已有结果，并在原会话处理。
+
+Coverage is explicit per adapter and retained record. Some providers expose complete public tool lifecycles, others only starts or phase markers; none of these interfaces guarantees visibility into internal HTTP/DNS/TLS, provider queues, hidden retries or every model call. Bounded journals may retain only part of a long task. Older companions or historical tasks without new evidence remain partial/unavailable rather than reconstructed. A diagnostic download is an allowlisted metadata snapshot with the same ownership and visibility as the page.
+
+按执行器能力显示“工具事件”“仅开始事件”“仅阶段”等观测范围。历史任务、旧 Companion 或已截断的日志会明确显示覆盖缺口，不补造步骤；不存在用量证据时仍显示未知。阶段失败、工具失败、连接中断、输出不完整和本地解析失败分别保留证据，不能统一解释为模型故障。
+
 ## Langfuse · 可选连接
 
 The app stores metadata in PostgreSQL without requiring Langfuse. Export is **disabled by default**. Operators may configure a self-hosted or otherwise trusted Langfuse instance using server environment variables:
@@ -34,7 +48,7 @@ The exporter uses an isolated OpenTelemetry provider with the official Langfuse 
 
 ## Data ownership and lifecycle · 数据边界
 
-All APIs derive the owner from authenticated server context. Run detail and feedback revalidate the source's visibility; deleted tasks/reports must not become readable again through telemetry. Feedback is a bounded explicit rating/comment, not an instruction or new research conclusion. Local metadata and feedback are included in normal database backups. Records already sent to an explicitly configured external Langfuse instance have their own retention/deletion lifecycle; hiding a Squabble source is not a promise of remote erasure.
+All APIs derive the owner from authenticated server context. Run detail and feedback revalidate the source's visibility; deleted tasks/reports must not become readable again through telemetry. Feedback is a bounded explicit rating/comment, not an instruction or new research conclusion. PostgreSQL operational spans and feedback are included in database backups. Native/Companion task journals and their diagnostic evidence live under `LOCAL_AGENTS_DATA_DIR` (default `~/.squabble/local-agents`) and require backup of that private data directory as well. Records already sent to an explicitly configured external Langfuse instance have their own retention/deletion lifecycle; hiding a Squabble source is not a promise of remote erasure.
 
 所有查询、关联和反馈写入都需要所属用户范围；已删除来源不能通过运行分析重新查看。反馈是用户评审数据，不是执行授权。观测数据不会启用策略、写入真实账本或修改研究结论。外部 Langfuse 的保留与删除需由部署者管理。
 

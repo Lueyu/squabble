@@ -1,4 +1,5 @@
 import http from './http';
+import type { TelemetryDiagnostics } from '@shared/telemetry-diagnostics.interface';
 import type {
   TelemetryFeedback, TelemetryFeedbackInput, TelemetryFilters,
   TelemetryRunDetail, TelemetryWorkspace,
@@ -11,6 +12,13 @@ export async function fetchTelemetryWorkspace(filters: TelemetryFilters): Promis
 
 export async function fetchTelemetryRun(id: string): Promise<TelemetryRunDetail> {
   return (await http.get<TelemetryRunDetail>(`/api/telemetry/runs/${encodeURIComponent(id)}`)).data;
+}
+
+/** Every snapshot rechecks source visibility; aborting this read never stops execution. */
+export async function fetchTelemetryDiagnostics(id: string, signal?: AbortSignal): Promise<TelemetryDiagnostics> {
+  return (await http.get<TelemetryDiagnostics>(
+    `/api/telemetry/runs/${encodeURIComponent(id)}/diagnostics`, { signal },
+  )).data;
 }
 
 export async function saveTelemetryFeedback(

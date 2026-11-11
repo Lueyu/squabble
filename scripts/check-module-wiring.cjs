@@ -34,6 +34,8 @@ async function main() {
   const { EvidenceService } = require(path.join(compiled, 'modules/research-core/evidence.service'));
   const { PortfolioContextService } = require(path.join(compiled, 'modules/research-core/portfolio-context.service'));
   const toolingProviders = [
+    ['telemetry/telemetry-diagnostics.service', 'TelemetryDiagnosticsService'],
+    ['local-agents/local-agents.service', 'LocalAgentsService'],
     ['research-runtime/runtime-journal.service', 'RuntimeJournalService'],
     ['research-runtime/research-runtime.service', 'ResearchRuntimeService'],
     ['research-runtime/drivers/deep-agents.driver', 'DeepAgentsDriver'],
