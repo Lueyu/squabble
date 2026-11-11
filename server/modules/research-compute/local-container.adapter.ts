@@ -55,7 +55,7 @@ export class LocalContainerAdapter implements ComputeProvider {
   }
   async readiness() {
     const value = z.object({ status: z.enum(['ready', 'unavailable']), provider: z.literal('local-container'),
-      protocolVersion: z.literal(1), imageId: z.string().nullable(), deploymentId: z.uuid().optional() }).parse(await this.request('/health'));
+      protocolVersion: z.literal(1), imageId: z.string().nullable(), deploymentId: z.uuid() }).parse(await this.request('/health'));
     if (value.status !== 'ready' || !value.imageId) throw new Error('LOCAL_SANDBOX_UNAVAILABLE');
     this.imageId = value.imageId; return value;
   }
@@ -77,8 +77,10 @@ export class LocalContainerAdapter implements ComputeProvider {
   async run(input: E2bComputeInput, created: (sandboxId: string) => Promise<void>, shouldContinue = async () => true) {
     if (this.status() !== 'configured') throw new Error('LOCAL_SANDBOX_UNCONFIGURED');
     const ready = await this.readiness();
+    const preparedImage = z.object({ dependencies: z.object({ sandboxImage: z.string() }) }).parse(input.manifest).dependencies.sandboxImage;
+    if (preparedImage !== ready.imageId) throw new ComputeE2bError('COMPUTE_PROVIDER_IDENTITY_CHANGED', null, true);
     let sandboxId = ready.deploymentId ? `local:${ready.deploymentId}:${input.jobId}` : null;
-    let terminated = false, receipt;
+    let terminated = false, receipt, createRequested = false;
     const checkedReceipt = (value: unknown) => {
       const parsed = receiptSchema.parse(value);
       if (parsed.jobId !== input.jobId || parsed.sandboxId !== sandboxId || parsed.imageId !== ready.imageId) throw new Error('LOCAL_IDENTITY_CONFLICT');
@@ -86,7 +88,7 @@ export class LocalContainerAdapter implements ComputeProvider {
     };
     try {
       if (!await shouldContinue()) throw new ComputeE2bError('COMPUTE_CANCELLED', null, true);
-      try { receipt = checkedReceipt(await this.request('/v1/jobs', 'POST', { version: 1, ...input,
+      try { createRequested = true; receipt = checkedReceipt(await this.request('/v1/jobs', 'POST', { version: 1, ...input,
         files: input.files.map(file => ({ name: file.name, base64: file.data.toString('base64') })) })); }
       catch { throw new ComputeE2bError('LOCAL_CREATE_UNKNOWN', sandboxId, false); }
       sandboxId = receipt.sandboxId;
@@ -118,6 +120,8 @@ export class LocalContainerAdapter implements ComputeProvider {
       });
       return { files, stdout: output.stdout, stderr: output.stderr, sandboxId, terminationConfirmed: true as const };
     } catch (error) {
+      if (!createRequested) { terminated = true; sandboxId = null; }
+      if (error instanceof ComputeE2bError && error.terminationConfirmed) terminated = true;
       if (sandboxId && !terminated) {
         try { await this.kill(sandboxId); terminated = true; } catch { /* Keep the durable unknown resource reservation. */ }
       }

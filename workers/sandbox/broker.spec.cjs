@@ -16,7 +16,7 @@ test('local protocol rejects caller-controlled isolation parameters and traversa
 test('job profile has hard isolation and no host filesystem bridge', () => {
   const broker = require('./broker.cjs');
   const args = broker.containerArguments('squabble-job-test', 'sha256:fixed', 'deployment', 'job', 1000);
-  for (const expected of ['--read-only', '--network=none', '--user=10001:10001', '--cap-drop=ALL',
+  for (const expected of ['--pull=never', '--read-only', '--network=none', '--user=10001:10001', '--cap-drop=ALL',
     '--security-opt=no-new-privileges:true', '--memory=2g', '--memory-swap=2g', '--cpus=1', '--pids-limit=64']) {
     assert.ok(args.includes(expected), expected);
   }

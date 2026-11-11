@@ -16,7 +16,7 @@ import { EvidenceService, type EvidenceInput } from '../research-core/evidence.s
 import { ResearchMemoryService } from '../research-memory/research-memory.service';
 import type { CouncilEvidence } from '../council/council.rules';
 import type { QuoteResponse } from '@shared/api.interface';
-import type { AgentToolDescriptor } from '@shared/agent-tooling.interface';
+import type { AgentDataClass, AgentToolDescriptor } from '@shared/agent-tooling.interface';
 import type { AgentToolResultEnvelope } from '@shared/agent-tooling.interface';
 import type { DataFinancialOperation, DataFinancialProvider } from '@shared/data-library.interface';
 import { toAgentToolEnvelope } from '../../common/agent-contract';
@@ -43,6 +43,7 @@ import type { ToolCapabilityPackId } from '../../../shared/tool-capabilities.int
 type SessionRow = typeof councilSessions.$inferSelect;
 interface ScopedSession { session: SessionRow; authority: string; review?: boolean }
 type ScopeDatabase = Pick<PostgresJsDatabase, 'select'>;
+interface CapabilityCallGrant { packId: ToolCapabilityPackId; revision: number; dataClasses: AgentDataClass[] }
 const ARCHIVED_TOOLS = new Set(['get_quotes', 'get_financials', 'get_news', 'get_valuation',
   'get_peer_comparison', 'get_valuation_scenarios', 'search_research_web', 'search_data_library', 'get_financial_source_data', 'read_browser_source',
   'get_portfolio_quotes', 'get_portfolio_financials', 'read_dataset_summary', 'run_statistics', 'run_backtest', 'browser_research']);
@@ -130,7 +131,8 @@ export class ResearchToolsService {
         : ['run_statistics', 'run_backtest'].includes(tool.name) ? 'compute'
           : ['get_financial_source_data', 'get_portfolio_financials'].includes(tool.name)
             && (parsed.data as HandlerInput).provider === 'aktools' ? 'market_data' : undefined;
-    let capability: { packId: ToolCapabilityPackId; revision: number } | undefined;
+    const capabilityDataClasses: AgentDataClass[] = capabilityPack === 'documents' ? ['private_material'] : [];
+    let capability: CapabilityCallGrant | undefined;
     const collection = new AbortController();
     let collectionPoll: ReturnType<typeof setInterval> | undefined;
     let checkingCollectionScope = false;
@@ -141,8 +143,9 @@ export class ResearchToolsService {
       assertActive();
       if (capabilityPack) {
         if (!this.capabilities) throw new Error('TOOL_CAPABILITY_DISABLED');
-        if (!capability) capability = { packId: capabilityPack, revision: (await this.capabilities.require(owner, capabilityPack)).revision };
-        else await this.capabilities.requireCurrent(owner, capability.packId, capability.revision);
+        if (!capability) capability = { packId: capabilityPack, dataClasses: capabilityDataClasses,
+          revision: (await this.capabilities.require(owner, capabilityPack, capabilityDataClasses)).revision };
+        else await this.capabilities.requireCurrent(owner, capability.packId, capability.revision, capability.dataClasses);
       }
       if (options.shouldContinue && !(await options.shouldContinue())) throw new ScopeEnded();
       assertActive();
@@ -266,7 +269,7 @@ export class ResearchToolsService {
   /** Read-only tools may archive their server-produced results, never caller-supplied facts or live memory/report copies. */
   private async archiveProviderResult(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
     result: ResearchToolResult, authority: string, assertActive: () => void, external = false,
-    capability?: { packId: ToolCapabilityPackId; revision: number }): Promise<ResearchToolResult> {
+    capability?: CapabilityCallGrant): Promise<ResearchToolResult> {
     const dependencyOnly = ['get_research_report', 'get_research_memory', 'get_discussion_context'].includes(tool.name);
     if (tool.name === 'browser_research' && result.data && typeof result.data === 'object'
       && 'closed' in result.data && result.data.closed === true) return boundedResult(result);
@@ -292,7 +295,7 @@ export class ResearchToolsService {
       // Match the workflow store's lock order; reload under lock so concurrent
       // results append to the current snapshot instead of replacing each other.
       const current = await this.currentSession(owner, scope, tx, true);
-      if (capability) await this.capabilities!.requireCurrent(owner, capability.packId, capability.revision, [], tx);
+      if (capability) await this.capabilities!.requireCurrent(owner, capability.packId, capability.revision, capability.dataClasses, tx);
       if (!current || current.authority !== authority) throw new ScopeEnded();
       if (!await libraryEvidenceAvailable(tx, owner, [evidence], true)) throw new ScopeEnded();
       assertActive();

@@ -50,11 +50,19 @@ export async function createUpdateBackup(
     await dump(databaseFile);
     if ((await stat(databaseFile)).size === 0) throw new Error('Database backup is empty');
     await chmod(databaseFile, 0o600);
+    const keySources: Record<string, string> = {};
     for (const filename of ['jwt.key', 'settings.key']) {
+      const runtimeValue = filename === 'jwt.key' ? snapshot?.keys?.jwt : snapshot?.keys?.settings;
+      if (runtimeValue?.trim()) {
+        await writeFile(join(pending, filename), runtimeValue, { mode: 0o600, flag: 'wx' });
+        keySources[filename] = 'runtime';
+        continue;
+      }
       try {
         const target = join(pending, filename);
         await copyFile(join(secretsRoot, filename), target);
         await chmod(target, 0o600);
+        keySources[filename] = 'persistent-file';
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         const value = filename === 'jwt.key' ? snapshot?.keys?.jwt : snapshot?.keys?.settings;
@@ -62,6 +70,7 @@ export async function createUpdateBackup(
         await writeFile(join(pending, filename), value, { mode: 0o600, flag: 'wx' });
       }
     }
+    await writeFile(join(pending, 'key-provenance.json'), JSON.stringify(keySources, null, 2), { mode: 0o600 });
     if (snapshot) await copyArtifacts(pending, snapshot);
     await rename(pending, complete);
     return complete;

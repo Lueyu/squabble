@@ -196,6 +196,26 @@ until the result is accepted.
 
 ## Docker-specific update path
 
+The standard tool suite uses a complete fixed-digest release archive; see
+`deploy/README.bundle.md`. Plain root Compose in a source checkout uses local
+build tags, so developers add `docker-compose.source.yml`. Never point a fresh
+user at unpublished local tags as if they were public images. The old app-only
+Watchtower update route is disabled when bundled capabilities are enabled.
+
+Include `capability-secrets`, `research-artifacts` and `sandbox-state` with the
+existing DB/settings/native state. Quiesce application, document and broker work
+before copying the matched set; the broker owns per-job lifecycle receipts.
+Worker-scoped credential volumes are regenerated from the authoritative
+capability-secrets volume. Restore into an isolated project/database and verify
+artifact hashes and original job/provider identities; a missing journal is not
+permission to rerun a computation. Cleanup must use the original provider.
+
+Windows source Web servers can use `deploy/compose.source-host.yml` and the
+configuration export script to prepare loopback services automatically. Preserve
+the original account/DB/model settings and private credential files. Desktop
+installers remain paused; future macOS/arm64 qualification is separate from a
+Windows Docker Desktop Linux-container test.
+
 Follow `docs/self-hosting.md` (and its Chinese counterpart). Root Compose is
 `squabble-local`; demo uses a different project. Back up DB, `settings-secrets`
 and `local-agents-data`, preserving any environment-supplied secrets and

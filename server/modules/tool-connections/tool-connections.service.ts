@@ -186,7 +186,7 @@ export class ToolConnectionsService {
       throw new BadRequestException(code);
     }
     const catalogId = randomUUID();
-    descriptors = descriptors.map(tool => ({ ...tool, catalogVersionId: catalogId })).sort((a, b) => a.id.localeCompare(b.id));
+    descriptors = descriptors.map(tool => ({ ...tool, catalogVersionId: catalogId })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
     const schemaHash = toolHash(descriptors.map(tool => ({ ...tool, catalogVersionId: '' })));
     return this.db.transaction(async tx => {
       const [latest] = await tx.select().from(toolConnections).where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id))).for('update');
@@ -232,7 +232,9 @@ export class ToolConnectionsService {
       allowedToolIds: body.toolIds, allowedDataClasses: body.dataClasses as AgentDataClass[],
       toolEffects: (body.effects ?? {}) as Record<string, AgentToolEffect>, revision: row.revision + 1,
       status: body.toolIds.length ? 'configured' : 'restricted', updatedAt: new Date() })
-      .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id), eq(toolConnections.revision, body.revision))).returning();
+      .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id), eq(toolConnections.revision, body.revision),
+        row.candidateCatalogVersionId ? eq(toolConnections.candidateCatalogVersionId, row.candidateCatalogVersionId)
+          : isNull(toolConnections.candidateCatalogVersionId))).returning();
     if (!saved) throw new ConflictException('TOOL_CONNECTION_REVISION_CHANGED');
     return this.project(saved);
   }

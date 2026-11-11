@@ -34,7 +34,7 @@ function validateInput(value) {
 }
 
 function containerArguments(name, imageId, deployment, jobId, runtime) {
-  return ['create', '--interactive', '--name', name,
+  return ['create', '--pull=never', '--interactive', '--name', name,
     '--label', `io.squabble.sandbox.deployment=${deployment}`, '--label', `io.squabble.sandbox.job=${jobId}`,
     '--label', `io.squabble.sandbox.deadline=${Date.now() + runtime + 30000}`,
     '--read-only', '--network=none', '--user=10001:10001', '--cap-drop=ALL',

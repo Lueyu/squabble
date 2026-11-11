@@ -1,10 +1,3 @@
-name: squabble-public
-
-# Public source deployment uses the same complete prepared capability suite.
-include:
-  - path: [../docker-compose.yml, ../docker-compose.source.yml]
-    project_directory: ..
-
 services:
   db:
     image: ${DB_IMAGE:-postgres:16-alpine}

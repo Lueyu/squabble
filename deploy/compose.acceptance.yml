@@ -2,8 +2,18 @@
 services:
   app:
     ports: !override ["127.0.0.1:54831:3000"]
+    environment:
+      TOOL_MCP_LOCAL_SERVICES_JSON: '[{"id":"aktools","endpoint":"http://aktools:8081/mcp"},{"id":"synthetic-acceptance","endpoint":"http://mcp-fixture:8084/mcp"}]'
   docling:
     volumes:
       - ./workers/documents/fixtures:/fixtures:ro
   db:
     ports: ["127.0.0.1:54834:5432"]
+  mcp-fixture:
+    image: ${SQUABBLE_APP_IMAGE:-squabble-app:local}
+    entrypoint: ["node", "/app/deploy/mcp-fixture.cjs"]
+    user: "1000:1000"
+    networks: [tools]
+    read_only: true
+    volumes: ["./deploy/mcp-fixture.cjs:/app/deploy/mcp-fixture.cjs:ro"]
+    ports: ["127.0.0.1:54835:8084"]

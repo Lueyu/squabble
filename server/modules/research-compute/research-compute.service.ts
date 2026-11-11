@@ -37,7 +37,7 @@ export class ResearchComputeService {
     @Optional() private readonly grants?: ToolCapabilityGrantsService) {}
 
   // The injected default is always local. A caller can explicitly inject E2B for historical fixtures.
-  private get provider(): ComputeProviderName { return this.sandbox.provider ?? 'e2b'; }
+  private get provider(): ComputeProviderName { return this.sandbox.provider; }
   private providerFor(name: string): ComputeProvider {
     if (name === this.provider) return this.sandbox;
     if (name === 'e2b' && this.legacyCloud) return this.legacyCloud;
@@ -143,7 +143,7 @@ export class ResearchComputeService {
     const request = computeRequestSchema.parse(raw);
     if (this.sandbox.status() !== 'configured') throw new Error(this.provider === 'e2b' ? 'E2B_UNCONFIGURED' : 'LOCAL_SANDBOX_UNCONFIGURED');
     if (this.provider === 'local-container') await (this.sandbox as LocalContainerAdapter).readiness();
-    const prepared = await this.prepare(owner, request, scope);
+    let prepared = await this.prepare(owner, request, scope);
     if (this.provider === 'local-container') {
       if (!this.grants) throw new Error('TOOL_CAPABILITY_DISABLED');
       prepared.capabilityRevision = (await this.grants.require(owner, 'compute', prepared.dataClasses)).revision;
@@ -170,10 +170,18 @@ export class ResearchComputeService {
       return true;
     };
     try {
+      // Replays can claim an older queued intent. Its encrypted payload and authority are immutable.
+      prepared = await this.jobs.input(owner, job.id) as PreparedCompute;
+      if (!Array.isArray(prepared.datasetVersionIds) || prepared.kind !== job.kind
+        || prepared.maxRuntimeMs !== job.maxRuntimeMs || (prepared.provider ?? 'e2b') !== job.provider
+        || job.provider !== this.provider) throw new Error('COMPUTE_FROZEN_CONTEXT_CHANGED');
+      const provider = this.providerFor(job.provider);
+      const expectedTemplate = job.providerIdentity?.template;
+      if (!expectedTemplate || hashContent(expectedTemplate) !== hashContent(provider.template())) throw new Error('COMPUTE_PROVIDER_IDENTITY_CHANGED');
       // Re-read after durable creation intent and immediately before provider dispatch.
       await this.revalidate(owner, prepared, scope);
       if (!await shouldContinue()) throw new ComputeE2bError('COMPUTE_CANCELLED', null, true);
-      const execution = await this.sandbox.run({ jobId: job.id, manifest: prepared.manifest,
+      const execution = await provider.run({ jobId: job.id, manifest: prepared.manifest,
         files: prepared.files.map(file => ({ name: file.name, data: Buffer.from(file.base64, 'base64') })),
         maxRuntimeMs: prepared.maxRuntimeMs, maxOutputBytes: 16 * 1024 * 1024 },
       id => this.jobs.created(owner, job.id, id), shouldContinue);

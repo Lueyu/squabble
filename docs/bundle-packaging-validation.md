@@ -68,10 +68,60 @@ sample **600000**, 2025-01-02 through 2025-01-10, returned **7 rows of 7** with
 container memory snapshot: **214.9 MiB**. This is one observed public-provider
 success, not an availability/coverage or financial-quality guarantee.
 
+## Actual offline Docling and OCR
+
+The actual local Docling image is
+`sha256:8470a752dca685a2d68f3c2741cef0a7882ebcb92ef2e5bfea31a08d87a008d7`,
+**7,566,255,830 bytes** as reported by Engine. The exported model manifest contains
+**103 files / 912,467,185 bytes**, SHA-256
+`968d35d623d89db62c08bafd00410f3ad86956b5dd462ec983f24520c7c4796b`.
+The package inventory records actual CPU Torch **2.14.1+cpu**, torchvision
+**0.29.1+cpu**, RapidOCR **3.10.0**, ONNX Runtime **1.31.0** and Docling Serve
+**1.38.2**. Both inventories are checked in under `workers/documents/`.
+
+The service ran nonroot/read-only with 2 CPU / 4 GiB / 256 PIDs and bounded tmpfs,
+attached only to an internal Docker network whose gateway is empty. The smoke
+also verified an Internet TCP connection fails before conversion. Model hashes
+are checked once at startup; health polling uses cached facts and raw process
+health, without repeated weight hashing.
+
+Initial actual execution found that bare `ocr_lang=zh-Hans` is treated as an
+unsupported native engine code. The pinned API requires **`ocr_lang=iso:zh`**.
+After that correction the first cold Chinese scan parsed in **13.192 s**, with
+4/4 expected literals and a physical-page text locator. The targeted application
+protocol spec observed RED for the old field, then **3/3 passed** after correction.
+
+Final `deploy/document-smoke.py` run: **20/20** expected parse/reject outcomes,
+**17** valid PDF/DOCX documents, **40/40** literal expected values in lossless
+document text and **39/40** in Markdown, **69.243 s** total. Results are in
+`workers/documents/acceptance.linux-amd64.jsonl`. The omitted Markdown value is
+`Revenue 40`, classified by the engine as a page header. Its exact original text,
+physical page and bounding box are preserved in lossless JSON. This distinction
+must remain visible; the measurement is not an audited financial accuracy claim.
+The three invalid files have explicit conversion failure results; the raw engine
+probe does not test the application's separate before-upload size gate. DOCX has
+element IDs and zero invented physical pages. The two-page fixture has two actual
+pages. Chinese and rotated-scan fixtures all retain their expected values.
+
+Cgroup memory peak: **2,199,445,504 bytes**; resident snapshot after the corpus:
+**1.649 GiB**. This workload used no runtime model download and no model API.
+
+## Actual Chromium component
+
+The pinned Playwright image ran matching Chromium **158.0.8127.18**, uid1000,
+`chromiumSandbox:true`, `no-new-privileges`, 256 MiB shared memory and the checked-in
+upstream seccomp profile, with Internet disabled for the synthetic dynamic-HTML
+probe. JavaScript rendering passed. No `SYS_ADMIN` or `--no-sandbox` was used.
+An initial stricter probe added `cap-drop ALL` and hit the upstream profile's
+conditional `chroot` denial; the actual app Compose configuration retains the
+default bounding capability set and passes. Compute jobs retain cap-drop ALL.
+Final application-image verification is still a separate pending gate.
+
 ## Remaining actual checks
 
-At this checkpoint: Docling image download is still completing; Chinese OCR,
-twenty-fixture measurements, model inventory export, actual sandboxed container
-Chromium, fresh whole-suite boot, matched recovery and public release archive
-verification are pending. These are not represented as successful by fixture
-or metadata checks above. Measurements will be appended after actual execution.
+Fresh whole-suite boot, final app-image Chromium, matched recovery and public
+release archive verification are pending. The release workflow now cold-boots
+the exact published image set with fresh disposable volumes, then runs actual
+Chromium, offline document corpus, MCP and broker checks before archiving. It
+stops heavier services before running the full sandbox exhaustion/recovery suite
+with `SANDBOX_REAL_TESTS=1`; no skipped real suite is reported as passed.

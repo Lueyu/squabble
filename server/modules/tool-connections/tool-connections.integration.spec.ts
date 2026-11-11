@@ -44,6 +44,50 @@ class FixtureAdapter implements TrustedToolAdapter {
   }
 }
 
+test('catalog confirmation cannot replace a newer unapproved candidate discovered at the same permission revision', async () => {
+  process.env.SETTINGS_ENCRYPTION_KEY = 'candidate-cas-fixture-key';
+  const fixture = await database(), owner = randomUUID();
+  class CandidateAdapter extends FixtureAdapter {
+    extraDescription = 'Candidate A';
+    override async discover(connection: ToolAdapterConnection) {
+      const tools = await super.discover(connection);
+      for (const tool of tools) if (tool.name === 'new_tool') tool.description = this.extraDescription;
+      return tools;
+    }
+  }
+  const adapter = new CandidateAdapter(), policy = new ToolTransportPolicy([{ id: 'fixture', endpoint: 'http://127.0.0.1:54321/mcp' }]);
+  const service = new ToolConnectionsService(fixture.db, [adapter], policy);
+  let entered!: () => void, resume!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const released = new Promise<void>(resolve => { resume = resolve; });
+  class PausedConfirmation extends ToolConnectionsService {
+    override async catalog(...args: Parameters<ToolConnectionsService['catalog']>) {
+      const value = await super.catalog(...args);
+      entered(); await released;
+      return value;
+    }
+  }
+  try {
+    const connection = await service.create(owner, { provider: 'mcp', endpoint: 'http://127.0.0.1:54321/mcp' });
+    const initial = await service.discover(owner, connection.id);
+    await service.enable(owner, connection.id, { revision: initial.connection.revision, catalogVersionId: initial.catalog.id,
+      schemaHash: initial.catalog.schemaHash, toolIds: initial.catalog.descriptors.map(tool => tool.id), dataClasses: ['public'] });
+    adapter.includeExtra = true;
+    const candidateA = await service.discover(owner, connection.id);
+    const confirmation = new PausedConfirmation(fixture.db, [adapter], policy).enable(owner, connection.id, {
+      revision: candidateA.connection.revision, catalogVersionId: candidateA.catalog.id, schemaHash: candidateA.catalog.schemaHash,
+      toolIds: candidateA.catalog.descriptors.map(tool => tool.id), dataClasses: ['public'],
+    });
+    await waiting;
+    adapter.extraDescription = 'Candidate B has different behavior';
+    const candidateB = await service.discover(owner, connection.id);
+    assert.equal(candidateB.connection.revision, candidateA.connection.revision);
+    resume();
+    await assert.rejects(confirmation, /TOOL_(CONNECTION_REVISION_CHANGED|CATALOG_RECONFIRMATION_REQUIRED)/u);
+    assert.equal((await service.detail(owner, connection.id)).candidateCatalogVersionId, candidateB.catalog.id);
+  } finally { resume(); await fixture.close(); }
+});
+
 test('unchanged discovery preserves active grants and changed metadata remains a separate candidate', async () => {
   process.env.SETTINGS_ENCRYPTION_KEY = 'tool-catalog-refresh-test-key';
   const fixture = await database(), adapter = new FixtureAdapter(), owner = randomUUID();

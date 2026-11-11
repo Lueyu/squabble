@@ -21,6 +21,9 @@ const copy = {
     boundary: 'This does not authorize private data export to AI/cloud services or external writes. Model permissions and budgets remain in AI settings.',
     enable: 'Enable recommended capabilities', refresh: 'Check preparation', disable: 'Disable', review: 'Review and approve this capability',
     checking: 'Working…', details: 'Technical details', empty: 'No prepared capability information is available.',
+    repair: 'Check that the deployment services are running, then check preparation again.',
+    sandboxRepair: 'Start the Docker Linux-container engine and check preparation again.',
+    documentRepair: 'The document engine or its models are not ready. Wait for startup, then check again.',
   },
   zh: {
     title: '工具与能力', intro: '工具已由部署包准备，在你的部署服务器运行。一次确认可处理的信息，之后即可在研究中使用。',
@@ -32,6 +35,9 @@ const copy = {
     boundary: '这里不授权将私有资料外发给 AI/云服务，也不授权外部写入。模型权限和预算仍在 AI 设置中管理。',
     enable: '启用推荐能力', refresh: '检查准备情况', disable: '停用', review: '审阅并确认此能力',
     checking: '处理中…', details: '技术详情', empty: '暂无已准备的能力信息。',
+    repair: '请确认部署服务已启动，然后重新检查准备情况。',
+    sandboxRepair: '请启动 Docker 的 Linux 容器引擎，然后重新检查准备情况。',
+    documentRepair: '文档引擎或模型尚未就绪，请等待启动完成后重新检查。',
   },
 };
 
@@ -63,7 +69,8 @@ export function ToolCapabilitiesPanel({ active = true }: { active?: boolean }) {
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 font-semibold"><Icon size={18} aria-hidden="true" />{text.names[view.packId]}</h3>
           <span className="text-sm" role="status">{status(view)}</span></div>
         <p className="text-sm text-muted-foreground">{text.descriptions[view.packId]}</p>
-        {view.grant === 'enabled' && <Button size="sm" variant="outline" disabled={operation.isPending}
+        {view.installation === 'unavailable' && <p className="text-sm">{view.packId === 'compute' ? text.sandboxRepair : view.packId === 'documents' ? text.documentRepair : text.repair}</p>}
+        {(view.grant === 'enabled' || view.grant === 'review_required') && <Button size="sm" variant="outline" disabled={operation.isPending}
           onClick={() => operation.mutate(() => revokeToolCapability(view.packId, view.revision))}>{text.disable}</Button>}
         {(view.grant === 'review_required' || view.catalog === 'changed') && view.installation === 'ready' && <Button size="sm" variant="outline" disabled={operation.isPending || !publicNetwork && ['browser', 'market_data'].includes(view.packId) || !privateLocal && view.packId === 'documents'}
           onClick={() => operation.mutate(() => activateToolCapabilities({ publicNetwork, grants: [{ packId: view.packId, revision: view.revision,

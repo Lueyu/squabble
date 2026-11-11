@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchModelConnections } from '@/api/model-connections';
@@ -32,6 +33,7 @@ export function ModelToolCapabilityCard({ active }: { active: boolean }) {
   return <section className="space-y-4 rounded-xl border bg-card p-5" aria-label={zh ? '模型工具调用验证' : 'Model tool calling verification'}>
     <div><h2 className="font-semibold">{zh ? '模型工具调用验证' : 'Model tool calling verification'}</h2>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{zh ? '验证最多发起 2 次模型请求并消耗模型预算。验证成功且启用后，新研究才使用多步工具调用；模型配置变化后需重新验证。' : 'Verification makes at most 2 model requests and consumes model budget. Successful verification enables tools for new research. Model configuration changes require verification again.'}</p></div>
+    <p className="text-sm"><Link to="/settings/models" className="underline">{zh ? '连接或管理 AI 模型' : 'Connect or manage AI models'}</Link></p>
     <p className="text-sm text-muted-foreground">{zh ? `当前：${connection === 'default' ? '默认模型连接' : models.data?.find(model => model.id === connection)?.name ?? connection} · ${tier === 'fast' ? '快速' : '深入'}` : `Selected: ${connection === 'default' ? 'Default model connection' : models.data?.find(model => model.id === connection)?.name ?? connection} · ${tier}`}</p>
     <details><summary className="cursor-pointer text-sm">{zh ? '选择其他模型或运行器' : 'Choose another model or runtime'}</summary>
     <div className="mt-4 grid gap-4 sm:grid-cols-2">

@@ -22,21 +22,31 @@ ENV VITE_PUBLIC_DEPLOYMENT=${VITE_PUBLIC_DEPLOYMENT}
 RUN npm run build:web
 
 # ---------- Production packages ----------
-FROM build AS production-deps
-RUN npm prune --omit=dev
+FROM ${BASE_REGISTRY}/node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS production-deps
+WORKDIR /app
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
+COPY package.json package-lock.json .npmrc ./
+COPY scripts/setup-git-hooks.js scripts/
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --offline --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ --replace-registry-host=always
 
 # ---------- Runtime stage ----------
 # Exact Playwright 1.65.0 amd64 image includes matching Chromium/OS libraries.
-FROM mcr.microsoft.com/playwright@sha256:bc4fbb329a25287ed23e9216c97063646abdd1bf2da669a9895fa3e2078b2302
+FROM mcr.microsoft.com/playwright@sha256:bc4fbb329a25287ed23e9216c97063646abdd1bf2da669a9895fa3e2078b2302 AS runtime-base
 WORKDIR /app
 LABEL org.opencontainers.image.source="https://github.com/Lueyu/squabble"
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 \
+ARG UBUNTU_MIRROR=https://archive.ubuntu.com/ubuntu
+ARG UBUNTU_SECURITY_MIRROR=https://security.ubuntu.com/ubuntu
+# Only Ubuntu main is needed for pg_dump; avoid downloading unrelated browser
+# build repositories again. Package signatures and hashes remain verified.
+RUN sed -i -e 's/^Components: .*/Components: main/' -e "s|http://azure.archive.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" \
+      -e "s|http://security.ubuntu.com/ubuntu|${UBUNTU_SECURITY_MIRROR}|g" -e 's/ noble-backports//' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update -o Acquire::Retries=3 && apt-get install -y --no-install-recommends postgresql-client-16 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/.secrets /app/.local-agents /app/.backups /app/.data/research-artifacts /app/logs \
     && chown -R 1000:1000 /app
 # Keep Node 24 independently of the browser image's Node release.
-COPY --from=build /usr/local/bin/node /usr/local/bin/node
+COPY --from=dependencies /usr/local/bin/node /usr/local/bin/node
 ENV NODE_ENV=production \
     SERVER_HOST=0.0.0.0 \
     SERVER_PORT=3000 \
@@ -44,6 +54,8 @@ ENV NODE_ENV=production \
     LOCAL_AGENTS_DATA_DIR=/app/.local-agents \
     RESEARCH_ARTIFACT_ROOT=/app/.data/research-artifacts \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+FROM runtime-base AS runtime
 
 COPY --from=production-deps /app/package.json /app/package-lock.json ./
 COPY --from=production-deps /app/node_modules ./node_modules

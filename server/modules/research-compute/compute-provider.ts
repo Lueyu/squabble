@@ -2,7 +2,7 @@ import type { E2bComputeInput, ComputeOutput } from './e2b.adapter';
 
 export type ComputeProviderName = 'local-container' | 'e2b';
 export interface ComputeProvider {
-  readonly provider?: ComputeProviderName;
+  readonly provider: ComputeProviderName;
   status(): 'configured' | 'unconfigured';
   template(): { id: string; version: string } | null;
   kill(sandboxId: string): Promise<boolean>;

@@ -62,3 +62,17 @@ test('a failed dump leaves no backup that looks complete', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('runtime environment keys override stale generated files in the matched backup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'squabble-authoritative-keys-'));
+  try {
+    const secrets = join(root, 'secrets'); await mkdir(secrets);
+    await writeFile(join(secrets, 'jwt.key'), 'obsolete-jwt');
+    await writeFile(join(secrets, 'settings.key'), 'obsolete-settings');
+    const directory = await createUpdateBackup(join(root, 'backups'), secrets, destination => writeFile(destination, 'database'), {
+      artifactRoot: join(root, 'artifacts'), artifacts: [], keys: { jwt: 'runtime-jwt', settings: 'runtime-settings' },
+    });
+    assert.equal(await readFile(join(directory, 'jwt.key'), 'utf8'), 'runtime-jwt');
+    assert.equal(await readFile(join(directory, 'settings.key'), 'utf8'), 'runtime-settings');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

@@ -27,4 +27,8 @@ retention rules continue to apply independently of the MIT software licenses.
 The bundle does not assert a new data redistribution license.
 
 Analytics uses the existing fixed worker lock and its existing QuantStats /
-Backtrader dependency notices; see `workers/analytics/README.md`.
+Backtrader dependency notices; see `workers/analytics/README.md`. Its builder and
+the AKTools image use [uv 0.13.1](https://github.com/astral-sh/uv/tree/0.13.1),
+distributed under MIT OR Apache-2.0; its upstream image and package notices are
+retained. Analytics currently retains this build utility and its cache, so its
+measured image size is not a minimum-runtime-size claim.

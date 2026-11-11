@@ -1,0 +1,9 @@
+services:
+  app:
+    ports: !override ["127.0.0.1:54831:3000"]
+  docling:
+    volumes:
+      - type: bind
+        source: ${BUNDLE_FIXTURE_DIR:?Set the absolute synthetic fixture directory}
+        target: /fixtures
+        read_only: true

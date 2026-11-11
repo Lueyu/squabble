@@ -64,11 +64,23 @@ for case in gold['cases']:
         result['taskState'] = state
         if state == 'success':
             raw = request('/v1/result/' + task_id)
-            document = raw['document']
+            document = raw.get('document')
+            if raw.get('status') != 'success' or not isinstance(document, dict):
+                result.update(parsed=False, conversionState=raw.get('status'), rejectionStage='engine-result')
+                result['seconds'] = round(time.monotonic() - started, 3)
+                result['stateMatches'] = case['expectedState'] != 'parsed' and raw.get('status') in ['failure', 'failed']
+                results.append(result)
+                print(json.dumps({'progress': result}, ensure_ascii=False), flush=True)
+                continue
             markdown = document['md_content']
             lossless = document['json_content']
             compact = markdown.replace(',', '').replace('−', '-')
+            source_text = '\n'.join(item.get('text', '') for item in lossless.get('texts', []))
+            for table in lossless.get('tables', []):
+                source_text += '\n' + '\n'.join(cell.get('text', '') for cell in table.get('data', {}).get('table_cells', []))
+            source_text = source_text.replace(',', '').replace('−', '-')
             result.update(parsed=True, chars=len(markdown), expectedTextMatches={value: value in compact for value in case['expectedText']},
+                          losslessExpectedTextMatches={value: value in source_text for value in case['expectedText']},
                           physicalPages=len(lossless.get('pages', {})),
                           textLocators=sum(len(item.get('prov', [])) for item in lossless.get('texts', [])),
                           elementIds=sum(bool(item.get('self_ref')) for item in lossless.get('texts', [])))
@@ -79,13 +91,15 @@ for case in gold['cases']:
     except Exception as error:
         result.update(parsed=False, error=type(error).__name__)
     result['seconds'] = round(time.monotonic() - started, 3)
-    result['stateMatches'] = result['parsed'] == (case['expectedState'] == 'parsed')
+    result['stateMatches'] = result['parsed'] if case['expectedState'] == 'parsed' else (
+        result.get('taskState') == 'failure' or result.get('httpStatus') in [400, 413, 422])
     results.append(result)
     print(json.dumps({'progress': result}, ensure_ascii=False), flush=True)
 
 summary = {'fixtureLicense': 'CC0-1.0', 'fixtureCases': len(results), 'offline': True,
            'stateMatches': sum(case['stateMatches'] for case in results),
            'matchedExpectedValues': sum(sum(case.get('expectedTextMatches', {}).values()) for case in results),
+           'losslessMatchedExpectedValues': sum(sum(case.get('losslessExpectedTextMatches', {}).values()) for case in results),
            'expectedValues': sum(len(case.get('expectedTextMatches', {})) for case in results),
            'totalSeconds': round(sum(case['seconds'] for case in results), 3), 'cases': results}
 print(json.dumps(summary, ensure_ascii=False), flush=True)
