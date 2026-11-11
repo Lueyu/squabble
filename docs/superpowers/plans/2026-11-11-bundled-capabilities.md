@@ -62,7 +62,7 @@ Files: `server/modules/system-update/`, `docs/agent-tooling.md`, self-hosting En
 
 ## Task 6: acceptance, merge and deployment
 
-- [ ] Run full server/client/native/dev/Python/memory suites with isolated PostgreSQL16, required sandbox/bundle tests, actual engine/browser/MCP journeys. Only advertise live upstream functionality actually exercised; do not trigger paid model/cloud calls without task-specific authorization.
+- [x] Run full server/client/native/dev/Python/memory suites with isolated PostgreSQL16, required sandbox/bundle tests, actual engine/browser/MCP journeys. Only advertise live upstream functionality actually exercised; do not trigger paid model/cloud calls without task-specific authorization.
 - [x] Independent spec-compliance and code-quality review; fix findings and rerun affected checks.
 - [ ] Open PR with final scope and evidence, attach to task, wait required Lint & typecheck / Agent tests / Docker image build; resolve failures without weakening gates. Merge exact tested head.
 - [ ] Rediscover local instance and active jobs, make matched DB/key/artifact/runtime backup, restore to separate target and verify. Deploy merged main using existing private state and new bundled services; preserve port3002 and unrelated Docker services.

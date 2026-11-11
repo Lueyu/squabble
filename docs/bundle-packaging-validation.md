@@ -133,8 +133,8 @@ the synthetic MCP fixture. Under severe host memory pressure the initial
 recorded as an initial failure, not a passing cold-boot command. All actual
 services subsequently became healthy and `/api/health` returned `{"status":"ok"}`.
 The configuration now gives app startup a 120-second grace period while still
-requiring successful HTTP health. Final fresh-command proof is pending the
-updated configuration/release gate.
+requiring successful HTTP health. The subsequent fresh source command below
+passed with that configuration; the published archive gate remains separate.
 
 Inside the actual application image, `node deploy/browser-smoke.cjs` passed with
 uid1000, Chromium158, its sandbox enabled and dynamic rendering. The packaged
@@ -178,9 +178,46 @@ root-resolved demo seed and ten separately prefixed volumes; an explicit custom
 project name also prefixed every volume correctly. No demo containers were
 started or existing volumes changed during this check.
 
+## Fresh source command with final configuration
+
+Before launch, project `squabble-bundle-fresh-20261111` had **zero containers and
+zero volumes**, and loopback port 54841 was unused. With `HOST_APP_PORT=54841`:
+
+```sh
+docker compose -p squabble-bundle-fresh-20261111 -f docker-compose.yml -f docker-compose.source.yml up -d --no-build --wait --wait-timeout 300
+```
+
+The command **passed with exit 0**. App, PostgreSQL, Docling, AKTools and broker
+were healthy; the last initial healthy transition, Docling, occurred **36.955 s**
+after launch. This is an Engine event measurement, not an exact CLI stopwatch.
+The actual app configuration contained the final 120-second startup grace.
+The application image was `8d326cd6ea9335d88a7b19d85f3403ca459df360d0d0b4c9d0e69be0850661ff`
+and the worker was `21f3560368aba97e7b45ff74c8faa602e8dd8e53bbe80e94181bbb5dd6a49981`.
+
+A new synthetic first account observed **all four** installations ready and
+catalogs verified while grants remained disabled. Explicit authorization for
+public fixture data then returned **4/4 ready**. The actual Chromium dynamic
+rendering probe passed with its sandbox enabled. These checks used cached local
+source images, not a published archive. The later downloaded archive must use
+its own distinct project and new volumes. Private test credentials were neither
+printed nor retained in the metadata receipts.
+
 ## Remaining actual checks
 
-Final cold-boot command and public release archive verification are pending.
+The six cached local suite images contain **73 unique unpacked chain layers**,
+**10,192,883,712 bytes** total. The conservative containerd footprint including
+retained compressed blobs and metadata is **14,070,760,907 bytes**, before DB and
+workflow overhead. These measurements use raw Engine history sizes and OCI
+parent-chain identities; unrelated cached base images are not subtracted.
+[Docker documents the dual compressed/uncompressed storage](https://docs.docker.com/engine/storage/containerd/).
+[GitHub guarantees only 14 GB free on standard runners](https://github.com/actions/runner-images/issues/13528).
+The archive job therefore logs actual free disk and requires **25 GiB** before
+pulling the suite. Only below that threshold may a guarded disposable
+GitHub-hosted Linux runner remove the exact canonical unused Android SDK
+directory `/usr/local/lib/android`; it rechecks and fails explicitly if space
+remains insufficient. No other cleanup or validation bypass is permitted.
+
+Public release archive verification remains pending.
 The independent root workflow owns matched restoration and actual user journeys.
 The release workflow now cold-boots
 the exact published image set with fresh disposable volumes, then runs actual

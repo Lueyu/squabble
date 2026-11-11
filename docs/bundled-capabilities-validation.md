@@ -104,9 +104,27 @@ separate from these focused checks.
 
 ## Remaining delivery gates
 
-- Final release empty-volume whole-suite cold boot (the actual first-user
-  activation in the source-built suite is already verified above).
-- Final-head required CI, module wiring, memory/native/dev coverage and independent review.
+Final source-suite cold boot also passed with previously absent project volumes
+in `squabble-bundle-fresh-20261111`. The unmodified Compose `up --wait` exited0;
+the last initial healthy transition occurred about37 seconds after launch.
+This is a health-transition measurement, not an exact command stopwatch. A
+fresh account saw four prepared/verified packs with disabled grants, and one
+explicit fixture authorization made all four ready. The actual Chromium sandbox
+probe passed. Cached local images were used; the published archive is separate.
+
+All three required checks passed on `830494f8fab7e63b2f9462b1783398e681d12310`
+([CI run42998097308](https://github.com/Lueyu/squabble/actions/runs/42998097308)):
+server1263/1263, client466/466, native181/181, memory99/99, dev9/9, context15/15,
+architecture9/9, browser preflight3/3, Python agent16/16 and analytics37/37;
+all had zero failures and zero skips. Compiled wiring passed. Docker contracts7/7
+and gateway3/3 passed. The final archive disk-headroom guard was independently
+reviewed with no P1/P2 finding and four negative host/runner/kernel guards passed
+without reaching cleanup. It changes only the workflow and excluded documents;
+the tested runtime build-context hash is unchanged.
+
+The remaining gates at this pre-merge record are:
+
+- Required CI on the final workflow/documentation commit.
 - Exact tested-head PR merge; published fixed image archive with anonymous
   digest verification and its own whole-suite acceptance.
 - Matched private DB/runtime-key/artifact/native/capability-key/broker-journal
