@@ -18,6 +18,7 @@ export class ToolConnectionsController {
   @Post('jobs/:id/cancel') cancel(@Req() request: Request, @Param('id') id: string) { return this.connections.remoteJob(request.userContext.userId, id, true); }
   @Get(':id') detail(@Req() request: Request, @Param('id') id: string) { return this.connections.detail(request.userContext.userId, id); }
   @Get(':id/catalog') catalog(@Req() request: Request, @Param('id') id: string) { return this.connections.catalog(request.userContext.userId, id); }
+  @Get(':id/catalogs') catalogs(@Req() request: Request, @Param('id') id: string) { return this.connections.reviewCatalog(request.userContext.userId, id); }
   @Put(':id/credential') credential(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) {
     return this.connections.setCredential(request.userContext.userId, id, body);
   }

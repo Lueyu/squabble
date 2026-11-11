@@ -19,6 +19,10 @@ export interface AgentToolConnection {
   allowedDataClasses: AgentDataClass[];
   catalogVersionId: string | null;
   verifiedAt: string | null;
+  candidateCatalogVersionId?: string | null;
+  managedPresetId?: string | null;
+  lastDiscoveryAt?: string | null;
+  lastDiscoveryCode?: string | null;
 }
 
 /** Effect classification is trusted adapter policy, never a remote readOnly hint. */

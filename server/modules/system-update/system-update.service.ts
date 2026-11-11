@@ -2,9 +2,10 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ConflictException, ForbiddenException, Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
-import { asc } from 'drizzle-orm';
+import { asc, ne, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { users } from '../../database/schema';
+import { researchArtifacts } from '../../database/research-artifacts.schema';
 import { createUpdateBackup } from './backup';
 import { parseLatestRelease } from './update-core';
 
@@ -21,11 +22,11 @@ export interface WebUpdateStatus {
 const RELEASE_API = 'https://api.github.com/repos/Lueyu/squabble/releases/latest';
 const APP_VERSION = (JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as { version: string }).version;
 
-function dumpDatabase(destination: string): Promise<void> {
+function dumpDatabase(destination: string, snapshot?: string): Promise<void> {
   const connection = process.env.DATABASE_URL;
   if (!connection) throw new Error('DATABASE_URL is required for the update backup');
   return new Promise((done, fail) => {
-    const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', connection], {
+    const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', connection, ...(snapshot ? ['--snapshot', snapshot] : [])], {
       stdio: 'ignore',
       env: { ...process.env, PGCONNECT_TIMEOUT: '10' },
     });
@@ -49,7 +50,8 @@ export class SystemUpdateService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
   private get enabled(): boolean {
-    return process.env.SQUABBLE_UPDATE_MODE === 'docker';
+    // The legacy helper replaces one app image. A versioned tool bundle requires its full matched update procedure.
+    return process.env.SQUABBLE_UPDATE_MODE === 'docker' && process.env.TOOL_CAPABILITIES_BUNDLE_ENABLED !== 'true';
   }
 
   private async requireOwner(userId: string): Promise<void> {
@@ -93,11 +95,19 @@ export class SystemUpdateService {
     this.phase = 'backingUp';
     this.error = undefined;
     try {
-      const backup = await createUpdateBackup(
-        process.env.SQUABBLE_UPDATE_BACKUP_DIR ?? '/app/.backups',
-        '/app/.secrets',
-        dumpDatabase,
-      );
+      const backup = await this.db.transaction(async tx => {
+        // The dump and file index share one PostgreSQL snapshot. Concurrent deletion may fail the copy,
+        // which correctly prevents completion; it must never yield a backup with missing indexed files.
+        await tx.execute(sql`set transaction isolation level repeatable read read only`);
+        const exported = await tx.execute(sql`select pg_export_snapshot() as snapshot`);
+        const snapshot = String(exported[0].snapshot);
+        const artifacts = await tx.select({ storageRef: researchArtifacts.storageRef, sha256: researchArtifacts.sha256,
+          sizeBytes: researchArtifacts.sizeBytes }).from(researchArtifacts).where(ne(researchArtifacts.status, 'deleted'));
+        return createUpdateBackup(process.env.SQUABBLE_UPDATE_BACKUP_DIR ?? '/app/.backups', '/app/.secrets',
+          destination => dumpDatabase(destination, snapshot),
+          { artifactRoot: process.env.RESEARCH_ARTIFACT_ROOT ?? resolve('.data/research-artifacts'), artifacts,
+            keys: { jwt: process.env.JWT_SECRET, settings: process.env.SETTINGS_ENCRYPTION_KEY } });
+      });
       this.phase = 'updating';
       setTimeout(() => { void this.triggerHelper(); }, 500).unref();
       return { started: true, backup };

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page } from 'playwright-core';
-import type { AgentSourceVersionRef } from '../../../../shared/agent-tooling.interface';
+import type { AgentDataClass, AgentSourceVersionRef } from '../../../../shared/agent-tooling.interface';
 import type { ResearchArtifactRef } from '../../../../shared/research-artifact.interface';
 import type { ResearchArtifactsService } from '../../research-artifacts/research-artifacts.service';
 import { BrowserEgressProxy, type PublicTunnelConnector } from './browser-egress';
@@ -12,9 +12,12 @@ import { BrowserNavigationPolicy } from './browser-navigation-policy';
 
 export interface BrowserResearchBinding {
   owner: string; runId: string; leaseToken: string; runRevision: string;
+  /** Server-owned runtime scope only. No browser HTTP/model argument accepts these fields. */
+  dataClasses?: AgentDataClass[];
 }
 export interface BrowserResearchAuthority {
   assert(binding: BrowserResearchBinding, dependencies: AgentSourceVersionRef[]): Promise<void>;
+  beforeNavigate?(binding: BrowserResearchBinding, url: string, dependencies: AgentSourceVersionRef[]): Promise<void>;
 }
 export type BrowserResearchCommand = { action: 'navigate'; url: string } | { action: 'next' | 'expand'; index: number }
   | { action: 'read' | 'screenshot' };
@@ -155,6 +158,8 @@ export class BrowserResearchSession {
   }
   async act(binding: BrowserResearchBinding, id: string, command: BrowserResearchCommand, signal?: AbortSignal): Promise<BrowserResearchSnapshot> {
     const session = this.lookup(binding, id);
+    // Scope can become more sensitive after reading a source; never shrink an existing browser session.
+    session.binding.dataClasses = [...new Set([...(session.binding.dataClasses ?? []), ...(binding.dataClasses ?? [])])];
     if (session.busy) throw new Error('BROWSER_BUSY');
     session.busy = true;
     const abort = (): void => { session.failure = new Error('BROWSER_CANCELLED'); session.controller.abort(); void this.dispose(session, 'cancelled'); };
@@ -181,6 +186,7 @@ export class BrowserResearchSession {
       const url = command.action === 'navigate' ? command.url : session.links.find(item => item.index === command.index)?.url;
       if (!url) throw new Error('BROWSER_LINK_NOT_FOUND');
       await session.policy.url(url);
+      if (command.action === 'navigate') await this.dependencies.authority.beforeNavigate?.(session.binding, url, session.dependencies);
       if (session.pages >= this.pageLimit()) throw new Error('BROWSER_PAGE_LIMIT');
       const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: Math.min(20_000, this.timeout(session)) });
       this.check(session);

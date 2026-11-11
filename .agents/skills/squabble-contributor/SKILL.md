@@ -20,6 +20,7 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 9. V5 研究室侧栏同时拥有策略库；`/strategy` 在同页恢复多轮访谈，其他 slash skills 固定受信清单版本与 hash，聊天展示真实公开活动。`server/modules/data-library/` 拥有资料、订阅、金融查询与迁移50；`features/data-library/` 复用于数据中心和记忆资料来源。`/settings/data` 重定向到 `/data?tab=financial`。资料检索与后续研究复验 owner、精确版本和启停/删除状态；资料原文不是采纳结论，更不是持仓导入。详见 `docs/research-data-workspace.md`。
 10. 迁移51增加浏览器采集与会话隔离。`data-library/browser/` 负责专用浏览器和固定公共IP的出口；`data-browser.service.ts` 负责人工登录确认、加密状态和断开；`read_browser_source` 工具仅接收已保存来源ID，经统一job/version路径返回渲染正文。浏览器登录不在同步租约内；最终提交复核lease token、job和revision。无浏览器或无法交互时明确不可用，不开放全局MCP、不把HTTP Basic当网页登录。安装浏览器及验证见 `docs/browser-source-collection.md`。
 11. 迁移53–58增加持久化 API 工具运行、不可变数据集/私有产物、写入预览、出站工具连接、隔离计算及 Deep Agents 检查点。先读 `council-tool-runtime.service.ts` 的成员/证据绑定，再读 `research-runtime/`；模型单步适配仍在 `research-core/`。`/settings/tools` 是向外调用工具，`/settings/mcp` 保留入站受限接口。SDK 不拥有审批或重试；未知调用不自动重发，关闭未知不释放可能费用。计算读取完整固定版本数据，来源撤销与删除阻止迟到发布。Deep Agents 为同预算下的只读替代 driver，文件系统/子 Agent/自动摘要关闭。部署配置、真实供应商未验收项见 `docs/agent-tooling.md`。
+12. 迁移59–60增加能力包授权、active/candidate 目录和本地计算 provider 身份。标准套件提供 Docling、受限 AKTools、Chromium 及必备的每任务 Linux 容器沙箱；应用不持有 Docker socket，仅受信 broker 控制容器。`tool-capabilities/` 的准备事实、用户授权和版本独立，发现目录不等于启用，相同目录不清空权限。默认本地计算不要求 E2B、不自动转云；旧 E2B 回执按原 provider 清理。资料/浏览器/计算在派发与发布复核授权修订，撤销后重新启用不能复活旧任务。源码配套服务及固定镜像发行说明见 `deploy/README.bundle.md`；旧桌面安装包不代表新套件已支持，macOS/arm64 验收单独记录。
 
 所有反引号内的仓库路径都相对于选定仓库；参考文件之间的链接相对于 skill。
 

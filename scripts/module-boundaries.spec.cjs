@@ -58,6 +58,13 @@ const boundaries = [
     allowed: ['../../common/agent-contract', '../../database/tool-connections.schema', '../settings/settings-security'],
   },
   {
+    name: 'capability preparation stays independent of investment orchestration',
+    file: 'server/modules/tool-capabilities/tool-capabilities.service.ts',
+    forbidden: ['../council/council.service', '../experience/today.service', '../paper-trading/strategy.service',
+      '../research-tools/research-tools.service', '../research-routing/portfolio-research-route.service'],
+    allowed: ['../tool-connections/tool-connections.service', '../../database/tool-capabilities.schema', './tool-capabilities.manifest'],
+  },
+  {
     name: 'artifact storage remains independent of investment orchestration',
     file: 'server/modules/research-artifacts/research-artifacts.service.ts',
     forbidden: ['../council/council.service', '../channel/channel.service', '../research-tools/research-tools.service'],

@@ -46,24 +46,21 @@ Windows 安装向导启动时可选择简体中文或 English。安装包需要�
 <a id="docker-compose"></a>
 ## 🐳 Docker Compose
 
-安装 [Git](https://git-scm.com/downloads/) 和[带 Compose 的 Docker](https://docs.docker.com/get-started/get-docker/)。Windows／macOS 用户先打开 Docker Desktop，等待引擎启动；Linux 用户安装 Docker Engine 和 Compose 插件。先检查：
+安装[带 Compose 的 Docker](https://docs.docker.com/get-started/get-docker/)。Windows／macOS 用户先打开 Docker Desktop，等待 Linux 容器引擎启动；Linux 用户安装 Docker Engine 和 Compose 插件。先检查：
 
 ```sh
-git --version
 docker compose version
 docker info
 ```
 
-然后在 PowerShell 或终端运行：
+从成功的 [Bundled Web images](https://github.com/Lueyu/squabble/actions/workflows/bundle.yml) 运行下载 `squabble-bundle-linux-amd64` 产物，解压后在该目录运行：
 
 ```sh
-git clone https://github.com/Lueyu/squabble.git
-cd squabble
 docker compose up -d
 docker compose ps
 ```
 
-首次启动会从 GitHub Container Registry 下载预构建应用镜像，可能需要几分钟。打开 [http://localhost:3000](http://localhost:3000)。干净安装使用空白数据库，没有演示账号，并自动生成稳定的 JWT 和设置加密密钥。创建账号、离线保存一次性恢复码，然后添加持仓或导入 CSV。首个账号创建后，注册入口会自动关闭。应用只绑定本机的 `127.0.0.1:3000`，PostgreSQL 不对主机发布端口。[健康检查](http://localhost:3000/api/health)应返回 `{"status":"ok"}`；页面尚未就绪时运行 `docker compose logs --tail=100 app db`。
+首次启动会下载完整固定镜像套件，包括 OCR 模型和 Chromium，需预留数 GiB 下载与宿主资源。打开 [http://localhost:3000](http://localhost:3000)。干净安装使用空白数据库，没有演示账号，并自动生成稳定的 JWT 和设置加密密钥。创建账号并离线保存一次性恢复码，进入“设置 → 工具”一次确认本地处理及公开联网权限。应用只绑定本机的 `127.0.0.1:3000`，PostgreSQL 不对主机发布端口。[健康检查](http://localhost:3000/api/health)应返回 `{"status":"ok"}`；页面尚未就绪时运行 `docker compose logs --tail=100 app db`。
 
 根目录 Compose 的默认项目名为 `squabble-local`。终端或 `.env` 中已有的 `COMPOSE_PROJECT_NAME`，以及 `-p` 参数，都会覆盖该名称。旧演示升级前请用 `docker compose ls` 和 `docker compose ps` 核对目标项目；展开的 Compose 配置可能包含密钥，不要直接分享到聊天或问题单。项目名不符时先清除覆盖值，或在**每条**干净实例命令中显式使用 `-p squabble-local`。不要把干净实例命名为旧演示项目 `squabble`，以免碰到旧数据卷。后续维护请保持相同的项目名与仓库路径，以便 Docker 找到已有卷。不要用 `docker compose down -v` 排查或升级；它会删除数据和自动生成的密钥。
 
@@ -73,10 +70,11 @@ docker compose ps
 | 自动生成的 JWT 与设置密钥 | `squabble-local_settings-secrets`（`app` 容器内 `/app/.secrets`） |
 | 本地 Agent 配对与任务状态 | `squabble-local_local-agents-data`（`app` 容器内 `/app/.local-agents`） |
 | 点击更新前自动创建的备份 | `squabble-local_update-backups`（`app` 容器内 `/app/.backups`） |
+| 资料原件与计算产物 | `squabble-local_research-artifacts`（`/app/.data/research-artifacts`） |
+| 内部服务专用密钥 | `squabble-local_capability-secrets` |
+| 本地沙箱生命周期回执 | `squabble-local_sandbox-state` |
 
-默认网页应用使用预构建镜像。首次升级旧版源码安装时，在原仓库目录执行 `git pull --ff-only` 和 `docker compose up -d`；保持原来的 Compose 项目名，原有数据库与密钥卷会继续使用。此后，首个注册账号可在“设置 → 软件更新”查看新版本并点击“立即更新”。应用先保存 PostgreSQL 转储和密钥，再由仅在 Docker 内部可访问的更新组件替换应用容器；数据库容器不会被替换。更新组件不会定时检查或自动安装；平常执行 `docker compose up -d` 也不会自行拉取更新。升级后检查页面是否显示新版本，以及持仓和登录是否正常。
-
-更新组件需要访问本机 Docker socket，因此有管理 Docker 容器的权限；它不向主机开放端口，并使用仅保存在密钥卷中的随机令牌。请只在可信任的本机运行该模式。
+以同一份经过核验的发行清单更新整套组件，保持 Compose 项目名与数据卷。默认关闭旧的单应用更新器，避免应用与工具服务版本分离。更新前共同备份数据库、加密密钥、内部服务密钥、原件/产物及沙箱/本地 Agent 回执，并在隔离目标恢复验证。只备份数据库不足以恢复工具部署。[完整套件说明](../deploy/README.bundle.md)。
 
 更新前的备份保存在 `update-backups` 卷。可通过 `docker compose exec app ls /app/.backups` 查看，再用 `docker compose cp app:/app/.backups/<备份目录名> ./backups/` 取出。建议定期把备份复制到电脑之外的受保护位置；如果密钥来自 `.env` 而不是自动生成文件，还要单独备份 `.env` 中的值。
 

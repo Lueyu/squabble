@@ -14,7 +14,10 @@ async function server(run: (base: string, requests: string[]) => Promise<void>) 
     res.setHeader('Content-Type', 'application/json');
     if (req.url === '/v1/convert/file/async') {
       assert.match(req.headers['content-type']!, /^multipart\/form-data/u); assert.match(body.toString(), /name="files"/u);
-      assert.match(body.toString(), /name="to_formats"/u); res.end(JSON.stringify({ task_id: 'doc-1', task_status: 'pending' }));
+      assert.match(body.toString(), /name="to_formats"/u);
+      assert.match(body.toString(), /name="ocr_engine"\r\n\r\nrapidocr/u);
+      assert.match(body.toString(), /name="ocr_lang"\r\n\r\niso:zh/u);
+      res.end(JSON.stringify({ task_id: 'doc-1', task_status: 'pending' }));
     } else if (req.url === '/v1/status/poll/doc-1') res.end(JSON.stringify({ task_status: 'success' }));
     else if (req.url === '/v1/result/doc-1') res.end(JSON.stringify({ status: 'success', document: { md_content: 'Revenue 12', json_content: { texts: [] } } }));
     else if (req.url === '/v1/tasks') {

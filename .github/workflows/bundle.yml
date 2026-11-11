@@ -1,0 +1,100 @@
+name: Bundled Web images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    name: Bundle ${{ matrix.name }} linux amd64
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: app
+            dockerfile: Dockerfile
+          - name: docling
+            dockerfile: workers/documents/Dockerfile
+          - name: aktools
+            dockerfile: workers/aktools/Dockerfile
+          - name: sandbox
+            dockerfile: workers/sandbox/Dockerfile
+          - name: analytics
+            dockerfile: workers/analytics/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Use existing public package with immutable commit tags
+        id: name
+        shell: bash
+        run: echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        id: image
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.name.outputs.repository }}:bundle-${{ github.sha }}-${{ matrix.name }}
+          cache-from: type=gha,scope=bundle-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=bundle-${{ matrix.name }}
+      - name: Record actual registry digest
+        env:
+          IMAGE: ${{ steps.name.outputs.repository }}@${{ steps.image.outputs.digest }}
+          IMAGE_NAME: ${{ matrix.name }}
+        run: node -e 'require("fs").writeFileSync(process.env.IMAGE_NAME+".json",JSON.stringify({[process.env.IMAGE_NAME]:process.env.IMAGE}))'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-image-${{ matrix.name }}
+          path: ${{ matrix.name }}.json
+
+  archive:
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-image-*
+          merge-multiple: true
+          path: image-digests
+      - name: Resolve actual PostgreSQL registry digest and merge manifests
+        run: |
+          docker buildx imagetools inspect postgres:16-alpine --format '{{.Manifest.Digest}}' > postgres-digest.txt
+          node -e 'const fs=require("fs");const images=Object.assign({},...fs.readdirSync("image-digests").map(f=>JSON.parse(fs.readFileSync("image-digests/"+f))));images.db="docker.io/library/postgres@"+fs.readFileSync("postgres-digest.txt","utf8").trim();fs.writeFileSync("actual-images.json",JSON.stringify(images,null,2));'
+      - name: Generate immutable publicly readable deployment archive
+        run: node deploy/release-bundle.cjs actual-images.json bundle
+      - name: Export exact bundled model and package inventory
+        run: |
+          image=$(node -p 'require("./actual-images.json").docling')
+          docker pull "$image"
+          id=$(docker create --entrypoint python "$image" -c 'pass')
+          docker cp "$id:/opt/squabble/model-manifest.json" bundle/docling-model-manifest.json
+          docker cp "$id:/opt/squabble/python-packages.txt" bundle/docling-python-packages.txt
+          docker rm "$id"
+          tar -czf squabble-bundle-linux-amd64.tar.gz -C bundle .
+          sha256sum squabble-bundle-linux-amd64.tar.gz > squabble-bundle-linux-amd64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: squabble-bundle-linux-amd64
+          path: |
+            squabble-bundle-linux-amd64.tar.gz
+            squabble-bundle-linux-amd64.tar.gz.sha256
+            bundle/bundle-manifest.json

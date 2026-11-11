@@ -63,6 +63,7 @@ const cloudFactory: ComputeSandboxFactory = async (options, config) => {
 /** One durable job creates at most one sandbox; every created sandbox reaches a cleanup attempt. */
 @Injectable()
 export class E2bAdapter {
+  readonly provider = 'e2b' as const;
   private readonly config: E2bAnalyticsConfig | null;
   private readonly factory: ComputeSandboxFactory;
   constructor(@Optional() @Inject('E2B_ANALYTICS_CONFIG') config?: E2bAnalyticsConfig | null,

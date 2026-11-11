@@ -37,6 +37,8 @@ import { boundedMemoryPins } from '../research-memory/research-memory.ranking';
 import { compactToolEvidence, toolEvidenceMetadata } from './research-tools.evidence';
 import { captureTelemetry, TelemetryCaptureService } from '../telemetry/telemetry-capture.service';
 import type { TelemetrySpanRecord } from '../../../shared/telemetry.interface';
+import { ToolCapabilityGrantsService } from '../tool-capabilities/tool-capability-grants.service';
+import type { ToolCapabilityPackId } from '../../../shared/tool-capabilities.interface';
 
 type SessionRow = typeof councilSessions.$inferSelect;
 interface ScopedSession { session: SessionRow; authority: string; review?: boolean }
@@ -76,6 +78,7 @@ export class ResearchToolsService {
     @Optional() private readonly datasets?: DataDatasetService,
     @Optional() private readonly compute?: ResearchComputeToolsService,
     @Optional() private readonly browsers?: BrowserResearchService,
+    @Optional() private readonly capabilities?: ToolCapabilityGrantsService,
   ) {}
 
   private availableDefinition(tool: ResearchToolDefinition, managed = false): boolean {
@@ -122,6 +125,12 @@ export class ResearchToolsService {
     let authority: string | undefined;
     let review = false;
     let telemetrySpan: TelemetrySpanRecord | undefined;
+    const capabilityPack: ToolCapabilityPackId | undefined = process.env.TOOL_CAPABILITIES_BUNDLE_ENABLED !== 'true' ? undefined
+      : tool.name === 'browser_research' ? 'browser' : tool.name === 'search_data_library' ? 'documents'
+        : ['run_statistics', 'run_backtest'].includes(tool.name) ? 'compute'
+          : ['get_financial_source_data', 'get_portfolio_financials'].includes(tool.name)
+            && (parsed.data as HandlerInput).provider === 'aktools' ? 'market_data' : undefined;
+    let capability: { packId: ToolCapabilityPackId; revision: number } | undefined;
     const collection = new AbortController();
     let collectionPoll: ReturnType<typeof setInterval> | undefined;
     let checkingCollectionScope = false;
@@ -130,6 +139,11 @@ export class ResearchToolsService {
     };
     const guard = async (): Promise<SessionRow> => {
       assertActive();
+      if (capabilityPack) {
+        if (!this.capabilities) throw new Error('TOOL_CAPABILITY_DISABLED');
+        if (!capability) capability = { packId: capabilityPack, revision: (await this.capabilities.require(owner, capabilityPack)).revision };
+        else await this.capabilities.requireCurrent(owner, capability.packId, capability.revision);
+      }
       if (options.shouldContinue && !(await options.shouldContinue())) throw new ScopeEnded();
       assertActive();
       const current = await this.currentSession(owner, scope);
@@ -172,7 +186,7 @@ export class ResearchToolsService {
         const result: ResearchToolResult = await this.handle(tool, owner, scope, session,
           parsed.data as HandlerInput, guard, review, collection.signal);
         await guard();
-        const archived = await this.archiveProviderResult(tool, owner, scope, result, authority!, assertActive);
+        const archived = await this.archiveProviderResult(tool, owner, scope, result, authority!, assertActive, false, capability);
         await guard();
         return archived;
       } catch (error) {
@@ -180,7 +194,8 @@ export class ResearchToolsService {
         if (error instanceof ScopeEnded || !active || options.signal?.aborted) {
           return researchFailure('cancelled', options.signal?.aborted ? 'RESEARCH_CANCELLED' : 'RESEARCH_SCOPE_EXPIRED', started);
         }
-        const code: string = error instanceof Error && /^RESEARCH_(TASK_LIMIT|DAILY_LIMIT|BUDGET_UNAVAILABLE|INVALID_PEERS)$/.test(error.message)
+        const code: string = error instanceof Error && (/^RESEARCH_(TASK_LIMIT|DAILY_LIMIT|BUDGET_UNAVAILABLE|INVALID_PEERS)$/.test(error.message)
+          || error.message === 'BROWSER_PUBLIC_SOURCE_REQUIRED' || /^TOOL_CAPABILITY_(DISABLED|UNAVAILABLE|REVIEW_REQUIRED|REVISION_CHANGED|DATA_NOT_AUTHORIZED|PUBLIC_NETWORK_REQUIRED)$/u.test(error.message))
           ? error.message : 'RESEARCH_PROVIDER_ERROR';
         return researchFailure('failed', code);
       }
@@ -250,7 +265,8 @@ export class ResearchToolsService {
 
   /** Read-only tools may archive their server-produced results, never caller-supplied facts or live memory/report copies. */
   private async archiveProviderResult(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
-    result: ResearchToolResult, authority: string, assertActive: () => void, external = false): Promise<ResearchToolResult> {
+    result: ResearchToolResult, authority: string, assertActive: () => void, external = false,
+    capability?: { packId: ToolCapabilityPackId; revision: number }): Promise<ResearchToolResult> {
     const dependencyOnly = ['get_research_report', 'get_research_memory', 'get_discussion_context'].includes(tool.name);
     if (tool.name === 'browser_research' && result.data && typeof result.data === 'object'
       && 'closed' in result.data && result.data.closed === true) return boundedResult(result);
@@ -276,6 +292,7 @@ export class ResearchToolsService {
       // Match the workflow store's lock order; reload under lock so concurrent
       // results append to the current snapshot instead of replacing each other.
       const current = await this.currentSession(owner, scope, tx, true);
+      if (capability) await this.capabilities!.requireCurrent(owner, capability.packId, capability.revision, [], tx);
       if (!current || current.authority !== authority) throw new ScopeEnded();
       if (!await libraryEvidenceAvailable(tx, owner, [evidence], true)) throw new ScopeEnded();
       assertActive();
@@ -358,7 +375,7 @@ export class ResearchToolsService {
       const managed = scope.runtimeScope;
       const [run] = await this.db.select().from(agentRuntimeRuns).where(and(eq(agentRuntimeRuns.owner, owner), eq(agentRuntimeRuns.id, managed.runId)));
       if (!run) return researchFailure('unavailable', 'RESEARCH_SCOPE_EXPIRED');
-      const binding = { owner, runId: run.id, leaseToken: managed.leaseToken, runRevision: run.frozenInputHash };
+      const binding = { owner, runId: run.id, leaseToken: managed.leaseToken, runRevision: run.frozenInputHash, dataClasses: managed.allowedDataClasses };
       const key = `${owner}:${run.id}`, prior = this.runtimeBrowsers.get(key);
       if (prior && prior.leaseToken !== managed.leaseToken) {
         this.runtimeBrowsers.delete(key);

@@ -26,7 +26,7 @@ test('write authorization reevaluates current source use/classification; readonl
   try {
     await admin.unsafe(`create schema ${ns}`);
     await client.unsafe(readFileSync('scripts/db/01_schema.sql', 'utf8'));
-    for (const name of ['53_agent_tool_runtime.sql', '54_research_artifacts.sql', '55_tool_actions.sql', '56_tool_connections.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
+    for (const name of ['53_agent_tool_runtime.sql', '54_research_artifacts.sql', '55_tool_actions.sql', '56_tool_connections.sql', '59_capability_activation.sql']) await client.unsafe(readFileSync(`scripts/db/${name}`, 'utf8'));
     process.env.SETTINGS_ENCRYPTION_KEY = 'policy-test-encryption-key-2026';
     const db = drizzle(client), owner = randomUUID(), cycleId = randomUUID();
     await client`insert into users(id,username,password_hash) values(${owner},${owner.slice(0, 20)},'fixture')`;

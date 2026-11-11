@@ -32,7 +32,9 @@ export function ModelToolCapabilityCard({ active }: { active: boolean }) {
   return <section className="space-y-4 rounded-xl border bg-card p-5" aria-label={zh ? '模型工具调用验证' : 'Model tool calling verification'}>
     <div><h2 className="font-semibold">{zh ? '模型工具调用验证' : 'Model tool calling verification'}</h2>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{zh ? '验证最多发起 2 次模型请求并消耗模型预算。验证成功且启用后，新研究才使用多步工具调用；模型配置变化后需重新验证。' : 'Verification makes at most 2 model requests and consumes model budget. Successful verification enables tools for new research. Model configuration changes require verification again.'}</p></div>
-    <div className="grid gap-4 sm:grid-cols-2">
+    <p className="text-sm text-muted-foreground">{zh ? `当前：${connection === 'default' ? '默认模型连接' : models.data?.find(model => model.id === connection)?.name ?? connection} · ${tier === 'fast' ? '快速' : '深入'}` : `Selected: ${connection === 'default' ? 'Default model connection' : models.data?.find(model => model.id === connection)?.name ?? connection} · ${tier}`}</p>
+    <details><summary className="cursor-pointer text-sm">{zh ? '选择其他模型或运行器' : 'Choose another model or runtime'}</summary>
+    <div className="mt-4 grid gap-4 sm:grid-cols-2">
       <div className="space-y-2"><Label htmlFor="model-tool-connection">{zh ? '模型连接' : 'Model connection'}</Label>
         <Select value={connection} onValueChange={value => { setConnection(value); setResult(null); }} disabled={probe.isPending}>
           <SelectTrigger id="model-tool-connection"><SelectValue /></SelectTrigger><SelectContent>
@@ -45,7 +47,7 @@ export function ModelToolCapabilityCard({ active }: { active: boolean }) {
             <SelectItem value="fast">{zh ? '快速' : 'Fast'}</SelectItem><SelectItem value="slow">{zh ? '深入' : 'Slow'}</SelectItem>
           </SelectContent></Select></div>
     </div>
-    <div className="space-y-2"><Label htmlFor="research-runtime-driver">{zh ? '研究运行器' : 'Research runtime'}</Label>
+    <div className="mt-4 space-y-2"><Label htmlFor="research-runtime-driver">{zh ? '研究运行器' : 'Research runtime'}</Label>
       <Select value={drivers.data?.find(item => item.connection_id === (connection === 'default' ? '' : connection))?.driver ?? 'controlled'}
         disabled={probe.isPending || driver.isPending} onValueChange={value => { if (value === 'controlled' || value === 'deep_agents') driver.mutate(value); }}>
         <SelectTrigger id="research-runtime-driver"><SelectValue /></SelectTrigger><SelectContent>
@@ -55,6 +57,7 @@ export function ModelToolCapabilityCard({ active }: { active: boolean }) {
       <p className="text-xs text-muted-foreground">{zh ? '仅影响新运行。Deep Agents 当前支持只读研究；需要确认的外部操作请使用标准运行器。' : 'Applies to new runs. Deep Agents currently supports read-only research; use the standard runtime for external actions requiring approval.'}</p>
       {(driver.isError || drivers.isError) && <p role="alert" className="text-sm text-destructive">{toolRequestError(driver.error ?? drivers.error)}</p>}
     </div>
+    </details>
     <div className="flex flex-wrap gap-2"><Button disabled={probe.isPending || disable.isPending} onClick={() => probe.mutate()}>
       {probe.isPending ? (zh ? '正在验证…' : 'Verifying…') : (zh ? '验证并启用（最多 2 次模型请求）' : 'Verify and enable (up to 2 model requests)')}</Button>
       <Button variant="outline" disabled={probe.isPending || disable.isPending} onClick={() => disable.mutate()}>{zh ? '关闭此连接的工具调用' : 'Disable tools for this connection'}</Button></div>

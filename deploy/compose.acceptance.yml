@@ -1,0 +1,9 @@
+# Synthetic acceptance data only. Use a unique -p project and empty volumes.
+services:
+  app:
+    ports: !override ["127.0.0.1:54831:3000"]
+  docling:
+    volumes:
+      - ./workers/documents/fixtures:/fixtures:ro
+  db:
+    ports: ["127.0.0.1:54834:5432"]

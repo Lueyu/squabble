@@ -25,7 +25,7 @@ export class ComputeJobsService {
   }
   async create(owner: string, input: { runId: string; requestKey: string; requestHash: string; kind: string;
     maxRuntimeMs: number; payload: unknown; sourceVersionIds?: string[]; datasetVersionIds?: string[];
-    retentionUntil?: string | null }): Promise<Job> {
+    retentionUntil?: string | null; provider?: 'local-container' | 'e2b'; providerIdentity?: Record<string, unknown> }): Promise<Job> {
     const text = JSON.stringify(input.payload);
     if (!text || Buffer.byteLength(text) > 48 * 1024 * 1024) throw new Error('COMPUTE_INPUT_LIMIT');
     return this.db.transaction(async tx => {
@@ -42,6 +42,7 @@ export class ComputeJobsService {
       const [job] = await tx.insert(jobs).values({ id: randomUUID(), owner, runId: input.runId,
         requestKey: input.requestKey, requestHash: input.requestHash, kind: input.kind,
         maxRuntimeMs: input.maxRuntimeMs, inputEnc: encryptSecret(text, this.key()),
+        provider: input.provider ?? 'e2b', providerIdentity: input.providerIdentity ?? {},
         sourceVersionIds: input.sourceVersionIds ?? [], datasetVersionIds: input.datasetVersionIds ?? [],
         retentionUntil: input.retentionUntil ? new Date(input.retentionUntil) : null }).returning();
       return job;
@@ -59,7 +60,8 @@ export class ComputeJobsService {
   }
   async status(owner: string, id: string) {
     const job = await this.read(owner, id);
-    return { id: job.id, runId: job.runId, kind: job.kind, state: job.state, cancelRequested: job.cancelRequested,
+    return { id: job.id, runId: job.runId, kind: job.kind, state: job.state, provider: job.provider,
+      providerIdentity: job.providerIdentity, cancelRequested: job.cancelRequested,
       terminationConfirmed: job.terminationConfirmed, errorCode: job.errorCode, result: job.result,
       usage: { billableQuantity: null, cost: null, known: false }, createdAt: job.createdAt.toISOString() };
   }

@@ -11,6 +11,9 @@ export class DoclingClient implements DocumentExtractor {
     form.append('files', new Blob([new Uint8Array(file.data)], { type: file.mime }), file.fileName);
     form.append('to_formats', 'md'); form.append('to_formats', 'json');
     form.append('image_export_mode', 'placeholder'); form.append('do_picture_description', 'false');
+    // The pinned engine requires the explicit ISO prefix; bare zh-Hans is
+    // interpreted as an unsupported engine-native code by RapidOCR.
+    form.append('do_ocr', 'true'); form.append('ocr_engine', 'rapidocr'); form.append('ocr_lang', 'iso:zh');
     const result = await this.http.json('v1/convert/file/async', { method: 'POST', body: form });
     if (typeof result.task_id !== 'string' || !result.task_id || result.task_id.length > 200) throw new Error('DOCLING_INVALID_RECEIPT');
     const receipt = { taskId: result.task_id }; await onReceipt?.(receipt); return receipt;

@@ -30,7 +30,7 @@ Understand your portfolio, what changed, and what needs your decision.
 
 - **Daily research and a quiet channel.** Independent investigations and a separate reverse check stay in readable reports. The channel publishes short, sourced updates, expandable evidence and one-fact follow-ups. [Channel guide](docs/channel-workbench.md).
 - **Strategy-driven paper trading.** Copy recorded holdings and cash, review the strategy, then explicitly apply it to the simulation. Current rules, proposed changes and actual fills remain distinct. Existing advanced tools remain available.
-- **Bring your model and reviewed tools.** Optional outbound MCP, search, browser, document and analytics adapters share durable receipts, budgets and source permissions. External writes require an editable confirmation; unknown outcomes are never silently resent. Configure each provider explicitly; [setup and acceptance limits](docs/agent-tooling.md).
+- **Prepared tools and your own extensions.** The Web bundle includes document OCR, public financial queries, Chromium and a required local container sandbox. Confirm capability permissions once; add custom MCP or optional cloud services when needed. Durable receipts, source permissions and exact external-write previews remain shared. [Setup and acceptance limits](docs/agent-tooling.md).
 - **Your data stays yours.** Self-hosted. No default external telemetry. Desktop and source local workspaces open without a Squabble login; account mode remains available.
 
 ## Install
@@ -46,15 +46,15 @@ Your data stays on your machine. Existing data is preserved; see the [upgrade an
 
 ### Web app (Docker)
 
-You need [Git](https://git-scm.com/downloads) and [Docker Desktop](https://docs.docker.com/get-docker/).
+You need [Docker with Compose](https://docs.docker.com/get-docker/) in Linux-container mode. Download and extract the `squabble-bundle-linux-amd64` artifact from a successful [Bundled Web images](https://github.com/Lueyu/squabble/actions/workflows/bundle.yml) run. It contains exact public image digests and all deployment files. From the extracted directory:
 
 ```bash
-git clone https://github.com/Lueyu/squabble.git
-cd squabble
 docker compose up -d
 ```
 
 Open **http://localhost:3000**. Create your first account.
+
+Open **Settings → Tools**, review local processing and public-network permissions, then enable the prepared capabilities. No host Python, OCR models, browser installation or E2B account is required. Developers building a checkout use `docker compose -f docker-compose.yml -f docker-compose.source.yml up -d --build`. Existing desktop installers do not yet include this new suite. [Deployment details](deploy/README.bundle.md).
 
 The database starts empty. To try a demo with fictional data, run `docker compose -f docker-compose.demo.yml up -d --build` instead.
 

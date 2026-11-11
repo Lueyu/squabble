@@ -1,8 +1,10 @@
 # Reproducible analytics worker
 
 This is a separate file-based Python worker. The Nest application never executes
-model-authored Python on its host. Production execution uses a configured E2B
-template with outbound internet and public sandbox URLs disabled. The local
+model-authored Python on its host. Default production execution uses a fresh
+local Linux container for every job, through the mandatory authenticated
+[sandbox broker](../sandbox/README.md). E2B remains a separately configured
+compatibility provider; local failure never selects it automatically. The local
 commands below execute only repository-owned fictional fixtures.
 
 ## Local offline verification
@@ -19,7 +21,7 @@ The `python -m pytest` form also works on Windows systems that block the generat
 `datetime.utcnow()` deprecation warnings on Python 3.12; the tests do not modify
 or suppress these warnings. No test requires E2B credentials or a model API key.
 
-## Production E2B template
+## Optional E2B compatibility template
 
 Build a dedicated immutable E2B template containing this directory, its `LICENSE`
 and `NOTICE.md`, Python 3.12.10 and `uv sync --frozen --no-dev` dependencies. Make

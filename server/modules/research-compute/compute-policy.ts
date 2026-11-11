@@ -19,12 +19,13 @@ export const computeRequestSchema = z.object({
 });
 export type ComputeRequest = z.infer<typeof computeRequestSchema>;
 
-export function assertDatasetComputeInput(metadata: ResearchDatasetVersion, rows: Record<string, unknown>[], expected: string): void {
+export function assertDatasetComputeInput(metadata: ResearchDatasetVersion, rows: Record<string, unknown>[], expected: string,
+  provider: 'local-container' | 'e2b' = 'e2b'): void {
   if (metadata.status !== 'active' || metadata.contentHash !== expected || rows.length !== metadata.coverage.rowCount) throw new Error('COMPUTE_DATASET_CHANGED');
   if (!verifyDatasetContent(metadata, rows)) throw new Error('COMPUTE_DATASET_HASH_MISMATCH');
   const sensitive = metadata.dataClasses.some(value => value !== 'public');
   if (!metadata.license.permittedUses.includes('research')
-    || sensitive && !metadata.license.permittedUses.includes('egress:e2b')) throw new Error('DATASET_EGRESS_NOT_ALLOWED');
+    || provider === 'e2b' && sensitive && !metadata.license.permittedUses.includes('egress:e2b')) throw new Error('DATASET_EGRESS_NOT_ALLOWED');
 }
 
 export function statisticsParameters(value: Record<string, unknown>) {

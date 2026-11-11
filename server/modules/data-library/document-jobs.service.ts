@@ -12,6 +12,7 @@ import { extractDocumentElements } from './documents/document-provenance';
 import { validateDocumentNumbers } from './documents/document-validation';
 import { MineruClient } from './documents/mineru-client';
 import type { DataDocumentStatus } from '../../../shared/data-library.interface';
+import { ToolCapabilityGrantsService } from '../tool-capabilities/tool-capability-grants.service';
 
 export const DOCUMENT_EXTRACTORS = Symbol('DOCUMENT_EXTRACTORS');
 type DocumentTask = typeof tasks.$inferSelect;
@@ -20,7 +21,8 @@ export class DocumentJobsService {
   private readonly extractors: Map<string, DocumentExtractor>;
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly artifacts: ResearchArtifactsService,
-    @Optional() @Inject(DOCUMENT_EXTRACTORS) extractors: DocumentExtractor[] = []) {
+    @Optional() @Inject(DOCUMENT_EXTRACTORS) extractors: DocumentExtractor[] = [],
+    @Optional() private readonly capabilities?: ToolCapabilityGrantsService) {
     this.extractors = new Map(extractors.map(extractor => [extractor.id, extractor]));
   }
   private extractor(id: string, version?: string): DocumentExtractor {
@@ -45,6 +47,7 @@ export class DocumentJobsService {
         numericValidation: validation?.status === 'verified' ? 'verified' : validation?.status === 'needs_review' ? 'needs_review' : 'unknown' } : null };
   }
   private async fence(db: SourceDatabase, task: DocumentTask): Promise<typeof sources.$inferSelect> {
+    await this.requireCapability(task, db);
     const [source] = await db.select().from(sources).where(and(eq(sources.id, task.sourceId), eq(sources.owner, task.owner),
       eq(sources.enabled, true), isNull(sources.deletedAt), eq(sources.revision, task.sourceRevision),
       eq(sources.activeJobId, task.jobId), eq(sources.leaseToken, task.leaseToken), gt(sources.leaseUntil, new Date()))).for('update');
@@ -52,10 +55,21 @@ export class DocumentJobsService {
     await assertSourceVersions(db, task.owner, [{ sourceId: task.sourceId, sourceVersionId: task.sourceVersionId, contentHash: task.sourceHash }]);
     return source;
   }
+  private async requireCapability(task: DocumentTask, db?: SourceDatabase): Promise<void> {
+    if (process.env.TOOL_CAPABILITIES_BUNDLE_ENABLED !== 'true') return;
+    const match = /^capability:(\d+):/u.exec(task.configVersion);
+    if (!this.capabilities || !match || !Number.isSafeInteger(Number(match[1]))) throw new Error('TOOL_CAPABILITY_REVIEW_REQUIRED');
+    await this.capabilities.requireCurrent(task.owner, 'documents', Number(match[1]), ['private_material'], db);
+  }
   async start(owner: string, sourceId: string, extractorId: string, configVersion: string): Promise<{ jobId: string; state: string }> {
     const extractor = this.extractor(extractorId);
     if (!/^[A-Za-z0-9._-]{1,100}$/u.test(configVersion)) throw new Error('DOCUMENT_CONFIG_VERSION_REQUIRED');
+    const bundled = process.env.TOOL_CAPABILITIES_BUNDLE_ENABLED === 'true';
+    if (bundled && !this.capabilities) throw new Error('TOOL_CAPABILITY_DISABLED');
+    const grant = bundled ? await this.capabilities!.require(owner, 'documents', ['private_material']) : null;
+    const boundConfigVersion = grant ? `capability:${grant.revision}:${configVersion}` : configVersion;
     const claim = await this.db.transaction(async tx => {
+      if (grant) await this.capabilities!.requireCurrent(owner, 'documents', grant.revision, ['private_material'], tx);
       const [source] = await tx.select().from(sources).where(and(eq(sources.id, sourceId), eq(sources.owner, owner),
         eq(sources.enabled, true), isNull(sources.deletedAt))).for('update');
       if (!source || !source.fileData || !source.latestVersionId) throw new Error('DOCUMENT_SOURCE_NOT_FOUND');
@@ -73,12 +87,13 @@ export class DocumentJobsService {
       const [task] = await tx.insert(tasks).values({ jobId: job.id, owner, sourceId, sourceVersionId: version.id,
         sourceHash: version.contentHash, sourceRevision: source.revision, leaseToken: token,
         originalHash: createHash('sha256').update(file.data).digest('hex'), extractor: extractor.id,
-        extractorVersion: extractor.version, configVersion, state: 'submitting' }).returning();
+        extractorVersion: extractor.version, configVersion: boundConfigVersion, state: 'submitting' }).returning();
       await tx.update(sources).set({ activeJobId: job.id, leaseToken: token, leaseUntil: new Date(Date.now() + 10 * 60_000), state: 'syncing' }).where(eq(sources.id, sourceId));
       return { task, file };
     });
     // Submission is never replayed automatically: a broken response may still have created remote work.
     try {
+      await this.requireCapability(claim.task);
       const persistReceipt = (receipt: DocumentTaskReceipt) => this.persistReceipt(claim.task, extractor, receipt);
       const receipt = await extractor.submit(claim.file, persistReceipt);
       await persistReceipt(receipt);
@@ -145,6 +160,7 @@ export class DocumentJobsService {
   async poll(owner: string, jobId: string): Promise<string> {
     let task = await this.task(owner, jobId);
     if (task.state !== 'submitted') return task.state;
+    await this.requireCapability(task);
     task = await this.recoverLease(task);
     if (!task.receipt) throw new Error('DOCUMENT_RECEIPT_MISSING');
     const extractor = this.extractor(task.extractor, task.extractorVersion), pollToken = randomUUID();
@@ -169,6 +185,7 @@ export class DocumentJobsService {
       }
       if (status !== 'completed') { await this.finish(task, pollToken, status === 'cancelled' ? 'cancelled' : 'failed'); return status; }
       let result = await extractor.result(task.receipt);
+      await this.requireCapability(task);
       if (extractor instanceof MineruClient && result.archive) result = await extractor.unpack(result.archive);
       const [source] = await this.db.select().from(sources).where(and(eq(sources.id, task.sourceId), eq(sources.owner, owner)));
       const elements = extractDocumentElements(result.lossless, source?.format === 'docx' ? 'docx' : 'pdf');

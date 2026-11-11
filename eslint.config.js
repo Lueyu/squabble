@@ -120,14 +120,14 @@ module.exports = tseslint.config(
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel|research-routing|research-runtime|research-tools|tool-connections|tool-actions)(/|$)',
+          regex: '(^|/)(multi-agent|experience|paper-trading|council|channel|research-routing|research-runtime|research-tools|tool-connections|tool-actions|tool-capabilities)(/|$)',
           message: 'Research core provides infrastructure to workflows and must not import them.',
         }],
       }],
     },
   },
   {
-    files: ['server/modules/tool-connections/**/*.ts', 'server/modules/tool-actions/**/*.ts',
+    files: ['server/modules/tool-connections/**/*.ts', 'server/modules/tool-actions/**/*.ts', 'server/modules/tool-capabilities/**/*.ts',
       'server/modules/research-artifacts/**/*.ts', 'server/modules/research-compute/**/*.ts'],
     rules: {
       'no-restricted-imports': ['error', {

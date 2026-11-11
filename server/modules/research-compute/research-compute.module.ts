@@ -6,8 +6,10 @@ import { ResearchComputeController } from './research-compute.controller';
 import { ResearchComputeService } from './research-compute.service';
 import { ResearchComputeToolsService } from './research-compute-tools.service';
 import { ComputeCleanupService } from './compute-cleanup.service';
+import { LocalContainerAdapter } from './local-container.adapter';
+import { ToolCapabilitiesModule } from '../tool-capabilities/tool-capabilities.module';
 
-@Module({ imports: [ResearchArtifactsModule], controllers: [ResearchComputeController],
-  providers: [ComputeJobsService, E2bAdapter, ResearchComputeService, ResearchComputeToolsService, ComputeCleanupService],
+@Module({ imports: [ResearchArtifactsModule, ToolCapabilitiesModule], controllers: [ResearchComputeController],
+  providers: [ComputeJobsService, E2bAdapter, LocalContainerAdapter, ResearchComputeService, ResearchComputeToolsService, ComputeCleanupService],
   exports: [ResearchComputeService, ResearchComputeToolsService, ComputeJobsService, ComputeCleanupService] })
 export class ResearchComputeModule {}

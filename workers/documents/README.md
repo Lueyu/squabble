@@ -1,5 +1,25 @@
 # Local document workers
 
+## Default prepared Web bundle
+
+The default Web suite ships the immutable official Docling Serve CPU image
+recorded in `base-image.json`, extended by this directory's `Dockerfile`. It
+already contains locked Python dependencies and OCR/layout/table models; startup
+does not install packages or download weights. Build records every model file's
+SHA-256 and actual `pip freeze` inside `/opt/squabble`; startup verifies those
+files before readiness. The default adapter selects RapidOCR Chinese (`iso:zh`)
+on CPU. A private authenticated gateway exposes only the three adapter route
+families; the raw API binds container loopback and has no Internet route.
+
+Use the [bundle guide](../../deploy/README.bundle.md) for one-command release or
+source builds. The older top-level requirements below document the separate
+engine API matrix. **The existing PyPI-based Docling lock contains CUDA packages
+and is not the default CPU image lock.** The digest-pinned official CPU image's
+own frozen lock is authoritative for the shipped environment. MinerU remains
+optional and is not started by the default suite.
+
+## Separate optional engine installations
+
 The server adapters target Docling Serve **1.38.2** and MinerU **4.2.0** on
 Python **3.12.12**. Each engine needs its own virtual environment. The checked-in
 top-level requirements pin the API release matrix. The checked-in

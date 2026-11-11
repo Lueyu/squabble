@@ -23,6 +23,7 @@ remain disabled account drafts until explicitly applied.
 | Understand data and privacy / 了解数据来源与隐私 | [Research data / 研究数据](research-data.md) · [Privacy](privacy.md) / [隐私](privacy.zh-CN.md) |
 | Change appearance / 调整外观 | [Appearance / 外观](appearance.md) |
 | Analyze Agent runs and connect Langfuse / 分析 Agent 运行与连接 Langfuse | [Agent telemetry / 运行分析](agent-telemetry.md) |
+| Prepare bundled tools and add custom tools / 内置工具与自定义接入 | [Tool operations / 工具使用](agent-tooling.md) · [Bundle design / 套件设计](superpowers/specs/2026-11-11-bundled-capabilities-design.md) · [Implementation plan / 实施计划](superpowers/plans/2026-11-11-bundled-capabilities.md) |
 
 Starting an empty workspace does not require the optional Python agent or a model
 key. AI research requires an available configured model or native agent. Desktop
@@ -42,9 +43,9 @@ is needed for local Docker.
 - [Deployment and recovery runbook](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md): inspect and update an existing private instance.
 - [Security](../SECURITY.md): private vulnerability reporting.
 
-### Pending review · 待审阅方案
+### Tooling design history · 工具设计记录
 
-- [Agent tooling design / Agent 工具体系设计](superpowers/specs/2026-11-11-agent-tooling-design.md) and [development plan / 开发计划](superpowers/plans/2026-11-11-agent-tooling-implementation.md): proposed API Agent runtime, MCP clients, financial data, document parsing, computation, browsing and app connections. These are review drafts, not implemented capabilities. 两份文档为待审阅方案，混合部署方向已确认，实施在用户审阅后开始。
+- [Agent tooling design / Agent 工具体系设计](superpowers/specs/2026-11-11-agent-tooling-design.md) and [development plan / 开发计划](superpowers/plans/2026-11-11-agent-tooling-implementation.md): the foundation was implemented in PR93; see [acceptance limits](agent-tooling-validation.md). [Bundled capabilities](superpowers/specs/2026-11-11-bundled-capabilities-design.md) supersedes its E2B-first deployment choice with a required local container sandbox. 工具基础已由 PR93 实现；套件设计将默认计算改为必备本地沙箱，实际验证记录与设计承诺分开。
 
 ## Retained workflows and history · 保留流程与历史记录
 

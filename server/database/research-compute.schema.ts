@@ -4,6 +4,8 @@ export const researchComputeJobs = pgTable('research_compute_jobs', {
   id: uuid('id').primaryKey(), owner: text('owner').notNull(), runId: text('run_id').notNull(),
   requestKey: text('request_key').notNull(), requestHash: text('request_hash').notNull(),
   inputEnc: text('input_enc').notNull(), kind: text('kind').notNull(), state: text('state').notNull().default('queued'),
+  provider: text('provider').notNull().default('e2b'),
+  providerIdentity: jsonb('provider_identity').$type<Record<string, unknown>>().notNull().default({}),
   sandboxId: text('sandbox_id'), terminationConfirmed: boolean('termination_confirmed').notNull().default(false),
   cancelRequested: boolean('cancel_requested').notNull().default(false), maxRuntimeMs: integer('max_runtime_ms').notNull(),
   result: jsonb('result').$type<Record<string, unknown>>(), errorCode: text('error_code'),

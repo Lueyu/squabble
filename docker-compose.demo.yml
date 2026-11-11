@@ -1,4 +1,8 @@
-name: squabble
+# Standalone demo inherits the same prepared engines and isolation as production.
+include:
+  - path: [docker-compose.yml, docker-compose.source.yml]
+
+name: squabble-demo
 
 services:
   db:
@@ -21,7 +25,6 @@ services:
       retries: 20
 
   app:
-    build: .
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -34,7 +37,7 @@ services:
       AGENT_GATEWAY_ENABLED: "false"
       LOCAL_AGENTS_MODE: companion
       LOCAL_AGENTS_DATA_DIR: /app/.local-agents
-    ports:
+    ports: !override
       - "127.0.0.1:${HOST_DEMO_PORT:-3001}:3000"
     volumes:
       - settings-secrets:/app/.secrets

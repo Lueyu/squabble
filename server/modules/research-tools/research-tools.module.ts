@@ -7,9 +7,10 @@ import { DataLibraryModule } from '../data-library/data-library.module';
 import { ResearchArtifactsModule } from '../research-artifacts/research-artifacts.module';
 import { ResearchComputeModule } from '../research-compute/research-compute.module';
 import { BrowserResearchModule } from '../data-library/browser/browser-research.module';
+import { ToolCapabilitiesModule } from '../tool-capabilities/tool-capabilities.module';
 
 @Module({
-  imports: [QuoteModule, ResearchCoreModule, ResearchMemoryModule, DataLibraryModule, ResearchArtifactsModule, ResearchComputeModule, BrowserResearchModule],
+  imports: [QuoteModule, ResearchCoreModule, ResearchMemoryModule, DataLibraryModule, ResearchArtifactsModule, ResearchComputeModule, BrowserResearchModule, ToolCapabilitiesModule],
   providers: [ResearchToolsService],
   exports: [ResearchToolsService],
 })

@@ -147,3 +147,8 @@ jobs:
 
       - name: Build self-hosted image
         run: docker build .
+
+      - name: Verify bundled deployment boundaries
+        run: |
+          node --test deploy/bundle-contract.spec.cjs deploy/release-bundle.spec.cjs
+          python -m unittest discover -s deploy -p test_bundle_gateway.py

@@ -100,28 +100,26 @@ the app or troubleshooting startup.
 <a id="docker-compose"></a>
 ## 🐳 Docker Compose
 
-Install [Git](https://git-scm.com/downloads/) and
-[Docker with Compose](https://docs.docker.com/get-started/get-docker/). On
+Install [Docker with Compose](https://docs.docker.com/get-started/get-docker/). On
 Windows or macOS, open Docker Desktop and wait for the engine to start. On
 Linux, install Docker Engine and the Compose plugin. Check:
 
 ```sh
-git --version
 docker compose version
 docker info
 ```
 
-Then run these commands in PowerShell or Terminal:
+Download the `squabble-bundle-linux-amd64` artifact from a successful
+[Bundled Web images](https://github.com/Lueyu/squabble/actions/workflows/bundle.yml)
+run, extract it, then run these commands in its directory:
 
 ```sh
-git clone https://github.com/Lueyu/squabble.git
-cd squabble
 docker compose up -d
 docker compose ps
 ```
 
-The first start downloads the prebuilt app image from GitHub Container Registry
-and may take several minutes. Open [http://localhost:3000](http://localhost:3000). The clean stack
+The first start downloads the complete fixed-image suite, including OCR models
+and Chromium; allow several GiB and sufficient host resources. Open [http://localhost:3000](http://localhost:3000). The clean stack
 starts with an empty database, no demo account and stable generated JWT and
 settings-encryption keys. Create your account, save the one-time recovery code
 offline, then add holdings or import a CSV. Registration closes automatically
@@ -147,20 +145,20 @@ deletes data and generated keys.
 | Generated JWT and settings keys | `squabble-local_settings-secrets` (`/app/.secrets` in `app`) |
 | Local agent pairing and task state | `squabble-local_local-agents-data` (`/app/.local-agents` in `app`) |
 | Backups made before click-to-update | `squabble-local_update-backups` (`/app/.backups` in `app`) |
+| Document originals and computed artifacts | `squabble-local_research-artifacts` (`/app/.data/research-artifacts`) |
+| Private internal-service credentials | `squabble-local_capability-secrets` |
+| Local sandbox lifecycle journal | `squabble-local_sandbox-state` |
 
-The default web stack uses a prebuilt image. For an existing source installation,
-run `git pull --ff-only` and `docker compose up -d` once from the same checkout
-and with the same Compose project name. The database and secrets volumes remain
-attached. After that, the first registered account can use **Settings →
-Software updates → Update now**. Squabble saves a PostgreSQL dump and secret
-files before its internal updater replaces only the app container. The database
-container is left alone. The updater does not poll or install on a schedule,
-and an ordinary `docker compose up -d` does not pull a newer app image.
-After restarting, confirm the new version, holdings and login.
+Open **Settings → Tools**. Preparation checks service metadata without model or
+business-tool calls. Confirm local processing and public-network permissions once.
+Optional cloud services and custom MCP remain under **Add tools and cloud services**;
+model-tool validation is a separate explicit charged action.
 
-The updater needs access to the local Docker socket, which grants it permission
-to manage Docker containers. It publishes no host port and uses a random token
-stored in the secrets volume. Run this mode only on a trusted local machine.
+Update the complete bundle using one reviewed image manifest and the same project
+name/volumes. The old independent app-only updater is disabled by default. Back up
+the database, keys, internal-service credentials, originals/artifacts and sandbox/
+native journals together, and verify an isolated restore before upgrading. A DB
+dump alone is not a recoverable tool deployment. See [bundle operations](../deploy/README.bundle.md).
 
 Pre-update backups live in the `update-backups` volume. List them with
 `docker compose exec app ls /app/.backups`, then copy one out with

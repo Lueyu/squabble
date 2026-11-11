@@ -468,7 +468,11 @@
         "shared/research-dataset.interface.ts",
         "shared/research-artifact.interface.ts",
         "shared/research-compute.interface.ts",
-        "docs/agent-tooling.md"
+        "docs/agent-tooling.md",
+        "server/modules/tool-capabilities/",
+        "workers/sandbox/",
+        "deploy/",
+        "shared/tool-capabilities.interface.ts"
       ],
       "entrypoints": [
         "server/modules/council/council-tool-runtime.service.ts",
@@ -494,7 +498,14 @@
         "scripts/db/57_research_compute.sql",
         "scripts/db/58_deep_agent_driver.sql",
         "workers/analytics/pyproject.toml",
-        "workers/documents/README.md"
+        "workers/documents/README.md",
+        "server/modules/tool-capabilities/tool-capabilities.service.ts",
+        "server/modules/tool-capabilities/tool-capability-grants.service.ts",
+        "server/modules/research-compute/local-container.adapter.ts",
+        "workers/sandbox/broker.cjs",
+        "deploy/README.bundle.md",
+        "scripts/db/59_capability_activation.sql",
+        "scripts/db/60_local_compute.sql"
       ],
       "references": [
         "references/repository-map.md",
@@ -564,6 +575,11 @@
       "scope": "Inspected runtime/model-step/Council binding, tool catalogs/actions, dataset/artifact/document/provider paths, compute and driver boundaries. Diagrams1-2 add frozen single-step dispatch, private receipts, explicit write approval, versioned data and optional local/cloud tools. Diagrams3-5 checked: no tool approval grants investment policy authority; backtests are hypothetical artifacts; existing channel source seals and real-ledger writers retain authority. New source/license revocation and late-result fences apply before acceptance. No deployed-instance or live-provider certification is implied.",
       "acceptanceLimits": "Actual local Chromium and pinned analytics fixtures are separate from real cloud/MCP/OAuth/Composio/E2B compatibility, Docling/MinerU twenty-document engine/numeric quality, bilingual retrieval quality and complete market/FX/corporate-action coverage. Linux document dependency hashes are resolved; model hashes and actual engine acceptance remain required.",
       "knowledgeValidation": "Documentation task: test:context 15 passed, zero failures/skips; check:context valid=true with no structural errors and expected semantic-review drift warning. Six public Markdown entrypoints checked with no missing local links; five architecture anchors/Mermaid blocks reviewed. Product CI, live providers, deployment and global skill sync are separate root delivery work."
+    },
+    "bundledCapabilities": {
+      "baseline": "e18b5febf61daf830100351051f216973a0b1599",
+      "scope": "Reviewed capability grants/readiness, candidate discovery, local provider/broker and default tool images. System/research diagrams add deployment preparation and per-job Docker. Strategy/channel/real-ledger flows retain existing authority; tool grants never authorize investment execution. Actual runtime/image/platform verification is separately recorded.",
+      "crossPlatform": "Current image qualification is Linux amd64; Windows uses Docker Desktop Linux containers/WSL2. Future native macOS/arm64/desktop installers are not certified by this source review."
     }
   },
   "notes": {

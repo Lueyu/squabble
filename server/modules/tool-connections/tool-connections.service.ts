@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { createHmac, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv-provider.js';
@@ -17,6 +17,7 @@ import { ProviderHttp } from './providers/search-provider.contract';
 export const TOOL_CONNECTION_ADAPTERS = Symbol('TOOL_CONNECTION_ADAPTERS');
 export interface PublicToolConnection extends AgentToolConnection { endpoint: string | null; hasCredential: boolean; toolEffects: Record<string, AgentToolEffect>; authKind: 'none' | 'bearer' | 'oauth' }
 type ConnectionRow = typeof toolConnections.$inferSelect;
+type ConnectionDatabase = Pick<PostgresJsDatabase, 'select' | 'update' | 'insert'>;
 const configSchema = z.object({ provider: z.string().min(1).max(50), endpoint: z.string().max(500).optional(),
   credential: z.string().min(1).max(16_000).optional(),
   providerConfig: z.object({ connectedAccountId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/u).optional(),
@@ -57,12 +58,14 @@ export class ToolConnectionsService {
       revision: row.revision, status: row.status as AgentConnectionStatus, allowedToolIds: row.allowedToolIds,
       allowedDataClasses: row.allowedDataClasses, catalogVersionId: row.catalogVersionId,
       verifiedAt: row.verifiedAt?.toISOString() ?? null, endpoint: row.endpoint, hasCredential: row.secretEnc !== null, toolEffects: row.toolEffects,
+      candidateCatalogVersionId: row.candidateCatalogVersionId, managedPresetId: row.managedPresetId,
+      lastDiscoveryAt: row.lastDiscoveryAt?.toISOString() ?? null, lastDiscoveryCode: row.lastDiscoveryCode,
       authKind: row.oauthConfig ? 'oauth' : row.secretEnc ? 'bearer' : 'none' };
   }
-  private async row(owner: string, id: string): Promise<ConnectionRow> {
+  private async row(owner: string, id: string, db: ConnectionDatabase = this.db): Promise<ConnectionRow> {
     ownerRequired(owner);
     if (!z.string().uuid().safeParse(id).success) throw new NotFoundException('TOOL_CONNECTION_NOT_FOUND');
-    const [row] = await this.db.select().from(toolConnections).where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id)));
+    const [row] = await db.select().from(toolConnections).where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id)));
     if (!row) throw new NotFoundException('TOOL_CONNECTION_NOT_FOUND');
     return row;
   }
@@ -79,12 +82,52 @@ export class ToolConnectionsService {
     return (await this.db.select().from(toolConnections).where(eq(toolConnections.owner, owner))).map(row => this.project(row));
   }
   async detail(owner: string, id: string): Promise<PublicToolConnection> { return this.project(await this.row(owner, id)); }
-  async catalog(owner: string, id: string) {
-    const row = await this.row(owner, id);
-    if (!row.catalogVersionId) return null;
-    const [catalog] = await this.db.select().from(toolCatalogVersions).where(and(eq(toolCatalogVersions.owner, owner),
-      eq(toolCatalogVersions.connectionId, id), eq(toolCatalogVersions.id, row.catalogVersionId)));
+  async catalog(owner: string, id: string, candidate = true, db: ConnectionDatabase = this.db) {
+    const row = await this.row(owner, id, db), catalogId = candidate ? row.candidateCatalogVersionId ?? row.catalogVersionId : row.catalogVersionId;
+    if (!catalogId) return null;
+    const [catalog] = await db.select().from(toolCatalogVersions).where(and(eq(toolCatalogVersions.owner, owner),
+      eq(toolCatalogVersions.connectionId, id), eq(toolCatalogVersions.id, catalogId)));
     return catalog ?? null;
+  }
+  async reviewCatalog(owner: string, id: string) {
+    const connection = await this.row(owner, id), active = await this.catalog(owner, id, false);
+    const latest = await this.catalog(owner, id);
+    const candidate = connection.candidateCatalogVersionId ? latest : null;
+    const before = active?.descriptors ?? [], after = candidate?.descriptors ?? before;
+    return { active, candidate, changes: {
+      added: after.filter(tool => !before.some(previous => previous.id === tool.id)).map(tool => tool.id),
+      removed: before.filter(tool => !after.some(next => next.id === tool.id)).map(tool => tool.id),
+      changed: after.filter(tool => { const previous = before.find(item => item.id === tool.id);
+        return previous && toolHash({ ...previous, catalogVersionId: '' }) !== toolHash({ ...tool, catalogVersionId: '' }); }).map(tool => tool.id),
+    } };
+  }
+
+  /** Stable deployer-owned identity. Metadata reconciliation never enables a managed tool. */
+  async ensureManaged(owner: string, presetId: string, endpointInput: string, secret?: string): Promise<PublicToolConnection> {
+    ownerRequired(owner);
+    if (presetId !== 'aktools') throw new BadRequestException('MANAGED_TOOL_PRESET_RESTRICTED');
+    const endpoint = await this.policy.normalizeEndpoint(endpointInput);
+    await this.db.insert(toolConnections).values({ id: randomUUID(), owner, provider: 'mcp', transport: 'streamable_http',
+      managedPresetId: presetId, endpoint, secretEnc: secret ? encryptSecret(secret, toolEncryptionKey()) : null })
+      .onConflictDoNothing({ target: [toolConnections.owner, toolConnections.managedPresetId] });
+    const [row] = await this.db.select().from(toolConnections).where(and(eq(toolConnections.owner, owner), eq(toolConnections.managedPresetId, presetId)));
+    if (!row) throw new ConflictException('MANAGED_TOOL_CONNECTION_UNAVAILABLE');
+    const oldSecret = row.secretEnc ? decryptSecret(row.secretEnc, toolEncryptionKey()) : undefined;
+    if (row.endpoint !== endpoint || oldSecret !== secret) {
+      const [updated] = await this.db.update(toolConnections).set({ endpoint, secretEnc: secret ? encryptSecret(secret, toolEncryptionKey()) : null,
+        revision: row.revision + 1, status: 'configured', allowedToolIds: [], toolEffects: {}, catalogVersionId: null,
+        candidateCatalogVersionId: null, verifiedAt: null, updatedAt: new Date() }).where(and(eq(toolConnections.owner, owner),
+        eq(toolConnections.id, row.id), eq(toolConnections.revision, row.revision))).returning();
+      if (!updated) throw new ConflictException('TOOL_CONNECTION_REVISION_CHANGED');
+      return this.project(updated);
+    }
+    return this.project(row);
+  }
+
+  async managed(owner: string, presetId: string): Promise<PublicToolConnection | null> {
+    ownerRequired(owner);
+    const [row] = await this.db.select().from(toolConnections).where(and(eq(toolConnections.owner, owner), eq(toolConnections.managedPresetId, presetId)));
+    return row ? this.project(row) : null;
   }
   async create(owner: string, input: unknown): Promise<PublicToolConnection> {
     ownerRequired(owner);
@@ -110,7 +153,7 @@ export class ToolConnectionsService {
     const body = parse(z.object({ revision: z.number().int().positive(), credential: z.string().min(1).max(16_000) }).strict(), input);
     const row = await this.row(owner, id);
     const [saved] = await this.db.update(toolConnections).set({ secretEnc: encryptSecret(body.credential, toolEncryptionKey()),
-      revision: row.revision + 1, status: 'configured', allowedToolIds: [], catalogVersionId: null, verifiedAt: null, updatedAt: new Date() })
+      revision: row.revision + 1, status: 'configured', allowedToolIds: [], catalogVersionId: null, candidateCatalogVersionId: null, verifiedAt: null, updatedAt: new Date() })
       .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id), eq(toolConnections.revision, body.revision))).returning();
     if (!saved) throw new ConflictException('TOOL_CONNECTION_REVISION_CHANGED');
     return this.project(saved);
@@ -119,7 +162,7 @@ export class ToolConnectionsService {
   async disconnect(owner: string, id: string): Promise<PublicToolConnection> {
     const row = await this.row(owner, id);
     const [saved] = await this.db.update(toolConnections).set({ secretEnc: null, status: 'unconfigured',
-      revision: row.revision + 1, allowedToolIds: [], catalogVersionId: null, verifiedAt: null, updatedAt: new Date() })
+      revision: row.revision + 1, allowedToolIds: [], catalogVersionId: null, candidateCatalogVersionId: null, verifiedAt: null, updatedAt: new Date() })
       .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id), eq(toolConnections.revision, row.revision))).returning();
     if (!saved) throw new ConflictException('TOOL_CONNECTION_REVISION_CHANGED');
     return this.project(saved);
@@ -137,16 +180,35 @@ export class ToolConnectionsService {
     }
     catch (error) {
       const code = error instanceof ToolAdapterError ? error.code : 'TOOL_DISCOVERY_FAILED';
-      await this.db.update(toolConnections).set({ status: code === 'TOOL_AUTHORIZATION_REQUIRED' ? 'authorization_required' : 'unavailable', updatedAt: new Date() })
+      await this.db.update(toolConnections).set({ lastDiscoveryAt: new Date(), lastDiscoveryCode: code,
+        ...(code === 'TOOL_AUTHORIZATION_REQUIRED' ? { status: 'authorization_required' } : row.catalogVersionId ? {} : { status: 'unavailable' }), updatedAt: new Date() })
         .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id), eq(toolConnections.revision, row.revision)));
       throw new BadRequestException(code);
     }
     const catalogId = randomUUID();
-    descriptors = descriptors.map(tool => ({ ...tool, catalogVersionId: catalogId }));
+    descriptors = descriptors.map(tool => ({ ...tool, catalogVersionId: catalogId })).sort((a, b) => a.id.localeCompare(b.id));
     const schemaHash = toolHash(descriptors.map(tool => ({ ...tool, catalogVersionId: '' })));
     return this.db.transaction(async tx => {
-      const [saved] = await tx.update(toolConnections).set({ catalogVersionId: catalogId, status: 'discovered',
-        revision: row.revision + 1, allowedToolIds: [], toolEffects: {}, verifiedAt: new Date(), updatedAt: new Date() })
+      const [latest] = await tx.select().from(toolConnections).where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id))).for('update');
+      if (!latest || latest.revision !== row.revision) throw new ConflictException('TOOL_CONNECTION_REVISION_CHANGED');
+      const [active] = latest.catalogVersionId ? await tx.select().from(toolCatalogVersions).where(and(eq(toolCatalogVersions.owner, owner), eq(toolCatalogVersions.id, latest.catalogVersionId))) : [];
+      const [candidate] = latest.candidateCatalogVersionId ? await tx.select().from(toolCatalogVersions).where(and(eq(toolCatalogVersions.owner, owner), eq(toolCatalogVersions.id, latest.candidateCatalogVersionId))) : [];
+      const same = active?.schemaHash === schemaHash ? active : candidate?.schemaHash === schemaHash ? candidate : null;
+      if (same) {
+        const [saved] = await tx.update(toolConnections).set({ lastDiscoveryAt: new Date(), lastDiscoveryCode: null,
+          ...(active?.id === same.id ? { candidateCatalogVersionId: null,
+            status: latest.status === 'reconfirmation_required' ? latest.allowedToolIds.length ? 'configured' : 'restricted' : latest.status } : {}),
+          verifiedAt: new Date(), updatedAt: new Date() }).where(eq(toolConnections.id, id)).returning();
+        return { connection: this.project(saved), catalog: same };
+      }
+      const affected = active && latest.allowedToolIds.some(toolId => {
+        const previous = active.descriptors.find(tool => tool.id === toolId), next = descriptors.find(tool => tool.id === toolId);
+        return !previous || !next || toolHash({ ...previous, catalogVersionId: '' }) !== toolHash({ ...next, catalogVersionId: '' });
+      });
+      const [saved] = await tx.update(toolConnections).set({ candidateCatalogVersionId: catalogId,
+        status: affected ? 'reconfirmation_required' : active ? latest.status : 'discovered',
+        revision: affected ? latest.revision + 1 : latest.revision, lastDiscoveryAt: new Date(), lastDiscoveryCode: null,
+        verifiedAt: new Date(), updatedAt: new Date() })
         .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id), eq(toolConnections.revision, row.revision))).returning();
       if (!saved) throw new ConflictException('TOOL_CONNECTION_REVISION_CHANGED');
       const [catalog] = await tx.insert(toolCatalogVersions).values({ id: catalogId, owner, connectionId: id,
@@ -155,9 +217,9 @@ export class ToolConnectionsService {
     });
   }
 
-  async enable(owner: string, id: string, input: unknown): Promise<PublicToolConnection> {
-    const body = parse(enableSchema, input), row = await this.row(owner, id);
-    const catalog = await this.catalog(owner, id);
+  async enable(owner: string, id: string, input: unknown, db: ConnectionDatabase = this.db): Promise<PublicToolConnection> {
+    const body = parse(enableSchema, input), row = await this.row(owner, id, db);
+    const catalog = await this.catalog(owner, id, true, db);
     if (!catalog || catalog.id !== body.catalogVersionId || catalog.schemaHash !== body.schemaHash || row.revision !== body.revision) {
       throw new ConflictException('TOOL_CATALOG_RECONFIRMATION_REQUIRED');
     }
@@ -166,7 +228,8 @@ export class ToolConnectionsService {
     if (row.provider !== 'mcp' && catalog.descriptors.some(tool => body.effects?.[tool.id] && body.effects[tool.id] !== tool.effect)) {
       throw new BadRequestException('TRUSTED_TOOL_EFFECT_IMMUTABLE');
     }
-    const [saved] = await this.db.update(toolConnections).set({ allowedToolIds: body.toolIds, allowedDataClasses: body.dataClasses as AgentDataClass[],
+    const [saved] = await db.update(toolConnections).set({ catalogVersionId: catalog.id, candidateCatalogVersionId: null,
+      allowedToolIds: body.toolIds, allowedDataClasses: body.dataClasses as AgentDataClass[],
       toolEffects: (body.effects ?? {}) as Record<string, AgentToolEffect>, revision: row.revision + 1,
       status: body.toolIds.length ? 'configured' : 'restricted', updatedAt: new Date() })
       .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id), eq(toolConnections.revision, body.revision))).returning();
@@ -177,11 +240,12 @@ export class ToolConnectionsService {
     return descriptors.filter(tool => row.allowedToolIds.includes(tool.id)).map(tool => ({ ...tool,
       effect: row.toolEffects[tool.id] ?? tool.effect, dataClasses: [...row.allowedDataClasses] }));
   }
-  async freezeCatalog(owner: string) {
+  async freezeCatalog(owner: string, managedPresetId?: string) {
     ownerRequired(owner);
     return this.db.transaction(async tx => {
       // Repeatable transaction read through row locks keeps catalog references and permission revisions coherent.
-      const rows = await tx.select().from(toolConnections).where(and(eq(toolConnections.owner, owner), eq(toolConnections.status, 'configured'))).for('share');
+      const rows = await tx.select().from(toolConnections).where(and(eq(toolConnections.owner, owner), eq(toolConnections.status, 'configured'),
+        managedPresetId ? eq(toolConnections.managedPresetId, managedPresetId) : isNull(toolConnections.managedPresetId))).for('share');
       const descriptors: AgentToolDescriptor[] = [], revisions: Record<string, number> = {};
       for (const row of rows) {
         if (!row.catalogVersionId || !row.allowedToolIds.length) continue;
@@ -200,7 +264,7 @@ export class ToolConnectionsService {
     if (row.revision !== expectedRevision || row.status !== 'configured' || row.catalogVersionId !== tool.catalogVersionId) {
       throw new ToolAdapterError('TOOL_CONNECTION_REVISION_CHANGED');
     }
-    const catalog = await this.catalog(owner, row.id);
+    const catalog = await this.catalog(owner, row.id, false);
     const current = catalog ? this.enabledDescriptors(row, catalog.descriptors).find(item => item.id === tool.id) : null;
     if (!current || toolHash(current) !== toolHash(tool)) throw new ToolAdapterError('TOOL_NOT_ENABLED');
     if (!args || typeof args !== 'object' || Array.isArray(args) || Buffer.byteLength(JSON.stringify(args)) > 64_000) throw new ToolAdapterError('INVALID_TOOL_ARGUMENTS');
@@ -260,7 +324,7 @@ export class ToolConnectionsService {
     const authorization = new URL(value.redirect_url), validation = new URL(value.redirect_url); validation.search = '';
     await new ToolTransportPolicy([]).normalizeEndpoint(validation.href);
     const [saved] = await this.db.update(toolConnections).set({ providerConfig: { ...row.providerConfig, connectedAccountId: value.connected_account_id },
-      revision: row.revision + 1, status: 'authorization_required', allowedToolIds: [], catalogVersionId: null, updatedAt: new Date() })
+      revision: row.revision + 1, status: 'authorization_required', allowedToolIds: [], catalogVersionId: null, candidateCatalogVersionId: null, updatedAt: new Date() })
       .where(and(eq(toolConnections.owner, owner), eq(toolConnections.id, id), eq(toolConnections.revision, row.revision))).returning();
     if (!saved) throw new ConflictException('TOOL_CONNECTION_REVISION_CHANGED');
     return { authorizationUrl: authorization.href };
