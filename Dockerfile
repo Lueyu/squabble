@@ -2,7 +2,7 @@
 # ARG BASE_REGISTRY lets users behind a firewall pull through a mirror, e.g.
 #   docker compose build --build-arg BASE_REGISTRY=docker.m.daocloud.io/library
 ARG BASE_REGISTRY=library
-FROM ${BASE_REGISTRY}/node:22-alpine AS build
+FROM ${BASE_REGISTRY}/node:24-alpine AS build
 WORKDIR /app
 ENV NODE_OPTIONS=--max-old-space-size=4096
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
@@ -19,7 +19,7 @@ ENV VITE_PUBLIC_DEPLOYMENT=${VITE_PUBLIC_DEPLOYMENT}
 RUN npm run build:web
 
 # ---------- Runtime stage ----------
-FROM ${BASE_REGISTRY}/node:22-alpine
+FROM ${BASE_REGISTRY}/node:24-alpine
 WORKDIR /app
 LABEL org.opencontainers.image.source="https://github.com/Lueyu/squabble"
 RUN apk add --no-cache postgresql16-client
