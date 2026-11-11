@@ -1,6 +1,21 @@
-import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
+import type { NativeAgentConfiguration, LocalAgentProvider, LocalAgentActivityCapability } from '../../../shared/local-agents.interface';
 import type { ResearchToolScope } from '../../../shared/research-tools.interface';
 import type { NativeAgentImage } from '../../../shared/native-image.interface';
+import type { ResearchTaskActivityContext, SafeFailure } from '../../../shared/research-execution.interface';
+import type { NativeDiagnosticEvent } from '../../../shared/local-agent-diagnostics.interface';
+import type { ResearchEvent } from '../../../shared/research-events.interface';
+
+/** Read-only retained execution metadata. Source authorization remains with the caller. */
+export interface LocalAgentTaskDiagnostics {
+  taskId: string; agentId: string; provider: LocalAgentProvider; executionMode: 'native' | 'companion';
+  state: 'staged' | 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
+  createdAt: string; updatedAt: string; commandEmitted: boolean; runtimeEntered: boolean;
+  activityContext?: ResearchTaskActivityContext;
+  configuredModel: string | null; observedModel: null; companionLastSeenAt: string | null;
+  activityCapability?: LocalAgentActivityCapability;
+  diagnostics: NativeDiagnosticEvent[]; diagnosticsTruncated: boolean;
+  events: ResearchEvent[]; eventsTruncated: boolean; failure?: SafeFailure; error?: string;
+}
 
 export interface LocalAgentTaskRef { taskId: string; contextId: string }
 /** Validation may fence the local handoff, but must never await remote execution. */
@@ -34,7 +49,7 @@ export interface LocalAgentResult {
   usageTokens: number | null;
 }
 export class LocalAgentError extends Error {
-  constructor(readonly code: string, readonly taskId?: string, readonly contextId?: string) {
+  constructor(readonly code: string, readonly taskId?: string, readonly contextId?: string, readonly failure?: SafeFailure) {
     super(code);
     this.name = 'LocalAgentError';
   }
@@ -45,6 +60,9 @@ export function nativeFailureCode(error: unknown): string {
   if (error instanceof LocalAgentError) return error.code;
   const codes: Record<string, string> = {
     NATIVE_AGENT_TIMEOUT: 'LOCAL_TIMEOUT',
+    NATIVE_AGENT_CANCELLED: 'LOCAL_CANCELLED',
+    NATIVE_AGENT_NOT_INSTALLED: 'LOCAL_UNAVAILABLE',
+    NATIVE_AGENT_INVALID_PROMPT: 'LOCAL_INVALID_INPUT',
     NATIVE_AGENT_OUTPUT_LIMIT: 'LOCAL_OUTPUT_LIMIT',
     NATIVE_AGENT_LAUNCH_FAILED: 'LOCAL_LAUNCH_FAILED',
     NATIVE_AGENT_INCOMPLETE: 'LOCAL_PROTOCOL_INCOMPLETE',

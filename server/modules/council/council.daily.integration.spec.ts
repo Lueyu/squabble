@@ -24,6 +24,13 @@ test('daily research executes a sealed independent barrier and mandatory reverse
   const namespace = `daily_channel_${randomUUID().replaceAll('-', '')}`;
   const admin = postgres(url!, { max: 1, onnotice: () => {} });
   const client = postgres(url!, { max: 6, onnotice: () => {}, connection: { search_path: namespace } });
+  async function waitForDatabaseClock(): Promise<void> {
+    // Published fixtures use PostgreSQL timestamps; a VM clock can briefly lead the application visibility fence.
+    const [database] = await client<{ clock: number }[]>`SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS clock`;
+    const delay = database.clock - Date.now() + 5;
+    assert.ok(delay <= 5000, 'fixture database clock must be within five seconds of the application clock');
+    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+  }
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try {
     for (const file of readdirSync('scripts/db').filter(name => /^\d\d_.*\.sql$/u.test(name) && !name.startsWith('02_')).sort()) {
@@ -71,6 +78,7 @@ test('daily research executes a sealed independent barrier and mandatory reverse
       for (let i = 0; i < 500 && result.status === 'running'; i++) {
         await new Promise(resolve => setTimeout(resolve, 10)); result = await council.getSession(owner, session.id);
       }
+      await waitForDatabaseClock();
       return { owner, session: result, prompts };
     }
 

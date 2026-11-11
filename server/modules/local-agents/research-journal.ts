@@ -18,6 +18,7 @@ export function publicText(value: string, max = 600): string {
 export function appendResearchEvents(task: AgentTask, entries: ResearchActivity[], internal = false): void {
   const scope = task.activityContext ?? task.researchScope;
   if (!scope || !internal && !['queued', 'running', 'cancelling'].includes(task.state)) return;
+  if (entries.length > 64) task.eventsTruncated = true;
   for (const entry of entries.slice(0, 64)) {
     if (!entry || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(entry.id) || !statuses.includes(entry.status)
       || !['task', 'tool', 'summary', 'capability'].includes(entry.kind) || !internal && entry.kind === 'task'
@@ -52,7 +53,9 @@ export function appendResearchEvents(task: AgentTask, entries: ResearchActivity[
         ? { durationMs: Math.max(0, Math.min(600_000, Math.trunc(entry.durationMs))) } : {}),
       ...(sources?.length ? { sources } : {}) };
     seen.push(entry.id); task.eventSequence = event.sequence;
+    if (/^(?:codex|claude|gemini|antigravity|opencode|kimi|doubao)-activity-truncated$|^truncated:/u.test(entry.id)) task.eventsTruncated = true;
     const events = task.events ??= []; events.push(event);
+    task.updatedAt = Date.now();
     if (events.length > MAX_EVENTS) {
       // Retain the initial task marker to keep role identity/start time after a long stream.
       const initial = events[0].kind === 'task' ? events[0] : undefined;

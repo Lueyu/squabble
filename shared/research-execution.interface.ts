@@ -5,7 +5,7 @@ export type RecoveryAction = 'check_existing' | 'reparse_existing' | 'retry_memb
 export type FailureStage = 'preflight' | 'dispatch' | 'runtime' | 'parse';
 /** Allowlisted diagnostics only: never stderr, prompts, credentials or portfolio contents. */
 export interface SafeFailure { code: string; stage: FailureStage; fieldPath?: string; expectedType?: string; actualType?: string;
-  exitCode?: number; outputBytes?: number; terminalEvent?: boolean; recoveries: RecoveryAction[] }
+  exitCode?: number; outputBytes?: number; stderrBytes?: number; terminalEvent?: boolean; recoveries: RecoveryAction[] }
 export interface ResearchExecutionReadiness { connectionId: string; provider: string; name: string; connected: boolean; busy: boolean;
   configuration?: NativeAgentConfiguration; models?: NativeAgentModel[]; reasoningEfforts?: string[];
   state: 'not_connected' | 'login_required' | 'configuration_required' | 'busy' | 'ready' | 'unknown'; executable: boolean;

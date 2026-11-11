@@ -592,6 +592,15 @@
   gap: 6px;
 }
 
+.telemetry-diagnostic-task-list > button {
+  height: auto;
+  max-width: 100%;
+  padding: 9px 12px;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .telemetry-timeline-axis, .telemetry-timeline button {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) minmax(0, 1.85fr) 64px;
@@ -736,6 +745,169 @@
   min-height: 85px;
 }
 
+.telemetry-usage-details > summary,
+.telemetry-diagnostic-stages > summary,
+.telemetry-event-metadata > summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.telemetry-usage-details > .telemetry-metrics {
+  margin-top: 12px;
+}
+
+.telemetry-diagnostic-task-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.telemetry-diagnostic-task-list small {
+  display: block;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.telemetry-diagnostic-detail {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.telemetry-diagnostic-detail > * + *,
+.telemetry-diagnostic-records > * + * {
+  margin-top: 14px;
+}
+
+.telemetry-diagnostic-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.telemetry-diagnostic-summary > div {
+  min-width: 0;
+  border-radius: 8px;
+  background: var(--muted);
+  padding: 12px;
+  overflow-wrap: anywhere;
+}
+
+.telemetry-diagnostic-summary dt,
+.telemetry-diagnostic-summary small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.telemetry-diagnostic-summary dd {
+  font-size: 17px;
+  margin: 6px 0;
+  font-weight: 600;
+}
+
+.telemetry-diagnostic-failure {
+  border-left: 3px solid var(--destructive);
+  padding-left: 14px;
+}
+
+.telemetry-diagnostic-failure > * + * {
+  margin-top: 10px;
+}
+
+.telemetry-recovery-recommendations {
+  list-style: disc;
+  padding-left: 18px;
+  margin-top: 6px;
+}
+
+.telemetry-panel-heading > .telemetry-timeline-actions {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.telemetry-diagnostic-event {
+  border-left: 2px solid var(--border);
+  padding: 12px;
+  overflow-wrap: anywhere;
+}
+
+.telemetry-diagnostic-event > div {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.telemetry-diagnostic-event > p {
+  margin-top: 5px;
+}
+
+.telemetry-event-failed {
+  border-left-color: var(--destructive);
+}
+
+.telemetry-event-running {
+  border-left-color: var(--warning);
+}
+
+.telemetry-event-succeeded {
+  border-left-color: var(--brand);
+}
+
+.telemetry-event-metadata {
+  margin-top: 6px;
+}
+
+.telemetry-event-metadata > .telemetry-facts {
+  margin-top: 10px;
+}
+
+.telemetry-diagnostic-records {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.telemetry-diagnostic-records > ol {
+  max-height: 340px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+
+.telemetry-diagnostic-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.telemetry-diagnostic-filters label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  max-width: 100%;
+}
+
+.telemetry-diagnostic-filters select {
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-height: 32px;
+  padding: 4px 8px;
+  max-width: 100%;
+}
+
+.telemetry-diagnostic-records :focus-visible,
+.telemetry-diagnostic-detail summary:focus-visible,
+.telemetry-usage-details > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 @media (width <= 1100px) {
   .telemetry-workspace {
     padding: 24px;
@@ -760,6 +932,27 @@
 }
 
 @media (width <= 600px) {
+  .telemetry-diagnostic-summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .telemetry-diagnostic-detail {
+    padding: 12px;
+  }
+
+  .telemetry-diagnostic-filters {
+    align-items: stretch;
+  }
+
+  .telemetry-diagnostic-filters label {
+    width: 100%;
+  }
+
+  .telemetry-diagnostic-filters .telemetry-timeline-actions {
+    flex-wrap: wrap;
+  }
+
   .telemetry-workspace {
     padding: 16px;
   }

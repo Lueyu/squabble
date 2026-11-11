@@ -178,6 +178,8 @@ test('native research isolation failures preserve their actionable error code', 
     f.response({ commands: [], cancelTaskIds: [] }); await f.helper.pollOnce();
     assert.deepEqual(f.sent.at(-1)?.updates[0], {
       id: 'isolation-failure', state: 'failed', error: 'LOCAL_TOOL_ISOLATION_FAILED',
+      activityCapability: 'tools',
+      failure: { code: 'LOCAL_TOOL_ISOLATION_FAILED', stage: 'runtime', recoveries: ['retry_member'] },
       progress: 'Native agent failed. Check its installation and sign-in before starting another task.',
     });
   } finally { await f.helper.stop(); await f.temporary.remove(); }

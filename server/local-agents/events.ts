@@ -2,6 +2,7 @@ import type { LocalAgentProvider } from '../../shared/local-agents.interface';
 import type { ResearchActivity } from '../../shared/research-events.interface';
 import { NativeActivityCollector } from './activity';
 import { providerFailure } from './failures';
+import { observe } from './diagnostics';
 
 interface JsonObject { [key: string]: unknown }
 function object(value: unknown): JsonObject {
@@ -29,6 +30,7 @@ function redactCredentials(text: string): string {
 export class NativeEventCollector {
   private text: string = '';
   private terminal: boolean = false;
+  private inferredTerminal = false;
   private usageTokens: number | null = null;
   private lastProgress: string = '';
   private readonly activity: NativeActivityCollector;
@@ -52,7 +54,7 @@ export class NativeEventCollector {
   private progress(text: string): void {
     if (this.lastProgress === text) return;
     this.lastProgress = text;
-    this.onProgress(text);
+    observe(this.onProgress, text);
   }
 
   private codex(event: JsonObject): void {
@@ -157,8 +159,10 @@ export class NativeEventCollector {
 
   /** Kimi's print protocol has no terminal event: zero exit plus a final non-tool assistant message is its completion contract. */
   completeProcess(): void {
-    if (this.provider === 'kimi' && this.text.trim()) this.terminal = true;
+    if (this.provider === 'kimi' && this.text.trim()) { this.terminal = true; this.inferredTerminal = true; }
   }
+
+  get terminalEvent(): boolean { return this.terminal && !this.inferredTerminal; }
 
   result(): { text: string; usageTokens: number | null } {
     if (!this.terminal || !this.text.trim()) throw new Error('NATIVE_AGENT_INCOMPLETE');

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { LocalAgentProvider } from '../../shared/local-agents.interface';
+import type { LocalAgentActivityCapability, LocalAgentProvider } from '../../shared/local-agents.interface';
 import type { ResearchActivity, ResearchEventStatus } from '../../shared/research-events.interface';
 import { object, type JsonObject } from './metadata';
+import { observe } from './diagnostics';
 
 const PUBLIC_TOOLS: Record<string, string> = {
   web_search: 'web_search', WebSearch: 'web_search', google_web_search: 'web_search', search_web: 'web_search', websearch: 'web_search',
@@ -10,6 +11,13 @@ const PUBLIC_TOOLS: Record<string, string> = {
   Glob: 'find_files', glob: 'find_files', find_by_name: 'find_files', Grep: 'search_files', grep: 'search_files', grep_search: 'search_files',
   list_directory: 'list_directory', list_dir: 'list_directory', command_execution: 'shell', Bash: 'shell',
 };
+
+/** Protocol coverage describes adapter support even when no public activity was observed. */
+export function nativeActivityCapability(provider: LocalAgentProvider): LocalAgentActivityCapability {
+  if (provider === 'kimi') return 'starts_only';
+  if (provider === 'antigravity' || provider === 'doubao') return 'phases';
+  return 'tools';
+}
 
 /** Uses an allowlist of public protocol metadata. Never forwards provider-supplied prose or arguments. */
 export class NativeActivityCollector {
@@ -21,10 +29,20 @@ export class NativeActivityCollector {
     this.emit({ id: `${this.provider}-phase-${key}`, kind: 'summary', status, at: new Date().toISOString(), summary });
   }
   private emit(event: ResearchActivity): void {
-    if (!this.onEvent || this.emitted.has(event.id) || this.emitted.size >= 256) return;
-    this.emitted.add(event.id); this.onEvent(event);
+    if (!this.onEvent || this.emitted.has(event.id)) return;
+    if (this.emitted.size >= 255) {
+      const id = `${this.provider}-activity-truncated`;
+      if (!this.emitted.has(id)) {
+        this.emitted.add(id);
+        observe(this.onEvent, { id, kind: 'summary', status: 'unavailable', at: new Date().toISOString(),
+          summary: 'Some public activity was omitted because the native event collector reached its limit.' });
+      }
+      return;
+    }
+    this.emitted.add(event.id); observe(this.onEvent, event);
   }
   private tool(id: unknown, name: unknown, status: ResearchEventStatus, server?: unknown): void {
+    if (this.emitted.has(`${this.provider}-activity-truncated`)) return;
     if (typeof id !== 'string' || !id || id.length > 512) return;
     if ((typeof server === 'string' && /^squabble(?:_|$)/u.test(server))
       || (typeof name === 'string' && /^(?:mcp__)?squabble(?:_|$)/u.test(name))) return;

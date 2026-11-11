@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ResearchEventBuffer } from './research-events.mjs';
+import { DiagnosticBuffer, safeFailure, type FailureCode, type NativeDiagnosticEvent, type SafeFailure } from './native-diagnostics.mjs';
 import { researchFailure, validResearchBundle, validResearchRequest, validResearchResult,
   type ResearchActivity, type ResearchToolBundle, type ResearchToolCapability,
   type ResearchToolRequest, type ResearchToolResult } from './research-protocol.mjs';
@@ -34,6 +35,7 @@ export interface NativeRuntime {
     image?: NativeAgentImage;
     researchTools?: ResearchToolBundle & { call: (request: ResearchToolRequest, signal: AbortSignal) => Promise<ResearchToolResult> };
     onEvent?: (event: ResearchActivity) => void;
+    onDiagnostic?: (event: NativeDiagnosticEvent) => void;
   }): Promise<{ text: string; usageTokens: number | null }>;
 }
 interface Command {
@@ -48,9 +50,9 @@ interface Update {
   text?: string;
   usageTokens?: number | null;
   events?: ResearchActivity[];
-  error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED'
-    | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED' | 'LOCAL_USAGE_LIMIT' | 'LOCAL_RATE_LIMIT'
-    | 'LOCAL_IMAGE_UNSUPPORTED' | 'LOCAL_INVALID_INPUT';
+  diagnostics?: NativeDiagnosticEvent[]; diagnosticsTruncated?: boolean; eventsTruncated?: boolean; failure?: SafeFailure;
+  activityCapability?: 'tools' | 'starts_only' | 'phases' | 'none';
+  error?: FailureCode;
 }
 interface UpdateSnapshot { source: Update; wire: Update }
 interface Pairing {
@@ -173,8 +175,12 @@ function nativeFailureCode(error: unknown): Update['error'] {
     NATIVE_AGENT_RATE_LIMIT: 'LOCAL_RATE_LIMIT',
     NATIVE_AGENT_CANCEL_UNCONFIRMED: 'LOCAL_DISPATCH_UNCERTAIN',
     NATIVE_AGENT_UPSTREAM_PENDING: 'LOCAL_DISPATCH_UNCERTAIN',
+    NATIVE_AGENT_TIMEOUT: 'LOCAL_TIMEOUT', NATIVE_AGENT_OUTPUT_LIMIT: 'LOCAL_OUTPUT_LIMIT',
+    NATIVE_AGENT_LAUNCH_FAILED: 'LOCAL_LAUNCH_FAILED', NATIVE_AGENT_INCOMPLETE: 'LOCAL_PROTOCOL_INCOMPLETE',
+    NATIVE_AGENT_NETWORK_FAILED: 'LOCAL_NETWORK_UNAVAILABLE', NATIVE_AGENT_CANCELLED: 'LOCAL_CANCELLED',
+    NATIVE_AGENT_NOT_INSTALLED: 'LOCAL_UNAVAILABLE', NATIVE_AGENT_INVALID_PROMPT: 'LOCAL_INVALID_INPUT',
   };
-  return error instanceof Error ? codes[error.message] : undefined;
+  return error instanceof Error ? codes[error.message] ?? 'LOCAL_TASK_FAILED' : 'LOCAL_TASK_FAILED';
 }
 
 async function readJson(response: Response, limit = 2 * 1024 * 1024): Promise<unknown> {
@@ -203,6 +209,7 @@ export class LocalAgentCompanion {
   private readonly processed = new Set<string>();
   private readonly updates = new Map<string, Update>();
   private readonly events = new Map<string, ResearchEventBuffer>();
+  private readonly diagnostics = new Map<string, DiagnosticBuffer>();
   private readonly tasks = new Map<string, RunningTask>();
   private readonly request: typeof fetch;
   private readonly now: () => number;
@@ -359,14 +366,19 @@ export class LocalAgentCompanion {
         ...requestOptions, body: JSON.stringify({ agents: this.agents, updates: wire }),
       });
       let response = await send(updates);
-      const isLimitError = (error: Update['error']) => error === 'LOCAL_USAGE_LIMIT' || error === 'LOCAL_RATE_LIMIT';
-      if (response.status === 400 && updates.some(update => isLimitError(update.error)) && generation === this.generation) {
+      const legacyErrors = ['LOCAL_INVALID_CONFIGURATION', 'LOCAL_CONFIGURATION_UNSUPPORTED', 'LOCAL_VERSION_UNSUPPORTED',
+        'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN', 'LOCAL_TOOL_ISOLATION_FAILED', 'LOCAL_IMAGE_UNSUPPORTED', 'LOCAL_INVALID_INPUT'];
+      const extended = (update: Update) => update.diagnostics || update.failure || update.diagnosticsTruncated !== undefined
+        || update.eventsTruncated !== undefined || update.activityCapability !== undefined || update.error && !legacyErrors.includes(update.error);
+      if (response.status === 400 && updates.some(extended) && generation === this.generation) {
         // Older servers reject new enum values before processing the poll. Retry only
         // this status acknowledgement once, retaining its safe progress and task IDs.
         // This never resubmits a model request or changes the durable local update.
         await response.body?.cancel();
         if (generation !== this.generation) return;
-        response = await send(updates.map(update => isLimitError(update.error) ? { ...update, error: undefined } : update));
+        response = await send(updates.map(update => ({ ...update, diagnostics: undefined, diagnosticsTruncated: undefined,
+          eventsTruncated: undefined, activityCapability: undefined, failure: undefined,
+          ...(update.error && !legacyErrors.includes(update.error) ? { error: undefined } : {}) })));
       }
       if (generation !== this.generation) return;
       if (response.status === 401 || response.status === 403) { await this.forget(); return; }
@@ -379,9 +391,12 @@ export class LocalAgentCompanion {
       this.failures = 0;
       for (const { source, wire } of snapshot) {
         const events = this.events.get(wire.id);
+        const diagnostics = this.diagnostics.get(wire.id);
         events?.acknowledge(wire.events ?? []);
+        diagnostics?.acknowledge(wire.diagnostics ?? []);
         if (!events?.length) this.events.delete(wire.id);
-        if (!events?.length && wire.state === source.state && this.updates.get(wire.id) === source) this.updates.delete(wire.id);
+        if (!diagnostics?.length) this.diagnostics.delete(wire.id);
+        if (!events?.length && !diagnostics?.length && wire.state === source.state && this.updates.get(wire.id) === source) this.updates.delete(wire.id);
       }
       for (const id of result.cancelTaskIds) this.tasks.get(id)?.controller.abort();
       const cancelled = new Set(result.cancelTaskIds);
@@ -415,17 +430,23 @@ export class LocalAgentCompanion {
       let source = queued;
       const buffer = this.events.get(queued.id);
       const events = buffer?.snapshot() ?? [];
+      const diagnosticBuffer = this.diagnostics.get(queued.id);
+      const diagnostics = diagnosticBuffer?.snapshot() ?? [];
       // A terminal update with a partial event batch would cause the broker to
       // reject later activity. Keep the terminal report until older batches drain.
-      let update: Update = buffer && buffer.length > events.length
+      let update: Update = buffer && buffer.length > events.length || diagnosticBuffer && diagnosticBuffer.length > diagnostics.length
         ? { id: queued.id, state: 'running' } : { ...queued };
       if (events.length) update.events = events;
+      if (diagnostics.length) update.diagnostics = diagnostics;
+      if (queued.activityCapability) update.activityCapability = queued.activityCapability;
+      if (diagnosticBuffer?.truncated) update.diagnosticsTruncated = true;
       let size = Buffer.byteLength(JSON.stringify(update), 'utf8');
       // JSON escaping can make a bounded UTF-8 report exceed the HTTP body limit.
       if (size + baseBytes > MAX_POLL_BYTES) {
         source = { id: queued.id, state: 'failed', progress: 'Native report exceeded the delivery limit. Start a new task.' };
         this.updates.set(source.id, source);
-        update = { ...source, ...(events.length ? { events } : {}) };
+        update = { ...source, ...(events.length ? { events } : {}), ...(diagnostics.length ? { diagnostics } : {}),
+          ...(diagnosticBuffer?.truncated ? { diagnosticsTruncated: true } : {}) };
         size = Buffer.byteLength(JSON.stringify(update), 'utf8');
       }
       const separator = snapshot.length ? 1 : 0;
@@ -473,8 +494,12 @@ export class LocalAgentCompanion {
   private async execute(command: Command, pairing: Pairing, controller: AbortController): Promise<void> {
     let acceptingEvents = true;
     const update = (value: Update): void => {
-      if (this.pairing === pairing) this.updates.set(command.id, value);
+      if (this.pairing === pairing) this.updates.set(command.id, { ...value, ...(command.kind === 'run' ? {
+        activityCapability: command.provider === 'kimi' ? 'starts_only'
+          : command.provider === 'antigravity' || command.provider === 'doubao' ? 'phases' : 'tools',
+      } : {}) });
     };
+    if (command.kind === 'run') update({ id: command.id, state: 'running' });
     try {
       if (command.kind === 'login') {
         await this.options.native.openNativeLogin(command.provider);
@@ -492,6 +517,12 @@ export class LocalAgentCompanion {
         ...(command.researchTools ? { researchTools: { ...command.researchTools,
           call: (request: ResearchToolRequest, signal: AbortSignal) => this.callResearchTool(command, pairing, request,
             AbortSignal.any([controller.signal, signal])) } } : {}),
+        onDiagnostic: event => {
+          if (!acceptingEvents || this.pairing !== pairing) return;
+          const buffer = this.diagnostics.get(command.id) ?? new DiagnosticBuffer();
+          buffer.append(event, pairing.token); this.diagnostics.set(command.id, buffer);
+          if (!this.updates.has(command.id)) update({ id: command.id, state: 'running' });
+        },
         onEvent: (event) => {
           if (!acceptingEvents || this.pairing !== pairing || command.image) return;
           const buffer = this.events.get(command.id) ?? new ResearchEventBuffer();
@@ -513,7 +544,9 @@ export class LocalAgentCompanion {
     } catch (error) {
       const code = nativeFailureCode(error);
       const cancelled = controller.signal.aborted && code !== 'LOCAL_DISPATCH_UNCERTAIN';
+      const failure = safeFailure(object(error) ? error.failure : undefined, code ?? 'LOCAL_TASK_FAILED');
       update({ id: command.id, state: cancelled ? 'cancelled' : 'failed', ...(code && !cancelled ? { error: code } : {}),
+        failure,
         progress: cancelled ? 'Task interrupted.'
           : code === 'LOCAL_USAGE_LIMIT' ? 'Provider usage limit or insufficient balance. Check the provider account or change the model. No automatic retry.'
             : code === 'LOCAL_RATE_LIMIT' ? 'Provider rate limit. Try again later or change the model. No automatic retry.'
@@ -573,6 +606,7 @@ export class LocalAgentCompanion {
     this.processed.clear();
     this.updates.clear();
     this.events.clear();
+    this.diagnostics.clear();
     this.state = 'unpaired';
     await this.writes.catch(() => undefined);
     await rm(join(this.options.dataDir, 'pairing.json'), { force: true });

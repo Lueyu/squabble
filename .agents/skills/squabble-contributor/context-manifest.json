@@ -4,7 +4,7 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "f077b3ee4b719d043db53bb3f132e985ef32a12a",
+    "commit": "b9f1febea567438afd315d6dcf8000d02a64c53e",
     "workingTreeChanges": true,
     "reviewedAt": "2026-11-11",
     "scope": [
@@ -18,7 +18,8 @@
       "V5 research slash skills and strategy sidebar; versioned material library, encrypted scheduled subscriptions, financial source queries and visible source memory",
       "Browser capture: isolated manual login, encrypted owner/source sessions, pinned public egress, token-fenced rendered versions and task-scoped read_browser_source",
       "Agent telemetry: owner-scoped run/attempt/span queries, metadata-only capture, explicit feedback, source-deletion fences and opt-in Langfuse export",
-      "Agent tooling: durable single-step runtime and controlled/Deep Agents drivers; outbound owner-approved MCP/provider connections, editable write previews, immutable datasets/private artifacts, local parser jobs, run browsers and isolated fixed-template analytics"
+      "Agent tooling: durable single-step runtime and controlled/Deep Agents drivers; outbound owner-approved MCP/provider connections, editable write previews, immutable datasets/private artifacts, local parser jobs, run browsers and isolated fixed-template analytics",
+      "Local Agent diagnostics: pure owner/source-scoped snapshots, native/Companion process evidence, bounded public activity, structured failures and separate acceptance/publication; flows3–5 retain financial and source authority"
     ]
   },
   "areas": [
@@ -432,12 +433,15 @@
         "shared/telemetry.interface.ts",
         "server/modules/telemetry/",
         "server/database/telemetry.schema.ts",
-        "scripts/db/52_agent_telemetry.sql"
+        "scripts/db/52_agent_telemetry.sql",
+        "shared/telemetry-diagnostics.interface.ts"
       ],
       "entrypoints": [
         "shared/telemetry.interface.ts",
         "server/database/telemetry.schema.ts",
-        "server/modules/telemetry/telemetry.module.ts"
+        "server/modules/telemetry/telemetry.module.ts",
+        "shared/telemetry-diagnostics.interface.ts",
+        "server/modules/telemetry/telemetry-diagnostics.service.ts"
       ],
       "references": [
         "references/repository-map.md",
