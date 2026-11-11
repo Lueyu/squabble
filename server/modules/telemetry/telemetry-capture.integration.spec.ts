@@ -49,6 +49,7 @@ test('durable capture keeps owner-scoped idempotent terminal records across recr
     await client.unsafe('CREATE TABLE users(id uuid PRIMARY KEY)');
     await client.unsafe(readFileSync('scripts/db/07_llm_budget.sql', 'utf8'));
     await client.unsafe(readFileSync('scripts/db/13_budget_toggle.sql', 'utf8'));
+    await client.unsafe(readFileSync('scripts/db/53_agent_tool_runtime.sql', 'utf8'));
     const owner = randomUUID();
     await client`INSERT INTO users(id) VALUES(${owner})`;
     const budgets = new LlmBudgetService(db);
