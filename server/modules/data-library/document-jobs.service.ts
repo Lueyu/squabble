@@ -8,7 +8,7 @@ import { ResearchArtifactsService } from '../research-artifacts/research-artifac
 import { assertSourceVersions, canonicalJson, hashContent, type SourceDatabase } from '../research-artifacts/research-artifacts.rules';
 import type { DocumentExtractor, DocumentTaskReceipt, DocumentTaskStatus, DocumentUpload } from './documents/document-client.interface';
 import { validateDocumentUpload } from './documents/document-client.interface';
-import { extractDocumentElements } from './documents/document-provenance';
+import { extractDocumentElements, documentSearchText } from './documents/document-provenance';
 import { validateDocumentNumbers } from './documents/document-validation';
 import { MineruClient } from './documents/mineru-client';
 import type { DataDocumentStatus } from '../../../shared/data-library.interface';
@@ -189,6 +189,7 @@ export class DocumentJobsService {
       if (extractor instanceof MineruClient && result.archive) result = await extractor.unpack(result.archive);
       const [source] = await this.db.select().from(sources).where(and(eq(sources.id, task.sourceId), eq(sources.owner, owner)));
       const elements = extractDocumentElements(result.lossless, source?.format === 'docx' ? 'docx' : 'pdf');
+      const searchableText = documentSearchText(result.markdown, elements);
       const numericValidation = validateDocumentNumbers(elements, []);
       if (result.archive) {
         const archive = await this.artifacts.create(owner, { runId: jobId, type: 'document', mime: 'application/zip',
@@ -197,7 +198,7 @@ export class DocumentJobsService {
         archiveArtifactId = archive.id;
       }
       const payload = { originalHash: task.originalHash, extractor: task.extractor, extractorVersion: task.extractorVersion,
-        configVersion: task.configVersion, markdown: result.markdown, lossless: result.lossless, elements, numericValidation, archiveArtifactId };
+        configVersion: task.configVersion, markdown: result.markdown, searchableText, lossless: result.lossless, elements, numericValidation, archiveArtifactId };
       const artifact = await this.artifacts.create(owner, { runId: jobId, type: 'document', mime: 'application/json',
         data: Buffer.from(canonicalJson(payload)), dependencies: [{ sourceId: task.sourceId, sourceVersionId: task.sourceVersionId,
           contentHash: task.sourceHash }], datasetVersionIds: [], dataClasses: ['private_material'], permittedUses: ['research'], retentionUntil: null });
@@ -207,16 +208,16 @@ export class DocumentJobsService {
         const [current] = await tx.select().from(tasks).where(eq(tasks.jobId, jobId)).for('update');
         if (current.state !== 'submitted' || current.pollToken !== pollToken || current.pollUntil! < new Date()) throw new Error('DOCUMENT_JOB_LEASE_CHANGED');
         const [version] = await tx.insert(versions).values({ owner, sourceId: task.sourceId, version: source.versionCount + 1,
-          contentHash: hashContent(payload), rawContent: canonicalJson(result.lossless), extractedText: result.markdown,
+          contentHash: hashContent(payload), rawContent: canonicalJson(result.lossless), extractedText: searchableText,
           sections: elements.map(element => ({ locator: canonicalJson(element.locator), text: element.text })),
-          byteLength: Buffer.byteLength(canonicalJson(result.lossless)), extractionState: result.markdown ? 'ready' : 'needs-text' }).returning();
+          byteLength: Buffer.byteLength(canonicalJson(result.lossless)), extractionState: searchableText ? 'ready' : 'needs-text' }).returning();
         await tx.insert(extractions).values({ owner, sourceId: task.sourceId, sourceVersionId: version.id, jobId,
           originalHash: task.originalHash, extractor: task.extractor, extractorVersion: task.extractorVersion,
           configVersion: task.configVersion, artifactId: artifact.id,
-          metadata: { elements, numericValidation, archiveArtifactId, parsingStatus: result.markdown ? 'completed' : 'needs_text', archiveSha256: result.archive ?
+          metadata: { elements, numericValidation, archiveArtifactId, parsingStatus: searchableText ? 'completed' : 'needs_text', archiveSha256: result.archive ?
             createHash('sha256').update(result.archive).digest('hex') : null } });
         await tx.update(sources).set({ latestVersionId: version.id, versionCount: source.versionCount + 1,
-          state: result.markdown ? 'ready' : 'needs-text', leaseToken: null, leaseUntil: null, activeJobId: null,
+          state: searchableText ? 'ready' : 'needs-text', leaseToken: null, leaseUntil: null, activeJobId: null,
           lastSuccessAt: new Date(), lastErrorCode: null }).where(eq(sources.id, task.sourceId));
         await tx.update(jobs).set({ state: 'succeeded', outcome: 'updated', versionId: version.id, finishedAt: new Date() }).where(eq(jobs.id, jobId));
         await tx.update(tasks).set({ state: 'completed', pollToken: null, pollUntil: null }).where(eq(tasks.jobId, jobId));

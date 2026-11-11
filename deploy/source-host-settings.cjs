@@ -18,7 +18,7 @@ function origins(value) {
       const url = new URL(entry);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('origin');
     }
-    return entries;
+    return entries.map(entry => new URL(entry).origin);
   } catch { throw new Error('EXISTING_DOCUMENT_ORIGINS_INVALID'); }
 }
 
@@ -32,4 +32,9 @@ function mergeSourceHostSettings(existing, managed) {
   return { ...managed, TOOL_MCP_LOCAL_SERVICES_JSON: JSON.stringify(merged), DOCUMENT_ALLOWED_ORIGINS: allowed.join(',') };
 }
 
-module.exports = { mergeSourceHostSettings };
+function environmentValue(value) {
+  for (const quote of ["'", '"', '`']) if (!value.includes(quote)) return `${quote}${value}${quote}`;
+  throw new Error('BUNDLE_SETTING_CANNOT_BE_QUOTED');
+}
+
+module.exports = { mergeSourceHostSettings, environmentValue };

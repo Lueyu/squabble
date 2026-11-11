@@ -21,3 +21,9 @@ test('malformed or unsafe existing registry and origins fail before any export',
   }
   assert.throws(() => mergeSourceHostSettings({ DOCUMENT_ALLOWED_ORIGINS: 'http://localhost:8000/a' }, managed), /EXISTING_DOCUMENT_ORIGINS_INVALID/u);
 });
+
+test('existing registry values with apostrophes round-trip through source env syntax', () => {
+  const { environmentValue } = require('./source-host-settings.cjs');
+  const value = JSON.stringify([{ id: "o'neil", endpoint: 'http://127.0.0.1:9010/mcp' }]);
+  assert.equal(require('dotenv').parse(`TOOL_MCP_LOCAL_SERVICES_JSON=${environmentValue(value)}\n`).TOOL_MCP_LOCAL_SERVICES_JSON, value);
+});

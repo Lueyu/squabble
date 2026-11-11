@@ -32,6 +32,12 @@ Build the suite from a checkout, retaining all prepared models inside images:
 docker compose -f docker-compose.yml -f docker-compose.source.yml up -d --build
 ```
 
+The Dockerfile accepts `NPM_REGISTRY`, `UBUNTU_MIRROR` and
+`UBUNTU_SECURITY_MIRROR` build arguments when a developer's network requires
+mirrors. npm integrity checks and Ubuntu archive signatures remain enabled.
+Ordinary release users pull the already prepared images and need none of these
+build settings.
+
 For an existing Windows/macOS **source Web server**, start only dependencies and
 export generated credentials into private files without editing endpoints:
 

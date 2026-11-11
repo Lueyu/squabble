@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractDocumentElements } from './document-provenance';
+import { extractDocumentElements, documentSearchText } from './document-provenance';
 import { validateDocumentNumbers } from './document-validation';
 
 test('PDF locators preserve physical pages independently of printed labels and unknown geometry', () => {
@@ -37,4 +37,19 @@ test('DOCX table cells retain stable row and column identities and Unicode negat
   const cell = elements.find(element => element.locator.kind === 'docx' && element.locator.cellId !== null);
   assert.ok(cell); assert.equal(cell.locator.kind, 'docx');
   assert.equal(validateDocumentNumbers(elements, [{ elementId: cell.locator.elementId, expected: '-20', unit: '万元' }]).status, 'verified');
+});
+
+test('financial text classified as page furniture stays searchable without replacing original Markdown or inventing locators', () => {
+  const markdown = '# Report\n\nNet income 20';
+  const elements = extractDocumentElements({ texts: [
+    { self_ref: '#/texts/0', text: 'Revenue 40', label: 'page_header', prov: [{ page_no: 1 }] },
+    { self_ref: '#/texts/1', text: 'Net income 20', prov: [{ page_no: 1 }] },
+    { self_ref: '#/texts/2', text: 'Revenue 40', label: 'page_header', prov: [{ page_no: 2 }] },
+  ] }, 'pdf');
+  const text = documentSearchText(markdown, elements);
+  assert.ok(text.startsWith(markdown));
+  assert.match(text, /Revenue 40/u);
+  assert.equal(text.match(/Revenue 40/gu)?.length, 1);
+  assert.equal(elements[0].locator.kind === 'pdf' && elements[0].locator.physicalPage, 1);
+  assert.equal(markdown, '# Report\n\nNet income 20');
 });

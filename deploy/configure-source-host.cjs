@@ -2,7 +2,7 @@ const { execFileSync } = require('node:child_process');
 const { mkdirSync, existsSync, copyFileSync, readFileSync, writeFileSync, chmodSync } = require('node:fs');
 const { resolve, join } = require('node:path');
 const { parse } = require('dotenv');
-const { mergeSourceHostSettings } = require('./source-host-settings.cjs');
+const { mergeSourceHostSettings, environmentValue } = require('./source-host-settings.cjs');
 
 // Export generated deployment credentials privately, never through stdout. This
 // configures only tool endpoints; database/model/account settings are preserved.
@@ -33,6 +33,11 @@ const settings = mergeSourceHostSettings(parse(existing), {
   SANDBOX_BROKER_URL: sandbox, SANDBOX_BROKER_TOKEN_FILE: join(destination, 'sandbox-token').replaceAll('\\', '/'),
   COMPUTE_CLEANUP_WORKER_ENABLED: 'true',
 });
+const preserved = existing.split(/\r?\n/u).filter(line => {
+  const key = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z_0-9]*)\s*=/u)?.[1];
+  return !Object.hasOwn(settings, key ?? '') && line !== '# Generated bundled capability endpoints; keep token files private.';
+});
+const content = `${preserved.join('\n').trimEnd()}\n\n# Generated bundled capability endpoints; keep token files private.\n${Object.entries(settings).map(([key, value]) => `${key}=${environmentValue(value)}`).join('\n')}\n`;
 mkdirSync(destination, { recursive: true, mode: 0o700 });
 const compose = ['compose', '-p', project, '-f', join(root, 'docker-compose.yml'), '-f', join(root, 'docker-compose.source.yml'), '-f', join(root, 'deploy', 'compose.source-host.yml')];
 for (const name of ['docling-token', 'aktools-token', 'sandbox-token']) {
@@ -42,7 +47,5 @@ for (const name of ['docling-token', 'aktools-token', 'sandbox-token']) {
   chmodSync(file, 0o600);
 }
 if (existsSync(envFile) && !existsSync(`${envFile}.before-bundle`)) copyFileSync(envFile, `${envFile}.before-bundle`);
-const preserved = existing.split(/\r?\n/u).filter(line => !Object.keys(settings).some(key => line.startsWith(`${key}=`)) && line !== '# Generated bundled capability endpoints; keep token files private.');
-const content = `${preserved.join('\n').trimEnd()}\n\n# Generated bundled capability endpoints; keep token files private.\n${Object.entries(settings).map(([key, value]) => `${key}='${value}'`).join('\n')}\n`;
 writeFileSync(envFile, content, { mode: 0o600 });
 process.stdout.write('Source Web tool endpoints and private credential files configured; existing database and model settings preserved.\n');

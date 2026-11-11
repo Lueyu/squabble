@@ -47,7 +47,7 @@ export function ToolCapabilitiesPanel({ active = true }: { active?: boolean }) {
   const preparedOnce = useRef(false);
   const [publicNetwork, setPublicNetwork] = useState(true), [privateLocal, setPrivateLocal] = useState(true);
   const query = useQuery({ queryKey: ['tool-capabilities'], queryFn: listToolCapabilities, enabled: active,
-    retry: false, refetchOnWindowFocus: false });
+    retry: false, refetchOnWindowFocus: false, refetchInterval: active ? 10_000 : false });
   const views = query.data ?? [], grants = recommendedGrants(views, { publicNetwork, privateLocal });
   const operation = useMutation({ mutationFn: (execute: () => Promise<ToolCapabilityView[]>) => execute(), retry: false,
     onSuccess: async result => { client.setQueryData(['tool-capabilities'], result);

@@ -107,9 +107,12 @@ Install `requirements-fixtures.txt`; supply a local CJK font path. The corpus
 covers digital and scanned PDFs, rotation, signs/units, a two-page table, DOCX,
 and malformed/oversized inputs. Generated files and gold are synthetic, CC0.
 Gold records describe expected contents, not measured engine performance.
-Real side-service acceptance must run both pinned engines on this same corpus
-and report page/locator coverage, numeric agreement, failures, and latency
-before enabling any document-type quality claim.
+Each deployed engine must run this same corpus and report page/locator coverage,
+numeric agreement, failures, and latency before enabling its document-type
+quality claim. The default Docling measurement is recorded in
+`acceptance.linux-amd64.jsonl` and the [packaging acceptance](../../docs/bundle-packaging-validation.md).
+Optional MinerU requires a separate record; Docling measurements do not establish
+MinerU compatibility or quality.
 
 Backup `RESEARCH_ARTIFACT_ROOT` together with the database and encryption keys.
 `ResearchArtifactsService.manifest(owner)` is an internal backup index and must

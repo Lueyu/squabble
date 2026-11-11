@@ -97,6 +97,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+      start_period: 120s
 
   updater:
     # The old app-only updater must not independently drift a complete bundle.
