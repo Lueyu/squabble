@@ -91,12 +91,12 @@ test('overview chart choices survive a detail visit and browser back through the
     await React.act(async () => root.render(React.createElement(MemoryRouter, { initialEntries: ['/?period=3M&metric=return&accountIds=real,account-a'] },
       React.createElement(Location), React.createElement(Routes, null,
         React.createElement(Route, { path: '/', element: React.createElement(Page) }),
-        React.createElement(Route, { path: '/paper/:accountId', element: React.createElement(Detail) })))));
+        React.createElement(Route, { path: '/holdings', element: React.createElement(Detail) })))));
     assert.equal(document.querySelector('[data-chart]').textContent, 'return:real,account-a');
     const week = [...document.querySelectorAll('button')].find(button => button.textContent === '1W');
     await React.act(async () => week.click());
     assert.match(document.querySelector('[data-url]').textContent, /period=1W/);
-    const account = [...document.querySelectorAll('a')].find(link => link.pathname === '/paper/account-a');
+    const account = [...document.querySelectorAll('a')].find(link => link.pathname === '/holdings' && link.search === '?accountId=account-a');
     await React.act(async () => account.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })));
     await React.act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Back').click());
     assert.equal(document.querySelector('[data-chart]').textContent, 'return:real,account-a');

@@ -1,6 +1,7 @@
 import { boolean, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import type { ConfirmedInvestmentStrategy } from '../../shared/user-investment-strategy.interface';
 import type { PortfolioAllocationInput, PortfolioCompanionId, PortfolioStrategyAssignment } from '../../shared/portfolio-workspace.interface';
+import type { TeamDecisionRef } from '../../shared/team-workspace.interface';
 
 /** Companion identity is intentionally stored outside policy and ledger records. */
 export const portfolioAccountCompanions = pgTable('portfolio_account_companions', {
@@ -27,6 +28,7 @@ export const portfolioStrategyAssignments = pgTable('portfolio_strategy_assignme
 
 export const portfolioCombinationRevisions = pgTable('portfolio_combination_revisions', {
   id: uuid('id').primaryKey().defaultRandom(),
+  teamDecisionRefs: jsonb('team_decision_refs').$type<TeamDecisionRef[]>().notNull().default([]),
   owner: text('owner').notNull(),
   accountId: uuid('account_id').notNull(),
   policyRevision: integer('policy_revision').notNull(),
@@ -35,6 +37,7 @@ export const portfolioCombinationRevisions = pgTable('portfolio_combination_revi
 }, t => [uniqueIndex('portfolio_combination_revision').on(t.owner, t.accountId, t.policyRevision)]);
 
 export const portfolioCombinationDrafts = pgTable('portfolio_combination_drafts', {
+  teamDecisionRefs: jsonb('team_decision_refs').$type<TeamDecisionRef[]>().notNull().default([]),
   owner: text('owner').notNull(),
   accountId: uuid('account_id').notNull(),
   expectedPolicyRevision: integer('expected_policy_revision').notNull(),
@@ -43,6 +46,7 @@ export const portfolioCombinationDrafts = pgTable('portfolio_combination_drafts'
 }, t => [uniqueIndex('portfolio_combination_draft_account').on(t.owner, t.accountId)]);
 
 export const portfolioCombinationPreviews = pgTable('portfolio_combination_previews', {
+  teamDecisionRefs: jsonb('team_decision_refs').$type<TeamDecisionRef[]>().notNull().default([]),
   id: uuid('id').primaryKey().defaultRandom(),
   owner: text('owner').notNull(),
   accountId: uuid('account_id').notNull(),

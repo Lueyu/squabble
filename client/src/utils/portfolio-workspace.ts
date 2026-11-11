@@ -2,6 +2,8 @@ import type {
   PortfolioAllocationInput,
   PortfolioCombinationPreview,
 } from '@shared/portfolio-workspace.interface';
+import type { TeamDecisionRef } from '@shared/team-workspace.interface';
+import { canonicalTeamDecisionRefs } from '@/features/investment-strategies/team-decision-context';
 import { friendlyError } from './error-message';
 
 const workspaceErrors: Record<string, { zh: string; en: string }> = {
@@ -85,8 +87,10 @@ export function combinationIdentity(
   accountId: string,
   revision: number,
   allocations: PortfolioAllocationInput[],
+  teamDecisionRefs: TeamDecisionRef[] = [],
 ) {
   return JSON.stringify({
+    teamDecisionRefs: canonicalTeamDecisionRefs(teamDecisionRefs),
     accountId,
     revision,
     allocations: allocations
@@ -107,13 +111,15 @@ export function canApplyCombination(
   preview: PortfolioCombinationPreview | null,
   reviewedIdentity: string | null,
   now = Date.now(),
+  teamDecisionRefs: TeamDecisionRef[] = [],
 ) {
   return Boolean(
     preview?.canApply &&
     preview.accountId === accountId &&
     preview.expectedPolicyRevision === revision &&
     Date.parse(preview.expiresAt) > now &&
-    reviewedIdentity === combinationIdentity(accountId, revision, allocations),
+    reviewedIdentity === combinationIdentity(accountId, revision, allocations, teamDecisionRefs) &&
+    JSON.stringify(canonicalTeamDecisionRefs(preview.teamDecisionRefs)) === JSON.stringify(canonicalTeamDecisionRefs(teamDecisionRefs)),
   );
 }
 

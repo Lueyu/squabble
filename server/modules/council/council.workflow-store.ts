@@ -1,4 +1,5 @@
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { assertTeamExecutionInTransaction, lockTeamOwner } from '../../database/team-context';
 import { randomUUID } from 'node:crypto';
 import { isNull, and, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from '../../common/platform';
@@ -71,6 +72,7 @@ export class CouncilWorkflowStore {
   }
   async markRemote(row: Session, task: ResearchTask, attemptId: string, patch: Partial<ResearchTaskAttempt>, dispatch = false): Promise<void> {
     await this.db.transaction(async tx => {
+      if (row.checkpoint?.teamContext) await lockTeamOwner(tx, row.owner);
       await lockMemoryOwner(tx, row.owner);
       const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.id, task.id))).for('update');
@@ -78,7 +80,9 @@ export class CouncilWorkflowStore {
       if (dispatch && (session?.revision !== row.revision || session.status !== 'running' || session.checkpoint?.cycleId !== task.cycleId
         || current.revision !== row.revision || current.state !== 'running' || current.attempts.at(-1)?.id !== attemptId
         || current.attempts.at(-1)?.state !== 'running')) throw new Error('LOCAL_PAUSED');
-      await tx.update(councilResearchTasks).set({ attempts: current.attempts.map(a => a.id === attemptId ? { ...a, ...patch } : a), updatedAt: new Date() }).where(eq(councilResearchTasks.id, task.id));
+      if (dispatch && row.checkpoint?.teamContext) await assertTeamExecutionInTransaction(tx, row.owner, row.checkpoint.teamContext, { dispatch: !current.attempts.find(a => a.id === attemptId)?.dispatched });
+      await tx.update(councilResearchTasks).set({ attempts: current.attempts.map(a => a.id === attemptId ? { ...a, ...patch,
+        ...(patch.savedResponse ? { savedResponse: { ...a.savedResponse, ...patch.savedResponse } } : {}) } : a), updatedAt: new Date() }).where(eq(councilResearchTasks.id, task.id));
     });
   }
   async finish(row: Session, task: ResearchTask, attempt: ResearchTaskAttempt, member: CouncilMember, result: {
@@ -86,21 +90,34 @@ export class CouncilWorkflowStore {
     tokens?: number; taskId?: string; externalUsageUnknown?: boolean; sources?: CouncilEvidence[];
   }): Promise<boolean> {
     return this.db.transaction(async tx => {
+      if (row.checkpoint?.teamContext) await lockTeamOwner(tx, row.owner);
       await lockMemoryOwner(tx, row.owner);
       const [session] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('update');
       const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.id, task.id))).for('update');
       if (!current) return false;
-      const fresh = session?.status === 'running' && session.revision === row.revision && session.checkpoint?.cycleId === task.cycleId
+      let fresh = session?.status === 'running' && session.revision === row.revision && session.checkpoint?.cycleId === task.cycleId
         && current.revision === row.revision && current.attempts.at(-1)?.id === attempt.id;
+      if (fresh && row.checkpoint?.teamContext) {
+        try { await assertTeamExecutionInTransaction(tx, row.owner, row.checkpoint.teamContext); }
+        catch { fresh = false; }
+      }
+      const unknown = Boolean(row.checkpoint?.teamContext && result.error && current.attempts.find(a => a.id === attempt.id)?.dispatched
+        && current.attempts.find(a => a.id === attempt.id)?.tokens === undefined);
       const attempts = current.attempts.map(a => a.id === attempt.id ? { ...a, ...result, externalAgent: member.executionMode === 'local',
-        state: !fresh ? 'cancelled' as const : result.error ? 'failed' as const : 'succeeded' as const, finishedAt: new Date().toISOString() } : a);
+        state: !fresh ? 'cancelled' as const : unknown ? 'uncertain' as const : result.error ? 'failed' as const : 'succeeded' as const,
+        ...(unknown ? { externalUsageUnknown: true } : {}), finishedAt: new Date().toISOString() } : a);
       if (!fresh) {
         await tx.update(councilResearchTasks).set({ attempts,
           ...(current.revision === row.revision && current.attempts.at(-1)?.id === attempt.id ? { state: 'cancelled' as const, reason: 'REVISION_CHANGED' } : {}) }).where(eq(councilResearchTasks.id, task.id)); return false;
       }
-      const accepted = result.review?.accepted === true || (task.key === 'summary' && !!result.delivery);
-      const needsRevision = result.review?.accepted === false && current.reworks < 1;
-      const state: ResearchTaskState = result.error ? 'failed' : accepted ? 'accepted' : result.review
+      const accepted = result.review?.accepted === true || (task.key === 'summary' && !!result.delivery
+        && (!row.checkpoint?.teamContext || task.assignment?.reviewMode === 'self_check'));
+      const revisionCounts = row.checkpoint?.teamContext && result.review?.accepted === false
+        ? await tx.select({ reworks: councilResearchTasks.reworks }).from(councilResearchTasks).where(and(
+          eq(councilResearchTasks.owner, row.owner), eq(councilResearchTasks.sessionId, row.id), eq(councilResearchTasks.cycleId, task.cycleId))) : [];
+      const consumedRevisions = row.checkpoint?.teamContext ? revisionCounts.reduce((sum, item) => sum + item.reworks, 0) : current.reworks;
+      const needsRevision = result.review?.accepted === false && consumedRevisions < (row.checkpoint?.teamContext?.plan.budget.paidRevisionLimit ?? 1);
+      const state: ResearchTaskState = unknown ? 'uncertain' : result.error ? 'failed' : accepted ? 'accepted' : result.review
         ? needsRevision ? 'needs_revision' : 'failed' : 'submitted';
       const delivery = result.delivery ?? current.delivery;
       const memory = attempts.find(item => item.id === attempt.id)?.memory;
@@ -123,7 +140,7 @@ export class CouncilWorkflowStore {
             : result.review.accepted ? '验收通过。' : '需要修订。'}${result.review.feedback}`, evidencePoints: [], risks: [], nextChecks: [] },
           evidenceIds: current.delivery?.evidenceIds ?? [], externalAgent: member.executionMode === 'local', externalUsageUnknown: result.externalUsageUnknown } });
       if (result.sources?.length) await tx.update(councilSessions).set({
-        evidenceSnapshot: [...session.evidenceSnapshot, ...result.sources].slice(-120), updatedAt: new Date(),
+        evidenceSnapshot: [...new Map([...session.evidenceSnapshot, ...result.sources].map(source => [source.id, source])).values()].slice(-120), updatedAt: new Date(),
       }).where(eq(councilSessions.id, row.id));
       return true;
     });

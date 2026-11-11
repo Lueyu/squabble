@@ -19,10 +19,12 @@ export interface ApiErrorResponse {
     taskId?: string;
     /** Per-field validation errors, keyed by field name. */
     fieldErrors?: Record<string, string[]>;
-    /** Stack trace, included only for unexpected server errors. */
-    stack?: string;
-    /** Underlying error cause. */
-    cause?: string;
+    /** Allowlisted team conflict metadata; never raw exception bodies. */
+    actualRevision?: number;
+    field?: string;
+    roleId?: string;
+    relationId?: string;
+    retryable?: boolean;
     /** Unix-millisecond timestamp of when the error occurred. */
     timestamp?: number;
   };

@@ -1,3 +1,6 @@
+import { assertTeamExecutionFence } from '../../database/team-context';
+import { readTeamSourceContents } from '../../database/team-source-context';
+import { teamWorkInputs, teamWorkClosure, teamVisibleEvidence } from '../../database/team-member-sources';
 import { unverifiedAgentMetadata } from '../research-memory/research-memory.temporal';
 import { libraryEvidenceReferences } from '../../database/data-library-visibility';
 import { randomUUID } from 'node:crypto';
@@ -36,6 +39,7 @@ export interface WorkflowExecutorDependencies {
 }
 
 const instructions: Record<ResearchTask['key'], string> = {
+  specialist: 'Complete the explicitly assigned specialist investigation. Cite sources and preserve counterevidence and unknowns.',
   financials: 'Verify financial quality: reporting period, revenue, cash conversion, debt, dilution, and accounting qualifications. Distinguish GAAP from adjusted figures.',
   business: 'Analyze business quality, industry and approved peers. Compare like periods, currencies and business models. Do not invent peer financials.',
   valuation: 'Use calculation tools for valuation ranges with sourced inputs, units, dates and assumptions. Never invent denominators or target prices.',
@@ -80,15 +84,26 @@ export class CouncilWorkflowExecutor {
   async active(row: Session): Promise<boolean> {
     const [current] = await this.deps.db.select({ revision: councilSessions.revision, status: councilSessions.status })
       .from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
-    return current?.revision === row.revision && current.status === 'running';
+    if (current?.revision !== row.revision || current.status !== 'running') return false;
+    if (row.checkpoint?.teamContext) { try { await assertTeamExecutionFence(this.deps.db, row.owner, row.checkpoint.teamContext); } catch { return false; } }
+    return true;
   }
   async execute(row: Session, task: ResearchTask, attempt: ResearchTaskAttempt, member: CouncilMember, tasks: ResearchTask[],
     batch: ResearchTask[] = []): Promise<WorkflowOutput> {
     const { db, memory } = this.deps;
     await this.deps.validateReferences?.(row);
+    const teamContext = row.checkpoint?.teamContext;
+    const sourceRefs = teamContext && task.workKey ? teamWorkInputs(teamContext.plan, task.workKey,
+      (teamContext.inputSnapshot.inputRefs ?? []) as import('../../../shared/team-workspace.interface').ResearchSourceRef[]) : [];
+    if (teamContext && task.workKey) row = { ...row, evidenceSnapshot: teamVisibleEvidence(teamContext, task.workKey, tasks, row.evidenceSnapshot) };
+    const sourceDocuments = teamContext ? await readTeamSourceContents(db, row.owner, teamContext.teamId, sourceRefs, teamContext.dataCutoffAt) : [];
+    const grantedEvidence: CouncilEvidence[] = sourceDocuments.map(source => ({ id: source.ref.id,
+      title: `${source.ref.kind} · ${source.ref.revision}`, content: source.content,
+      fetchedAt: teamContext!.dataCutoffAt, sourceUrl: null, sourceName: 'Explicit team source version', role: 'news', evidenceType: 'other', relevanceScore: 0,
+      ...(task.workKey ? { teamWorkKey: task.workKey } : {}) }));
     const scope = { sessionId: row.id, revision: row.revision, memberId: member.id, memberName: member.name,
       turn: task.position, ticker: row.ticker, language: row.language, webResearch: row.profileSnapshot.council?.webResearch === true,
-      expiresAt: Date.now() + 600_000 };
+      expiresAt: Date.now() + 600_000, ...(row.checkpoint?.teamContext ? { teamId: row.checkpoint.teamContext.teamId } : {}) };
     const callTool = async (name: string, args: Record<string, unknown> = {}): Promise<ResearchToolResult> => {
       const callId = `${attempt.id}:${name}`;
       const event = { id: randomUUID(), taskId: attempt.id, callId, sessionId: row.id, memberId: member.id, memberName: member.name,
@@ -117,7 +132,7 @@ export class CouncilWorkflowExecutor {
     const packingTarget = member.executionMode === 'local' ? 5500 : Math.max(0, inputLimit - 500);
     const recallQuery = { ticker: row.ticker, enabled: row.checkpoint?.workflow?.recallEnabled,
       query: taskMemoryQuery(row.checkpoint?.workflow?.goal ?? '', instructions[task.key], messages.at(-1)?.content ?? '') };
-    const recall = !review && frozen && memory ? await memory.refreshRecall(row.owner, frozen, recallQuery) : undefined;
+    const recall = !review && frozen && memory ? await memory.refreshRecall(row.owner, frozen, recallQuery, row.checkpoint?.teamContext) : undefined;
     const suppliedIds = new Set(toolResults.flatMap(item => {
       const data = item.result.data as { evidenceId?: string } | undefined;
       return data?.evidenceId ? [data.evidenceId] : [];
@@ -140,9 +155,12 @@ export class CouncilWorkflowExecutor {
       row.language === 'en' ? 'Write in English.' : '用简体中文。',
     ].filter(Boolean).join('\n');
     const input = {
-      task: { id: task.id, key: task.key },
+      task: { id: task.id, key: task.key, ...(task.assignment ? { assignment: task.assignment } : {}) },
+      ...(teamContext ? { sourceDocuments } : {}),
+      ...(row.checkpoint?.teamContext ? { teamInput: row.checkpoint.teamContext.inputSnapshot, objective: row.checkpoint.teamContext.plan.objective,
+        dataCutoffAt: row.checkpoint.teamContext.dataCutoffAt } : {}),
       ticker: row.ticker, peers: row.checkpoint!.workflow!.peers, member: { name: member.name,
-        ...(member.instructions ? { instructions: member.instructions.slice(0, 500) } : {}) },
+        ...(member.instructions ? { instructions: row.checkpoint?.teamContext ? member.instructions : member.instructions.slice(0, 500) } : {}) },
       ...(messages.length ? { steering: messages.slice(-1).map(m => m.content) } : {}), memory: '',
       // Existing task pins survive deployments and retries. Skills carry no additional permissions.
       skills: task.skills, ...(task.reason ? { feedback: task.reason } : {}),
@@ -151,7 +169,7 @@ export class CouncilWorkflowExecutor {
       submitted: review ? batch.length ? batch.map(t => ({ taskId: t.id,
         submittedAttemptId: [...t.attempts].reverse().find(a => a.kind === 'work' && a.state === 'succeeded')?.id,
         requirement: instructions[t.key], delivery: t.delivery })) : task.delivery : undefined,
-      handoffs: tasks.filter(t => task.dependencies.includes(t.key) && t.delivery).map(t => ({ key: t.key, state: t.state,
+      handoffs: tasks.filter(t => (task.workKey ? task.dependencyWorkKeys?.includes(t.workKey ?? '') : task.dependencies.includes(t.key)) && t.delivery).map(t => ({ key: t.key, state: t.state,
         reason: t.reason,
         conclusion: t.delivery!.conclusion.slice(0, 800), evidenceIds: t.delivery!.evidenceIds,
         thesisCandidates: t.delivery!.thesisCandidates,
@@ -159,8 +177,9 @@ export class CouncilWorkflowExecutor {
         evidencePoints: t.delivery!.response.evidencePoints,
         assumptions: t.delivery!.assumptions, gaps: t.delivery!.gaps })),
       // A predecessor's key/state/reason already accompanies its handoff. Coverage retains the other tasks.
-      coverage: tasks.filter(t => (task.key === 'summary' || task.dependencies.includes(t.key))
-        && !(task.dependencies.includes(t.key) && t.delivery))
+      coverage: tasks.filter(t => (teamContext && task.workKey ? !!t.workKey && teamWorkClosure(teamContext.plan, task.workKey).has(t.workKey)
+        : task.key === 'summary' || (task.workKey ? task.dependencyWorkKeys?.includes(t.workKey ?? '') : task.dependencies.includes(t.key)))
+        && !((task.workKey ? task.dependencyWorkKeys?.includes(t.workKey ?? '') : task.dependencies.includes(t.key)) && t.delivery))
         .map(t => ({ key: t.key, state: t.state, reason: t.reason })),
       // Tool results already contain their server citation ID, source and data. Avoid repeating their serialized envelopes.
       evidence: referenceEvidenceMetadata(evidenceExcerpts(row.evidenceSnapshot.filter(e => !suppliedIds.has(e.id)), 550),
@@ -199,7 +218,7 @@ export class CouncilWorkflowExecutor {
       if (requestSize(system, input) <= packingTarget) break;
       Object.assign(input, compact(length));
     }
-    const excerptedContext = review ? workflowReviewPrompt(task, attempt, batch, instructions, row.ticker, row.language,
+    const excerptedContext = review && !teamContext ? workflowReviewPrompt(task, attempt, batch, instructions, row.ticker, row.language,
       messages.slice(-1).map(message => message.content), row.evidenceSnapshot, member.instructions, packingTarget) : { system, input };
     // Every task sees the whole account, including uncited holdings and unknown balances.
     // Restore atomic records after optional excerpts/factoring; the real request gate decides fit.
@@ -229,7 +248,7 @@ export class CouncilWorkflowExecutor {
       }
       // A revoked source or changed pinned version between preparation and reservation must not cross the transport boundary.
       if (inventory.prepared.length && frozen && memory) {
-        const fresh = await memory.refreshRecall(row.owner, frozen, recallQuery);
+        const fresh = await memory.refreshRecall(row.owner, frozen, recallQuery, row.checkpoint?.teamContext);
         const missing = inventory.prepared.filter(ref => !fresh.items.some(item => item.id === ref.id && item.kind === ref.kind && item.version === ref.version));
         if (missing.length) {
           inventory.omissions = [...inventory.omissions, ...missing.map(ref => fresh.omissions?.find(item =>
@@ -259,7 +278,7 @@ export class CouncilWorkflowExecutor {
           memberId: member.id, memberName: member.name, turn: task.position,
           language: row.language, attempt: savedPosition >= 0 ? savedPosition + 1 : task.attempts.length + 1 },
         prompt: `${promptContext.system}\n${JSON.stringify(promptContext.input)}`,
-        researchScope: isPortfolioThread(row) ? undefined : { ...scope, memoryReferences: inventory.prepared },
+        researchScope: isPortfolioThread(row) && !teamContext ? undefined : { ...scope, memoryReferences: inventory.prepared },
         onDispatch,
         withHandoff: async handoff => {
           const activeHandoff = async (tx: MemoryDatabase) => {
@@ -269,7 +288,7 @@ export class CouncilWorkflowExecutor {
           };
           if (memory) {
             try { await memory.withRecallHandoff(row.owner, frozen ?? { items: [], context: '', preferences: { autoArchive: false, recallEnabled: false } },
-              recallQuery, inventory.prepared, handoff, activeHandoff); }
+              recallQuery, inventory.prepared, handoff, activeHandoff, row.checkpoint?.teamContext); }
             catch (error) {
               // Persist the safe omission after releasing the fence; never record an un-emitted submission.
               if (error instanceof Error && error.message === 'MEMORY_CONTEXT_CHANGED') await onDispatch();
@@ -284,19 +303,27 @@ export class CouncilWorkflowExecutor {
       tokens = result.usageTokens ?? 0; taskId = result.taskId; externalUsageUnknown = result.usageTokens === null;
       await this.deps.store.markRemote(row, task, attempt.id, { tokens, externalAgent: true, externalUsageUnknown });
       value = result.data;
+      if (row.checkpoint?.teamContext) await this.deps.store.markRemote(row, task, attempt.id,
+        { savedResponse: { data: result.data, text: result.text } });
       if (!value) { try { value = JSON.parse(result.text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')); } catch { throw new Error('DELIVERY_INVALID'); } }
     } else {
       const options = { taskId: row.taskId, purpose: `council:${task.key}:${attempt.kind}:${member.id}`, maxOutputTokens: review ? batch.length ? 1000 : 600 : 2400,
+        ...(teamContext ? { onResponseReceived: async (response: { content: string; totalTokens: number; usageKnown?: boolean }) => {
+          await this.deps.store.markRemote(row, task, attempt.id, { savedResponse: { text: response.content },
+            tokens: response.totalTokens, externalUsageUnknown: response.usageKnown === false });
+        } } : {}),
         telemetryContext: { sessionId: row.id, revision: row.revision, cycleId: row.checkpoint!.cycleId,
           memberId: member.id, parentId: `workflow:${attempt.id}` },
         retryPolicy: 'none' as const, timeoutMs: 120_000, connectionId: member.connectionId, route: { mode: 'api' as const }, shouldContinue: () => this.active(row), onDispatch };
       const result = member.model === 'slow' ? await this.deps.llm.chatSlowJSON(prompt, row.owner, options)
         : await this.deps.llm.chatFastJSON(prompt, row.owner, options);
-      value = result.data; tokens = result.tokens; taskId = attempt.id;
+      value = result.data; tokens = result.tokens; taskId = attempt.id; externalUsageUnknown = result.tokensKnown === false;
     }
     const usage = { tokens: Number.isFinite(tokens) ? Math.max(0, Math.trunc(tokens)) : 0, taskId, externalUsageUnknown };
     // Preserve known usage even if the model violates the output contract.
     await this.deps.store.markRemote(row, task, attempt.id, usage);
+    if (row.checkpoint?.teamContext && member.executionMode !== 'local') await this.deps.store.markRemote(row, task, attempt.id,
+      { savedResponse: { data: value } });
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('DELIVERY_INVALID');
     const raw = value as Record<string, unknown>;
     if (review) {
@@ -321,8 +348,9 @@ export class CouncilWorkflowExecutor {
     const [current] = await db.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
     if (!current || current.revision !== attempt.revision || current.status !== 'running') throw new Error('LOCAL_PAUSED');
     // Native tool calls may have added server-sourced evidence after dispatch.
-    const parsed = member.executionMode === 'local' ? nativeWorkflowSources(raw, attempt.id, current.evidenceSnapshot, row.language) : { data: raw, sources: [] };
-    const delivery = validateDelivery(parsed.data, new Set([...current.evidenceSnapshot, ...parsed.sources].map(e => e.id)), task.skills);
+    const visibleEvidence = teamContext && task.workKey ? teamVisibleEvidence(teamContext, task.workKey, tasks, current.evidenceSnapshot) : current.evidenceSnapshot;
+    const parsed = member.executionMode === 'local' ? nativeWorkflowSources(raw, attempt.id, visibleEvidence, row.language) : { data: raw, sources: [] };
+    const delivery = validateDelivery(parsed.data, new Set([...visibleEvidence, ...grantedEvidence, ...parsed.sources].map(e => e.id)), task.skills);
     if (task.key === 'valuation' && this.deps.tools) {
       const parameters = raw.valuationScenario && typeof raw.valuationScenario === 'object' && !Array.isArray(raw.valuationScenario)
         ? raw.valuationScenario as Record<string, unknown> : {};
@@ -330,6 +358,7 @@ export class CouncilWorkflowExecutor {
       attachValuation(delivery, calculation, row.language);
     }
     await activity('succeeded', row.language === 'en' ? 'Deliverable submitted for review' : '研究交付已提交，等待验收');
-    return { ...usage, delivery, sources: parsed.sources };
+    return { ...usage, delivery, sources: [...grantedEvidence, ...parsed.sources.map(source => ({ ...source,
+      ...(teamContext && task.workKey ? { teamWorkKey: task.workKey } : {}) }))] };
   }
 }

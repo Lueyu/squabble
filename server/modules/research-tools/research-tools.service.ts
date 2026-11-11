@@ -1,8 +1,13 @@
+import { assertTeamExecutionFence, listTeamSourceGrants } from '../../database/team-context';
+import { readTeamSourceContents } from '../../database/team-source-context';
+import { teamWorkInputs, teamWorkClosure, teamVisibleEvidence, teamSourceIdentity } from '../../database/team-member-sources';
+import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
+import { dataLibraryVersions } from '../../database/data-library.schema';
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
 import { libraryEvidenceAvailability, libraryEvidenceAvailable, libraryEvidenceReferences, MAX_LIBRARY_EVIDENCE_REFERENCES } from '../../database/data-library-visibility';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { isNull, and, desc, eq, lte, ne, or } from 'drizzle-orm';
+import { isNull, and, desc, eq, lte, ne, or, sql, inArray } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { councilMessages, councilReports, councilSessions } from '../../database/council.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
@@ -41,7 +46,7 @@ import { ToolCapabilityGrantsService } from '../tool-capabilities/tool-capabilit
 import type { ToolCapabilityPackId } from '../../../shared/tool-capabilities.interface';
 
 type SessionRow = typeof councilSessions.$inferSelect;
-interface ScopedSession { session: SessionRow; authority: string; review?: boolean }
+interface ScopedSession { session: SessionRow; authority: string; review?: boolean; workKey?: string | null }
 type ScopeDatabase = Pick<PostgresJsDatabase, 'select'>;
 interface CapabilityCallGrant { packId: ToolCapabilityPackId; revision: number; dataClasses: AgentDataClass[] }
 const ARCHIVED_TOOLS = new Set(['get_quotes', 'get_financials', 'get_news', 'get_valuation',
@@ -151,6 +156,13 @@ export class ResearchToolsService {
       assertActive();
       const current = await this.currentSession(owner, scope);
       if (!current || authority && current.authority !== authority) throw new ScopeEnded();
+      const team = current.session.checkpoint?.teamContext;
+      if (team) {
+        const member = team.members.find(item => item.memberId === scope.memberId);
+        if (!member || !['get_discussion_context', 'get_research_memory'].includes(tool.name) && !member.allowedToolIds.includes(tool.name)) throw new ScopeEnded();
+        // Browser sessions and arbitrary datasets are not transferable by an organization edge.
+        if (['browser_research', 'read_dataset_summary', 'run_statistics', 'run_backtest'].includes(tool.name) && !scope.runtimeScope) throw new ScopeEnded();
+      }
       if (!await this.validateLibraryEvidence(owner, [...current.session.evidenceSnapshot,
         ...(current.session.checkpoint?.simple?.commonEvidence ?? []),
         ...Object.values(current.session.checkpoint?.simple?.privateEvidence ?? {}).flat()])) throw new ScopeEnded();
@@ -236,6 +248,11 @@ export class ResearchToolsService {
     if (!row || scope.expiresAt <= Date.now() || row.status !== 'running' || row.revision !== scope.revision
       || row.ticker !== scope.ticker || row.language !== scope.language || !row.checkpoint
       || (scope.webResearch && !row.profileSnapshot.council?.webResearch)) return null;
+    if (row.teamCommissionId && !row.checkpoint?.teamContext) return null;
+    if (row.checkpoint?.teamContext) {
+      if (scope.teamId !== row.checkpoint.teamContext.teamId) return null;
+      await assertTeamExecutionFence(database as PostgresJsDatabase, owner, row.checkpoint.teamContext);
+    }
     const memberIds: string[] = row.profileSnapshot.council?.members.map((member) => member.id)
       ?? ['researcher', 'challenger', 'manager'];
     if (!memberIds.includes(scope.memberId)) return null;
@@ -261,9 +278,23 @@ export class ResearchToolsService {
     const attempt = task?.attempts.at(-1);
     if (!task || !attempt || attempt.state !== 'running' || attempt.revision !== scope.revision) return null;
     const assigned = attempt.kind === 'review'
-      ? row.profileSnapshot.council?.members.find(member => member.role === 'manager')?.id : task.memberId;
+      ? row.checkpoint.teamContext ? task.reviewerMemberId : row.profileSnapshot.council?.members.find(member => member.role === 'manager')?.id : task.memberId;
     return assigned === scope.memberId && scope.expiresAt > Date.now()
-      ? { session: row, authority: JSON.stringify([row.checkpoint.cycleId, task.id, attempt.id]), review: attempt.kind === 'review' } : null;
+      ? { session: row, authority: JSON.stringify([row.checkpoint.cycleId, task.id, attempt.id]), review: attempt.kind === 'review', workKey: task.workKey } : null;
+  }
+
+  private async teamWorkScope(owner: string, scope: ResearchToolScope, session: SessionRow) {
+    const team = session.checkpoint?.teamContext;
+    if (!team) return null;
+    const tasks = await this.db.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner),
+      eq(councilResearchTasks.sessionId, session.id), eq(councilResearchTasks.cycleId, session.checkpoint!.cycleId),
+      eq(councilResearchTasks.revision, scope.revision)));
+    const current = tasks.find(task => task.position === scope.turn);
+    if (!current?.workKey) throw new ScopeEnded();
+    const assigned = current.attempts.at(-1)?.kind === 'review' ? current.reviewerMemberId : current.memberId;
+    if (assigned !== scope.memberId) throw new ScopeEnded();
+    return { team, tasks, workKey: current.workKey,
+      refs: teamWorkInputs(team.plan, current.workKey, (team.inputSnapshot.inputRefs ?? []) as ResearchSourceRef[]) };
   }
 
   /** Read-only tools may archive their server-produced results, never caller-supplied facts or live memory/report copies. */
@@ -297,6 +328,7 @@ export class ResearchToolsService {
       const current = await this.currentSession(owner, scope, tx, true);
       if (capability) await this.capabilities!.requireCurrent(owner, capability.packId, capability.revision, capability.dataClasses, tx);
       if (!current || current.authority !== authority) throw new ScopeEnded();
+      if (current.session.checkpoint?.teamContext && current.workKey) evidence.teamWorkKey = current.workKey;
       if (!await libraryEvidenceAvailable(tx, owner, [evidence], true)) throw new ScopeEnded();
       assertActive();
       const checkpoint = current.session.checkpoint;
@@ -398,10 +430,32 @@ export class ResearchToolsService {
       return { status: 'succeeded', data: { ...snapshot, ...(snapshot.artifact ? { artifacts: [snapshot.artifact] } : {}) },
         sources: [{ title: snapshot.title ?? 'Browser source', url: snapshot.url, fetchedAt: snapshot.observedAt }], asOf: snapshot.observedAt, truncated: false };
     }
+    if (tool.name === 'read_browser_source' && session.checkpoint?.teamContext) {
+      const team = session.checkpoint.teamContext;
+      const member = team.members.find(item => item.memberId === scope.memberId)!;
+      const workScope = await this.teamWorkScope(owner, scope, session);
+      const selected = new Set(workScope!.refs.map(teamSourceIdentity));
+      const grants = (await listTeamSourceGrants(this.db, owner, team.teamId)).filter(grant => grant.sourceKind === 'document_version'
+        && member.sourceGrantIds.includes(grant.id) && selected.has(JSON.stringify([grant.sourceKind, grant.sourceId, grant.sourceRevision])));
+      const versions = grants.length ? await this.db.select().from(dataLibraryVersions).where(and(eq(dataLibraryVersions.owner, owner), inArray(dataLibraryVersions.id, grants.map(grant => grant.sourceId)), eq(dataLibraryVersions.sourceId, input.sourceId ?? ''))) : [];
+      const refs = versions.map(version => ({ kind: 'document_version' as const, id: version.id, revision: String(version.version), availability: 'available' as const }));
+      const content = await readTeamSourceContents(this.db, owner, team.teamId, refs, team.dataCutoffAt);
+      await guard();
+      return { status: content.length ? 'succeeded' : 'unavailable', data: { items: content.map(item => ({ sourceId: input.sourceId, versionId: item.ref.id, content: item.content })) }, sources: [], asOf: team.dataCutoffAt, truncated: false };
+    }
     if (tool.name === 'read_browser_source') return this.browserSource(owner, input.sourceId, guard, signal);
     if (tool.name === 'search_data_library') {
       if (!this.library || !input.query) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
-      const result = await this.library.search(owner, { query: input.query, limit: input.limit });
+      const team = session.checkpoint?.teamContext;
+      const member = team?.members.find(item => item.memberId === scope.memberId);
+      const workScope = team ? await this.teamWorkScope(owner, scope, session) : null;
+      const selected = new Set(workScope?.refs.map(teamSourceIdentity) ?? []);
+      const grants = team ? (await listTeamSourceGrants(this.db, owner, team.teamId)).filter(grant => grant.sourceKind === 'document_version'
+        && member?.sourceGrantIds.includes(grant.id) && selected.has(JSON.stringify([grant.sourceKind, grant.sourceId, grant.sourceRevision]))) : [];
+      const versions = team && grants.length ? await this.db.select().from(dataLibraryVersions).where(and(eq(dataLibraryVersions.owner, owner), inArray(dataLibraryVersions.id, grants.map(grant => grant.sourceId)))) : [];
+      if (team && !versions.length) return researchFailure('unavailable', 'RESEARCH_SOURCE_UNAVAILABLE');
+      const result = await this.library.search(owner, { query: input.query, limit: input.limit, ...(team ? { sourceIds: [...new Set(versions.map(version => version.sourceId))] } : {}) });
+      if (team) result.items = result.items.filter(item => versions.some(version => version.id === item.versionId && version.observedAt.getTime() <= Date.parse(team.dataCutoffAt)));
       await guard();
       if (!await this.library.validateReferences(owner, result.items)) return researchFailure('unavailable', 'RESEARCH_SOURCE_UNAVAILABLE');
       return { status: result.items.length ? 'succeeded' : 'unavailable', data: result,
@@ -528,8 +582,8 @@ export class ResearchToolsService {
       const requested = boundedMemoryPins(workflow.memory?.items ?? []).map(memoryReference);
       recall = { items: [], context: '', preferences: await this.memory.getPreferences(owner), requested,
         omissions: requested.map(item => ({ ...item, reason: 'disabled' })) };
-    } else if (workflow?.memory) recall = await this.memory.refreshRecall(owner, workflow.memory, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) });
-    else recall = await this.memory.recall(owner, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) });
+    } else if (workflow?.memory) recall = await this.memory.refreshRecall(owner, workflow.memory, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) }, session.checkpoint?.teamContext);
+    else recall = await this.memory.recall(owner, { ticker: scope.ticker, ...(asOf ? { asOf } : {}) }, session.checkpoint?.teamContext);
     const now = new Date().toISOString();
     if (!review && scope.memoryReferences) {
       const permitted = (item: { id: string; kind: string; version: number }) => scope.memoryReferences!.some(ref =>
@@ -644,7 +698,7 @@ export class ResearchToolsService {
 
   private async reports(owner: string, scope: ResearchToolScope, limit: number): Promise<ResearchToolResult> {
     const [deepRows, councilRows] = await Promise.all([
-      this.db.select({ id: deepReport.id, ticker: deepReport.ticker, coreThesis: deepReport.coreThesis,
+      scope.teamId ? Promise.resolve([]) : this.db.select({ id: deepReport.id, ticker: deepReport.ticker, coreThesis: deepReport.coreThesis,
         rating: deepReport.rating, confidence: deepReport.confidence, companyOverview: deepReport.companyOverview,
         financialQuality: deepReport.financialQuality, valuationMethodology: deepReport.valuationMethodology,
         viewChange: deepReport.viewChange, createdAt: deepReport.createdAt, updatedAt: deepReport.updatedAt })
@@ -656,6 +710,7 @@ export class ResearchToolsService {
         evidence: councilReports.evidence, createdAt: councilReports.createdAt })
         .from(councilReports).innerJoin(councilSessions, eq(councilReports.sessionId, councilSessions.id))
         .where(and(councilReportSourceVisible(), eq(councilReports.owner, owner), isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.ticker, scope.ticker),
+          scope.teamId ? sql`${councilSessions.teamContext}->>'teamId' = ${scope.teamId}` : isNull(councilSessions.teamCommissionId),
           lte(councilReports.revision, councilSessions.revision),
           or(ne(councilReports.sessionId, scope.sessionId), lte(councilReports.revision, scope.revision))))
         .orderBy(desc(councilReports.createdAt), desc(councilReports.version)).limit(limit + 1),
@@ -691,15 +746,20 @@ export class ResearchToolsService {
 
   private async context(owner: string, scope: ResearchToolScope, session: SessionRow, limit: number, review = false): Promise<ResearchToolResult> {
     const independent = session.checkpoint?.simple?.stage === 'independent';
-    const snapshot = independent ? [...(session.checkpoint!.simple!.commonEvidence ?? []),
+    const workScope = session.checkpoint?.teamContext ? await this.teamWorkScope(owner, scope, session) : null;
+    const snapshot = workScope ? teamVisibleEvidence(workScope.team, workScope.workKey, workScope.tasks, session.evidenceSnapshot)
+      : independent ? [...(session.checkpoint!.simple!.commonEvidence ?? []),
       ...(session.checkpoint!.simple!.privateEvidence?.[scope.memberId] ?? [])] : session.evidenceSnapshot;
     const rows = await this.db.select({ id: councilMessages.id, role: councilMessages.role,
       memberName: councilMessages.memberName, content: councilMessages.content, revision: councilMessages.revision,
-      createdAt: councilMessages.createdAt }).from(councilMessages)
+      createdAt: councilMessages.createdAt, metadata: councilMessages.metadata }).from(councilMessages)
       .where(and(eq(councilMessages.owner, owner), eq(councilMessages.sessionId, scope.sessionId),
         lte(councilMessages.revision, scope.revision))).orderBy(desc(councilMessages.createdAt)).limit(limit + 1);
     const now: string = new Date().toISOString();
-    const visibleRows = independent ? rows.filter(row => row.role !== 'system'
+    const allowedAttempts = workScope ? new Set(workScope.tasks.filter(task => task.workKey && teamWorkClosure(workScope.team.plan, workScope.workKey).has(task.workKey))
+      .flatMap(task => task.attempts.map(attempt => attempt.id))) : null;
+    const visibleRows = workScope ? rows.filter(row => row.role === 'user' || !!row.metadata?.taskId && allowedAttempts!.has(row.metadata.taskId))
+      : independent ? rows.filter(row => row.role !== 'system'
       && (!session.checkpoint!.simple!.commonMessageIds || session.checkpoint!.simple!.commonMessageIds.includes(row.id))) : rows;
     const gaps = snapshot.filter((item) => item.sourceName === 'Data Unavailable' || item.relevanceScore <= 0);
     const facts = snapshot.filter((item) => !gaps.includes(item));

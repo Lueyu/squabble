@@ -5,6 +5,7 @@ import type {
   ArchivePortfolioAccountResult,
   CreatePortfolioAccountRequest,
   PortfolioAccountDetail,
+  PortfolioAccountAssets,
   PortfolioAccountMutationRequest,
   PortfolioAccountMutationResult,
   PortfolioAccountSummary,
@@ -35,6 +36,8 @@ export const portfolioWorkspaceApi = {
   accounts: async () => (await http.get<PortfolioAccountSummary[]>(base)).data,
   account: async (accountId: string) =>
     (await http.get<PortfolioAccountDetail>(accountPath(accountId))).data,
+  assets: async (accountId: string) =>
+    (await http.get<PortfolioAccountAssets>(`${accountPath(accountId)}/assets`)).data,
   create: async (input: CreatePortfolioAccountRequest) =>
     (await http.post<PortfolioAccountMutationResult>(base, input)).data,
   archive: async (accountId: string, input: ArchivePortfolioAccountRequest) =>

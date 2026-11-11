@@ -12,8 +12,8 @@ if (existsSync(filename)) runInNewContext(ts.transpileModule(readFileSync(filena
 const api = moduleUnderTest.exports;
 
 test('portfolio destinations have the same order in Chinese and English', () => {
-  assert.equal(api.simpleNavigation?.('zh-CN').map(item => item.label).join(','), '投资总览,模拟账户,研究报告,研究频道,资产与账本');
-  assert.equal(api.simpleNavigation?.('en').map(item => item.label).join(','), 'Overview,Simulations,Research,Channel,Assets & ledger');
+  assert.equal(api.simpleNavigation?.('zh-CN').map(item => item.label).join(','), '投资总览,模拟账户,团队模拟盘,研究报告,研究频道,资产与账户');
+  assert.equal(api.simpleNavigation?.('en').map(item => item.label).join(','), 'Overview,Simulations,Team simulations,Research,Channel,Assets & accounts');
 });
 test('a past decision keeps its frozen context when a stock code is also present', () => {
   assert.equal(JSON.stringify(api.contextFromSearch?.(new URLSearchParams('decisionId=old-order&ticker=TEST'))),

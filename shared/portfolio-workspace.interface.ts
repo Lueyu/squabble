@@ -1,3 +1,4 @@
+import type { TeamDecision, TeamDecisionRef } from './team-workspace.interface';
 import type { AiInvestmentView, InvestmentPolicy, InvestmentStartRequest } from './investment-policy.interface';
 import type { ConfirmedInvestmentStrategy } from './user-investment-strategy.interface';
 
@@ -64,6 +65,7 @@ export interface RenamePortfolioAccountRequest extends PortfolioAccountMutationR
   name: string;
 }
 export interface PortfolioCombinationRequest extends PortfolioAccountMutationRequest {
+  teamDecisionRefs?: TeamDecisionRef[];
   allocations: PortfolioAllocationInput[];
 }
 export interface ApplyPortfolioCombinationRequest extends PortfolioCombinationRequest {
@@ -76,11 +78,13 @@ export interface PortfolioCombinationIssue {
   message: { en: string; 'zh-CN': string };
 }
 export interface PortfolioCombinationDraft {
+  teamDecisionRefs?: TeamDecisionRef[];
   allocations: PortfolioAllocationInput[];
   expectedPolicyRevision: number;
   updatedAt: string;
 }
 export interface PortfolioCombination {
+  teamDecisionRefs?: TeamDecisionRef[];
   accountId: string;
   policyRevision: number;
   allocations: PortfolioStrategyAssignment[];
@@ -88,6 +92,7 @@ export interface PortfolioCombination {
   cashFloorPct: number;
 }
 export interface PortfolioCombinationPreview {
+  teamDecisionRefs?: TeamDecisionRef[];
   accountId: string;
   expectedPolicyRevision: number;
   previewHash: string;
@@ -102,4 +107,36 @@ export interface PortfolioAccountMutationResult {
   accountId: string;
   status: 'running' | 'paused' | 'archived';
   policy: InvestmentPolicy;
+}
+
+/** Historical attribution copied from the recorded execution link, never the account's current binding. */
+export interface PortfolioExecutionProvenance {
+  kind: 'order' | 'trade'; targetId: string; teamId: string; teamName: string | null;
+  teamVersionId: string; teamVersion: number | null; commissionId: string;
+  workKey: string | null; attemptId: string | null;
+  decision: Pick<TeamDecision, 'id' | 'proposalId' | 'proposalRevision' | 'event' | 'reason' | 'createdAt' | 'basis'> | null;
+  reportAvailability: 'available' | 'unavailable' | 'not_recorded';
+}
+
+/** Pure account-scoped ledger projection. Reads never settle cash or create NAV observations. */
+export interface PortfolioAccountAssets {
+  accountId: string;
+  positions: Array<{
+    id: string; ticker: string; company: string | null; market: string; currency: string;
+    shares: string; avgCost: string | null; currentPrice: string | null; priceAsOf: string | null;
+    /** Market value and unrealized P/L are in the position's original currency. */
+    marketValue: string | null; unrealizedPl: string | null;
+  }>;
+  cash: Array<{
+    currency: string; available: string | null; frozen: string | null;
+    unsettled: string | null; availabilityKnown: boolean;
+  }>;
+  orders: import('./api.interface').PaperOrder[];
+  trades: import('./api.interface').PaperTrade[];
+  /** Optional for compatible older servers; an absent link is never inferred from ticker or time. */
+  executionProvenance?: PortfolioExecutionProvenance[];
+  /** Latest saved complete USD valuation; not a valuation made by this read. */
+  equityUsd: string | null;
+  valuedAt: string | null;
+  gaps: string[];
 }

@@ -50,7 +50,8 @@ import { publicText } from '../local-agents/research-journal';
 import { enqueueResearchArchive } from '../research-memory/research-memory.archive';
 import { ResearchMemoryService, type MemoryDatabase } from '../research-memory/research-memory.service';
 import { CouncilWorkflow } from './council.workflow';
-import { dependentTaskKeys, planResearchTasks, validateWorkflowInput } from './council.tasks';
+import { dependentTaskKeys, planResearchTasks, validateDelivery, validateWorkflowInput } from './council.tasks';
+import { nativeWorkflowSources } from './council.workflow-executor';
 import type { ResearchCoverage, ResearchTaskKind } from '../../../shared/research-workflow.interface';
 import { pinResearchSkills } from '../research-skills/research-skills.registry';
 import { researchSkillTitle } from '../research-skills/research-skills.catalog';
@@ -64,6 +65,10 @@ import { dailyResearchPrompt, dailyResearchTurns, renderDailyReverseCheck, repor
 import { createReportObservationPlan, parseReportExecutionPlan } from '../paper-trading/report-execution-plan';
 import { CouncilToolRuntimeService, ResearchRuntimeSuspended } from './council-tool-runtime.service';
 import type { CouncilRuntimeRecoveryInput } from '../../../shared/research-runtime.interface';
+import type { RecoveryInput, TeamExecutionContext } from '../../../shared/team-workspace.interface';
+import { teamCouncilMembers, dependentTeamWorkKeys, parseSavedTeamResponse } from './council.team';
+import { assertTeamExecutionFence, lockTeamOwner, type TeamDatabase } from '../../database/team-context';
+import { teamCommissions } from '../../database/teams.schema';
 
 type SessionRow = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 type ReportRow = typeof councilReports.$inferSelect;
@@ -73,6 +78,120 @@ interface MemberOutput { member: CouncilMember; contribution: DiscussionContribu
 
 @Injectable()
 export class CouncilService implements OnModuleInit {
+  /** The caller commits the commission, frozen scope and session together, before any recall. */
+  async prepareTeamSessionInTransaction(tx: TeamDatabase, context: TeamExecutionContext): Promise<{ sessionId: string; cycleId: string; rootBudgetTaskId: string }> {
+    const [existing] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, context.ownerId),
+      eq(councilSessions.teamCommissionId, context.commissionId)));
+    if (existing) return { sessionId: existing.id, cycleId: existing.checkpoint!.cycleId, rootBudgetTaskId: existing.taskId };
+    await assertTeamExecutionFence(tx, context.ownerId, context);
+    const members = teamCouncilMembers(context);
+    const config = normalizeBuilderConfig({ name: 'Team research', template: 'guard', tickers: ['PORTFOLIO'],
+      minimumRating: 'Buy', customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1,
+      notifyOnProposal: false, priceRules: [], language: 'zh-CN' });
+    config.council = { enabled: true, members, webResearch: false };
+    const checkpoint: CouncilCheckpoint = { cycleId: randomUUID(), turns: [], nextTurn: 0, toolKindsUsed: [], pendingResearch: [] };
+    checkpoint.teamContext = context;
+    checkpoint.workflow = { goal: 'comprehensive', peers: [], parallelism: context.plan.parallelism,
+      recallEnabled: true };
+    const [commission] = await tx.select().from(teamCommissions).where(and(eq(teamCommissions.ownerId, context.ownerId), eq(teamCommissions.id, context.commissionId)));
+    const [row] = await tx.insert(councilSessions).values({ owner: context.ownerId, profileVersion: 1,
+      profileSnapshot: config, ticker: 'PORTFOLIO', scene: 'portfolio_daily', title: context.plan.objective,
+      subject: context.plan.objective, language: 'zh-CN', taskId: commission.rootBudgetTaskId,
+      evidenceSnapshot: [{ id: `team-account:${context.commissionId}`, role: 'portfolio', evidenceType: 'owner_portfolio',
+        title: 'Frozen team account', sourceName: 'Frozen owner context', sourceUrl: null,
+        content: JSON.stringify({ accountId: context.accountId, holdings: context.inputSnapshot.positions ?? [],
+          account: context.inputSnapshot.account, readAt: context.dataCutoffAt }),
+        fetchedAt: context.dataCutoffAt, relevanceScore: 0 }],
+      teamCommissionId: context.commissionId, teamContext: context, checkpoint }).returning();
+    if (this.memory) {
+      checkpoint.workflow.memory = await this.memory.recallInTransaction(tx as unknown as MemoryDatabase, context.ownerId,
+        { ticker: 'PORTFOLIO', asOf: context.dataCutoffAt }, context);
+      await tx.update(councilSessions).set({ checkpoint }).where(eq(councilSessions.id, row.id));
+    }
+    return { sessionId: row.id, cycleId: checkpoint.cycleId, rootBudgetTaskId: row.taskId };
+  }
+
+  /** Accept a durable start command once. A lost response never causes a second launch. */
+  async runTeamSessionOnce(owner: string, commandId: string, sessionId: string): Promise<void> {
+    const launch = await this.db.transaction(async tx => {
+      await lockTeamOwner(tx, owner);
+      const [row] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, sessionId), isNull(councilSessions.deletedAt))).for('update');
+      if (!row?.checkpoint?.teamContext || row.teamCommissionId !== row.checkpoint.teamContext.commissionId) throw new ConflictException('TEAM_SCOPE_REQUIRED');
+      if (row.checkpoint.teamStartCommandId) {
+        if (row.checkpoint.teamStartCommandId !== commandId) throw new ConflictException('TEAM_EXECUTION_UNCERTAIN');
+        return false;
+      }
+      await assertTeamExecutionFence(tx, owner, row.checkpoint.teamContext);
+      await tx.update(councilSessions).set({ status: 'running', checkpoint: { ...row.checkpoint, teamStartCommandId: commandId }, updatedAt: new Date() }).where(eq(councilSessions.id, row.id));
+      return true;
+    });
+    if (launch) this.launch(owner, sessionId);
+  }
+
+  async cancelTeamSession(owner: string, sessionId: string): Promise<void> {
+    const row = await this.requireSession(owner, sessionId);
+    if (!row.checkpoint?.teamContext) throw new ConflictException('TEAM_SCOPE_REQUIRED');
+    await this.pauseSession(owner, sessionId);
+  }
+
+  async recoverTeamSession(owner: string, sessionId: string, input: RecoveryInput): Promise<void> {
+    const row = await this.requireSession(owner, sessionId);
+    if (!row.checkpoint?.teamContext) throw new ConflictException('TEAM_SCOPE_REQUIRED');
+    // Status checks deliberately preserve unknown outcomes and never enter the execution loop.
+    if (input.action === 'check_existing') { await this.getSession(owner, sessionId); return; }
+    const tasks = await this.workflow.store.list(owner, sessionId, row.checkpoint.cycleId);
+    const task = tasks.find(item => item.workKey === input.workKey);
+    const attempt = task?.attempts.find(item => item.id === input.attemptId);
+    if (!task || !attempt) throw new NotFoundException('TEAM_REFERENCE_NOT_FOUND');
+    if (attempt.state === 'uncertain' || attempt.state === 'running') throw new ConflictException('TEAM_EXECUTION_UNCERTAIN');
+    if (input.action === 'reparse_existing') {
+      if (task.state === 'accepted') return;
+      if (!attempt.savedResponse) throw new ConflictException('TEAM_SAVED_RESPONSE_REQUIRED');
+      const value = parseSavedTeamResponse(attempt.savedResponse);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('DELIVERY_INVALID');
+      const raw = value as Record<string, unknown>;
+      const member = this.members(row.profileSnapshot).find(m => m.id === (attempt.kind === 'review' ? task.reviewerMemberId : task.memberId));
+      if (!member) throw new ConflictException('TEAM_PLAN_INVALID');
+      const parsed = member.executionMode === 'local' && attempt.kind === 'work'
+        ? nativeWorkflowSources(raw, attempt.id, row.evidenceSnapshot, row.language) : { data: raw, sources: [] };
+      const delivery = attempt.kind === 'work' ? validateDelivery(parsed.data,
+        new Set([...row.evidenceSnapshot, ...parsed.sources].map(e => e.id)), task.skills) : undefined;
+      if (attempt.kind === 'review' && (typeof raw.accepted !== 'boolean' || typeof raw.feedback !== 'string' || !raw.feedback.trim())) throw new BadRequestException('REVIEW_INVALID');
+      await this.db.transaction(async tx => {
+        await lockTeamOwner(tx, owner);
+        await assertTeamExecutionFence(tx, owner, row.checkpoint!.teamContext);
+        const dependents = dependentTeamWorkKeys(tasks, task.workKey!);
+        dependents.delete(task.workKey!);
+        for (const dependent of tasks.filter(item => dependents.has(item.workKey ?? ''))) await tx.update(councilResearchTasks)
+          .set({ state: 'queued', delivery: null, acceptedAttemptId: null, reason: 'Upstream result revalidated', revision: row.revision, updatedAt: new Date() })
+          .where(eq(councilResearchTasks.id, dependent.id));
+        await tx.update(councilSessions).set({ status: 'running', error: null, updatedAt: new Date() }).where(and(eq(councilSessions.id, sessionId), eq(councilSessions.revision, row.revision)));
+      });
+      const current = await this.requireSession(owner, sessionId);
+      await this.workflow.store.finish(current, task, attempt, member, { delivery, sources: parsed.sources,
+        ...(attempt.kind === 'review' ? { review: { accepted: raw.accepted as boolean, feedback: raw.feedback as string } } : {}),
+        tokens: attempt.tokens, externalUsageUnknown: attempt.externalUsageUnknown });
+      this.launch(owner, sessionId);
+      return;
+    }
+    await this.db.transaction(async tx => {
+      await lockTeamOwner(tx, owner);
+      await assertTeamExecutionFence(tx, owner, row.checkpoint!.teamContext);
+      const counts = await tx.select({ reworks: councilResearchTasks.reworks }).from(councilResearchTasks).where(and(
+        eq(councilResearchTasks.owner, owner), eq(councilResearchTasks.sessionId, sessionId), eq(councilResearchTasks.cycleId, row.checkpoint!.cycleId)));
+      if (counts.reduce((sum, item) => sum + item.reworks, 0) >= row.checkpoint!.teamContext!.plan.budget.paidRevisionLimit) throw new ConflictException('TEAM_BUDGET_BLOCKED');
+      await tx.update(councilResearchTasks).set({ state: input.action === 'retry_review' && task.delivery ? 'submitted' : 'queued',
+        reworks: task.reworks + 1, reason: null, acceptedAttemptId: null, revision: row.revision,
+        ...(input.action === 'retry_work' ? { delivery: null } : {}), updatedAt: new Date() }).where(and(eq(councilResearchTasks.owner, owner), eq(councilResearchTasks.id, task.id)));
+      const dependents = dependentTeamWorkKeys(tasks, task.workKey!);
+      dependents.delete(task.workKey!);
+      for (const dependent of tasks.filter(item => dependents.has(item.workKey ?? ''))) await tx.update(councilResearchTasks)
+        .set({ state: 'queued', delivery: null, acceptedAttemptId: null, revision: row.revision, reason: 'Upstream work explicitly retried', updatedAt: new Date() })
+        .where(eq(councilResearchTasks.id, dependent.id));
+      await tx.update(councilSessions).set({ status: 'running', error: null, updatedAt: new Date() }).where(eq(councilSessions.id, sessionId));
+    });
+    this.launch(owner, sessionId);
+  }
   private readonly logger = new Logger(CouncilService.name);
   private readonly jobs = new Map<string, Promise<void>>();
   private readonly candidateJobs = new Map<string, Promise<CouncilReviewResult>>();
@@ -242,6 +361,7 @@ export class CouncilService implements OnModuleInit {
       throw new BadRequestException('Message must contain 1–2000 characters');
     }
     const owned = await this.requireSession(userId, id);
+    if (owned.teamCommissionId || owned.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
     if (owned.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
     const resolved = await this.resolvePinnedReferences(userId, details.references ?? [], owned.scene !== 'trade_pre_review');
     if (details.replyToMessageId !== undefined) this.assertId(details.replyToMessageId);
@@ -286,6 +406,7 @@ export class CouncilService implements OnModuleInit {
       await lockMemoryOwner(tx, userId);
       const [parent] = await tx.select().from(councilSessions).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, id))).for('update');
       if (!parent) throw new NotFoundException('Council session not found');
+      if (parent.teamCommissionId || parent.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
       if (parent.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
       const messages = await tx.select().from(councilMessages).where(and(eq(councilMessages.owner, userId), eq(councilMessages.sessionId, id)))
         .orderBy(councilMessages.createdAt, councilMessages.id);
@@ -327,6 +448,8 @@ export class CouncilService implements OnModuleInit {
   async draftReportRevision(userId: string, id: string, reportId: string, parentVersionId: string,
     options: Omit<CouncilRevisionRequest, 'parentVersionId'> = {}) {
     this.assertId(id); this.assertId(reportId); this.assertId(parentVersionId);
+    const owned = await this.requireSession(userId, id);
+    if (owned.teamCommissionId || owned.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
     if (!this.documents) throw new BadRequestException('Report documents are unavailable');
     if (options.generate !== undefined && typeof options.generate !== 'boolean') throw new BadRequestException('Invalid generation option');
     if (options.generate) this.assertId(options.requestId ?? '');
@@ -470,6 +593,8 @@ export class CouncilService implements OnModuleInit {
   }
 
   async recoverMember(owner:string,id:string,input:ResearchRecoveryInput):Promise<void>{
+    const teamTarget = await this.requireSession(owner, id);
+    if (teamTarget.teamCommissionId || teamTarget.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
     const current = await this.requireSession(owner, id);
     if (input.runtimeTarget && ['check_existing', 'reparse_existing'].includes(input.action)) {
       if (!current.checkpoint?.runtimePending?.some(item => item.memberId === input.memberId && item.runId === input.runtimeTarget!.runId)) {
@@ -564,6 +689,8 @@ export class CouncilService implements OnModuleInit {
   }
 
   async recoverRuntime(owner: string, id: string, input: CouncilRuntimeRecoveryInput): Promise<void> {
+    const teamTarget = await this.requireSession(owner, id);
+    if (teamTarget.teamCommissionId || teamTarget.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
     if (!this.toolRuntime) throw new BadRequestException('RESEARCH_RUNTIME_UNAVAILABLE');
     if (await this.toolRuntime.recover(owner, id, input)) {
       const active = this.jobs.get(`${owner}:${id}`);
@@ -591,6 +718,8 @@ export class CouncilService implements OnModuleInit {
 
   /** Controlled migration helper, deliberately absent from HTTP. Never dispatches a provider. */
   async reparseSavedTask(owner:string,id:string,memberId:string,taskId:string):Promise<CouncilSession>{
+    const teamTarget = await this.requireSession(owner, id);
+    if (teamTarget.teamCommissionId || teamTarget.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
     if(!this.localAgents)throw new BadRequestException('LOCAL_UNAVAILABLE');
     const row=await this.requireSession(owner,id);const member=this.members(row.profileSnapshot).find(m=>m.id===memberId);
     const task=await this.localAgents.store.task(owner,taskId);
@@ -628,6 +757,7 @@ export class CouncilService implements OnModuleInit {
   async runSession(userId: string, id: string, retryKeys?: ResearchTaskKind[]): Promise<CouncilSession> {
     this.assertId(id);
     const previous = await this.requireSession(userId, id);
+    if (previous.teamCommissionId || previous.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
     if (previous.checkpoint?.runtimePending?.length) throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
     if (previous.checkpoint?.simple?.overallDaily && ['completed', 'failed', 'paused'].includes(previous.status)) {
       throw new ConflictException('OVERALL_DAILY_RESUME_REQUIRED');
@@ -687,7 +817,9 @@ export class CouncilService implements OnModuleInit {
 
   async resumeDailyReport(owner: string, id: string, input: ResumeDailyReportInput): Promise<CouncilSession> {
     this.assertId(id);
-    if ((await this.requireSession(owner, id)).checkpoint?.runtimePending?.length) throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
+    const owned = await this.requireSession(owner, id);
+    if (owned.teamCommissionId || owned.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
+    if (owned.checkpoint?.runtimePending?.length) throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
     const result = await new CouncilReportResumeService(this.db, this.localAgents, row => this.validatePinnedReferences(row)).reserve(owner, id, input);
     if (result.created) {
       const active = this.jobs.get(`${owner}:${id}`);
@@ -701,6 +833,7 @@ export class CouncilService implements OnModuleInit {
   }
 
   private async newCycleCheckpoint(row: SessionRow, tx: MemoryDatabase): Promise<CouncilCheckpoint> {
+    if (row.teamCommissionId || row.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
     const checkpoint = newCheckpoint(this.members(row.profileSnapshot), { independent: Boolean(row.checkpoint?.simple) });
     checkpoint.automaticTaskId = row.checkpoint?.automaticTaskId;
     if (checkpoint.simple && row.checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple,
@@ -784,6 +917,8 @@ export class CouncilService implements OnModuleInit {
     const [report] = await this.db.select().from(councilReports)
       .where(and(eq(councilReports.owner, userId), eq(councilReports.id, reportId)));
     if (!report) throw new NotFoundException('Council report not found');
+    const owned = await this.requireSession(userId, report.sessionId);
+    if (owned.teamCommissionId || owned.checkpoint?.teamContext) throw new ConflictException('TEAM_RESEARCH_COMMAND_REQUIRED');
     await this.db.transaction(async (tx) => {
       await lockMemoryOwner(tx, userId);
       const [session] = await tx.select().from(councilSessions)
@@ -1644,10 +1779,13 @@ export class CouncilService implements OnModuleInit {
   private async publish(userId: string, row: SessionRow, opinion: CouncilOpinion, engine: CouncilReport['engine'], error: string | null,
     researchStance: CouncilReport['researchStance'] = null, coverage?: ResearchCoverage, thesisCandidates?: CouncilReport['thesisCandidates']): Promise<boolean> {
     const published = await this.db.transaction(async (tx) => {
+      if (row.teamCommissionId || row.checkpoint?.teamContext) await lockTeamOwner(tx, userId);
       await lockMemoryOwner(tx, userId);
       const [current] = await tx.select().from(councilSessions)
         .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, userId), eq(councilSessions.id, row.id))).for('update');
       if (!current || current.status !== 'running' || current.revision !== row.revision) return false;
+      if (current.teamCommissionId && !current.checkpoint?.teamContext) throw new ConflictException('TEAM_SCOPE_REQUIRED');
+      if (current.checkpoint?.teamContext) await assertTeamExecutionFence(tx, userId, current.checkpoint.teamContext, { allowPublication: true });
       const workflowTasks = row.checkpoint?.workflow ? await tx.select({ attempts: councilResearchTasks.attempts, cycleId: councilResearchTasks.cycleId }).from(councilResearchTasks)
         .where(and(eq(councilResearchTasks.owner, userId), eq(councilResearchTasks.sessionId, row.id))) : [];
       const submittedLibraryReferences = libraryEvidenceReferences(workflowTasks.filter(task => task.cycleId === current.checkpoint?.cycleId)

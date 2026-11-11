@@ -39,7 +39,7 @@ function harness(file, options = {}) {
     react,
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
     'react-i18next': { useTranslation: () => ({ t: (key) => key, i18n: { language: 'en' } }) },
-    'react-router-dom': { useNavigate: () => () => {}, Link: 'Link' },
+    'react-router-dom': { useNavigate: () => () => {}, useSearchParams: () => [new URLSearchParams(), () => {}], Link: 'Link' },
     sonner: { toast: { success() {}, error() {}, info() {} } },
     '@/utils/format': {
       formatDate: (d) => String(d), formatPercent: String, formatPrice: String,
@@ -131,10 +131,10 @@ async function main() {
 
   // 3. Actual HoldingsPage comparator renders numeric strings in lexical descending order.
   const holdings = ['2', '10', '100'].map((shares, i) => ({ id: String(i), ticker: 'AUDIT' + i, company: 'Fixture', shares, buyPrice: shares, currentPrice: shares, market: 'US', marketValue: Number(shares) ** 2, cost: 1, pl: 0, returnPct: 0 }));
-  const holding = harness('client/src/pages/Holdings/HoldingsPage.tsx', { seed: { 0: holdings, 2: false } });
-  tree = holding.render();
+  const holding = harness('client/src/pages/Holdings/HoldingsPage.tsx', { seed: { 0: holdings, 2: false }, append: '\nexport { RealHoldingsPage };' });
+  tree = holding.render(undefined, holding.exports.RealHoldingsPage);
   node(tree, 'HoldingsTable').props.onSort('shares');
-  tree = holding.render();
+  tree = holding.render(undefined, holding.exports.RealHoldingsPage);
   const sorted = node(tree, 'HoldingsTable').props.holdings.map((h) => h.shares);
   assert.equal(JSON.stringify(sorted), JSON.stringify(['100', '10', '2']));
   results.push({ finding: 'holdings-numeric-string-sort', column: 'shares', direction: 'desc', actual: sorted, expected: ['100', '10', '2'] });
@@ -153,15 +153,15 @@ async function main() {
   // 5. Verify the page sends no pagination/limit, and only sees the first 100 API rows.
   const txCalls = [];
   const txRows = Array.from({ length: 101 }, (_, i) => ({ id: String(i), ticker: 'AAA', txType: 'Buy', txDate: '2026-11-02', shares: '1', price: '10', fees: '0', currency: 'USD' }));
-  const page = harness('client/src/pages/Transactions/TransactionsPage.tsx', { api: {
+  const page = harness('client/src/pages/Transactions/TransactionsPage.tsx', { append: '\nexport { RealTransactionsPage };', api: {
     fetchTransactions: async (params) => { txCalls.push(params); return txRows.slice(params?.offset ?? 0, (params?.offset ?? 0) + (params?.limit ?? 100)); },
     fetchClosed: async () => [], fetchRealizedPlSummary: async () => ({ items: [], totalByCurrency: {} }),
   } });
-  page.render(); await page.runEffects(); tree = page.render();
+  page.render(undefined, page.exports.RealTransactionsPage); await page.runEffects(); tree = page.render(undefined, page.exports.RealTransactionsPage);
   assert.equal(txCalls[0].offset, 0);
   assert.equal(page.states[0].length, 100);
   await button(tree, 'common.loadMore').props.onClick();
-  tree = page.render();
+  tree = page.render(undefined, page.exports.RealTransactionsPage);
   assert.equal(txCalls[1].offset, 100);
   assert.equal(page.states[0].length, 101);
   const controller = read('server/modules/transactions/transactions.controller.ts');

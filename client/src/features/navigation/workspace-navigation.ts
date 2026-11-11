@@ -2,6 +2,7 @@
 export type WorkspaceSectionId =
   | 'overview'
   | 'friends'
+  | 'teams'
   | 'daily'
   | 'research'
   | 'assets'
@@ -46,6 +47,12 @@ export function workspaceSections(language: string): WorkspaceSection[] {
       group: 'daily',
     },
     {
+      id: 'teams',
+      path: '/teams',
+      label: zh ? '团队模拟盘' : 'Team simulations',
+      group: 'daily',
+    },
+    {
       id: 'daily',
       path: '/daily',
       label: zh ? '投资日报' : 'Daily report',
@@ -60,7 +67,7 @@ export function workspaceSections(language: string): WorkspaceSection[] {
     {
       id: 'assets',
       path: '/holdings',
-      label: zh ? '资产与账本' : 'Assets & ledger',
+      label: zh ? '资产与账户' : 'Assets & accounts',
       group: 'daily',
     },
     {
@@ -112,6 +119,8 @@ export function resolveWorkspaceRoute(
       parent: '/settings',
       kind: 'root',
     };
+  if (pathname.startsWith('/teams/'))
+    return { section: 'teams', title: zh ? '团队工作区' : 'Team workspace', parent: '/teams', kind: 'detail' };
   const account = pathname.match(/^\/paper\/([^/]+)(?:\/(.*))?$/u);
   if (account)
     return {
@@ -235,7 +244,7 @@ export function safeReturnPath(value: unknown): string | null {
     const parsed = new URL(value, 'https://squabble.invalid');
     if (parsed.origin !== 'https://squabble.invalid') return null;
     if (
-      !/^\/(?:$|paper(?:\/|$)|daily(?:\/|$)|research(?:\/|$)|holdings(?:\/|$)|data(?:\/|$)|memory(?:\/|$)|settings(?:\/|$)|strategies(?:\/|$)|analysis(?:\/|$)|council(?:\/|$)|transactions$|watchlist$|import$|journal$|notifications$)/u.test(
+      !/^\/(?:$|paper(?:\/|$)|teams(?:\/|$)|daily(?:\/|$)|research(?:\/|$)|holdings(?:\/|$)|data(?:\/|$)|memory(?:\/|$)|settings(?:\/|$)|strategies(?:\/|$)|analysis(?:\/|$)|council(?:\/|$)|transactions$|watchlist$|import$|journal$|notifications$)/u.test(
         parsed.pathname,
       )
     )
@@ -336,4 +345,10 @@ export function workspaceDestinations(language: string) {
     { path: '/settings/agents', label: zh ? '本地 Agent' : 'Local agents' },
     { path: '/settings/budget', label: zh ? '用量与预算' : 'Usage & budget' },
   ];
+}
+
+/** Explicit source-account returns may use Back only when that exact context precedes this visit. */
+export function contextReturnDestination(visits: WorkspaceVisit[], index: number, target: unknown): { kind: 'back' } | { kind: 'path'; path: string } {
+  const path = safeReturnPath(target) ?? '/';
+  return visits.some(visit => visit.index === index - 1 && visit.path === path) ? { kind: 'back' } : { kind: 'path', path };
 }

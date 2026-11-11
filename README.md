@@ -30,6 +30,7 @@ Understand your portfolio, what changed, and what needs your decision.
 
 - **Daily research and a quiet channel.** Independent investigations and a separate reverse check stay in readable reports. The channel publishes short, sourced updates, expandable evidence and one-fact follow-ups. [Channel guide](docs/channel-workbench.md).
 - **Strategy-driven paper trading.** Copy recorded holdings and cash, review the strategy, then explicitly apply it to the simulation. Current rules, proposed changes and actual fills remain distinct. Existing advanced tools remain available.
+- **Configurable investment teams.** Build departments and matrix reporting on a drag-and-connect canvas, start from 10 editable templates, and trace team research through decisions and paper execution. Real and team accounts share an account-specific assets view. [Enable and use the team workspace](docs/team-workspace.md).
 - **Prepared tools and your own extensions.** The Web bundle includes document OCR, public financial queries, Chromium and a required local container sandbox. Confirm capability permissions once; add custom MCP or optional cloud services when needed. Durable receipts, source permissions and exact external-write previews remain shared. [Setup and acceptance limits](docs/agent-tooling.md).
 - **Your data stays yours.** Self-hosted. No default external telemetry. Desktop and source local workspaces open without a Squabble login; account mode remains available.
 

@@ -6,6 +6,7 @@ import {
   resolveWorkspaceRoute,
   workspaceSections,
 } from './workspace-navigation';
+import { assetHref } from '@/features/assets/account-context';
 import { useWorkspaceNavigation } from './use-workspace-navigation';
 
 export function WorkspaceNavigationBar() {
@@ -17,6 +18,8 @@ export function WorkspaceNavigationBar() {
     (item) => item.id === route.section,
   )!;
   const { goBack } = useWorkspaceNavigation();
+  const accountId = new URLSearchParams(location.search).get('accountId') ?? 'real';
+  const parent = route.section === 'assets' ? assetHref(route.parent, accountId) : route.parent;
   if (route.kind === 'flow')
     return (
       <div id="workspace-flow-controls" className="workspace-flow-controls">
@@ -26,7 +29,7 @@ export function WorkspaceNavigationBar() {
           size="sm"
           className="workspace-flow-fallback"
         >
-          <Link to={route.parent}>
+          <Link to={parent}>
             <ArrowLeft size={15} />
             {zh ? '返回策略库' : 'Back to strategies'}
           </Link>
@@ -45,7 +48,7 @@ export function WorkspaceNavigationBar() {
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => goBack(route.parent)}
+          onClick={() => goBack(parent)}
         >
           <ArrowLeft size={15} />
           <span>{zh ? '返回上一页' : 'Go back'}</span>
@@ -60,7 +63,7 @@ export function WorkspaceNavigationBar() {
           {section.label}
         </span>
       ) : (
-        <Link className="workspace-parent-link" to={route.parent}>
+        <Link className="workspace-parent-link" to={parent}>
           <span className="hidden sm:inline">
             {zh ? '所属 · ' : 'Within · '}
           </span>
@@ -74,7 +77,9 @@ export function WorkspaceNavigationBar() {
 export function WorkspaceSectionTabs() {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
+  const accountId = new URLSearchParams(location.search).get('accountId') ?? 'real';
   const section = resolveWorkspaceRoute(pathname, i18n.language).section;
   const items =
     section === 'assets'
@@ -82,7 +87,7 @@ export function WorkspaceSectionTabs() {
           ['/holdings', zh ? '持仓与现金' : 'Holdings & cash'],
           ['/transactions', zh ? '交易账本' : 'Ledger'],
           ['/watchlist', zh ? '关注列表' : 'Watchlist'],
-          ['/import', zh ? '导入与对账' : 'Import & reconcile'],
+          ...(accountId === 'real' ? [['/import', zh ? '导入与对账' : 'Import & reconcile']] : []),
         ]
       : section === 'daily' &&
           ['/daily', '/analysis', '/journal'].includes(pathname)
@@ -101,7 +106,8 @@ export function WorkspaceSectionTabs() {
       {items.map(([path, label]) => (
         <Link
           key={path}
-          to={path}
+          to={section === 'assets' ? assetHref(path, accountId, path === '/watchlist' ? new URLSearchParams({ returnTo: `${pathname}${location.search}${location.hash}` }).toString() : '') : path}
+          state={{ returnTo: `${pathname}${location.search}${location.hash}` }}
           aria-current={pathname === path ? 'page' : undefined}
         >
           {label}

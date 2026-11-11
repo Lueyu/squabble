@@ -17,6 +17,9 @@ import { installInvestorCombinationMandate } from './user-strategy-runtime';
 import { combinationHash, combinationIssues, workspaceCombinationSchema, workspaceCompanionSchema, workspaceHash, workspaceMutationSchema } from './portfolio-workspace.rules';
 import type { ArchivePortfolioAccountResult, PortfolioAccountDetail, PortfolioAccountSummary, PortfolioAllocationInput, PortfolioCombination,
   PortfolioCombinationPreview, PortfolioCompanionResult, PortfolioStrategyAssignment } from '../../../shared/portfolio-workspace.interface';
+import { teamStrategyAuthority, recordTeamStrategyApplied } from './team-strategy-transaction';
+import { releaseTeamAccountBinding, lockTeamOwner } from '../../database/team-context';
+import { pauseTeamAccountInTransaction } from './team-account-transaction';
 
 @Injectable()
 export class PortfolioWorkspaceService {
@@ -60,6 +63,7 @@ export class PortfolioWorkspaceService {
     });
     return this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
+      await lockTeamOwner(tx, owner);
       // The same client key may safely be used on different accounts.
       const requestKey = `account:${accountId}:${request.requestKey}`;
       const requestHash = workspaceHash({ accountId, operation, request });
@@ -144,9 +148,9 @@ export class PortfolioWorkspaceService {
       this.db.select().from(portfolioCombinationDrafts).where(and(eq(portfolioCombinationDrafts.owner, owner), eq(portfolioCombinationDrafts.accountId, accountId))),
       this.db.select().from(portfolioStrategyAssignments).where(and(eq(portfolioStrategyAssignments.owner, owner), eq(portfolioStrategyAssignments.accountId, accountId))),
     ]);
-    return { accountId, policyRevision: policies[0]?.revision ?? 0,
+    return { accountId, policyRevision: policies[0]?.revision ?? 0, teamDecisionRefs: policies[0]?.baseConfig.teamDecisionRefs ?? [],
       allocations: allocations.map(a => ({ strategyId: a.strategyId, strategyRevision: a.strategyRevision, allocationPct: Number(a.allocationPct), enabled: a.enabled, snapshot: a.snapshot })),
-      draft: drafts[0] ? { allocations: drafts[0].allocations, expectedPolicyRevision: drafts[0].expectedPolicyRevision, updatedAt: drafts[0].updatedAt.toISOString() } : null,
+      draft: drafts[0] ? { allocations: drafts[0].allocations, teamDecisionRefs: drafts[0].teamDecisionRefs, expectedPolicyRevision: drafts[0].expectedPolicyRevision, updatedAt: drafts[0].updatedAt.toISOString() } : null,
       cashFloorPct: policies[0]?.effectiveConfig.limits.minCashPct ?? 0 };
   }
   async saveDraft(owner: string, accountId: string, input: unknown) {
@@ -157,12 +161,13 @@ export class PortfolioWorkspaceService {
         const strategy = await this.strategies.get(owner, allocation.strategyId);
         if (strategy.revision !== allocation.strategyRevision) throw new ConflictException('STRATEGY_REVISION_CHANGED');
       }
+      await teamStrategyAuthority(tx, owner, accountId, await this.snapshots(tx, owner, request.allocations), request.teamDecisionRefs ?? []);
       const updatedAt = new Date();
-      const value = { owner, accountId, allocations: request.allocations, expectedPolicyRevision: request.expectedPolicyRevision, updatedAt };
+      const value = { owner, accountId, allocations: request.allocations, teamDecisionRefs: request.teamDecisionRefs ?? [], expectedPolicyRevision: request.expectedPolicyRevision, updatedAt };
       await tx.insert(portfolioCombinationDrafts).values(value).onConflictDoUpdate({
         target: [portfolioCombinationDrafts.owner, portfolioCombinationDrafts.accountId], set: value,
       });
-      return { allocations: request.allocations, expectedPolicyRevision: request.expectedPolicyRevision, updatedAt: updatedAt.toISOString() };
+      return { allocations: request.allocations, teamDecisionRefs: request.teamDecisionRefs ?? [], expectedPolicyRevision: request.expectedPolicyRevision, updatedAt: updatedAt.toISOString() };
     });
   }
   private async snapshots(tx: InvestmentTx, owner: string, allocations: PortfolioAllocationInput[], confirm = false): Promise<PortfolioStrategyAssignment[]> {
@@ -176,13 +181,14 @@ export class PortfolioWorkspaceService {
     return this.mutate(owner, accountId, 'preview', request, async tx => {
       const { policy } = await this.current(tx, owner, accountId, request.expectedPolicyRevision);
       const allocations = await this.snapshots(tx, owner, request.allocations);
+      await teamStrategyAuthority(tx, owner, accountId, allocations, request.teamDecisionRefs ?? []);
       const issues = combinationIssues(allocations);
       const effective = effectiveInvestmentConfig({ ...policy.baseConfig, portfolio: allocations }, policy.constraintRecords);
-      const previewHash = combinationHash(accountId, policy.revision, allocations);
+      const previewHash = combinationHash(accountId, policy.revision, allocations, request.teamDecisionRefs ?? []);
       const expiresAt = new Date(Date.now() + 15 * 60_000);
-      await tx.insert(portfolioCombinationPreviews).values({ owner, accountId, policyRevision: policy.revision, allocations, previewHash, expiresAt });
+      await tx.insert(portfolioCombinationPreviews).values({ owner, accountId, policyRevision: policy.revision, allocations, teamDecisionRefs: request.teamDecisionRefs ?? [], previewHash, expiresAt });
       return { accountId, expectedPolicyRevision: policy.revision, previewHash, expiresAt: expiresAt.toISOString(),
-        canApply: issues.length === 0, allocations, issues, cashFloorPct: effective.limits.minCashPct,
+        canApply: issues.length === 0, allocations, issues, teamDecisionRefs: request.teamDecisionRefs ?? [], cashFloorPct: effective.limits.minCashPct,
         allocatedPct: allocations.filter(a => a.enabled).reduce((sum, a) => sum + a.allocationPct, 0) };
     });
   }
@@ -191,7 +197,7 @@ export class PortfolioWorkspaceService {
     const hashInput = this.parse(z.object({ previewHash: z.string().length(64) }).passthrough(), input);
     const { previewHash, ...body } = hashInput;
     const request = { ...this.parse(workspaceCombinationSchema, body), previewHash };
-    const reviewers = await this.reviewTeam?.resolveMembers(owner).catch(() => null);
+    const reviewers = request.teamDecisionRefs?.length ? null : await this.reviewTeam?.resolveMembers(owner).catch(() => null);
     return this.mutate(owner, accountId, 'apply', request, async tx => {
       const { policy } = await this.current(tx, owner, accountId, request.expectedPolicyRevision);
       const [preview] = await tx.select().from(portfolioCombinationPreviews).where(and(eq(portfolioCombinationPreviews.owner, owner),
@@ -199,13 +205,16 @@ export class PortfolioWorkspaceService {
         .orderBy(desc(portfolioCombinationPreviews.createdAt)).limit(1).for('update');
       if (!preview || preview.expiresAt.getTime() <= Date.now()) throw new ConflictException('COMBINATION_PREVIEW_EXPIRED');
       const allocations = await this.snapshots(tx, owner, request.allocations, true);
-      if (combinationHash(accountId, policy.revision, allocations) !== request.previewHash) throw new ConflictException('COMBINATION_PREVIEW_CHANGED');
+      if (combinationHash(accountId, policy.revision, allocations, request.teamDecisionRefs ?? []) !== request.previewHash) throw new ConflictException('COMBINATION_PREVIEW_CHANGED');
+      const teamAuthority = await teamStrategyAuthority(tx, owner, accountId, allocations, request.teamDecisionRefs ?? []);
       const issues = combinationIssues(allocations);
       if (issues.length) throw new ConflictException({ code: 'COMBINATION_CONFLICT', message: 'COMBINATION_CONFLICT', issues });
       await cancelInvestmentCandidates(tx, owner, accountId, 'Account strategy combination changed');
       const running = allocations.some(a => a.enabled);
       const baseConfig = { ...policy.baseConfig, portfolio: allocations,
-        ...(reviewers?.members.length ? { reviewMembers: reviewers.members } : {}) };
+        teamDecisionRefs: request.teamDecisionRefs ?? [], teamExecutionContexts: teamAuthority.contexts,
+        ...(teamAuthority.members.length ? { reviewMembers: teamAuthority.members }
+          : reviewers?.members.length ? { reviewMembers: reviewers.members } : {}) };
       delete baseConfig.userStrategy;
       const [saved] = await tx.update(investmentPolicies).set({ revision: policy.revision + 1, status: running ? 'running' : 'paused',
         baseConfig, effectiveConfig: effectiveInvestmentConfig(baseConfig, policy.constraintRecords), updatedAt: new Date() })
@@ -213,7 +222,8 @@ export class PortfolioWorkspaceService {
       await tx.delete(portfolioStrategyAssignments).where(and(eq(portfolioStrategyAssignments.owner, owner), eq(portfolioStrategyAssignments.accountId, accountId)));
       if (allocations.length) await tx.insert(portfolioStrategyAssignments).values(allocations.map(a => ({ ...a,
         owner, accountId, allocationPct: String(a.allocationPct), policyRevision: saved.revision })));
-      await tx.insert(portfolioCombinationRevisions).values({ owner, accountId, policyRevision: saved.revision, allocations });
+      await tx.insert(portfolioCombinationRevisions).values({ owner, accountId, policyRevision: saved.revision, allocations, teamDecisionRefs: request.teamDecisionRefs ?? [] });
+      await recordTeamStrategyApplied(tx, owner, accountId, saved.revision, allocations, request.teamDecisionRefs ?? [], request.requestKey);
       await tx.delete(portfolioCombinationDrafts).where(and(eq(portfolioCombinationDrafts.owner, owner), eq(portfolioCombinationDrafts.accountId, accountId)));
       await this.setRuntime(tx, owner, saved, running);
       return { accountId, status: saved.status as 'running' | 'paused', policy: policyView(saved) };
@@ -230,6 +240,12 @@ export class PortfolioWorkspaceService {
     const request = this.parse(workspaceMutationSchema, input);
     return this.mutate(owner, accountId, running ? 'resume' : 'pause', request, async tx => {
       const { policy } = await this.current(tx, owner, accountId, request.expectedPolicyRevision);
+      if (!running) {
+        await pauseTeamAccountInTransaction(tx, owner, accountId);
+        const [saved] = await tx.select().from(investmentPolicies)
+          .where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, accountId)));
+        return { accountId, status: 'paused' as const, policy: policyView(saved) };
+      }
       if (running && !policy.baseConfig.portfolio?.some(a => a.enabled)) throw new ConflictException('CONFIRMED_STRATEGY_REQUIRED');
       if (running) await this.snapshots(tx, owner, policy.baseConfig.portfolio ?? []);
       await cancelInvestmentCandidates(tx, owner, accountId, running ? 'Fresh account evaluation required' : 'All account automation paused, including protective orders');
@@ -259,6 +275,7 @@ export class PortfolioWorkspaceService {
         .set({ status: 'archived', revision: revision!, updatedAt: new Date() }).where(eq(investmentPolicies.id, policy.id));
       await tx.update(paperAccounts).set({ isActive: false, botEnabled: false, updatedAt: new Date() })
         .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId)));
+      await releaseTeamAccountBinding(tx, owner, accountId);
       return { accountId, status: 'archived', policyRevision: revision };
     });
   }

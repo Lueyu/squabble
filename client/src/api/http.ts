@@ -11,6 +11,19 @@
  */
 import axios, { type AxiosInstance } from 'axios';
 import { getAuthMode } from './auth-mode';
+import { clearTeamDraftStorage } from '../utils/team-session-storage';
+
+function clearPrivateTeamInputs(): void {
+  try { if (typeof window !== 'undefined' && window.sessionStorage) clearTeamDraftStorage(window.sessionStorage); }
+  catch { /* Unavailable storage must not prevent session termination. */ }
+}
+function sessionSubject(token: string | null): string | null {
+  try {
+    if (!token) return null;
+    const payload: unknown = JSON.parse(atob(token.split('.')[1].replace(/-/gu, '+').replace(/_/gu, '/')));
+    return payload && typeof payload === 'object' && 'sub' in payload && typeof payload.sub === 'string' ? payload.sub : null;
+  } catch { return null; }
+}
 
 /** localStorage keys for the JWT session. */
 export const ACCESS_TOKEN_KEY = 'sq-at';
@@ -25,10 +38,13 @@ export const tokenStore = {
     return localStorage.getItem(REFRESH_TOKEN_KEY);
   },
   save(accessToken: string, refreshToken: string): void {
+    const previous = sessionSubject(localStorage.getItem(ACCESS_TOKEN_KEY)), next = sessionSubject(accessToken);
+    if (previous && next && previous !== next) clearPrivateTeamInputs();
     localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
     localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
   },
   clear(): void {
+    clearPrivateTeamInputs();
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
   },

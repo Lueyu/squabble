@@ -9,7 +9,7 @@
  *   3. Postgres error `22P02` (invalid text representation, e.g. malformed UUID)
  *      -> treated as 404 NOT_FOUND so a bad UUID reads as "resource missing"
  *         rather than a 500.
- *   4. Anything else         -> 500 INTERNAL_ERROR (with stack/cause attached).
+ *   4. Anything else         -> generic 500 INTERNAL_ERROR without internal details.
  * Registered as `APP_FILTER` in `AppModule`.
  */
 import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
@@ -18,6 +18,7 @@ import { BusinessException } from '../interfaces/exception.interface';
 import { HTTP_STATUS_TO_RESPONSE_CODE_MAP, ResponseCode } from '../constants/api_response_code';
 import { ApiErrorResponse } from '../interfaces/api_response.interface';
 import { BudgetExceededException } from '../../modules/llm-budget/llm-budget.rules';
+import { safeTeamErrorResponse, safeStandardHttpDetails } from './team-error-response';
 
 /**
  * Catch-all exception filter that turns exceptions into the unified error JSON
@@ -72,14 +73,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       httpStatus = exception.getStatus() as HttpStatus;
       const exceptionResponse = exception.getResponse();
 
-      errorResponse = {
-        error: {
-          code: HTTP_STATUS_TO_RESPONSE_CODE_MAP[httpStatus],
-          message: typeof exceptionResponse === 'string' ? exceptionResponse : exception.message,
-          details: typeof exceptionResponse === 'object' ? JSON.stringify(exceptionResponse) : undefined,
-          timestamp: Date.now(),
-        },
-      };
+      const teamError = safeTeamErrorResponse(exceptionResponse);
+      errorResponse = { error: teamError
+        ? { ...teamError, timestamp: Date.now() }
+        : { code: HTTP_STATUS_TO_RESPONSE_CODE_MAP[httpStatus] ?? ResponseCode.INTERNAL_ERROR,
+          message: httpStatus >= 500 ? '服务器内部错误'
+            : (typeof exceptionResponse === 'string' ? exceptionResponse : exception.message),
+          details: safeStandardHttpDetails(exceptionResponse, httpStatus),
+          timestamp: Date.now() } };
     } else if (
       typeof exception === 'object' &&
       exception !== null &&
@@ -98,15 +99,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         },
       };
     } else {
-      // Unknown/unexpected exception: surface as a 500 with diagnostic info.
+      // Unknown failures expose a generic response. Internal stacks and causes
+      // may contain database parameters, credentials or private research text.
       httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
       errorResponse = {
         error: {
           code: ResponseCode.INTERNAL_ERROR,
           // NOTE: Chinese user-facing message returned to the client (existing behavior).
           message: '服务器内部错误',
-          stack: (exception as Error).stack,
-          cause: (exception as Error).cause as string,
           timestamp: Date.now(),
         },
       };

@@ -8,6 +8,7 @@ import type { ResearchCoverage, ResearchSkillPin, ResearchTask, ResearchTaskKind
 import { analysisErrorCode, safeAnalysisError } from '../research-core/research-errors';
 import { agentErrorMessage } from './council.native';
 import { planResearchTasks } from './council.tasks';
+import { teamTaskPlan } from './council.team';
 import { CouncilScheduler } from './council.scheduler';
 import { CouncilWorkflowExecutor, type WorkflowExecutorDependencies } from './council.workflow-executor';
 import { CouncilWorkflowStore } from './council.workflow-store';
@@ -40,18 +41,19 @@ export class CouncilWorkflow {
     const manager = members.find(m => m.role === 'manager')!;
     const blockedConnections = new Map<string, string>();
     let budgetBlocked: string | undefined;
-    if (!row.evidenceSnapshot.length && members.some(m => m.executionMode !== 'local')) {
+    if (!row.checkpoint?.teamContext && !row.evidenceSnapshot.length && members.some(m => m.executionMode !== 'local')) {
       const snapshot = await this.callbacks.snapshot(row);
       await this.db.update(councilSessions).set({ evidenceSnapshot: snapshot.evidence, sourceRunId: snapshot.sourceRunId }).where(and(
         isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id), eq(councilSessions.revision, revision), eq(councilSessions.status, 'running')));
       row = await this.callbacks.get(owner, id);
     }
     if (row.revision !== revision || row.status !== 'running') return;
-    await this.store.initialize(row, planResearchTasks(row.checkpoint!.workflow!.goal, members), this.callbacks.pin);
+    await this.store.initialize(row, row.checkpoint?.teamContext ? teamTaskPlan(row.checkpoint.teamContext)
+      : planResearchTasks(row.checkpoint!.workflow!.goal, members), this.callbacks.pin);
     const connection = (m: CouncilMember) => m.executionMode === 'local' ? `native:${m.agentId}` : `api:${m.connectionId ?? 'default'}`;
     const run = async (task: ResearchTask, currentTasks: ResearchTask[], batch: ResearchTask[] = []) => {
       const kind = task.state === 'submitted' ? 'review' : 'work';
-      const member = kind === 'review' ? manager : members.find(m => m.id === task.memberId)!;
+      const member = kind === 'review' ? members.find(m => m.id === task.reviewerMemberId) ?? manager : members.find(m => m.id === task.memberId)!;
       const key = connection(member);
       const release = await this.scheduler.acquire(owner, id, member.executionMode === 'local' ? key : undefined,
         row.checkpoint!.workflow!.parallelism, () => this.executor.active(row));
@@ -119,7 +121,7 @@ export class CouncilWorkflow {
       } finally { release(); }
     };
     // Five nodes, one business rework each and their reviews: bounded regardless of model output.
-    for (let step = 0; step < 32; step++) {
+    for (let step = 0; step < (row.checkpoint?.teamContext ? Math.min(512, row.checkpoint.teamContext.plan.work.length * 8 + 8) : 32); step++) {
       row = await this.callbacks.get(owner, id);
       if (row.revision !== revision || row.status !== 'running') return;
       const tasks = await this.store.list(owner, id, row.checkpoint!.cycleId);
@@ -143,12 +145,14 @@ export class CouncilWorkflow {
       for (const task of tasks) {
         // Resume can leave one opening draft ready before the other. Keep their
         // reviews together; a terminal counterpart releases the surviving draft.
-        if (task.state === 'submitted' && ['financials', 'business'].includes(task.key)
+        if (!row.checkpoint?.teamContext && task.state === 'submitted' && ['financials', 'business'].includes(task.key)
           && tasks.some(other => other.id !== task.id && ['financials', 'business'].includes(other.key)
             && ['queued', 'running', 'needs_revision'].includes(other.state))) continue;
         if (task.state === 'submitted' || task.state === 'needs_revision') { runnable.push(task); continue; }
         if (task.state !== 'queued') continue;
-        const deps = task.dependencies.map(key => tasks.find(t => t.key === key)!);
+        const deps = task.workKey ? (task.dependencyWorkKeys ?? []).map(key => tasks.find(t => t.workKey === key)!)
+          : task.dependencies.map(key => tasks.find(t => t.key === key)!);
+        if (deps.some(dep => !dep)) { await this.store.block(row, task, 'TEAM_PLAN_INVALID'); changed = true; continue; }
         if (task.key === 'summary') {
           if (deps.every(d => terminal.has(d.state))) runnable.push(task);
         } else if (deps.every(d => d.state === 'accepted')) runnable.push(task);
@@ -157,7 +161,7 @@ export class CouncilWorkflow {
         }
       }
       if (runnable.length) {
-        const batch = runnable.filter(t => ['financials', 'business'].includes(t.key) && t.state === 'submitted');
+        const batch = row.checkpoint?.teamContext ? [] : runnable.filter(t => ['financials', 'business'].includes(t.key) && t.state === 'submitted');
         await Promise.all(batch.length === 2 ? [run(batch[0], tasks, batch),
           ...runnable.filter(t => !batch.includes(t)).map(task => run(task, tasks))] : runnable.map(task => run(task, tasks)));
         continue;

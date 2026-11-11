@@ -9,6 +9,9 @@ import type {
   PortfolioCombinationDraft,
   PortfolioCombinationPreview,
 } from '@shared/portfolio-workspace.interface';
+import type { TeamDecision, TeamDecisionRef } from '@shared/team-workspace.interface';
+import { teamsApi } from '@/api/teams';
+import { canonicalTeamDecisionRefs, matchTeamDecision, teamDecisionContextFromSearch, withRequestedTeamDecision } from './team-decision-context';
 import type { UserInvestmentStrategy } from '@shared/user-investment-strategy.interface';
 import {
   portfolioWorkspaceApi,
@@ -33,6 +36,26 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const requestedId = params.get('investmentStrategyId');
+  const decisionContext = teamDecisionContextFromSearch(params);
+  const remoteDecisionRefs = account.combination.draft?.teamDecisionRefs ?? account.combination.teamDecisionRefs ?? [];
+  const [teamDecisionRefs, setTeamDecisionRefs] = useState<TeamDecisionRef[]>(() => withRequestedTeamDecision(remoteDecisionRefs, decisionContext.ref));
+  const decisionSource = useQuery({
+    queryKey: ['portfolio-team-decision-source', account.id, decisionContext.teamId, decisionContext.ref?.decisionId, decisionContext.ref?.proposalId, decisionContext.ref?.proposalRevision],
+    enabled: !!decisionContext.ref && !!decisionContext.teamId && !decisionContext.invalid,
+    retry: false,
+    queryFn: async () => {
+      const items: TeamDecision[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await teamsApi.decisions(decisionContext.teamId!, cursor, decisionContext.ref!.proposalId);
+        items.push(...page.items); cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+      const decision = matchTeamDecision(items, decisionContext, account.id);
+      if (!decision) throw Error('TEAM_DECISION_SOURCE_UNAVAILABLE');
+      return decision;
+    },
+  });
+  const teamSourceBlocked = decisionContext.invalid || (!!decisionContext.ref && (!decisionSource.data || decisionSource.isError));
   const initial =
     account.combination.draft?.allocations ?? account.combination.allocations;
   const [allocations, setAllocations] = useState<PortfolioAllocationInput[]>(
@@ -58,6 +81,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
       account.id,
       account.combination.policyRevision,
       initial,
+      remoteDecisionRefs,
     ),
   );
   const [adding, setAdding] = useState(false);
@@ -78,6 +102,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
     account.id,
     expectedRevision,
     allocations,
+    teamDecisionRefs,
   );
   const identityRef = useRef(identity);
   identityRef.current = identity;
@@ -85,6 +110,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
     account.id,
     account.combination.policyRevision,
     initial,
+    remoteDecisionRefs,
   );
   const observedRemoteIdentity = useRef(remoteIdentity);
   const library = useQuery({
@@ -133,6 +159,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
       account.id,
       expectedRevision,
       next,
+      teamDecisionRefs,
     );
     setAllocations(next);
     setPreview(null);
@@ -162,12 +189,14 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
   const mutation = useMutation({
     retry: false,
     mutationFn: async (action: 'save' | 'preview' | 'apply') => {
+      if (teamSourceBlocked) throw Error('TEAM_DECISION_SOURCE_UNAVAILABLE');
       const captured = combinationIdentity(
         account.id,
         expectedRevision,
         allocations,
+        teamDecisionRefs,
       );
-      const body = { expectedPolicyRevision: expectedRevision, allocations };
+      const body = { expectedPolicyRevision: expectedRevision, allocations, teamDecisionRefs };
       const request = {
         ...body,
         requestKey: intent.current.keyFor({
@@ -185,6 +214,8 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
             allocations,
             preview,
             reviewedIdentity,
+            Date.now(),
+            teamDecisionRefs,
           )
         )
           throw Error(
@@ -249,6 +280,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
     // refreshes may initialize a clean editor, but never overwrite local work.
     if (expectedRevision !== account.combination.policyRevision) return;
     if (identity === savedIdentity && !mutation.isPending) {
+      setTeamDecisionRefs(canonicalTeamDecisionRefs(remoteDecisionRefs));
       setAllocations(initial.map(({ strategyId, strategyRevision, allocationPct, enabled }) => ({
         strategyId, strategyRevision, allocationPct, enabled,
       })));
@@ -279,6 +311,12 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
     );
     return () => window.clearTimeout(timeout);
   }, [preview]);
+  const requestedDecisionIdentity = JSON.stringify(decisionContext.ref);
+  useEffect(() => {
+    if (!decisionContext.ref) return;
+    setTeamDecisionRefs(current => withRequestedTeamDecision(current, decisionContext.ref));
+    setPreview(null); setReviewedIdentity(null);
+  }, [requestedDecisionIdentity]);
   const closeEditor = () => {
     setEditing(null);
     if (params.has('investmentStrategyId')) {
@@ -288,6 +326,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
     }
   };
   const reviewSaved = async (item: UserInvestmentStrategy) => {
+    if (teamSourceBlocked) throw Error('TEAM_DECISION_SOURCE_UNAVAILABLE');
     const replacedId = editing?.item?.id;
     const next =
       replacedId &&
@@ -306,6 +345,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
     const body = {
       expectedPolicyRevision: expectedRevision,
       allocations: next,
+      teamDecisionRefs,
     };
     const draft = await portfolioWorkspaceApi.saveDraft(account.id, {
       ...body,
@@ -318,7 +358,7 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
     await cacheDraft(draft);
     intent.current.complete();
     changed(next);
-    setSavedIdentity(combinationIdentity(account.id, expectedRevision, next));
+    setSavedIdentity(combinationIdentity(account.id, expectedRevision, next, teamDecisionRefs));
     setMessage(
       zh
         ? '已保存到组合草稿。为策略设置预算并启用，再预览组合。'
@@ -362,17 +402,24 @@ export function useAccountStrategyCombination(account: PortfolioAccountDetail) {
   const allocated = allocations
     .filter((item) => item.enabled)
     .reduce((sum, item) => sum + item.allocationPct, 0);
-  const locked = mutation.isPending || account.status === 'archived' || stale;
+  const locked = mutation.isPending || account.status === 'archived' || stale || teamSourceBlocked;
   const canApply = canApplyCombination(
     account.id,
     expectedRevision,
     allocations,
     preview,
     reviewedIdentity,
-  );
+    Date.now(),
+    teamDecisionRefs,
+  ) && !teamSourceBlocked;
   return {
     zh,
     language,
+    teamDecisionRefs,
+    decisionContext,
+    decisionSource,
+    teamSourceBlocked,
+    setTeamDecisionRefs,
     allocations,
     expectedRevision,
     preview,

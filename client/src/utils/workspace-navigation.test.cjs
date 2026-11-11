@@ -10,13 +10,16 @@ function navigation() {
   return fixture().load('features/navigation/workspace-navigation.ts');
 }
 
-test('all nine destinations retain old entry ownership and direct-link fallbacks', () => {
+test('all ten destinations retain old entry ownership and direct-link fallbacks', () => {
   const { workspaceSections, resolveWorkspaceRoute } = navigation();
   assert.deepEqual(Array.from(workspaceSections('en'), row => row.path),
-    ['/', '/paper', '/daily', '/research', '/holdings', '/data', '/memory', '/telemetry', '/settings']);
+    ['/', '/paper', '/teams', '/daily', '/research', '/holdings', '/data', '/memory', '/telemetry', '/settings']);
   assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').section, 'telemetry');
   assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').parent, '/telemetry?view=runs');
   assert.equal(resolveWorkspaceRoute('/paper/account-1/strategies', 'en').parent, '/paper/account-1');
+  assert.equal(resolveWorkspaceRoute('/teams/team-a', 'en').section, 'teams');
+  assert.equal(resolveWorkspaceRoute('/teams/team-a', 'en').parent, '/teams');
+  assert.equal(workspaceSections('zh-CN').find(row => row.id === 'assets').label, '资产与账户');
   assert.equal(resolveWorkspaceRoute('/transactions', 'en').section, 'assets');
   assert.equal(resolveWorkspaceRoute('/watchlist', 'zh-CN').section, 'assets');
   assert.equal(resolveWorkspaceRoute('/analysis/reports/report-1', 'en').section, 'daily');
@@ -57,4 +60,12 @@ test('back restores the original page key and forward branches discard obsolete 
   entries = rememberLocation(entries, { key: 'replacement', index: 1, path: '/daily', scrollTop: 0 }, 'PUSH');
   assert.equal(entries.some(row => row.key === 'detail'), false);
   assert.equal(entries.some(row => row.key === 'overview'), true);
+});
+
+test('returning from the global watchlist restores only the matching source history entry', () => {
+  const { contextReturnDestination } = navigation();
+  const target = '/holdings?accountId=b&q=FICT';
+  assert.equal(contextReturnDestination([{ key: 'b', index: 2, path: target, scrollTop: 640 }], 3, target).kind, 'back');
+  assert.equal(contextReturnDestination([{ key: 'a', index: 2, path: '/holdings?accountId=a', scrollTop: 0 }], 3, target).path, target);
+  assert.equal(contextReturnDestination([], 0, '//unsafe.example').path, '/');
 });

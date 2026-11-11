@@ -35,6 +35,8 @@ services:
       NODE_ENV: production
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 3000
+      TEAM_WORKSPACE_ENABLED: ${TEAM_WORKSPACE_ENABLED:-false}
+      TEAM_RESEARCH_ENABLED: ${TEAM_RESEARCH_ENABLED:-false}
       # Direct PostgreSQL connection (first-party, no platform layer).
       DATABASE_URL: "postgres://postgres:postgres@db:5432/portfolio"
       # Empty values are generated once in the persistent secrets volume.

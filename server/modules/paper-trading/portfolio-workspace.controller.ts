@@ -1,17 +1,20 @@
 import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { NeedLogin } from '../../common/platform/need-login.decorator';
+import { PortfolioAssetsService } from './portfolio-assets.service';
 import { PortfolioWorkspaceService } from './portfolio-workspace.service';
 
 @Controller('api/ai-investment/accounts')
 export class PortfolioWorkspaceController {
-  constructor(private readonly workspace: PortfolioWorkspaceService) {}
+  constructor(private readonly workspace: PortfolioWorkspaceService, private readonly assets: PortfolioAssetsService) {}
   @NeedLogin() @Get()
   list(@Req() req: Request) { return this.workspace.list(req.userContext.userId); }
   @NeedLogin() @Post()
   create(@Req() req: Request, @Body() input: unknown) { return this.workspace.create(req.userContext.userId, input); }
   @NeedLogin() @Get(':accountId')
   detail(@Req() req: Request, @Param('accountId') id: string) { return this.workspace.detail(req.userContext.userId, id); }
+  @NeedLogin() @Get(':accountId/assets')
+  assetView(@Req() req: Request, @Param('accountId') id: string) { return this.assets.read(req.userContext.userId, id); }
   @NeedLogin() @Patch(':accountId')
   rename(@Req() req: Request, @Param('accountId') id: string, @Body() input: unknown) { return this.workspace.rename(req.userContext.userId, id, input); }
   @NeedLogin() @Patch(':accountId/companion')

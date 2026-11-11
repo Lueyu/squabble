@@ -58,7 +58,8 @@ import {
 } from '@/components/ui/alert';
 
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AccountAssetsPage } from '@/features/assets/AccountAssetsPage';
 
 /** Columns that the holdings table can sort by. */
 type SortKey =
@@ -104,22 +105,27 @@ function computeDerived(h: Holding): DerivedHolding {
  * multi-select, AI ratings map, and the pending-human run count.
  */
 export default function HoldingsPage() {
+  return <AccountAssetsPage mode="holdings" real={<RealHoldingsPage />} />;
+}
+
+function RealHoldingsPage() {
   const { t, i18n } = useTranslation();
+  const [accountParams, setAccountParams] = useSearchParams();
   const [holdings, setHoldings] = useState<DerivedHolding[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasLoadedHoldings, setHasLoadedHoldings] = useState(false);
   const loadRevision = useRef(0);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [groupId, setGroupId] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('marketValue');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [search, setSearch] = useState(() => accountParams.get('q') ?? '');
+  const [groupId, setGroupId] = useState(() => accountParams.get('group') ?? '');
+  const [sortKey, setSortKey] = useState<SortKey>(() => { const value = accountParams.get('sort'); return ['ticker', 'company', 'buyPrice', 'currentPrice', 'shares', 'marketValue', 'cost', 'pl', 'returnPct'].includes(value ?? '') ? value as SortKey : 'marketValue'; });
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => accountParams.get('direction') === 'asc' ? 'asc' : 'desc');
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<Holding | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [selectedMarkets, setSelectedMarkets] = useState<Set<Market>>(
-    new Set(['US', 'HK', 'CN'])
+    new Set((accountParams.has('markets') ? (accountParams.get('markets') ?? '').split(',').filter(value => ['US', 'HK', 'CN'].includes(value)) : ['US', 'HK', 'CN']) as Market[])
   );
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
@@ -128,6 +134,14 @@ export default function HoldingsPage() {
   const [awaitingHumanCount, setAwaitingHumanCount] = useState(0);
   const [aiDetailRunId, setAiDetailRunId] = useState<string | null>(null);
   const [aiDetailOpen, setAiDetailOpen] = useState(false);
+
+  useEffect(() => {
+    const next = new URLSearchParams(accountParams);
+    for (const [key, value] of Object.entries({ q: search, group: groupId, sort: sortKey, direction: sortDir, markets: [...selectedMarkets].join(',') })) {
+      if (value) next.set(key, value); else next.delete(key);
+    }
+    if (next.toString() !== accountParams.toString()) setAccountParams(next, { replace: true });
+  }, [search, groupId, sortKey, sortDir, selectedMarkets]);
 
   const tickers = useMemo(
     () => holdings.map((h) => h.ticker),

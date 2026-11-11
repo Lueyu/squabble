@@ -48,6 +48,8 @@ export interface LlmCallOptions {
   onProgress?: (message: string) => Promise<void>;
   /** Runs after a committed reservation, immediately before transport. Failure prevents transport and releases that reservation. */
   onDispatch?: () => Promise<void>;
+  /** Private durable response receipt, before JSON validation; never a telemetry/progress payload. */
+  onResponseReceived?: (response: { content: string; totalTokens: number; usageKnown?: boolean }) => Promise<void>;
   /** Explicit server-owned correlation; never inferred from arbitrary task identifiers. */
   telemetryContext?: { sessionId: string; revision: number; cycleId: string; memberId?: string; parentId?: string };
 }
@@ -357,6 +359,7 @@ export class LlmService {
           promptTokens: usage.inputTokens,
           completionTokens: usage.outputTokens,
           totalTokens: usage.chargedTokens,
+          usageKnown: known,
         };
       }
 
@@ -436,6 +439,7 @@ export class LlmService {
     options?: LlmCallOptions,
   ): Promise<{ data: unknown; tokens: number; tokensKnown?: boolean }> {
     const result = await this.chat(jsonChatMessages(messages), tier, userId, options);
+    await options?.onResponseReceived?.(result);
 
     let cleaned = result.content.trim();
     // Strip markdown code fences (```json … ```) if the LLM wrapped the output.

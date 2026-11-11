@@ -35,7 +35,11 @@ import {
   portfolioWorkspaceApi,
   portfolioWorkspaceKeys,
 } from '@/api/portfolio-workspace';
+import { holdingsHref } from '@/features/assets/account-context';
+import { useAccountTeams } from '@/features/assets/AccountAssetsPage';
 import CompanionIdentity from '@/features/companions/CompanionIdentity';
+import { TeamDecisionComparison } from './TeamDecisionComparison';
+import { teamResearchStatus } from './team-decision-comparison-state';
 
 interface Props {
   accountIds?: string[];
@@ -134,6 +138,8 @@ export default function PortfolioComparisonPanel({
     enabled: Boolean(showAccounts),
     retry: false,
   });
+  const teams = useAccountTeams();
+  const teamFor = (id: string) => teams.data?.find(team => team.accountId === id && team.binding?.state === 'active');
   const money = (value: number | null | undefined) =>
     value == null
       ? '—'
@@ -182,8 +188,7 @@ export default function PortfolioComparisonPanel({
     if (persistView) saveView('accounts', next.join(','));
     else setLocalIds(next);
   };
-  const accountPath = (id: string) =>
-    id === 'real' ? '/holdings' : `/paper/${encodeURIComponent(id)}`;
+  const accountPath = holdingsHref;
   const returnState = {
     returnTo: `${location.pathname}${location.search}${location.hash}`,
   };
@@ -518,6 +523,7 @@ export default function PortfolioComparisonPanel({
             ))}
         </details>
       )}
+      <TeamDecisionComparison accounts={selected.filter(item => item.kind === 'simulation').map(item => ({ accountId: item.accountId, name: item.name, createdAt: item.createdAt, strategyCount: item.strategyCount }))} teams={teams.data} teamsLoading={teams.isPending} teamsError={teams.isError} retryTeams={() => void teams.refetch()} zh={zh} returnState={returnState} />
       {showAccounts && (
         <section className="portfolio-account-section">
           <div className="portfolio-section-heading">
@@ -530,8 +536,9 @@ export default function PortfolioComparisonPanel({
           </div>
           <div className="portfolio-account-grid">
             {series.map((item) => (
+              <div key={item.accountId} className="flex min-w-0 flex-col gap-2">
               <Link
-                className="portfolio-account-card"
+                className="portfolio-account-card flex-1"
                 key={item.accountId}
                 to={accountPath(item.accountId)}
                 state={returnState}
@@ -547,6 +554,8 @@ export default function PortfolioComparisonPanel({
                     compact
                   />
                 )}
+                {item.kind === 'simulation' && <small className="text-muted-foreground">{teams.isPending ? (zh ? '正在读取团队…' : 'Loading team…') : teams.isError ? (zh ? '团队归属暂不可用' : 'Team identity unavailable') : teamFor(item.accountId)?.name ?? (zh ? '未绑定团队' : 'No team linked')}</small>}
+                {item.kind === 'simulation' && <small className="text-muted-foreground">{teamResearchStatus(teams.isPending || teams.isError ? undefined : teamFor(item.accountId)?.runningCommissionCount, zh)}</small>}
                 <div className="portfolio-account-card-heading">
                   <span>
                     <i
@@ -573,6 +582,7 @@ export default function PortfolioComparisonPanel({
                 <strong className="portfolio-account-value">
                   {money(currentAccountValue(item))}
                 </strong>
+                {currentAccountValue(item) == null && <small className="text-muted-foreground">{zh ? '暂无法完整估值' : 'Complete valuation unavailable'}</small>}
                 <small className="portfolio-performance-asof">
                   {currentAccountBasis(item, zh)}
                 </small>
@@ -586,7 +596,7 @@ export default function PortfolioComparisonPanel({
                   }
                 >
                   {zh ? '账户记录收益：' : 'Recorded return: '}
-                  {percentage(item.returnPct)}{' '}
+                  {item.returnPct === null && item.points.filter(point => point.equityUsd !== null).length < 2 ? (zh ? '历史不足' : 'Insufficient history') : percentage(item.returnPct)}{' '}
                   <small>
                     {item.returnFrom
                       ? `${zh ? '自' : 'from'} ${new Date(item.returnFrom).toLocaleDateString(zh ? 'zh-CN' : 'en-US')}`
@@ -598,15 +608,17 @@ export default function PortfolioComparisonPanel({
                     className={item.status === 'running' ? 'text-success' : ''}
                   >
                     {item.status === 'running' && <Check size={12} />}
-                    {status(item.status)}
+                    {item.kind === 'simulation' ? (zh ? '模拟执行 · ' : 'Simulation execution · ') : ''}{status(item.status)}
                     {item.kind === 'simulation' &&
                       ` · ${item.strategyCount} ${zh ? '个策略' : 'strategies'}`}
                   </span>
                   <span>
-                    {zh ? '管理' : 'Manage'} <ArrowRight size={14} />
+                    {zh ? '查看资产' : 'View assets'} <ArrowRight size={14} />
                   </span>
                 </div>
               </Link>
+              {item.kind === 'simulation' && <Link className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-primary" to={teamFor(item.accountId) ? `/teams/${encodeURIComponent(teamFor(item.accountId)!.id)}` : '/teams'} state={returnState}>{teamFor(item.accountId) ? (zh ? '团队与研究记录' : 'Team & research records') : (zh ? '关联团队' : 'Link a team')} <ArrowRight size={12} /></Link>}
+              </div>
             ))}
           </div>
         </section>

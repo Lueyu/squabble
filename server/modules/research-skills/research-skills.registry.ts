@@ -62,7 +62,7 @@ function freezeManifest(skill: ResearchSkillManifest): ResearchSkillManifest {
 }
 export const BUNDLED_RESEARCH_SKILLS: readonly ResearchSkillManifest[] = Object.freeze(validateResearchSkills(SKILL_BUNDLES).map(freezeManifest));
 const SELECTION: Record<ResearchTaskKind, string | null> = { financials: 'financial-verification',
-  business: 'peer-comparison', valuation: 'valuation-ranges', challenge: 'contrarian-invalidation', summary: null };
+  business: 'peer-comparison', valuation: 'valuation-ranges', challenge: 'contrarian-invalidation', summary: null, specialist: null };
 
 function compareVersions(left: string, right: string): number {
   const a = left.split('.').map(BigInt); const b = right.split('.').map(BigInt);

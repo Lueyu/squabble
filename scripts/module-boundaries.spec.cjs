@@ -19,6 +19,9 @@ async function restrictions(filePath, source) {
 }
 
 const boundaries = [
+  { name: 'Council consumes neutral team scope without importing team orchestration',
+    file: 'server/modules/council/council.team.ts', forbidden: ['../teams/teams.service', '@server/modules/teams/teams.module'],
+    allowed: ['../../database/team-context', '../../../shared/team-workspace.interface'] },
   {
     name: 'strategy features depend on shared UI and APIs, never pages',
     file: 'client/src/features/investment-strategies/InvestmentStrategyEditor.tsx',
@@ -46,7 +49,7 @@ const boundaries = [
       '../experience/today.service', '../paper-trading/strategy.service',
       '../channel/channel.service', '../research-routing/portfolio-research-route.service',
       '../research-runtime/research-runtime.service', '../research-tools/research-tools.service',
-      '../tool-connections/tool-connections.service', '../tool-actions/tool-actions.service',
+      '../tool-connections/tool-connections.service', '../tool-actions/tool-actions.service', '../teams/teams.service',
     ],
     allowed: ['../quote/quote.service', '../settings/settings.service', './research-errors'],
   },

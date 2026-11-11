@@ -1,4 +1,5 @@
 import { councilReportSourceVisible } from '../../database/research-source-visibility';
+import { recordTeamSignalLinks } from '../../database/team-execution-links';
 import { Inject, Injectable } from '@nestjs/common';
 import { isNull, and, desc, eq, gt, inArray, lte, ne, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -141,6 +142,7 @@ export class StrategyStore {
       state: candidate.protectiveStop ? 'approved' : 'reviewing', candidate, reason: candidate.reason })
       .onConflictDoNothing().returning({ id: strategySignals.id });
     if (!row) return false;
+    if (investment.policy?.baseConfig.teamDecisionRefs?.length) await recordTeamSignalLinks(tx, owner, investment.policy.baseConfig, row.id);
     if (candidate.accountId) {
       const [mandate] = candidate.mandateId ? await tx.select().from(strategyMandates).where(eq(strategyMandates.id, candidate.mandateId)) : [];
       if (!await reserveStrategyCandidate(tx, owner, account, candidate, mandate?.config.routePolicy.candidateTtlSeconds)) {

@@ -4,6 +4,7 @@ import {
   rememberLocation,
   workspaceScrollTarget,
   returnDestination,
+  contextReturnDestination,
   safeReturnPath,
   type WorkspaceVisit,
 } from './workspace-navigation';
@@ -150,5 +151,9 @@ export function useWorkspaceNavigation(
     },
     [location.state, navigate],
   );
-  return { goBack };
+  const returnToContext = useCallback((target: string) => {
+    const destination = contextReturnDestination(readVisits(), currentIndex(), target);
+    if (destination.kind === 'back') navigate(-1); else navigate(destination.path);
+  }, [navigate]);
+  return { goBack, returnToContext };
 }

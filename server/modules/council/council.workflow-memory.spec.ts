@@ -65,6 +65,8 @@ test('real executor submissions match durable inventories across languages, refr
       const [source] = await db.insert(councilSessions).values({ owner, profileVersion: 1, profileSnapshot: {} as never,
         ticker: 'AAPL', language, status: 'completed' }).returning();
       const [report] = await db.insert(councilReports).values({ owner, sessionId: source.id, version: 1, revision: 1,
+        // The provider/database clock is not the application's clock; this is a historical fixture.
+        createdAt: new Date(Date.now() - 60_000),
         decision: 'wait', summary: 'A report summary is history. '.repeat(100), dissent: [], nextReviewCondition: 'Next filing', engine: 'llm',
         evidence: [{ id: 'filing', title: 'Annual filing', content: 'Annual revenue 100 USD million.', sourceUrl: 'https://example.test/filing', libraryReferences,
           metadata: financialMetadata({ ticker: 'AAPL', provider: 'SEC EDGAR', sourceUrl: 'https://example.test/filing',

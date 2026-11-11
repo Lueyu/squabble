@@ -10,6 +10,8 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 
 **Local diagnostic review — 2026-11-11:** inspected `b9f1feb` plus this diagnostic change. Flows1–2 add owner/source-validated diagnostic snapshots of retained native/Companion task evidence, public activity and separate application acceptance. Actual process launch is distinct from runtime handoff; missing observations stay unknown. Recovery links retain the original research controls. Flows3–5 keep the same strategy, channel and real-ledger writers; diagnostic reads cannot authorize execution or recreate a deleted source.
 
+**Team workspace review — 2026-11-12:** reviewed `3a561b1` plus the team workspace change. All five flows include the team additions: independent organization/display/layout revisions, immutable team versions, one active account binding, durable manual commissions through the existing Council workflow, exact decision/strategy/execution links and pure account asset reads. Team permissions and transitive sources are checked at dispatch, result acceptance, final publication, memory write and strategy application; research completion never applies a strategy. Validation is recorded in [team workspace validation](team-workspace-validation.md).
+
 ## Module ownership
 
 | Boundary | Responsibility | Dependency direction |
@@ -22,6 +24,7 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 | `tool-capabilities` | Reviewed packs, cached deployment readiness and owner activation revisions | Health checks never invoke business tools; feature dispatch and publication recheck grants |
 | `workers/sandbox` | Restricted deployment broker and per-job Linux container lifecycle | Only the broker controls Docker; jobs have no network, host paths or application credentials |
 | `data-library` | Owned materials, encrypted subscriptions, version extraction, retrieval and financial-provider queries | Uses existing financial/settings adapters; never creates research tasks or ledger entries |
+| `teams` | Organization drafts, versions, account responsibility, finite commissions, source grants and decisions | Consumes Council, paper trading and memory; infrastructure receives neutral DB scope helpers |
 | `council`, `experience` | Research workflow, current-report projection and scheduling | Consume shared research services and retained history where required |
 | `portfolio-history` | Current marks and current-position historical references with public price/FX cache | Reads owned ledger inputs; writes only market-data caches; never imports research orchestration |
 | `paper-trading` | Account combinations, simulated policy/runtime, ledger and saved comparison projection | Uses research-routing; never imports experience |
@@ -37,6 +40,10 @@ Static dependency directions are checked by ESLint and `npm run test:architectur
 
 ```mermaid
 flowchart LR
+    auth --> teamWorkspace["Teams: organization drafts, immutable versions and manual commissions"]
+    teamWorkspace --> council
+    teamWorkspace --> strategy
+    teamWorkspace --> db
     user["User"] --> web["React web client"]
     web -->|"HTTP API and polling"| auth["Nest auth and owner context"]
     auth --> experience["Research reports and current research"]
@@ -152,6 +159,9 @@ V5 keeps these eight destinations. `/research` owns chat history and the strateg
 
 ```mermaid
 flowchart TD
+    teamVersion["Frozen team version, account, inputs, unique lead and bounded work DAG"] --> request
+    request --> teamFence["Team/source/binding/budget fences; exact work and attempt identity"]
+    teamFence --> teamScope["Published role and work-input intersection; scoped memory, evidence and tools"]
     selectedSkill["Explicit slash skill selection"] --> skillPin["Trusted manifest version and hash frozen in request and attempt"]
     skillPin --> request
     material["Owned enabled material version"] --> materialPin["Bounded sections with immutable source/version references"]
@@ -256,6 +266,10 @@ The older `server/modules/multi-agent/pipeline.service.ts` bull/bear/critic/risk
 
 ```mermaid
 flowchart TD
+    teamDecision["Exact adopted team decision and accepted report/message/thesis versions; no inherited authority for user derivatives"] --> preview
+    authority --> teamPolicy["Frozen team references; explicit handover continuation"]
+    teamPolicy --> order
+    ledger --> teamTrace["Signal/order/fill links copied from exact original authority"]
     real["Recorded real holdings and cash"] --> seed["Explicit preview with quote and FX gaps"]
     virtual["Chosen virtual opening cash"] --> seed
     ownedPaper["Owned simulation snapshot"] --> seed
@@ -324,6 +338,7 @@ Report payload hashes, exact source-text hashes, strategy preview `strategyConte
 
 ```mermaid
 flowchart TD
+    teamAttribution["Original team version and decision references on actual account execution"] --> receipt
     report["Published report version and typed conditions"] --> brief["Compile briefs only from visible versions and tasks"]
     strategyChange["Strategy context for legacy report briefs"] --> brief
     select["Explicit account selection; no selection writes"] --> runtime
@@ -363,6 +378,9 @@ Question receipts and deferred questions freeze their account and research conte
 
 ```mermaid
 flowchart TD
+    accountRoute["Explicit real or paper accountId in unified assets UI"] --> readOnlyAssets["Pure paper positions/cash/orders/fills and saved valuation read"]
+    readOnlyAssets --> paper
+    accountRoute --> today
     manual["Explicit transaction entry"] --> ledgerTx["Owner-fenced ledger transaction"]
     file["Transaction file and source rows"] --> batch["Import classification and preview"]
     batch --> confirm["User selects rows and confirms revisions"]

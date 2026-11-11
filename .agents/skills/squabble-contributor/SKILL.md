@@ -50,3 +50,9 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 `/telemetry` 提供总览、成员比较、运行列表、Trace 与反馈/质量视图；`shared/telemetry.interface.ts` 定义未知值与统计口径。`server/modules/telemetry/` 读取所属用户来源并尊重删除墓碑，迁移52持久化观测元数据和反馈。模型/本地助手/工具的采集不改变执行结果。Langfuse 默认不启用，只有显式配置后导出元数据；不得将提示词、回答、持仓或密钥写入导出。详见 `docs/agent-telemetry.md`；使用临时 `TELEMETRY_TEST_DATABASE_URL` 运行 `npm run test:telemetry`，浏览界面不能触发研究。
 
 本地 Agent 诊断通过 `shared/telemetry-diagnostics.interface.ts` 分别表达进程证据、公开活动、结果验收和发布状态；认证快照读取持续复验 owner 与来源可见性。`server/local-agents/` 和 Companion 只传固定安全元数据，runtime handoff 不代表 CLI 已启动。静默、缺失或截断的历史不能推断成失败或完整链路，诊断页不能隐式恢复或重新派发任务。
+
+## 团队模拟盘
+
+`/teams` 提供可编辑组织与10种模板，统一资产页使用 `/holdings?accountId=real|id`。迁移61新增组织/布局独立修订、不可变团队版本、唯一有效绑定、预览/幂等回执、有限手动委托、来源授权与精确决定关联；已有Council执行workKey DAG，不另建模型引擎。团队私有召回、工具、最终发布与记忆写入沿可信team context检查，历史普通入口不能省scope绕过。采纳不应用策略，teamDecisionRefs随原组合preview/apply及signal/order/trade传递。测试、启用开关及真实剩余限制见 `docs/team-workspace.md` 与 `docs/team-workspace-validation.md`。
+
+岗位来源权限与本次work/复核/依赖输入取交集，不能把团队所有grant并给每人；共享记忆和工具上下文同样受接收范围约束。Team报告的用户派生版不继承原采纳，message策略必须绑定已接受的确切工作尝试。用户后续论点复核与原Agent迟到发布分开：前者保留历史归属并复验当前来源，不能因原期限结束阻止驳回/到期/排除；后者仍严格按冻结期限与授权验收。

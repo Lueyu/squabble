@@ -2,9 +2,10 @@ export function simpleNavigation(language: string) {
   const zh = language.startsWith('zh');
   return [{ path: '/', label: zh ? '投资总览' : 'Overview', end: true },
     { path: '/paper', label: zh ? '模拟账户' : 'Simulations' },
+    { path: '/teams', label: zh ? '团队模拟盘' : 'Team simulations' },
     { path: '/analysis', label: zh ? '研究报告' : 'Research' },
     { path: '/council', label: zh ? '研究频道' : 'Channel' },
-    { path: '/holdings', label: zh ? '资产与账本' : 'Assets & ledger' }];
+    { path: '/holdings', label: zh ? '资产与账户' : 'Assets & accounts' }];
 }
 
 // Historical context takes priority over any live security included in an old link.

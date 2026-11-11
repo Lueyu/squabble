@@ -24,6 +24,7 @@ const react = { useEffect() {}, useState: initial => [initial, () => {}], useRef
 
 function httpHarness(mode, tokens = { 'sq-at': 'saved-access', 'sq-rt': 'saved-refresh' }) {
   const storage = new Map(Object.entries(tokens));
+  const drafts = new Map([['squabble.team-create', 'private creation'], ['squabble.team-draft.team-a', 'private instructions'], ['navigation-visits', 'keep']]);
   const redirects = [];
   const requests = [];
   const handlers = {};
@@ -34,12 +35,31 @@ function httpHarness(mode, tokens = { 'sq-at': 'saved-access', 'sq-rt': 'saved-r
     response: { use: (_success, failure) => { handlers.failure = failure; } },
   };
   const authMode = { getAuthMode: () => mode };
-  const exports = load('api/http.ts', { axios: { default: { create: () => client } }, './auth-mode': authMode }, {
+  const exports = load('api/http.ts', { axios: { default: { create: () => client } }, './auth-mode': authMode,
+    '../utils/team-session-storage': load('utils/team-session-storage.ts') }, {
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
-    window: { location: { pathname: '/', assign: to => redirects.push(to) } },
+    atob: globalThis.atob,
+    window: { location: { pathname: '/', assign: to => redirects.push(to) }, sessionStorage: {
+      get length() { return drafts.size; }, key(index) { return [...drafts.keys()][index] ?? null; }, removeItem(key) { drafts.delete(key); },
+    } },
   });
-  return { exports, handlers, storage, redirects, requests };
+  return { exports, handlers, storage, redirects, requests, drafts };
 }
+
+test('expired account sessions clear private team drafts before redirecting', async () => {
+  const f = httpHarness('account', { 'sq-at': 'expired' });
+  await assert.rejects(f.handlers.failure({ response: { status: 401 }, config: { url: '/api/teams', headers: {} } }));
+  assert.deepEqual([...f.drafts.keys()], ['navigation-visits']);
+});
+
+test('changing account identity clears drafts while same-owner token refresh retains them', () => {
+  const jwt = sub => `fixture.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`;
+  const f = httpHarness('account', { 'sq-at': jwt('owner-a'), 'sq-rt': 'refresh' });
+  f.exports.tokenStore.save(jwt('owner-a'), 'refreshed');
+  assert.equal(f.drafts.has('squabble.team-create'), true);
+  f.exports.tokenStore.save(jwt('owner-b'), 'new-login');
+  assert.deepEqual([...f.drafts.keys()], ['navigation-visits']);
+});
 
 test('local workspace has a session without credentials and never sends a saved Bearer token', () => {
   const empty = httpHarness('local', {});

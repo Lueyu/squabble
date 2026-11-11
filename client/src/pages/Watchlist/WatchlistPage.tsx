@@ -65,6 +65,10 @@ import DetailDialog from './DetailDialog';
 import WatchForm, { type WatchFormData } from './WatchForm';
 
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom';
+import { safeReturnPath } from '@/features/navigation/workspace-navigation';
+import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navigation';
+import { holdingsHref } from '@/features/assets/account-context';
 
 /** Signal filter options (built inside the component for i18n). */
 function signalFilters(t: (k: string) => string): Array<{ value: 'all' | string; label: string }> {
@@ -130,6 +134,10 @@ function belowTargetPct(
  * dialog, add-dialog open state, and the create form.
  */
 function WatchlistPage() {
+  const location = useLocation();
+  const { returnToContext } = useWorkspaceNavigation();
+  const accountParams = new URLSearchParams(location.search);
+  const returnTo = safeReturnPath(accountParams.get('returnTo')) ?? holdingsHref(accountParams.get('accountId') ?? 'real');
   const { t } = useTranslation();
   const [items, setItems] = useState<WatchItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -237,6 +245,7 @@ function WatchlistPage() {
 
   return (
     <div className="space-y-4 md:space-y-6">
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 p-4"><p className="text-sm text-muted-foreground">{t('assets.globalWatchlist')}</p><Button variant="outline" size="sm" onClick={() => returnToContext(returnTo)}>{t('assets.returnAccount')}</Button></section>
       {/* Header actions */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex-1">

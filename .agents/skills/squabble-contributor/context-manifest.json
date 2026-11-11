@@ -4,9 +4,9 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "b9f1febea567438afd315d6dcf8000d02a64c53e",
+    "commit": "3a561b18bacbef8557996d18977e69b1f63380e8",
     "workingTreeChanges": true,
-    "reviewedAt": "2026-11-11",
+    "reviewedAt": "2026-11-12",
     "scope": [
       "V4 eight-destination navigation, safe return and scroll restoration; compatible legacy routes",
       "Persistent strategy interviews with exact wording, explicit acceptance, saved review and disabled account staging",
@@ -19,7 +19,8 @@
       "Browser capture: isolated manual login, encrypted owner/source sessions, pinned public egress, token-fenced rendered versions and task-scoped read_browser_source",
       "Agent telemetry: owner-scoped run/attempt/span queries, metadata-only capture, explicit feedback, source-deletion fences and opt-in Langfuse export",
       "Agent tooling: durable single-step runtime and controlled/Deep Agents drivers; outbound owner-approved MCP/provider connections, editable write previews, immutable datasets/private artifacts, local parser jobs, run browsers and isolated fixed-template analytics",
-      "Local Agent diagnostics: pure owner/source-scoped snapshots, native/Companion process evidence, bounded public activity, structured failures and separate acceptance/publication; flows3–5 retain financial and source authority"
+      "Local Agent diagnostics: pure owner/source-scoped snapshots, native/Companion process evidence, bounded public activity, structured failures and separate acceptance/publication; flows3–5 retain financial and source authority",
+      "Team workspace: organization/version/binding/commission/source/decision contracts, neutral scope fences and read-only account assets; implementation validation recorded separately"
     ]
   },
   "areas": [
@@ -519,6 +520,39 @@
         "references/research-and-execution.md",
         "references/development-and-tests.md",
         "references/deployment-and-recovery.md"
+      ],
+      "diagrams": [
+        "system-overview",
+        "research-report",
+        "strategy-execution",
+        "channel-publication",
+        "asset-ledger"
+      ]
+    },
+    {
+      "id": "team-workspace",
+      "paths": [
+        "client/src/features/teams/",
+        "client/src/pages/Teams/",
+        "client/src/features/assets/",
+        "server/modules/teams/",
+        "server/database/team-",
+        "server/database/teams.schema.ts",
+        "shared/team-",
+        "scripts/db/61_teams.sql",
+        "server/database/team-member-sources.ts",
+        "server/modules/paper-trading/team-strategy-sources.ts"
+      ],
+      "entrypoints": [
+        "server/modules/teams/teams.module.ts",
+        "shared/team-workspace.interface.ts",
+        "client/src/pages/Teams/TeamsPage.tsx",
+        "client/src/pages/Teams/TeamWorkspacePage.tsx"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md",
+        "references/development-and-tests.md"
       ],
       "diagrams": [
         "system-overview",

@@ -199,7 +199,7 @@ test('JSON calls budget injected instructions and use compatible reasoning-model
   try {
     assert.deepEqual(await service.chatSlowJSON([{ role: 'user', content: 'fact' }], 'alice', {
       taskId: 'json-task', maxOutputTokens: 200,
-    }), { data: { ok: true }, tokens: 30 });
+    }), { data: { ok: true }, tokens: 30, tokensKnown: true });
     assert.equal(harness.reservations[0].request.messages.length, 2);
     assert.equal(harness.reservations[0].taskId, 'json-task');
   } finally { axios.defaults.adapter = original; }

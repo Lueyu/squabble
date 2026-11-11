@@ -3,7 +3,7 @@ import type { MemoryContextInventory, ResearchMemoryRecall, ThesisCandidateInput
 import type { ResearchToolResult } from './research-tools.interface';
 
 export type ResearchGoal = 'comprehensive' | 'financials' | 'peers' | 'valuation';
-export type ResearchTaskKind = 'financials' | 'business' | 'valuation' | 'challenge' | 'summary';
+export type ResearchTaskKind = 'financials' | 'business' | 'valuation' | 'challenge' | 'summary' | 'specialist';
 export type ResearchTaskState = 'queued' | 'running' | 'submitted' | 'accepted' | 'needs_revision'
   | 'failed' | 'blocked' | 'cancelled' | 'uncertain';
 export interface ResearchSkillPin { id: string; version: string; hash: string; context: string }
@@ -20,6 +20,8 @@ export interface ResearchDelivery {
   response: CouncilResponse;
 }
 export interface ResearchTaskAttempt {
+  /** Private saved provider result for local re-validation; never included in telemetry. */
+  savedResponse?: { data?: unknown; text?: string };
   libraryReferences?: import('./data-library.interface').DataLibraryReference[];
   memory?: MemoryContextInventory;
   id: string; revision: number; kind: 'work' | 'review'; startedAt: string; finishedAt?: string;
@@ -30,6 +32,8 @@ export interface ResearchTaskAttempt {
   delivery?: ResearchDelivery; review?: { accepted: boolean; feedback: string };
 }
 export interface ResearchTask {
+  workKey?: string | null; dependencyWorkKeys?: string[];
+  reviewerMemberId?: string | null; assignment?: import('./team-workspace.interface').TeamWorkItem | null;
   id: string; key: ResearchTaskKind; sessionId: string; cycleId: string; revision: number; position: number;
   memberId: string; dependencies: ResearchTaskKind[]; state: ResearchTaskState; reason: string | null;
   attempts: ResearchTaskAttempt[]; delivery: ResearchDelivery | null; skills: ResearchSkillPin[];

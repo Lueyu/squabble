@@ -4,7 +4,12 @@ import { councilSessions } from './council.schema';
 import type { ResearchDelivery, ResearchSkillPin, ResearchTaskAttempt, ResearchTaskKind, ResearchTaskState } from '../../shared/research-workflow.interface';
 
 export const councilResearchTasks = pgTable('council_research_tasks', {
+  // Nullable work metadata must not turn an existing legacy task into an absent join.
   id: uuid('id').primaryKey().defaultRandom(), owner: text('owner').notNull(),
+  workKey: text('work_key'),
+  dependencyWorkKeys: jsonb('dependency_work_keys').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  taskKind: text('task_kind'), reviewerMemberId: text('reviewer_member_id'),
+  assignment: jsonb('assignment_json').$type<import('../../shared/team-workspace.interface').TeamWorkItem | null>(),
   sessionId: uuid('session_id').notNull().references(() => councilSessions.id, { onDelete: 'cascade' }),
   cycleId: uuid('cycle_id').notNull(), revision: integer('revision').notNull(),
   key: varchar('key', { length: 20 }).$type<ResearchTaskKind>().notNull(), position: integer('position').notNull(),
@@ -14,5 +19,6 @@ export const councilResearchTasks = pgTable('council_research_tasks', {
   delivery: jsonb('delivery').$type<ResearchDelivery | null>(), skills: jsonb('skills').$type<ResearchSkillPin[]>().notNull(),
   reworks: integer('reworks').notNull().default(0), acceptedAttemptId: uuid('accepted_attempt_id'),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
-}, t => [uniqueIndex('council_research_tasks_cycle_key_idx').on(t.sessionId, t.cycleId, t.key),
+}, t => [uniqueIndex('council_research_tasks_cycle_key_idx').on(t.sessionId, t.cycleId, t.key).where(sql`${t.workKey} IS NULL`),
+  uniqueIndex('council_research_tasks_cycle_work_key_idx').on(t.sessionId, t.cycleId, t.workKey).where(sql`${t.workKey} IS NOT NULL`),
   index('council_research_tasks_owner_idx').on(t.owner, t.sessionId, t.cycleId)]);

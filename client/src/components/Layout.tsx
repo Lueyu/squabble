@@ -53,6 +53,7 @@ import { workspaceSections, resolveWorkspaceRoute } from '@/features/navigation/
 import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navigation';
 import { WorkspaceNavigationBar, WorkspaceSectionTabs } from '@/features/navigation/WorkspaceNavigationBar';
 import { WorkspaceSearch } from '@/features/navigation/WorkspaceSearch';
+import { clearTeamDraftStorage } from '@/features/teams/team-draft-storage';
 
 /**
  * Sidebar navigation entries. `end: true` marks the index route so it is only
@@ -65,6 +66,7 @@ const navItems = [
   { path: '/watchlist', label: 'nav.watchlist', icon: Eye },
   { path: '/analysis', label: 'nav.analysis', icon: BarChart3 },
   { path: '/paper', label: 'nav.paper', icon: FlaskConical },
+  { path: '/teams', label: 'nav.teams', icon: Users },
   { path: '/agent-builder', label: 'ui.builder.nav', icon: Bot },
   { path: '/council', label: 'council.nav', icon: Users },
   { path: '/journal', label: 'nav.journal', icon: BookOpen },
@@ -95,7 +97,7 @@ function Layout() {
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
   const { enabled: simple } = useSimpleExperience();
-  const sectionIcons = { overview: LayoutDashboard, friends: Users, daily: BookOpen, research: FlaskConical, assets: Briefcase, data: Database, memory: Brain, telemetry: BarChart3, settings: Settings };
+  const sectionIcons = { overview: LayoutDashboard, friends: Users, teams: Users, daily: BookOpen, research: FlaskConical, assets: Briefcase, data: Database, memory: Brain, telemetry: BarChart3, settings: Settings };
   const simpleItems = simple ? workspaceSections(i18n.language).map(item => ({ ...item, icon: sectionIcons[item.id], literal: true })) : [];
   const allItems = simple ? simpleItems : navItems;
   const currentRoute = resolveWorkspaceRoute(location.pathname, i18n.language);
@@ -106,8 +108,8 @@ function Layout() {
     { label: zh ? '工作区' : 'Workspace', items: simpleItems.filter(item => item.group === 'workspace') },
   ] : [
     { label: zh ? '我的投资' : 'Portfolio', items: navItems.slice(0, 4) },
-    { label: zh ? '研究与实验' : 'Research & lab', items: navItems.slice(4, 11) },
-    { label: zh ? '偏好设置' : 'Preferences', items: navItems.slice(11) },
+    { label: zh ? '研究与实验' : 'Research & lab', items: navItems.slice(4, 12) },
+    { label: zh ? '偏好设置' : 'Preferences', items: navItems.slice(12) },
   ];
 
   const toggleLang = () => {
@@ -360,6 +362,7 @@ function LogoutButton() {
   const queryClient = useQueryClient();
 
   const handleLogout = () => {
+    clearTeamDraftStorage(window.sessionStorage);
     tokenStore.clear();
     queryClient.clear();
     navigate('/login', { replace: true });
