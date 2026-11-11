@@ -186,3 +186,11 @@ test('fixed adapter stages translate without changing recorded public evidence',
   assert.equal(copy.diagnosticEventSummary('A retained public source activity', true), 'A retained public source activity');
   assert.equal(copy.diagnosticEventSummary('Native process started', false), 'Native process started');
 });
+
+
+test('diagnostic timestamps distinguish failures within the same second', () => {
+  const { formatDiagnosticTime } = fixture().load('features/telemetry/telemetry-diagnostics-state.ts');
+  assert.notEqual(formatDiagnosticTime('2026-11-11T08:00:01.100Z', 'en'), formatDiagnosticTime('2026-11-11T08:00:01.900Z', 'en'));
+  assert.notEqual(formatDiagnosticTime('2026-11-11T08:00:01.100Z', 'zh-CN'), formatDiagnosticTime('2026-11-11T08:00:02.100Z', 'zh-CN'));
+  assert.equal(formatDiagnosticTime('invalid', 'en'), '—');
+});

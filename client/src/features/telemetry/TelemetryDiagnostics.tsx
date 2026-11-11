@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import type { TelemetryDiagnosticEvent, TelemetryDiagnosticStage, TelemetryDiagnostics as Diagnostics, TelemetryTaskDiagnostic } from '@shared/telemetry-diagnostics.interface';
 import { TelemetryEmpty, TelemetryPanel } from './TelemetryPrimitives';
 import { useTelemetryDiagnostics } from './use-telemetry';
-import { diagnosticAccessDenied, diagnosticEvidence, diagnosticPack } from './telemetry-diagnostics-state';
-import { formatDuration, formatTime } from './telemetry-state';
+import { diagnosticAccessDenied, diagnosticEvidence, diagnosticPack, formatDiagnosticTime } from './telemetry-diagnostics-state';
+import { formatDuration } from './telemetry-state';
 import { diagnosticEventSummary, diagnosticFailureExplanation, diagnosticFailureStageLabel, diagnosticRecoveryLabel } from './telemetry-copy';
 
 function stageLabel(stage: TelemetryDiagnosticStage | null, zh: boolean): string {
@@ -54,7 +54,7 @@ function publicationLabel(state: Diagnostics['publication'], zh: boolean): strin
 function EventRow({ event, language, memberName }: { event: TelemetryDiagnosticEvent; language: string; memberName?: string }) {
   const zh = language.startsWith('zh');
   return <li className={`telemetry-diagnostic-event telemetry-event-${event.status}`}>
-    <div><time className="telemetry-mono" dateTime={event.at}>{formatTime(event.at, language)}</time>
+    <div><time className="telemetry-mono" dateTime={event.at}>{formatDiagnosticTime(event.at, language)}</time>
       <span className="telemetry-diagnostic-stage">{stageLabel(event.stage, zh)}</span>
       <span className={event.status === 'failed' ? 'telemetry-negative' : 'telemetry-muted'}>{stateLabel(event.status, zh)}</span>
       {memberName && <strong>{memberName}</strong>}</div>
@@ -82,13 +82,13 @@ function TaskDetail({ task, data, sessionId, language }: { task: TelemetryTaskDi
     <div className="telemetry-row-between"><h3>{task.memberName} · {zh ? '第' : 'Attempt'} {task.attempt}{zh ? ' 次' : ''}</h3>
       <span className={`telemetry-status telemetry-status-${task.state}`}>{stateLabel(task.state, zh)}</span></div>
     <dl className="telemetry-diagnostic-summary">
-      <div><dt>{zh ? '当前记录阶段' : 'Current recorded stage'}</dt><dd>{stageLabel(evidence.stage, zh)}</dd><small>{evidence.latestEvent ? formatTime(evidence.latestEvent.at, language) : (zh ? '未保存阶段事件' : 'No saved stage events')}</small></div>
+      <div><dt>{zh ? '当前记录阶段' : 'Current recorded stage'}</dt><dd>{stageLabel(evidence.stage, zh)}</dd><small>{evidence.latestEvent ? formatDiagnosticTime(evidence.latestEvent.at, language) : (zh ? '未保存阶段事件' : 'No saved stage events')}</small></div>
       <div><dt>{zh ? '实际进程状态' : 'Observed process state'}</dt><dd>{processLabel(task.processState, zh)}</dd><small>{zh ? '执行完成不代表验收通过' : 'Completion does not establish acceptance'}</small></div>
       <div><dt>{zh ? '结果验收' : 'Result acceptance'}</dt><dd>{stateLabel(task.acceptance ?? 'unknown', zh)}</dd><small>{zh ? '报告发布' : 'Publication'}: {publicationLabel(data.publication, zh)}</small></div>
     </dl>
     <dl className="telemetry-facts">
-      <dt>{zh ? '最近公开活动' : 'Last public activity'}</dt><dd>{task.lastActivityAt ? formatTime(task.lastActivityAt, language) : unknown}</dd>
-      <dt>{zh ? '桥接最近心跳' : 'Last bridge heartbeat'}</dt><dd>{task.heartbeatAt ? formatTime(task.heartbeatAt, language) : (zh ? '未记录；连接状态未知' : 'Not recorded; connectivity unknown')}</dd>
+      <dt>{zh ? '最近公开活动' : 'Last public activity'}</dt><dd>{task.lastActivityAt ? formatDiagnosticTime(task.lastActivityAt, language) : unknown}</dd>
+      <dt>{zh ? '桥接最近心跳' : 'Last bridge heartbeat'}</dt><dd>{task.heartbeatAt ? formatDiagnosticTime(task.heartbeatAt, language) : (zh ? '未记录；连接状态未知' : 'Not recorded; connectivity unknown')}</dd>
       <dt>{zh ? '最后成功步骤' : 'Last successful step'}</dt><dd>{evidence.lastSuccess ? `${stageLabel(evidence.lastSuccess.stage, zh)} · ${diagnosticEventSummary(evidence.lastSuccess.summary, zh)}` : unknown}</dd>
       <dt>{zh ? '执行器 / 通道' : 'Executor / transport'}</dt><dd>{task.provider ?? unknown} / {task.transport ?? unknown}</dd>
       <dt>{zh ? '配置 / 观测模型' : 'Configured / observed model'}</dt><dd>{task.configuredModel ?? unknown} / {task.observedModel ?? unknown}</dd>
@@ -156,7 +156,7 @@ export default function TelemetryDiagnostics({ id, sessionId, active }: { id: st
     {query.isError && !denied && <p className="telemetry-banner" role="status">{zh ? '重新连接中，保留上次成功读取的诊断记录。' : 'Reconnecting. The last successfully read diagnostics remain visible.'}</p>}
     {!data ? <TelemetryEmpty>{query.isPending ? (zh ? '正在读取诊断记录…' : 'Loading diagnostic records…') : (zh ? '诊断记录不可用，未保留的历史步骤无法还原。' : 'Diagnostic records are unavailable. Unretained historical steps cannot be reconstructed.')}</TelemetryEmpty> : <>
       <div className="telemetry-row-between telemetry-muted"><span>{zh ? '观测覆盖' : 'Coverage'}: {data.coverage === 'available' ? (zh ? '已保留' : 'Retained') : data.coverage === 'partial' ? (zh ? '部分记录 / 历史信息缺失' : 'Partial records / missing history') : (zh ? '不可用' : 'Unavailable')}</span>
-        <span>{zh ? '最近成功读取' : 'Last successful read'}: {formatTime(data.generatedAt, i18n.language)}</span></div>
+        <span>{zh ? '最近成功读取' : 'Last successful read'}: {formatDiagnosticTime(data.generatedAt, i18n.language)}</span></div>
       {data.tasks.length ? <>
         <div className="telemetry-diagnostic-task-list" aria-label={zh ? '选择执行任务' : 'Select execution task'}>{data.tasks.map(task => <Button key={task.taskId} variant={selected?.taskId === task.taskId ? 'secondary' : 'outline'} aria-pressed={selected?.taskId === task.taskId} onClick={() => setSelectedId(task.taskId)}>
           <span>{task.memberName}<small>{zh ? '第' : 'Attempt'} {task.attempt}{zh ? ' 次' : ''} · {stateLabel(task.state, zh)}</small></span>

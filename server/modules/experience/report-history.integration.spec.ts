@@ -17,6 +17,13 @@ import {researchCurrentViews} from '../../database/simple-experience.schema';
 test('first AI report and latest same-day portfolio discussion are independent immutable selections',{skip:!process.env.EXPERIENCE_TEST_DATABASE_URL},async()=>{
   const url=process.env.EXPERIENCE_TEST_DATABASE_URL!,namespace='report_history_'+randomUUID().replaceAll('-','');
   const admin=postgres(url,{max:1,onnotice:()=>{}}),client=postgres(url,{max:4,onnotice:()=>{},connection:{search_path:namespace}});
+  async function waitForDatabaseClock(): Promise<void> {
+    // Published fixtures use PostgreSQL timestamps; a VM clock can briefly lead the application visibility fence.
+    const [database] = await client<{ clock: number }[]>`SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS clock`;
+    const delay = database.clock - Date.now() + 5;
+    assert.ok(delay <= 5000, 'fixture database clock must be within five seconds of the application clock');
+    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+  }
   await admin`CREATE SCHEMA ${admin(namespace)}`;
   try{
     for(const name of readdirSync('scripts/db').filter(n=>/^\d\d_.*\.sql$/u.test(n)&&!n.startsWith('02_')&&(Number(n.slice(0,2))<=34 || n.startsWith('49_'))).sort())await client.unsafe(readFileSync('scripts/db/'+name,'utf8'));
@@ -30,6 +37,7 @@ test('first AI report and latest same-day portfolio discussion are independent i
     const first=await discussion('First round',1),second=await discussion('Second round',2);
     await db.update(councilSessions).set({status:'running',revision:3}).where(eq(councilSessions.id,session.id));
     await db.insert(researchCurrentViews).values({owner,topicKey:'portfolio',dateKey:'2026-11-06',currentDocumentId:second.id,state:'ready'});
+    await waitForDatabaseClock();
     const selected=await service.getDailyReports(owner,'2026-11-06');
     assert.equal(selected.initial?.documentId,initial.id);assert.equal(selected.latestDiscussion?.documentId,second.id);
     assert.deepEqual(new Set(selected.history.map(item=>item.documentId)),new Set([initial.id,update.id,first.id,second.id]));
@@ -44,6 +52,7 @@ test('first AI report and latest same-day portfolio discussion are independent i
       dissent:['Member unavailable'],nextReviewCondition:'Finish the missing review',evidence:[],engine:'local',publicationOutcome:'succeeded',
       coverage:{goal:'review',cycleId:randomUUID(),revision:3,complete:false,tasks:[]} as never}).returning();
     const partial=await documents.importSource(owner,{type:'council',id:partialReport.id});
+    await waitForDatabaseClock();
     const afterPartial=await service.getDailyReports(owner,'2026-11-06');
     assert.equal(afterPartial.latestDiscussion?.documentId,second.id,'partial coverage must not replace the latest complete discussion conclusion');
     assert.ok(afterPartial.history.some(item=>item.documentId===partial.id),'partial saved research remains available in history');
@@ -108,7 +117,9 @@ test('first AI report and latest same-day portfolio discussion are independent i
     const raw='Result follows:\n```json\n{"response":{"thesis":"Reformatted paid result.","evidencePoints":[],"risks":[],"nextChecks":[]}}\n```';
     const [returned]=await db.insert(portfolioAnalysisRuns).values({owner,status:'completed',route:{mode:'api'},snapshot:{},progress:{},report:{summary:raw}}).returning();
     await db.update(researchCurrentViews).set({state:'failed',taskId:returned.id,taskKind:'formatting_portfolio',currentDocumentId:initial.id}).where(eq(researchCurrentViews.owner,owner));
-    const repaired=await service.reformat(owner,{topicKey:'portfolio',date:'2026-11-06',requestKey:'reformat-paid'},'Asia/Shanghai');
+    await service.reformat(owner,{topicKey:'portfolio',date:'2026-11-06',requestKey:'reformat-paid'},'Asia/Shanghai');
+    await waitForDatabaseClock();
+    const repaired=await service.get(owner,'portfolio','2026-11-06');
     assert.match(repaired.content,/Reformatted paid result/u);assert.equal(repaired.state,'ready');
     assert.equal((await service.reformat(owner,{topicKey:'portfolio',date:'2026-11-06',requestKey:'reformat-paid'},'Asia/Shanghai')).documentId,repaired.documentId);
     assert.equal((await db.select().from(portfolioAnalysisRuns).where(eq(portfolioAnalysisRuns.id,returned.id)))[0].report&&JSON.stringify((await db.select().from(portfolioAnalysisRuns).where(eq(portfolioAnalysisRuns.id,returned.id)))[0].report),JSON.stringify({summary:raw}),'reformat never rewrites the original paid output');

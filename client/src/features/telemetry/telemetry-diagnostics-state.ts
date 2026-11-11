@@ -43,3 +43,13 @@ export function diagnosticPack(runId: string, data: TelemetryDiagnostics): strin
     })),
   } }, null, 2);
 }
+
+/** Subsecond task failures need finer timestamps than the aggregate run list. */
+export function formatDiagnosticTime(value: string, language: string): string {
+  const at = new Date(value);
+  if (!Number.isFinite(at.getTime())) return '—';
+  const time = at.toLocaleString(language, {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  return `${time}.${String(at.getMilliseconds()).padStart(3, '0')}`;
+}
