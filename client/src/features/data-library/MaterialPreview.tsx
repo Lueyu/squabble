@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Download, RefreshCw, Trash2 } from 'lucide-react';
+import DocumentExtractionStatus from './DocumentExtractionStatus';
 import { dataLibraryApi, dataLibraryKey } from '@/api/data-library';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -76,7 +77,8 @@ export default function MaterialPreview({ sourceId, onRemoved }: { sourceId: str
       <dt>{zh ? '保存版本' : 'Saved versions'}</dt><dd>{source.versionCount}</dd></dl>
     {source.description && <p className="text-sm leading-7 whitespace-pre-wrap break-words">{source.description}</p>}
     {source.kind === 'image' && <SavedImage source={source} />}
-    {source.state === 'needs-text' && <p className="data-notice data-warning">{zh ? '原图已保存，尚未 OCR。研究只能使用你补充的说明，不能当作已识别的图中文字。' : 'Original image saved without OCR. Research can use your description, not inferred image text.'}</p>}
+    {source.kind === 'image' && source.state === 'needs-text' && <p className="data-notice data-warning">{zh ? '原图已保存，尚未 OCR。研究只能使用你补充的说明，不能当作已识别的图中文字。' : 'Original image saved without OCR. Research can use your description, not inferred image text.'}</p>}
+    {(source.format === 'pdf' || source.format === 'docx') && <DocumentExtractionStatus sourceId={sourceId} versionId={versionId} enabled={source.enabled} zh={zh} />}
     <label className="data-field">{zh ? '版本历史' : 'Version history'}<select className="data-select" value={versionId} onChange={event => setSelectedVersion(event.target.value)} disabled={!detail.data?.versions.length}>
       {!detail.data?.versions.length && <option value="">{zh ? '等待首次同步' : 'Awaiting first sync'}</option>}
       {detail.data?.versions.map(item => <option key={item.id} value={item.id}>v{item.version} · {dataTime(item.observedAt, i18n.language)}</option>)}

@@ -100,12 +100,12 @@ export default function SourceForm({ subscription = false, onClose }: { subscrip
           : <p className="data-notice">{zh ? '认证方式：在专用浏览器中登录。先保存订阅，再打开浏览器并保存连接，最后手动采集。' : 'Authentication: sign in using the dedicated browser. Save the subscription, open the browser and save its connection, then capture.'}</p>}
         <p className="text-xs leading-6 text-muted-foreground">{zh ? '定时任务在应用运行期间执行。浏览器采集只保存配置地址的页面正文，不会自动遍历全站。' : 'Scheduled jobs run while the application is running. Browser capture saves only the configured page, without crawling the entire site.'}</p>
       </>}
-      {mode === 'file' && <label className="data-field">{zh ? '文件 · 最大 8 MiB' : 'File · Up to 8 MiB'}<Input type="file" required accept=".txt,.md,.html,.htm,.json,.xml,.rss,.pptx,.png,.jpg,.jpeg,.webp" onChange={event => {
+      {mode === 'file' && <label className="data-field">{zh ? '文件 · 最大 8 MiB' : 'File · Up to 8 MiB'}<Input type="file" required accept=".txt,.md,.html,.htm,.json,.xml,.rss,.pptx,.pdf,.docx,.png,.jpg,.jpeg,.webp" onChange={event => {
         const next = event.target.files?.[0] ?? null;
         setFile(next);
         setFileError(next && next.size > 8 * 1024 * 1024 ? zh ? '文件超过 8 MiB。' : 'File exceeds 8 MiB.' : '');
         if (next && !title) setTitle(next.name);
-      }} /><span className="text-xs leading-6 text-muted-foreground">{zh ? '支持文本、网页、JSON、RSS、PPTX 和图片。图片保存原件，可补充说明；不会假装已经识别图片文字。' : 'Text, HTML, JSON, RSS, PPTX and images. Images preserve the original with your description; no OCR is implied.'}</span></label>}
+      }} /><span className="text-xs leading-6 text-muted-foreground">{zh ? '支持文本、网页、JSON、RSS、PPTX、PDF、DOCX 和图片。PDF/DOCX 保存原件并由已配置的本地服务后台解析；图片可补充说明。' : 'Text, HTML, JSON, RSS, PPTX, PDF, DOCX and images. PDF/DOCX originals are saved and parsed in the background by a configured local service; images accept a description.'}</span></label>}
       <label className="data-field">{zh ? '说明（可选）' : 'Description (optional)'}<Textarea rows={2} value={description} onChange={event => setDescription(event.target.value)} /></label>
       {(save.isError || fileError) && <p role="alert" className="text-sm text-destructive">{fileError || dataError(save.error, zh)}</p>}
       <footer className="flex justify-end gap-2"><Button type="button" variant="ghost" disabled={save.isPending} onClick={onClose}>{zh ? '取消' : 'Cancel'}</Button><Button type="submit" disabled={save.isPending || !!fileError || !title.trim()}>{save.isPending ? zh ? '正在保存…' : 'Saving…' : zh ? '保存资料' : 'Save source'}</Button></footer>

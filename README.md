@@ -30,6 +30,7 @@ Understand your portfolio, what changed, and what needs your decision.
 
 - **Daily research and a quiet channel.** Independent investigations and a separate reverse check stay in readable reports. The channel publishes short, sourced updates, expandable evidence and one-fact follow-ups. [Channel guide](docs/channel-workbench.md).
 - **Strategy-driven paper trading.** Copy recorded holdings and cash, review the strategy, then explicitly apply it to the simulation. Current rules, proposed changes and actual fills remain distinct. Existing advanced tools remain available.
+- **Bring your model and reviewed tools.** Optional outbound MCP, search, browser, document and analytics adapters share durable receipts, budgets and source permissions. External writes require an editable confirmation; unknown outcomes are never silently resent. Configure each provider explicitly; [setup and acceptance limits](docs/agent-tooling.md).
 - **Your data stays yours.** Self-hosted. No default external telemetry. Desktop and source local workspaces open without a Squabble login; account mode remains available.
 
 ## Install

@@ -957,3 +957,10 @@ export * from './portfolio-history.schema';
 export * from './research-deletions.schema';
 export * from './data-library.schema';
 export * from './telemetry.schema';
+
+export * from './agent-tooling.schema';
+export * from './research-artifacts.schema';
+export * from './tool-actions.schema';
+export * from './tool-connections.schema';
+export * from './research-compute.schema';
+export * from './deep-agent-driver.schema';

@@ -53,6 +53,7 @@ test('canonicalizing the settings entry keeps previously visited form panels mou
       './settings-navigation': navigation,
       '@/api/auth-mode': { getAuthMode: () => 'account' },
       '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
+      '@/features/tool-connections/tool-connection-copy': { useToolConnectionCopy: () => ({ title: 'Tools', description: 'Tools settings' }) },
     };
     vm.runInNewContext(output, { exports, require: name => imports[name] ?? {} });
     const tree = exports.default();

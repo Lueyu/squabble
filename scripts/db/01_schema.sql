@@ -1937,3 +1937,237 @@ CREATE TABLE IF NOT EXISTS telemetry_feedback (
   owner text NOT NULL, run_id text NOT NULL, rating text NOT NULL CHECK(rating IN ('positive','negative')),
   comment text NOT NULL DEFAULT '' CHECK(length(comment) <= 2000), updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner,run_id)
 );
+
+-- 53_agent_tool_runtime.sql
+-- Durable runtime receipts are additive and never dispatch work during migration.
+CREATE TABLE IF NOT EXISTS agent_runtime_runs (
+  id uuid PRIMARY KEY, owner text NOT NULL, identity_hash text NOT NULL,
+  identity jsonb NOT NULL, driver text NOT NULL, frozen_input_hash text NOT NULL,
+  frozen_input_enc text NOT NULL, initial_request_enc text, initial_request_hash text,
+  policy jsonb NOT NULL, state text NOT NULL DEFAULT 'queued',
+  cursor integer NOT NULL DEFAULT 0, lease_token text, lease_until timestamptz, cancel_requested boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(owner, identity_hash), UNIQUE(owner, id),
+  CHECK(state IN ('queued','running','waiting_approval','cancelling','provider_unknown','result_received','accepted','failed','cancelled','settled_unknown'))
+);
+CREATE TABLE IF NOT EXISTS agent_runtime_steps (
+  id uuid PRIMARY KEY, owner text NOT NULL, run_id uuid NOT NULL, step_index integer NOT NULL,
+  dispatch_key text NOT NULL, request_hash text NOT NULL, request_enc text NOT NULL, model text NOT NULL,
+  response_hash text, response_enc text, state text NOT NULL DEFAULT 'dispatched',
+  budget_id uuid, provider_request_id text, usage jsonb, created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(owner, run_id) REFERENCES agent_runtime_runs(owner,id),
+  UNIQUE(owner, run_id, step_index), UNIQUE(owner, dispatch_key), UNIQUE(owner,id), UNIQUE(owner,run_id,id)
+);
+CREATE TABLE IF NOT EXISTS agent_runtime_events (
+  id bigserial PRIMARY KEY, owner text NOT NULL, run_id uuid NOT NULL, step_id uuid,
+  kind text NOT NULL, code text, parse_attempt_id uuid, response_hash text, parser_version text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(owner, run_id) REFERENCES agent_runtime_runs(owner,id)
+);
+CREATE TABLE IF NOT EXISTS agent_tool_invocations (
+  id uuid PRIMARY KEY, owner text NOT NULL, run_id uuid NOT NULL, step_id uuid NOT NULL,
+  tool_call_id text NOT NULL, tool_id text NOT NULL, catalog_version_id text NOT NULL,
+  arguments_hash text NOT NULL, arguments_enc text NOT NULL, result_enc text,
+  state text NOT NULL DEFAULT 'queued', remote_receipt jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(owner,run_id) REFERENCES agent_runtime_runs(owner,id),
+  FOREIGN KEY(owner,run_id,step_id) REFERENCES agent_runtime_steps(owner,run_id,id),
+  UNIQUE(owner,run_id,step_id,tool_call_id), UNIQUE(owner,id)
+);
+CREATE TABLE IF NOT EXISTS agent_tool_budget_reservations (
+  id uuid PRIMARY KEY, owner text NOT NULL, run_id uuid NOT NULL, invocation_id uuid NOT NULL,
+  amount numeric NOT NULL CHECK(amount>=0), unit text NOT NULL, price_version text NOT NULL,
+  actual_amount numeric, state text NOT NULL DEFAULT 'reserved', revision integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(owner,run_id) REFERENCES agent_runtime_runs(owner,id),
+  FOREIGN KEY(owner,invocation_id) REFERENCES agent_tool_invocations(owner,id),
+  UNIQUE(owner,invocation_id)
+);
+CREATE TABLE IF NOT EXISTS agent_tool_budget_events (
+  owner text NOT NULL, reservation_id uuid NOT NULL, revision integer NOT NULL,
+  state text NOT NULL, quantity numeric, created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(owner,reservation_id,revision)
+);
+CREATE INDEX IF NOT EXISTS agent_runtime_owner_state ON agent_runtime_runs(owner,state);
+-- Legacy budget rows keep null identities; only new paid dispatches opt into replay protection.
+ALTER TABLE IF EXISTS llm_budget_usage ADD COLUMN IF NOT EXISTS dispatch_key text;
+ALTER TABLE IF EXISTS llm_budget_usage ADD COLUMN IF NOT EXISTS request_hash text;
+DO $$ BEGIN
+  IF to_regclass('llm_budget_usage') IS NOT NULL THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS llm_budget_dispatch_identity ON llm_budget_usage(owner,dispatch_key) WHERE dispatch_key IS NOT NULL;
+  END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS agent_model_usage_corrections (
+  owner text NOT NULL, budget_id uuid NOT NULL, event_id text NOT NULL, prior_status text NOT NULL,
+  prior_tokens integer NOT NULL, corrected_tokens integer NOT NULL, facts jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner,budget_id,event_id)
+);
+CREATE TABLE IF NOT EXISTS agent_model_capabilities (
+  owner text NOT NULL, connection_id text NOT NULL, model text NOT NULL, config_hash text NOT NULL,
+  run_id uuid NOT NULL, supported boolean NOT NULL, enabled boolean NOT NULL DEFAULT false,
+  verified_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner,connection_id,model,config_hash)
+);
+CREATE TABLE IF NOT EXISTS agent_runtime_driver_preferences (
+  owner text NOT NULL, connection_id text NOT NULL, driver text NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner,connection_id),
+  CHECK(driver IN ('controlled','deep_agents'))
+);
+CREATE TABLE IF NOT EXISTS agent_runtime_evidence_snapshots (
+  owner text NOT NULL, run_id uuid NOT NULL, step_id uuid NOT NULL, content_hash text NOT NULL, content_enc text NOT NULL,
+  PRIMARY KEY(owner,run_id,step_id), FOREIGN KEY(owner,run_id,step_id) REFERENCES agent_runtime_steps(owner,run_id,id)
+);
+-- Route is selected once per full member/turn/attempt identity, before any paid dispatch.
+CREATE TABLE IF NOT EXISTS agent_runtime_execution_routes (
+  owner text NOT NULL, identity_hash text NOT NULL, identity jsonb NOT NULL,
+  route text NOT NULL CHECK(route IN ('legacy','controlled','deep_agents')), model_config jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner,identity_hash)
+);
+ALTER TABLE agent_runtime_execution_routes DROP CONSTRAINT IF EXISTS agent_runtime_execution_routes_route_check;
+ALTER TABLE agent_runtime_execution_routes ADD CONSTRAINT agent_runtime_execution_routes_route_check
+  CHECK(route IN ('legacy','controlled','deep_agents'));
+
+-- 54_research_artifacts.sql
+CREATE TABLE IF NOT EXISTS research_dataset_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  source_id uuid NOT NULL REFERENCES data_library_sources(id),
+  source_version_id uuid NOT NULL,
+  content_hash text NOT NULL CHECK (content_hash ~ '^[a-f0-9]{64}$'),
+  metadata jsonb NOT NULL, rows jsonb NOT NULL CHECK (jsonb_typeof(rows) = 'array'),
+  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked','deleted')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (owner, source_version_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS research_dataset_owner_idx ON research_dataset_versions(owner, created_at);
+CREATE TABLE IF NOT EXISTS research_source_policies (
+  source_version_id uuid PRIMARY KEY, owner text NOT NULL,
+  data_classes jsonb NOT NULL, permitted_uses jsonb NOT NULL,
+  retention_until timestamptz, revoked_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS research_artifacts (
+  id uuid PRIMARY KEY, owner text NOT NULL, run_id text NOT NULL,
+  metadata jsonb NOT NULL, storage_ref text NOT NULL UNIQUE,
+  size_bytes integer NOT NULL CHECK (size_bytes >= 0),
+  sha256 text NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
+  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked','deleted')),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS research_artifact_owner_idx ON research_artifacts(owner, created_at);
+CREATE TABLE IF NOT EXISTS research_document_extractions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL,
+  source_id uuid NOT NULL REFERENCES data_library_sources(id),
+  source_version_id uuid NOT NULL,
+  job_id uuid NOT NULL REFERENCES data_library_jobs(id),
+  original_hash text NOT NULL, extractor text NOT NULL, extractor_version text NOT NULL,
+  config_version text NOT NULL, artifact_id uuid NOT NULL REFERENCES research_artifacts(id),
+  metadata jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (owner, job_id)
+);
+CREATE TABLE IF NOT EXISTS research_document_tasks (
+  job_id uuid PRIMARY KEY REFERENCES data_library_jobs(id), owner text NOT NULL,
+  source_id uuid NOT NULL REFERENCES data_library_sources(id), source_version_id uuid NOT NULL,
+  source_revision integer NOT NULL, source_hash text NOT NULL,
+  lease_token uuid NOT NULL, original_hash text NOT NULL,
+  extractor text NOT NULL, extractor_version text NOT NULL, config_version text NOT NULL,
+  receipt jsonb, state text NOT NULL CHECK (state IN ('submitting','submitted','provider_unknown','cancelled','failed','completed')),
+  poll_token uuid, poll_until timestamptz, failure_count integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE research_document_tasks ADD COLUMN IF NOT EXISTS poll_token uuid;
+ALTER TABLE research_document_tasks ADD COLUMN IF NOT EXISTS poll_until timestamptz;
+ALTER TABLE research_document_tasks ADD COLUMN IF NOT EXISTS failure_count integer NOT NULL DEFAULT 0;
+
+-- 55_tool_actions.sql
+CREATE TABLE IF NOT EXISTS tool_actions (
+ id uuid PRIMARY KEY, owner text NOT NULL, run_id uuid NOT NULL, step_id uuid NOT NULL, tool_call_id text NOT NULL,
+ tool_id text NOT NULL, connection_id uuid NOT NULL, connection_revision integer NOT NULL, catalog_version_id text NOT NULL,
+ revision integer NOT NULL DEFAULT 1, payload_hash text NOT NULL, arguments_hash text NOT NULL, preview_enc text NOT NULL,
+ state text NOT NULL DEFAULT 'pending', expires_at timestamptz NOT NULL, approved_at timestamptz,
+ invocation_id text, receipt jsonb, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(owner, run_id, step_id, tool_call_id),
+ CHECK (revision > 0), CHECK (state IN ('draft','pending','approved','rejected','dispatched','completed','failed','unknown'))
+);
+CREATE INDEX IF NOT EXISTS tool_action_owner_idx ON tool_actions(owner, created_at);
+
+-- 56_tool_connections.sql
+-- Owner scoped connection state; secrets never enter the public catalog.
+CREATE TABLE IF NOT EXISTS tool_connections (
+ id uuid PRIMARY KEY, owner text NOT NULL, provider text NOT NULL, transport text NOT NULL,
+ endpoint text, secret_enc text, provider_config jsonb, revision integer NOT NULL DEFAULT 1, status text NOT NULL DEFAULT 'configured',
+ allowed_tool_ids jsonb NOT NULL DEFAULT '[]', allowed_data_classes jsonb NOT NULL DEFAULT '["public"]',
+ tool_effects jsonb NOT NULL DEFAULT '{}', catalog_version_id uuid, verified_at timestamptz,
+ oauth_config jsonb, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+ CONSTRAINT tool_connection_revision_positive CHECK (revision > 0)
+);
+CREATE INDEX IF NOT EXISTS tool_connection_owner_idx ON tool_connections(owner);
+CREATE TABLE IF NOT EXISTS tool_catalog_versions (
+ id uuid PRIMARY KEY, owner text NOT NULL, connection_id uuid NOT NULL REFERENCES tool_connections(id),
+ connection_revision integer NOT NULL, schema_hash text NOT NULL, descriptors jsonb NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS tool_catalog_owner_idx ON tool_catalog_versions(owner, connection_id);
+CREATE TABLE IF NOT EXISTS tool_oauth_states (
+ id uuid PRIMARY KEY, owner text NOT NULL, connection_id uuid NOT NULL REFERENCES tool_connections(id),
+ connection_revision integer NOT NULL, state_hash text NOT NULL UNIQUE, verifier_enc text NOT NULL,
+ expires_at timestamptz NOT NULL, consumed_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS tool_remote_jobs (
+ id uuid PRIMARY KEY, owner text NOT NULL, connection_id uuid NOT NULL REFERENCES tool_connections(id),
+ connection_revision integer NOT NULL, invocation_id text NOT NULL, remote_job_id text NOT NULL,
+ state text NOT NULL, limits jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(owner, invocation_id)
+);
+
+-- 57_research_compute.sql
+-- Persistent cloud compute intent precedes every sandbox creation. Startup never runs compute.
+CREATE TABLE IF NOT EXISTS research_compute_jobs (
+  id uuid PRIMARY KEY, owner text NOT NULL, run_id text NOT NULL,
+  request_key text NOT NULL, request_hash text NOT NULL, input_enc text NOT NULL,
+  kind text NOT NULL CHECK(kind IN ('statistics','backtest','exploratory')),
+  state text NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','creating','running','succeeded','failed',
+    'provider_unknown','cancel_requested','cancelled')),
+  sandbox_id text, termination_confirmed boolean NOT NULL DEFAULT false,
+  cancel_requested boolean NOT NULL DEFAULT false, max_runtime_ms integer NOT NULL CHECK(max_runtime_ms BETWEEN 1000 AND 120000),
+  result jsonb, error_code text, source_version_ids jsonb NOT NULL DEFAULT '[]', dataset_version_ids jsonb NOT NULL DEFAULT '[]',
+  retention_until timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(owner,request_key)
+);
+ALTER TABLE research_compute_jobs ADD COLUMN IF NOT EXISTS source_version_ids jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE research_compute_jobs ADD COLUMN IF NOT EXISTS dataset_version_ids jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE research_compute_jobs ADD COLUMN IF NOT EXISTS retention_until timestamptz;
+CREATE INDEX IF NOT EXISTS research_compute_owner_state ON research_compute_jobs(owner,state,created_at);
+
+CREATE OR REPLACE FUNCTION revoke_compute_version_inputs() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE research_compute_jobs SET input_enc='', result=NULL, cancel_requested=true,
+    state=CASE WHEN state IN ('creating','running','cancel_requested') THEN 'cancel_requested' ELSE 'failed' END,
+    error_code='COMPUTE_INPUT_REVOKED', updated_at=now()
+    WHERE owner=OLD.owner AND source_version_ids @> jsonb_build_array(OLD.id::text);
+  RETURN OLD;
+END $$;
+DROP TRIGGER IF EXISTS compute_version_delete_fence ON data_library_versions;
+CREATE TRIGGER compute_version_delete_fence BEFORE DELETE ON data_library_versions
+  FOR EACH ROW EXECUTE FUNCTION revoke_compute_version_inputs();
+
+CREATE OR REPLACE FUNCTION revoke_compute_source_inputs() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
+    UPDATE research_compute_jobs j SET input_enc='', result=NULL, cancel_requested=true,
+      state=CASE WHEN state IN ('creating','running','cancel_requested') THEN 'cancel_requested' ELSE 'failed' END,
+      error_code='COMPUTE_INPUT_REVOKED', updated_at=now()
+      WHERE j.owner=NEW.owner AND EXISTS (SELECT 1 FROM data_library_versions v
+        WHERE v.owner=NEW.owner AND v.source_id=NEW.id AND j.source_version_ids @> jsonb_build_array(v.id::text));
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS compute_source_tombstone_fence ON data_library_sources;
+CREATE TRIGGER compute_source_tombstone_fence BEFORE UPDATE OF deleted_at ON data_library_sources
+  FOR EACH ROW EXECUTE FUNCTION revoke_compute_source_inputs();
+
+-- 58_deep_agent_driver.sql
+-- No implicit LangGraph in-memory persistence or host filesystem is used by the controlled driver.
+CREATE TABLE IF NOT EXISTS deep_agent_driver_checkpoints (
+  owner text NOT NULL, run_id uuid NOT NULL, context_hash text NOT NULL,
+  step_index integer NOT NULL CHECK(step_index BETWEEN 0 AND 5), transcript_enc text NOT NULL,
+  transcript_hash text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(owner,run_id), FOREIGN KEY(owner,run_id) REFERENCES agent_runtime_runs(owner,id)
+);

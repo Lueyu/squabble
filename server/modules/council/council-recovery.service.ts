@@ -22,6 +22,9 @@ export class CouncilRecoveryService {
       const [attempt]=await tx.select().from(councilMemberAttempts).where(and(eq(councilMemberAttempts.owner,owner),eq(councilMemberAttempts.sessionId,sessionId),
         eq(councilMemberAttempts.cycleId,session.checkpoint!.cycleId),eq(councilMemberAttempts.memberId,input.memberId))).orderBy(desc(councilMemberAttempts.attempt)).limit(1);
       if(!attempt)throw new BadRequestException('LEGACY_TASK_DETAILS_UNAVAILABLE');
+      if (input.action === 'retry_member' && attempt.failure?.code === 'RUNTIME_CLOSED_UNKNOWN_COST_RETAINED') {
+        throw new ConflictException('ORIGINAL_TASK_NOT_TERMINATED');
+      }
       if(input.action==='retry_member'&&(!['failed','cancelled','skipped'].includes(attempt.status)||attempt.failure?.recoveries.includes('check_existing')))throw new ConflictException('ORIGINAL_TASK_NOT_TERMINATED');
       if(input.action==='reparse_existing'&&(!attempt.rawText||attempt.resultAcceptance!=='rejected'||attempt.status!=='completed'))throw new ConflictException('NO_COMPLETED_RESULT_TO_REPARSE');
       await tx.insert(councilRecoveryRequests).values({owner,requestKey:input.requestKey,inputHash,sessionId,memberId:input.memberId,attemptId:attempt.id,action:input.action});

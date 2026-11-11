@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -9,6 +9,7 @@ import { FinnhubEvidenceService } from '../research-core/finnhub-evidence.servic
 import { SecEvidenceService } from '../research-core/sec-evidence.service';
 import { decodeDataSecret, encodeDataSecret } from './data-library.secrets';
 import { DataLibraryError } from './data-library.fetch';
+import { FinancialDatasetService } from './providers/financial-dataset.service';
 import { dataFinancialProviders, dataFinancialOperations, type DataFinancialProvider, type DataFinancialConnection,
   type DataFinancialQuery, type DataFinancialQueryResult, type DataFinancialTestResult } from '../../../shared/data-library.interface';
 const catalog: Array<Omit<DataFinancialConnection, 'enabled' | 'configured' | 'needsReentry' | 'hasApiKey' | 'lastTestAt' | 'lastTestOk' | 'lastTestCode'>> = [
@@ -16,9 +17,12 @@ const catalog: Array<Omit<DataFinancialConnection, 'enabled' | 'configured' | 'n
   { provider: 'sec', name: 'SEC EDGAR', description: '公开申报和财报，适用于 SEC 申报公司；不是交易报价源。', capabilities: ['financials'], markets: ['US'], requiresKey: false },
   { provider: 'finnhub', name: 'Finnhub', description: '美股新闻与基本面；沿用当前账户已保存的密钥，权限按套餐决定。', capabilities: ['financials', 'news'], markets: ['US'], requiresKey: true },
   { provider: 'alpha-vantage', name: 'Alpha Vantage', description: '日终报价与历史日线，用于研究查询；不会替代模拟盘实时成交报价。', capabilities: ['quote', 'daily-history'], markets: ['US'], requiresKey: true },
+  { provider: 'aktools', name: 'AKTools', description: '通过已授权本地 MCP 查询 A 股日线及港股利润表；完整分页保存为数据集，市场和接口依实际授权。', capabilities: ['daily-history', 'financials'], markets: ['CN', 'HK'], requiresKey: false },
+  { provider: 'tushare', name: 'Tushare Pro', description: '官方 HTTPS 接口的 A 股日线、利润表与逐日交易日历。配额和权限以账户套餐为准。', capabilities: ['daily-history', 'financials', 'trading-calendar'], markets: ['CN'], requiresKey: true },
 ];
 const querySchema = z.object({ provider: z.enum(dataFinancialProviders), symbol: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9.^-]{0,19}$/u),
-  operation: z.enum(dataFinancialOperations) }).strict();
+  operation: z.enum(dataFinancialOperations), market: z.enum(['CN', 'HK', 'US']).optional(), exchange: z.string().max(16).optional(),
+  from: z.string().max(10).optional(), to: z.string().max(10).optional(), adjustment: z.enum(['unadjusted', 'forward', 'backward']).optional() }).strict();
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const positive = (v: unknown) => typeof v === 'number' || typeof v === 'string' && v.trim() ? Number.isFinite(Number(v)) && Number(v) > 0 : false;
 const validDay = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(v)
@@ -57,7 +61,8 @@ export class DataFinancialService {
   private usage = new Map<string, { since: number; calls: number; active: number }>();
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly settings: SettingsService, private readonly quotes: QuoteService,
-    private readonly finnhub: FinnhubEvidenceService, private readonly sec: SecEvidenceService) {}
+    private readonly finnhub: FinnhubEvidenceService, private readonly sec: SecEvidenceService,
+    @Optional() private readonly datasetProvider?: FinancialDatasetService) {}
   private owner(owner: string) { if (!owner?.trim()) throw new BadRequestException('OWNER_REQUIRED'); }
   private provider(provider: string): DataFinancialProvider {
     if (!dataFinancialProviders.includes(provider as DataFinancialProvider)) throw new BadRequestException('UNSUPPORTED_PROVIDER');
@@ -69,11 +74,11 @@ export class DataFinancialService {
   }
   async list(owner: string): Promise<{ providers: DataFinancialConnection[] }> {
     this.owner(owner);
-    const [rows, settings] = await Promise.all([this.db.select().from(financialDataConnections).where(eq(financialDataConnections.owner, owner)), this.settings.getSettings(owner)]);
+    const [rows, settings, aktools] = await Promise.all([this.db.select().from(financialDataConnections).where(eq(financialDataConnections.owner, owner)), this.settings.getSettings(owner), this.datasetProvider?.available(owner) ?? false]);
     return { providers: catalog.map(entry => {
       const row = rows.find(r => r.provider === entry.provider), key = row?.secretEnc ? decodeDataSecret(row.secretEnc) : null;
       const legacy = entry.provider === 'finnhub' ? settings.financial : null;
-      const configured = !entry.requiresKey || Boolean(legacy?.hasApiKey || key);
+      const configured = entry.provider === 'aktools' ? aktools : !entry.requiresKey || Boolean(legacy?.hasApiKey || key);
       return { ...entry, enabled: row?.enabled ?? true, configured, hasApiKey: Boolean(legacy?.hasApiKey || key),
         ...(legacy?.maskedApiKey ? { maskedApiKey: legacy.maskedApiKey } : key ? { maskedApiKey: `••••${key.slice(-4)}` } : {}),
         needsReentry: Boolean(legacy?.needsReentry || row?.secretEnc && !key), lastTestAt: row?.lastTestAt?.toISOString() ?? null,
@@ -85,12 +90,12 @@ export class DataFinancialService {
     if (!parsed.success) throw new BadRequestException('INVALID_PROVIDER_SETTINGS');
     const current = await this.row(owner, provider), p = parsed.data;
     if (provider === 'finnhub' && p.apiKey) await this.settings.saveFinancial(owner, { provider: 'finnhub', apiKey: p.apiKey });
-    if (provider === 'alpha-vantage' && !p.apiKey && !decodeDataSecret(current?.secretEnc ?? null)) throw new BadRequestException('API_KEY_REQUIRED');
+    if (['alpha-vantage', 'tushare'].includes(provider) && !p.apiKey && !decodeDataSecret(current?.secretEnc ?? null)) throw new BadRequestException('API_KEY_REQUIRED');
     if (!catalog.find(c => c.provider === provider)!.requiresKey && p.apiKey) throw new BadRequestException('PROVIDER_REQUIRES_NO_KEY');
     await this.db.insert(financialDataConnections).values({ owner, provider, enabled: p.enabled ?? current?.enabled ?? true,
-      secretEnc: provider === 'alpha-vantage' && p.apiKey ? encodeDataSecret(p.apiKey) : current?.secretEnc ?? null })
+      secretEnc: ['alpha-vantage', 'tushare'].includes(provider) && p.apiKey ? encodeDataSecret(p.apiKey) : current?.secretEnc ?? null })
       .onConflictDoUpdate({ target: [financialDataConnections.owner, financialDataConnections.provider], set: {
-        enabled: p.enabled ?? current?.enabled ?? true, secretEnc: provider === 'alpha-vantage' && p.apiKey ? encodeDataSecret(p.apiKey) : current?.secretEnc ?? null,
+        enabled: p.enabled ?? current?.enabled ?? true, secretEnc: ['alpha-vantage', 'tushare'].includes(provider) && p.apiKey ? encodeDataSecret(p.apiKey) : current?.secretEnc ?? null,
         lastTestAt: null, lastTestOk: null, lastTestCode: null, updatedAt: new Date() } });
     return this.list(owner);
   }
@@ -114,6 +119,12 @@ export class DataFinancialService {
     if (usage.calls >= 30 || usage.active >= 2 || this.usage.size >= 1000 && !this.usage.has(owner)) return { ...base, errorCode: 'QUERY_RATE_LIMITED' };
     usage.calls++; usage.active++; this.usage.set(owner, usage);
     try {
+      if (p.provider === 'aktools' || p.provider === 'tushare') {
+        if (!this.datasetProvider) return { ...base, errorCode: 'PROVIDER_UNAVAILABLE' };
+        const secret = decodeDataSecret(row?.secretEnc ?? null);
+        if (p.provider === 'tushare' && !secret) return { ...base, errorCode: row?.secretEnc ? 'CREDENTIAL_UNREADABLE' : 'KEY_REQUIRED' };
+        return { ...base, ...await this.datasetProvider.query(owner, p, secret) };
+      }
       if (p.provider === 'alpha-vantage') {
         const key = decodeDataSecret(row?.secretEnc ?? null); if (!key) return { ...base, errorCode: row?.secretEnc ? 'CREDENTIAL_UNREADABLE' : 'KEY_REQUIRED' };
         if (!/^[A-Z][A-Z0-9.-]{0,15}$/u.test(p.symbol) || /\.(?:HK|SH|SZ|SS|BJ)$/u.test(p.symbol)) return { ...base, errorCode: 'UNSUPPORTED_MARKET' };
@@ -136,13 +147,17 @@ export class DataFinancialService {
       return { ...base, status: 'succeeded', data: { evidence: items }, asOf: dates.at(-1) ?? observedAt,
         sources: items.map(item => ({ title: item.sourceName ?? entry.name, ...(item.sourceUrl ? { url: item.sourceUrl } : {}), fetchedAt: observedAt })) };
     } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code).toUpperCase() : 'PROVIDER_UNAVAILABLE';
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code).toUpperCase() :
+        error instanceof Error && /^(?:TUSHARE_|AKTOOLS_|PROVIDER_|UNSUPPORTED_|INVALID_)[A-Z_]+$/u.test(error.message) ? error.message : 'PROVIDER_UNAVAILABLE';
       return { ...base, status: 'failed', errorCode: /^[A-Z_]{1,60}$/u.test(code) ? code : 'PROVIDER_UNAVAILABLE' };
     } finally { usage.active--; }
   }
   async test(owner: string, providerInput: string): Promise<DataFinancialTestResult> {
     const provider = this.provider(providerInput), operation = catalog.find(c => c.provider === provider)!.capabilities[0];
-    const sample = await this.query(owner, { provider, symbol: 'AAPL', operation }), ok = sample.status === 'succeeded';
+    const advanced = provider === 'tushare' || provider === 'aktools';
+    const today = new Date().toISOString().slice(0,10), from = new Date(Date.now() - 7 * 86400000).toISOString().slice(0,10);
+    const sample = await this.query(owner, { provider, symbol: advanced ? '000001' : 'AAPL', operation,
+      ...(advanced ? { market: 'CN' as const, exchange: 'SZSE', from, to: today } : {}) }), ok = sample.status === 'succeeded';
     const code = sample.errorCode ?? 'CONNECTED', testedAt = new Date();
     await this.db.insert(financialDataConnections).values({ owner, provider, lastTestAt: testedAt, lastTestOk: ok, lastTestCode: code })
       .onConflictDoUpdate({ target: [financialDataConnections.owner, financialDataConnections.provider], set: { lastTestAt: testedAt, lastTestOk: ok, lastTestCode: code } });

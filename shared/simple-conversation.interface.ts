@@ -15,7 +15,9 @@ export interface DebateOutcome {
   currentAction: 'observe' | 'research_more' | 'consider_action';
   nextEvidence: string[];
 }
-export interface CreateResearchConversationInput { message: string; context?: ResearchContext; requestKey: string; skillId?: string | null }
+export interface CreateResearchConversationInput { message: string; context?: ResearchContext; requestKey: string; skillId?: string | null;
+  /** Explicit per-conversation authorization; omission keeps web research disabled. */
+  toolPolicy?: { webResearch: boolean } }
 export interface ResearchConversationMessageInput { message: string; replyTo?: string; requestKey: string; skillId?: string | null }
 /** Explicit paid continuation of saved daily work, fenced to the reviewed revision. */
 export interface ResumeDailyReportInput { requestKey: string; expectedRevision: number }
@@ -28,6 +30,7 @@ export interface DailyReportInputCorrection {
   revalidated: boolean;
 }
 export interface ResearchConversationView extends CouncilSession {
+  runtimePending?: import('./research-runtime.interface').CouncilRuntimePending[];
   skills?: import('./research-skills.interface').ResearchSkillIdentity[];
   /** A durable question receipt exists; member configuration is being checked asynchronously. */
   initializing?: boolean;

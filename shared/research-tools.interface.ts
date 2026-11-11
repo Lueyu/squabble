@@ -1,7 +1,12 @@
 import type { MemoryReference } from './research-memory.interface';
+import type { AgentToolScope } from './agent-tooling.interface';
 /** Task-bound read-only tools; never carry account credentials across this boundary. */
 export interface ResearchSource { title: string; url?: string; fetchedAt: string }
 export interface ResearchToolDescriptor {
+  /** Execution effect is trusted registry metadata, separate from the legacy read-only hint. */
+  effect?: import('./agent-tooling.interface').AgentToolEffect;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
   name: string; description: string; inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown>;
   annotations: { readOnlyHint: true; destructiveHint: false; openWorldHint: boolean };
 }
@@ -12,6 +17,12 @@ export interface ResearchToolResult {
   data: unknown; sources: ResearchSource[]; asOf: string; truncated: boolean; errorCode?: string;
 }
 export interface ResearchToolScope {
+  /** Server metadata discovery for a managed run; it does not authorize execution by itself. */
+  managedRuntime?: true;
+  runtimeScope?: AgentToolScope;
+  /** Runtime-only immutable scope, rebuilt from its protected frozen input on resume. */
+  frozenInstrumentIds?: string[];
+  frozenAccountIds?: string[];
   /** Server-owned durable member attempt, required for parallel simple research. */
   attemptId?: string;
   /** Server-owned allowlist for workflow prompt memory. Explicit [] forbids further memory; snapshots never duplicate it. */

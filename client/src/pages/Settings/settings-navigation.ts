@@ -1,5 +1,6 @@
 export const SETTINGS_SECTIONS = [
   { id: 'models', group: 'research' },
+  { id: 'tools', group: 'research' },
   { id: 'agents', group: 'research' },
   { id: 'budget', group: 'research' },
   { id: 'rules', group: 'research' },

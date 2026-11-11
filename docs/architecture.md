@@ -2,7 +2,7 @@
 
 Squabble is a React client, a NestJS backend and PostgreSQL for an intelligent investing assistant: portfolio-aware research, coordinated agents, readable reports, a stock-friend channel and explicitly applied simulated strategies.
 
-**Structural review — 2026-11-10:** inspected `fa4a592` plus the browser-source working tree. All five diagrams were checked. Flows1–2 add isolated browser connection, controlled public-network egress, rendered versions and the task-scoped source tool. Login state is separately encrypted; source/job token and revision guard publication. Flows3–5 retain explicit strategy application, source-aware channel publication and real-ledger writers. This is a source review, not a deployed-instance certification.
+**Structural review — 2026-11-11:** inspected `f077b3e` plus the agent-tooling working tree. All five diagrams were checked. Flows1–2 add a durable model/tool runtime, owner-approved outbound connectors, immutable datasets/private artifacts, local document services, anonymous browser research and isolated computation. Flows3–5 retain explicit strategy application, source-aware channel publication and real-ledger writers: tool approval authorizes one external action, never an investment-policy application or a financial fill. This is a source review, not a deployed-instance certification.
 
 The development phase is Web-only. Desktop code remains for manual recovery; ordinary development does not require packaging it. Start with the [Chinese code-reading tour](code-reading.zh-CN.md), [development commands](development.md) or the repository-owned [contributor skill](../.agents/skills/squabble-contributor/SKILL.md).
 
@@ -12,6 +12,9 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 |---|---|---|
 | `research-core` | Model calls, financial evidence/source adapters and portfolio context | Shared infrastructure; never imports current or retained orchestration |
 | `research-routing` | Select a usable configured research executor | Uses research-core and local-agent readiness; starts no task itself |
+| `research-runtime` | Durable single-step model loop, dispatch receipts, recovery, capability probes and selectable controlled/Deep Agents drivers | Uses research-core's model step; orchestration supplies owner/source and final-parser ports |
+| `tool-connections`, `tool-actions` | Outbound MCP/provider catalogs, encrypted credentials, tool budgets and persistent external-write previews | Never import Council; runtime dispatch rechecks exact catalog, source and approval revisions |
+| `research-artifacts`, `research-compute` | Immutable dataset rows, private hashed files and isolated fixed-template analytics | Compute consumes complete owned dataset versions; neither module creates portfolio trades |
 | `data-library` | Owned materials, encrypted subscriptions, version extraction, retrieval and financial-provider queries | Uses existing financial/settings adapters; never creates research tasks or ledger entries |
 | `council`, `experience` | Research workflow, current-report projection and scheduling | Consume shared research services and retained history where required |
 | `portfolio-history` | Current marks and current-position historical references with public price/FX cache | Reads owned ledger inputs; writes only market-data caches; never imports research orchestration |
@@ -73,6 +76,24 @@ flowchart LR
     council --> core["Shared research core: models, evidence and portfolio context"]
     legacy["Retained analysis APIs"] --> core
     core --> models["Configured model API"]
+    council --> controlled["Durable API model/tool runtime; frozen driver and inputs"]
+    controlled --> core
+    controlled --> tools["Owner-approved immutable tool catalog and invocation receipts"]
+    auth --> settingsTools["Tools settings: discover, classify, enable and disconnect"]
+    settingsTools --> tools
+    tools --> external["Scoped outbound MCP, search, crawl and application adapters"]
+    tools --> writePreview["Persistent external-write preview and exact confirmation"]
+    writePreview --> external
+    tools --> anonymous["Anonymous run-scoped local browser"]
+    tools --> dataset["Complete immutable datasets and source policies"]
+    dataset --> artifacts["Private hashed artifact storage"]
+    library --> docJobs["Durable Docling/MinerU jobs; optional local services"]
+    docJobs --> artifacts
+    tools --> compute["Configured E2B sandbox; fixed QuantStats/Backtrader worker"]
+    compute --> dataset
+    compute --> artifacts
+    controlled --> db
+    artifacts --> db
     experience --> routing["Shared research executor selection"]
     strategy --> routing
     routing --> core
@@ -108,6 +129,8 @@ V5 keeps these eight destinations. `/research` owns chat history and the strateg
 
 `GET /api/daily-workspace?date=` reads personal saved facts, all owned simulation facts and exact research versions using a repeatable-read, read-only transaction. This projection is not itself a frozen published report. `GET /api/research-memory/inventory` is an owner-only paginated source inventory; existing thesis lifecycle/version controls retain their authority. Provider configuration, import receipts, notification channels and scoped MCP sessions are composed into explicit workspaces without claiming new connection health or model adoption metrics.
 
+`/settings/tools` configures outbound tool access; `/settings/mcp` retains the separate inbound scoped-session integration. Tools are enabled by exact catalog/schema/effect and data classes, not by a global MCP switch. Local private endpoints require an operator-owned exact-endpoint registry. No arbitrary stdio command is accepted. API tool calling is enabled only after an explicit charged compatibility probe; reading settings never probes a model. See [tool operations](agent-tooling.md).
+
 <a id="research-report"></a>
 ## 2. Research and immutable reports
 
@@ -135,6 +158,19 @@ flowchart TD
     overallFacts --> request
     request --> frozen["Complete frozen holdings, cash, limits and source times"]
     frozen --> fit["Atomic owner input and full-request limit"]
+    frozen --> dataFreeze["Exact dataset version IDs and content hashes; full rows remain stored"]
+    fit --> apiRoute["Frozen API route: controlled or read-only Deep Agents driver"]
+    apiRoute --> dispatch["One paid model step: durable identity plus budget reservation"]
+    dispatch --> received["Encrypted saved response before parsing"]
+    received --> toolBatch["Validated actions; bounded reads first"]
+    toolBatch --> approved["External writes wait for persisted preview confirmation"]
+    approved --> toolReceipt["Exact invocation receipt; revalidate source and permissions"]
+    toolBatch --> toolReceipt
+    toolReceipt --> dispatch
+    received --> localParse["Final domain parser and bound evidence snapshot"]
+    localParse --> sealed
+    dispatch --> unknown["Unresolved provider outcome; never automatic resend"]
+    unknown --> settled["Explicit close as settled_unknown; retain possible charges"]
     fit -->|"Fits"| independent["Independent source checks"]
     fit -->|"Oversized"| refuse["Explicit refusal before provider dispatch"]
     independent --> sealed["Durable sealed submissions"]
@@ -168,6 +204,10 @@ flowchart TD
 The route is `ExperienceController` → `CurrentResearchService` → `DailyChannelResearchService` → `SimpleCouncilService`/`CouncilService`. Source files are in `server/modules/experience/` and `server/modules/council/`. `ExperienceScheduler` reconciles persisted results, synchronizes publications and starts eligible automatic daily work under preferences/budget controls. A source inspection or status read does not authorize that work.
 
 Independent submissions are persisted before subsequent shared inspection. `council.daily.ts` adds the daily `researchOnly` contract: a separate challenge records `reverseCheck`, then summary produces readable research and a separately marked strategy proposal. `no_counterevidence_found` is not proof; `unable_to_verify` remains a gap. Publication preserves disagreement, source identifiers, dates and coverage. Incomplete coverage or missing critical evidence cannot quietly become executable certainty.
+
+`council-tool-runtime.service.ts` binds the new API route to the original owner/session/cycle/member/turn/attempt and private evidence boundary. `research-core/model-step.service.ts` performs one AI SDK generation with SDK retries/execution/approval disabled. The runtime intercepts writes before dispatch, persists receipts and applies the same model and tool budgets to both drivers. Model-step reservations and tool-invocation reservations are distinct; available budget is limit minus settled usage minus all in-flight reservations. Unknown usage is not zero and an unknown reservation is retained until provider facts settle it. Editing an action invalidates its old preview hash without rerunning the model. Reparse uses the saved response and evidence snapshot; no paid repair is hidden in parsing.
+
+Runs freeze complete owner facts plus exact dataset version IDs/content hashes, not only security symbols. Calculations read full stored rows rather than a model's preview sample. Source disabling, deletion and current license/egress policy are rechecked before new calls and final publication. Late results cannot reopen cancelled/settled runs or restore revoked inputs. Deep Agents is an alternate read-only loop using the same ports; filesystem, delegated subagents, automatic summaries and external framework tracing are disabled.
 
 `Frozen owner context` evidence is an atomic record: all holdings, every recorded cash currency including zero/unknown balances, confirmed investor limits, evidence IDs and capture/as-of times reach the model intact. `council.native.ts`, `council.context.ts` and `council.workflow-executor.ts` preserve it across native/API work and review packing while keeping other evidence excerpted. Full-request byte/token limits reject a request that cannot fit before provider dispatch; native oversized assignments are rejected before staging. Stored marks do not establish fresh market prices. Challenge and summary prompts require whole-portfolio concentration, a concise judgment/basis/next check for each holding, separate cash coverage and the consequences of actual data gaps.
 
@@ -351,6 +391,8 @@ Cash confirmation is an explicit request with expected timestamps and an idempot
 `server/modules/experience/portfolio-metrics.service.ts` combines recorded holdings/cash, quote/FX data and value points. UI coverage and dates matter: recorded balances are not broker synchronization, quote retrieval does not establish exchange-live execution, and missing data is not zero. Preserve these distinctions when changing asset totals or returns. The actual-NAV comparison reader consumes saved value points and their flow/cash/position fingerprints without calling the valuation writer. Separate current marks and historical references can populate only public market-data caches, never NAV, holdings, cash or trade rows. Flow or baseline changes can preserve visible equity while invalidating a comparable return.
 
 ## Maintaining this architecture
+
+The tooling review also checked flows3–5: fixed-template backtests produce hypothetical artifacts only; app-write confirmation does not activate a strategy; channel publication still requires its original source seal; real holdings, cash and transaction writers remain the existing explicit import/ledger services. These boundaries are unchanged by migrations53–58.
 
 A change to an entrypoint, owner/source contract, persistent state, publication gate or execution boundary reviews the corresponding diagram and the contributor skill references in the same PR. If structure is unchanged, record the reviewed scope and a concrete no-impact reason. Verify source paths and Mermaid syntax; do not edit diagrams merely to update a timestamp. Changes to desktop recovery do not by themselves resume desktop development.
 

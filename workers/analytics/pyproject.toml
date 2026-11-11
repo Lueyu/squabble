@@ -1,0 +1,20 @@
+[project]
+name = "squabble-analytics-worker"
+version = "1.0.0"
+requires-python = "==3.12.*"
+description = "Independent reproducible analytics and Backtrader worker"
+license = "GPL-3.0-or-later"
+dependencies = [
+  "backtrader==1.9.78.123",
+  "matplotlib==3.10.7",
+  "numpy==2.3.5",
+  "pandas==2.3.3",
+  "quantstats==0.0.86",
+]
+
+[dependency-groups]
+dev = ["pytest==8.4.2"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

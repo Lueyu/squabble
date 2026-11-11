@@ -1,5 +1,38 @@
 # Research, execution and provenance contracts
 
+## Durable API tools and external action approval
+
+`council-tool-runtime.service.ts` binds the original owner/session/cycle/member/
+turn/attempt to `research-runtime/`. It freezes complete owner facts and exact
+dataset version/content hashes, selected connection/catalog/driver and private
+evidence. One SDK generation is one durable paid dispatch; tool invocation
+identity and budget reservations are separate. `research-core` owns transport,
+not a second approval or execution loop. Deep Agents is a read-only alternative
+using the same model/permission/receipt ports, with filesystem, child agents,
+automatic summaries and external tracing disabled.
+
+Mixed batches finish bounded reads before parking writes. `tool-actions/` keeps
+an expiring exact target/account/arguments/attachments/source/catalog preview;
+editing replaces revision/hash and invalidates old confirmation without a model
+rerun. Confirmation saves permission, and the original research continuation
+rechecks it immediately before dispatch. An action approval is separate from
+report adoption, investment-policy confirmation and simulated fills. Source
+policy tightening, disabled/deleted sources and stale connection revisions block
+new use and final acceptance, including receipts received after cancellation.
+
+`provider_unknown` never authorizes an automatic resend or paid fallback. An
+explicit `settled_unknown` close retains possible costs/reservations; later usage
+facts are append-only idempotent corrections. A failed final parser can inspect
+and reparse the same saved result under frozen input/evidence/hash fences, with
+an audited parse attempt and no new provider request. Usage/cost placeholders
+remain unknown. Status GETs and cached capability reads never run a probe.
+
+Complete dataset rows and hashes are retained before previews. Computation uses
+the exact stored rows; source policy/egress permissions are inherited through
+artifacts and rechecked. Local PDF/DOCX parsing retains originals and honest
+locators; E2B fixed templates produce hypothetical analytics only. See
+`docs/agent-tooling.md` for operation and acceptance limitations.
+
 ## Browser-source collection
 
 `read_browser_source` collects only an enabled owned saved browser source. It

@@ -7,15 +7,17 @@ import {
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SETTINGS_GROUPS, SETTINGS_SECTIONS, type SettingsSection } from './settings-navigation';
 import { getAuthMode } from '@/api/auth-mode';
+import { useToolConnectionCopy } from '@/features/tool-connections/tool-connection-copy';
 
 const ICONS: Record<SettingsSection, LucideIcon> = {
   models: Sparkles, agents: Bot, budget: Coins, rules: SlidersHorizontal,
   appearance: Palette, security: ShieldCheck, updates: RefreshCw, guide: BookOpenText,
-  notifications: Bell, mcp: Plug,
+  notifications: Bell, mcp: Plug, tools: Plug,
 };
 
 export default function SettingsNavigation({ active }: { active: SettingsSection }) {
   const { t } = useTranslation();
+  const toolCopy = useToolConnectionCopy();
   const navigate = useNavigate();
   const sections = SETTINGS_SECTIONS.filter(section => getAuthMode() !== 'local' || section.id !== 'security');
 
@@ -34,7 +36,7 @@ export default function SettingsNavigation({ active }: { active: SettingsSection
             return <NavLink key={section.id} to={`/settings/${section.id}`} end
               className="settings-menu-link">
               <Icon size={18} aria-hidden="true" />
-              <span>{t(`settingsNav.sections.${section.id}.title`)}</span>
+              <span>{section.id === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section.id}.title`)}</span>
               <ChevronRight size={14} className="settings-menu-arrow" aria-hidden="true" />
             </NavLink>;
           })}
@@ -56,7 +58,7 @@ export default function SettingsNavigation({ active }: { active: SettingsSection
             <SelectLabel>{t(`settingsNav.groups.${group}`)}</SelectLabel>
             {sections.filter(section => section.group === group).map(section =>
               <SelectItem key={section.id} value={section.id}>
-                {t(`settingsNav.sections.${section.id}.title`)}
+                {section.id === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section.id}.title`)}
               </SelectItem>)}
           </SelectGroup>)}
         </SelectContent>

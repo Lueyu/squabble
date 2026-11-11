@@ -1,0 +1,6 @@
+# Synthetic document fixtures include ASCII PDFs with byte offsets and hashes.
+# Treat them as bytes even when Git's content heuristic considers them text.
+*.pdf binary
+*.docx binary
+*.png binary
+*.lock text eol=lf

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, integer, numeric, pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import { boolean, check, index, integer, numeric, pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 import { users } from './schema';
 
 export const llmBudgetSettings = pgTable('llm_budget_settings', {
@@ -33,6 +33,8 @@ export const llmBudgetUsage = pgTable('llm_budget_usage', {
   id: uuid('id').primaryKey().defaultRandom(),
   owner: uuid('owner').notNull().references(() => users.id, { onDelete: 'cascade' }),
   taskId: varchar('task_id', { length: 160 }).notNull(),
+  dispatchKey: text('dispatch_key'),
+  requestHash: text('request_hash'),
   purpose: varchar('purpose', { length: 160 }).notNull(),
   model: varchar('model', { length: 120 }).notNull(),
   inputTokens: integer('input_tokens').notNull(),

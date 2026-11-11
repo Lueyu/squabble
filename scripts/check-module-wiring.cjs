@@ -33,6 +33,17 @@ async function main() {
   const { ResearchRoutingModule } = require(path.join(compiled, 'modules/research-routing/research-routing.module'));
   const { EvidenceService } = require(path.join(compiled, 'modules/research-core/evidence.service'));
   const { PortfolioContextService } = require(path.join(compiled, 'modules/research-core/portfolio-context.service'));
+  const toolingProviders = [
+    ['research-runtime/runtime-journal.service', 'RuntimeJournalService'],
+    ['research-runtime/research-runtime.service', 'ResearchRuntimeService'],
+    ['research-runtime/drivers/deep-agents.driver', 'DeepAgentsDriver'],
+    ['tool-connections/tool-connections.service', 'ToolConnectionsService'],
+    ['tool-actions/tool-actions.service', 'ToolActionsService'],
+    ['research-artifacts/research-artifacts.service', 'ResearchArtifactsService'],
+    ['data-library/data-dataset.service', 'DataDatasetService'],
+    ['research-compute/research-compute.service', 'ResearchComputeService'],
+    ['data-library/browser/browser-research.module', 'BrowserResearchService'],
+  ].map(([modulePath, name]) => require(path.join(compiled, 'modules', modulePath))[name]);
 
   let app;
   const deadline = setTimeout(() => {
@@ -47,7 +58,7 @@ async function main() {
     assert.equal(route, app.select(ResearchRoutingModule).get(PortfolioResearchRouteService, { strict: true }));
 
     const modules = [...app.get(ModulesContainer).values()];
-    for (const token of [PortfolioResearchRouteService, EvidenceService, PortfolioContextService]) {
+    for (const token of [PortfolioResearchRouteService, EvidenceService, PortfolioContextService, ...toolingProviders]) {
       const owners = modules.filter(module => module.providers.has(token));
       assert.equal(owners.length, 1, `${token.name} must have exactly one provider owner.`);
       assert.ok(app.get(token), `${token.name} must resolve in the application.`);

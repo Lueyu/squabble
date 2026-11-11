@@ -8,6 +8,30 @@ Squabble 的主线是一款智能投资助手：理解持仓，多位研究者�
 [体验开关](../server/common/platform/simple-experience.ts)；旧分析、投委会 API 和历史报告读取仍可达。
 环境搭建与命令以[开发指南](development.md)为准，完整数据流见[架构图](architecture.md)。
 
+## 读懂 API Agent 的工具循环
+
+先看 [CouncilToolRuntimeService](../server/modules/council/council-tool-runtime.service.ts)
+怎样把原来的会话、成员、轮次、私有证据与当前权限绑定到运行器，再看
+[ResearchRuntimeService](../server/modules/research-runtime/research-runtime.service.ts)
+的单步循环和 [RuntimeJournalService](../server/modules/research-runtime/runtime-journal.service.ts)
+的派发、结果回执与恢复。模型适配留在 research-core；AI SDK 只发送一次请求，
+审批、重试决定和工具执行由持久化运行器掌握。Deep Agents 是同一权限/预算边界下的
+[可选只读 driver](../server/modules/research-runtime/drivers/README.md)，不再套一层模型循环。
+
+外接能力从 [ToolConnectionsService](../server/modules/tool-connections/tool-connections.service.ts)
+和 [ToolActionsService](../server/modules/tool-actions/tool-actions.service.ts) 开始：连接目录、
+schema/effect 分类和资料外发权限先审阅，写入预览可编辑，确认绑定精确版本。
+`/settings/tools` 是向外使用工具，已有 `/settings/mcp` 是把 Squabble 的受限能力向外提供。
+读状态不会探测模型或重新派发未知请求。
+
+数据链按“完整不可变数据集 → 固定版本计算 → 私有产物”阅读：
+[DataDatasetService](../server/modules/data-library/data-dataset.service.ts)、
+[ResearchArtifactsService](../server/modules/research-artifacts/research-artifacts.service.ts)、
+[ResearchComputeService](../server/modules/research-compute/research-compute.service.ts)。
+Docling/MinerU 异步解析、AKTools/Tushare 和匿名浏览器分别是适配器；它们不能绕过
+来源删除、owner、当前授权和最终发布检查。计算消费完整行与内容 hash，模型看到的样本
+不能替代真实输入。配置、故障恢复和尚未完成的真实供应商验收见[工具运维指南](agent-tooling.md)。
+
 ## 跟随“账户总览 → 报告 → 账户组合 → 频道”
 
 V5 的研究入口是 `/research`：左侧聊天／策略库、输入框 slash 技能和同页策略访谈。

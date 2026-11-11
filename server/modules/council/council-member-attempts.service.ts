@@ -49,7 +49,7 @@ export class CouncilMemberAttemptsService {
         : { code: 'LOCAL_CANCELLED', stage: 'runtime', recoveries: ['retry_member'] },
       completedAt: uncertain ? null : new Date(), updatedAt: new Date() }).where(and(eq(councilMemberAttempts.owner, owner), eq(councilMemberAttempts.id, id),
       sql`${councilMemberAttempts.status} in ('queued','running','unknown')`,
-      sql`exists(select 1 from council_sessions s where s.owner=${owner} and s.id=${councilMemberAttempts.sessionId} and s.deleted_at IS NULL and s.status='paused' and s.revision>${councilMemberAttempts.revision} and s.checkpoint->'simple'->>'stopped'='true')`));
+      sql`exists(select 1 from council_sessions s where s.owner=${owner} and s.id=${councilMemberAttempts.sessionId} and s.deleted_at IS NULL and s.status='paused' and s.revision>=${councilMemberAttempts.revision} and s.checkpoint->'simple'->>'stopped'='true')`));
   }
   publicState(row: MemberAttempt): ResearchMemberState {
     return { memberId: row.memberId, attempt: row.attempt, ...(row.taskId ? { taskId: row.taskId } : {}), status: row.status,

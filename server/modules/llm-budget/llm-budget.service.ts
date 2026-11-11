@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -13,9 +13,12 @@ import {
 type Transaction = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 type SettingsRow = typeof llmBudgetSettings.$inferSelect;
 export interface BudgetReservation extends TokenReservation { id: string; taskId: string; omitOutputLimit?: boolean;
+  replayed?: boolean;
   /** The user's rate at reservation time, never a provider invoice or a read-time repricing. */
   estimateRates?: { inputUsdPerMillion: number; outputUsdPerMillion: number } }
 export interface ReserveBudgetRequest {
+  dispatchKey?: string;
+  requestHash?: string;
   taskId?: string;
   purpose?: string;
   model: string;
@@ -82,7 +85,7 @@ export class LlmBudgetService {
     return row;
   }
 
-  async reserve(userId: string, input: ReserveBudgetRequest, beforeDispatch?: () => Promise<void>): Promise<BudgetReservation> {
+  async reserve(userId: string, input: ReserveBudgetRequest, beforeDispatch?: () => Promise<void>, transaction?: Transaction): Promise<BudgetReservation> {
     const text = (value: unknown, fallback: string, maximum: number): string => {
       if (value === undefined) return fallback;
       if (typeof value !== 'string' || !value.trim() || value.length > maximum || /[\u0000-\u001f]/u.test(value)) {
@@ -97,11 +100,24 @@ export class LlmBudgetService {
     if (input.maxOutputTokens !== undefined && (!Number.isSafeInteger(input.maxOutputTokens) || input.maxOutputTokens < 1)) {
       throw new BadRequestException('maxOutputTokens must be a positive integer');
     }
-    const reservation = await this.db.transaction(async (tx) => {
+    if (Boolean(input.dispatchKey) !== Boolean(input.requestHash)) throw new BadRequestException('LLM_DISPATCH_IDENTITY_REQUIRED');
+    const reserveInTransaction = async (tx: Transaction): Promise<BudgetReservation> => {
       await this.ownerLock(tx, userId);
+      if (input.dispatchKey) {
+        const [prior] = await tx.select().from(llmBudgetUsage).where(and(eq(llmBudgetUsage.owner, userId), eq(llmBudgetUsage.dispatchKey, input.dispatchKey)));
+        if (prior) {
+          if (prior.requestHash !== input.requestHash || prior.model !== model || prior.taskId !== taskId) throw new ConflictException('LLM_DISPATCH_CONFLICT');
+          return { id: prior.id, taskId, inputTokens: prior.inputTokens, maxOutputTokens: prior.maxOutputTokens,
+            reservedTokens: prior.reservedTokens, replayed: true };
+        }
+      }
       const [row] = await tx.select().from(llmBudgetSettings).where(eq(llmBudgetSettings.owner, userId));
       const settings = this.settingsFromRow(row);
       if (settings.enabled && inputTokens > settings.maxInputTokens) throw new BudgetExceededException('input_tokens', taskId);
+      // A durable request hash describes the actual wire cap. A changed budget
+      // cannot silently clamp the reservation while leaving a larger SDK cap.
+      if (input.dispatchKey && settings.enabled && input.maxOutputTokens !== undefined
+        && input.maxOutputTokens > settings.maxOutputTokens) throw new BadRequestException('RUNTIME_OUTPUT_LIMIT_CHANGED');
       // Keep a finite usage estimate for providers that omit accounting. It is not sent as a cap when limits are off.
       const maxOutputTokens = settings.enabled
         ? Math.min(input.maxOutputTokens ?? settings.maxOutputTokens, settings.maxOutputTokens)
@@ -119,6 +135,7 @@ export class LlmBudgetService {
       if (settings.enabled && blocked) throw new BudgetExceededException(blocked[0], taskId);
       const id = randomUUID();
       await tx.insert(llmBudgetUsage).values({
+        dispatchKey: input.dispatchKey ?? null, requestHash: input.requestHash ?? null,
         id, owner: userId, taskId, purpose, model, inputTokens, outputTokens: maxOutputTokens,
         maxOutputTokens, reservedTokens, chargedTokens: reservedTokens, status: 'reserved',
       });
@@ -127,7 +144,10 @@ export class LlmBudgetService {
         ...(settings.enabled && settings.inputUsdPerMillion !== null && settings.outputUsdPerMillion !== null
           ? { estimateRates: { inputUsdPerMillion: settings.inputUsdPerMillion, outputUsdPerMillion: settings.outputUsdPerMillion } }
           : {}) };
-    });
+    };
+    const reservation = transaction ? await reserveInTransaction(transaction) : await this.db.transaction(reserveInTransaction);
+    if (reservation.replayed) return reservation;
+    if (transaction) { await beforeDispatch?.(); return reservation; }
     // This callback has no transport capability. Rollback is confined to its failure,
     // before the reservation is returned to the caller that can start a network call.
     try { await beforeDispatch?.(); }
@@ -140,6 +160,25 @@ export class LlmBudgetService {
       throw error;
     }
     return reservation;
+  }
+
+  /** Provider facts correct an unknown charge without erasing its prior accounting history. */
+  async reconcileDispatchUsage(userId: string, id: string, eventId: string, usage: unknown): Promise<void> {
+    if (!eventId || eventId.length > 200) throw new BadRequestException('LLM_USAGE_EVENT_REQUIRED');
+    await this.db.transaction(async tx => {
+      await this.ownerLock(tx, userId);
+      const [row] = await tx.select().from(llmBudgetUsage).where(and(eq(llmBudgetUsage.owner, userId), eq(llmBudgetUsage.id, id)));
+      if (!row?.dispatchKey) throw new NotFoundException('LLM_DISPATCH_NOT_FOUND');
+      const prior = await tx.execute(sql`select event_id from agent_model_usage_corrections where owner=${userId} and budget_id=${id} and event_id=${eventId}`);
+      if (prior.length) return;
+      const result = settleTokenUsage(row, usage);
+      if (!result.known) throw new BadRequestException('LLM_PROVIDER_USAGE_FACT_REQUIRED');
+      await tx.execute(sql`insert into agent_model_usage_corrections(owner,budget_id,event_id,prior_status,prior_tokens,corrected_tokens,facts)
+        values(${userId},${id},${eventId},${row.status},${row.chargedTokens},${result.chargedTokens},${JSON.stringify(usage)}::jsonb)`);
+      await tx.update(llmBudgetUsage).set({ inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+        chargedTokens: result.chargedTokens, status: 'completed', settledAt: new Date() })
+        .where(and(eq(llmBudgetUsage.owner, userId), eq(llmBudgetUsage.id, id)));
+    });
   }
 
   async settle(userId: string, id: string, usage?: unknown, failed = false): Promise<SettledTokenUsage> {

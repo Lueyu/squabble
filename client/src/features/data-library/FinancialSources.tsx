@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, Database, ExternalLink, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
@@ -63,6 +64,12 @@ function QueryResult({ result, zh, language }: {
   const data: Record<string, unknown> = isRecord(result.data) ? result.data : {};
   const points: Record<string, unknown>[] = Array.isArray(data.points) ? data.points.filter(isRecord) : [];
   const evidence: Record<string, unknown>[] = Array.isArray(data.evidence) ? data.evidence.filter(isRecord) : [];
+  const rows: Record<string, unknown>[] = Array.isArray(data.rows) ? data.rows.filter(isRecord) : [];
+  const download = useMutation({ retry: false, mutationFn: async () => {
+    const blob = await dataLibraryApi.dataset(result.dataset!.datasetVersionId), url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `dataset-${result.dataset!.datasetVersionId}.json`; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } });
   const status = {
     succeeded: zh ? '已取得数据' : 'Data received', partial: zh ? '部分数据' : 'Partial data',
     unavailable: zh ? '暂无可用数据' : 'Data unavailable', failed: zh ? '查询失败' : 'Query failed',
@@ -77,9 +84,18 @@ function QueryResult({ result, zh, language }: {
     <div className={`data-notice ${result.status === 'succeeded' ? '' : 'data-warning'}`} role="status">
       <strong>{status} · {result.symbol} · {operationLabel(result.operation, zh)}</strong>
       <p>{freshness} · {zh ? '取得于' : 'Retrieved'} {dataTime(result.observedAt, language)}</p>
-      {usable && <p>{zh ? '结果标注时间' : 'Result timestamp'}：{dataTime(result.asOf, language)}</p>}
+      {usable && <p>{result.dataset ? zh ? '业务数据时间见各行；未知值保持为空。' : 'Business timestamps are recorded per row; unknown values remain null.' : `${zh ? '结果标注时间' : 'Result timestamp'}: ${dataTime(result.asOf, language)}`}</p>}
       {(!usable || result.errorCode) && <p>{issueLabel(result.errorCode, zh)}</p>}
     </div>
+    {usable && result.dataset && <section className="data-notice space-y-2" aria-label={zh ? '完整数据集' : 'Full dataset'}>
+      <p>{zh ? `完整保存 ${result.dataset.rowCount} 行；当前预览 ${result.dataset.sampleSize} 行${result.dataset.truncated ? '（已截取预览）' : ''}。` : `${result.dataset.rowCount} full rows saved; previewing ${result.dataset.sampleSize} rows${result.dataset.truncated ? ' (truncated preview)' : ''}.`}</p>
+      <p>{zh ? '覆盖' : 'Coverage'}: {result.dataset.coverage.status} · {zh ? '延迟情况' : 'Delay'}: {result.dataset.coverage.delayed === null ? zh ? '未知' : 'unknown' : String(result.dataset.coverage.delayed)}</p>
+      {!!result.dataset.coverage.missing.length && <p className="break-words">{result.dataset.coverage.missing.slice(0,10).join(' · ')}{result.dataset.coverage.missing.length > 10 ? ' …' : ''}</p>}
+      <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={download.isPending} onClick={() => download.mutate()}>{zh ? '下载全部行' : 'Download all rows'}</Button>
+        {result.libraryReference && <Button asChild variant="outline"><Link to={`/data?source=${encodeURIComponent(result.libraryReference.sourceId)}`}>{zh ? '查看保存版本' : 'View saved version'}</Link></Button>}</div>
+      {download.isError && <p role="alert">{dataError(download.error, zh)}</p>}
+      {rows.length > 0 && <details><summary>{zh ? '查看行样本' : 'View row sample'}</summary><pre className="overflow-x-auto text-xs">{JSON.stringify(rows, null, 2)}</pre></details>}
+    </section>}
     {usable && result.operation === 'quote' && <dl className="financial-quote">
       <div><dt>{zh ? '价格' : 'Price'}</dt><dd>{displayValue(data.price)} {displayValue(data.currency) === '—' ? '' : displayValue(data.currency)}</dd></div>
       <div><dt>{zh ? '前收盘' : 'Previous close'}</dt><dd>{displayValue(data.previousClose)}</dd></div>
@@ -107,7 +123,7 @@ function QueryResult({ result, zh, language }: {
       })}
     </div>}
     {usable && result.data !== null && <details className="data-query-result">
-      <summary>{zh ? '查看完整结构化结果' : 'View the full structured result'}</summary>
+      <summary>{result.dataset ? zh ? '查看预览与元数据' : 'View preview and metadata' : zh ? '查看完整结构化结果' : 'View the full structured result'}</summary>
       <pre>{JSON.stringify(result.data, null, 2)}</pre>
     </details>}
   </section>;
@@ -120,11 +136,17 @@ function ProviderConfiguration({ connection, zh, language }: {
   const [apiKey, setApiKey] = useState('');
   const [enabledDraft, setEnabledDraft] = useState<boolean | null>(null);
   const [clearing, setClearing] = useState(false);
-  const [symbol, setSymbol] = useState('AAPL');
+  const structured = connection.provider === 'aktools' || connection.provider === 'tushare';
+  const [symbol, setSymbol] = useState(structured ? '000001' : 'AAPL');
+  const [exchange, setExchange] = useState('SZSE');
+  const [from, setFrom] = useState(`${new Date().getFullYear()}-01-01`);
+  const [to, setTo] = useState(new Date().toISOString().slice(0,10));
+  const [adjustment, setAdjustment] = useState<'unadjusted' | 'forward' | 'backward'>('unadjusted');
   const [operationDraft, setOperationDraft] = useState<DataFinancialOperation | null>(null);
   const enabled = enabledDraft ?? connection.enabled;
   const operation = connection.capabilities.find((item: DataFinancialOperation) => item === operationDraft)
     ?? connection.capabilities[0];
+  const hk = connection.provider === 'aktools' && operation === 'financials';
   const dirty = Boolean(apiKey.trim()) || enabled !== connection.enabled;
   const keyNeeded = connection.requiresKey && (!connection.configured || connection.needsReentry);
 
@@ -147,7 +169,9 @@ function ProviderConfiguration({ connection, zh, language }: {
   });
   const query = useMutation({
     retry: false,
-    mutationFn: () => dataLibraryApi.queryProvider({ provider: connection.provider, symbol: symbol.trim().toUpperCase(), operation }),
+    mutationFn: () => dataLibraryApi.queryProvider({ provider: connection.provider, symbol: symbol.trim().toUpperCase(), operation,
+      ...(structured ? { market: hk ? 'HK' as const : 'CN' as const, exchange: hk ? 'HKEX' : exchange, from, to,
+        ...(connection.provider === 'aktools' && operation === 'daily-history' ? { adjustment } : {}) } : {}) }),
   });
   const remove = useMutation({
     retry: false, mutationFn: () => dataLibraryApi.removeProvider(connection.provider),
@@ -166,6 +190,7 @@ function ProviderConfiguration({ connection, zh, language }: {
   return <section className="data-panel financial-configuration" aria-labelledby="financial-provider-title">
     <header className="financial-heading"><h2 id="financial-provider-title">{connection.name}</h2><Badge variant="secondary">{connectionLabel(connection, zh)}</Badge></header>
     <p className="financial-description">{connection.description}</p>
+    {connection.provider === 'aktools' && <p className="data-notice">{zh ? '由部署者配置固定本地 AKTools MCP 地址；在工具连接中发现并授权 get_data 为只读、允许公开数据后可查询。A 股日线需明确交易所；港股利润表请填写五位代码。' : 'The deployer configures a fixed local AKTools MCP endpoint. Discover the connection and approve get_data as read-only for public data. A-share history requires an explicit exchange; HK income statements use a five-digit symbol.'}</p>}
     <form className="financial-settings" onSubmit={event => { event.preventDefault(); test.reset(); query.reset(); save.mutate(); }}>
       {connection.requiresKey && <label className="data-field" htmlFor={inputId}>API Key
         <Input id={inputId} type="password" autoComplete="new-password" maxLength={4096} value={apiKey}
@@ -204,6 +229,16 @@ function ProviderConfiguration({ connection, zh, language }: {
           const next = connection.capabilities.find((item: DataFinancialOperation) => item === event.target.value);
           if (next) setOperationDraft(next);
         }}>{connection.capabilities.map((capability: DataFinancialOperation) => <option key={capability} value={capability}>{operationLabel(capability, zh)}</option>)}</NativeSelect></label>
+        {structured && <>
+          <label className="data-field">{zh ? '市场 / 交易所' : 'Market / exchange'}<NativeSelect value={hk ? 'HKEX' : exchange} disabled={busy || hk} onChange={event => setExchange(event.target.value)}>
+            {hk ? <option value="HKEX">HK · HKEX</option> : <><option value="SZSE">CN · SZSE</option><option value="SSE">CN · SSE</option>{connection.provider === 'tushare' && <option value="BSE">CN · BSE</option>}</>}
+          </NativeSelect></label>
+          <label className="data-field">{zh ? '开始日期' : 'From'}<Input value={from} placeholder="YYYY-MM-DD" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" required disabled={busy} onChange={event => setFrom(event.target.value)} /></label>
+          <label className="data-field">{zh ? '结束日期' : 'To'}<Input value={to} placeholder="YYYY-MM-DD" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" required disabled={busy} onChange={event => setTo(event.target.value)} /></label>
+          {connection.provider === 'aktools' && operation === 'daily-history' && <label className="data-field">{zh ? '复权' : 'Adjustment'}<NativeSelect value={adjustment} disabled={busy} onChange={event => {
+            if (event.target.value === 'unadjusted' || event.target.value === 'forward' || event.target.value === 'backward') setAdjustment(event.target.value);
+          }}><option value="unadjusted">{zh ? '不复权' : 'Unadjusted'}</option><option value="forward">{zh ? '前复权' : 'Forward adjusted'}</option><option value="backward">{zh ? '后复权' : 'Backward adjusted'}</option></NativeSelect></label>}
+        </>}
         <Button type="submit" disabled={busy || !canRequest || !symbol.trim() || !operation}>{query.isPending && <LoaderCircle className="animate-spin" />}{zh ? '查询数据' : 'Query data'}</Button>
       </div>
       <p className="financial-hint">{connection.provider === 'alpha-vantage'

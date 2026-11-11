@@ -25,6 +25,8 @@ export const renameResearchConversation = async (id: string, input: { title: str
   (await http.patch(`/api/research-conversations/${encodeURIComponent(id)}`, input)).data;
 export const recoverResearchConversation = async (id: string, input: ResearchRecoveryInput): Promise<ResearchConversationView> =>
   (await http.post(`/api/research-conversations/${encodeURIComponent(id)}/recovery`, input)).data;
+export const recoverResearchRuntime = async (id: string, input: import('@shared/research-runtime.interface').CouncilRuntimeRecoveryInput): Promise<ResearchConversationView> =>
+  (await http.post(`/api/research-conversations/${encodeURIComponent(id)}/runtime-recovery`, input)).data;
 export const resumeDailyReport = async (id: string, input: ResumeDailyReportInput): Promise<ResearchConversationView> =>
   (await http.post(`/api/research-conversations/${encodeURIComponent(id)}/resume-report`, input)).data;
 export const fetchOriginalResearchResult = async (id: string, memberId: string): Promise<{ text: string; verified: false; resultAcceptance: string }> =>

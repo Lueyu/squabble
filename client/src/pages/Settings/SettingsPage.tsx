@@ -25,9 +25,12 @@ import { resolveSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from 
 import './settings.css';
 import { NotificationChannelsCard, AgentSessionsCard } from '@/features/integrations/PaperIntegrationPanels';
 import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navigation';
+import ToolConnectionsPanel from '@/features/tool-connections/ToolConnectionsPanel';
+import { useToolConnectionCopy } from '@/features/tool-connections/tool-connection-copy';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
+  const toolCopy = useToolConnectionCopy();
   const location = useLocation();
   const navigate = useNavigate();
   const localWorkspace = getAuthMode() === 'local';
@@ -64,9 +67,9 @@ export default function SettingsPage() {
           <div className="min-w-0">
             <p className="settings-kicker">{t(`settingsNav.groups.${group}`)}</p>
             <h1 ref={titleRef} tabIndex={-1} className="settings-page-title" id="settings-page-title">
-              {t(`settingsNav.sections.${active}.title`)}
+              {active === 'tools' ? toolCopy.title : t(`settingsNav.sections.${active}.title`)}
             </h1>
-            <p className="settings-page-description">{t(`settingsNav.sections.${active}.description`)}</p>
+            <p className="settings-page-description">{active === 'tools' ? toolCopy.description : t(`settingsNav.sections.${active}.description`)}</p>
           </div>
           {active !== 'guide' && <Button asChild variant="ghost" size="sm" className="settings-help-link">
             <Link to="/settings/guide"><BookOpenText />{t('settingsNav.help')}<ArrowUpRight /></Link>
@@ -75,7 +78,7 @@ export default function SettingsPage() {
 
         {sections.filter(section => section.id === active || visited.includes(section.id)).map(section =>
           <div key={section.id} hidden={active !== section.id} className="settings-panel"
-            role="region" aria-label={t(`settingsNav.sections.${section.id}.title`)}>
+            role="region" aria-label={section.id === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section.id}.title`)}>
             <SettingsSectionContent section={section.id} active={active === section.id} />
           </div>)}
       </div>
@@ -88,7 +91,8 @@ function SettingsSectionContent({ section, active }: { section: SettingsSection;
   const { enabled: simple } = useSimpleExperience();
   switch (section) {
     case 'notifications': return <NotificationChannelsCard active={active} />;
-    case 'mcp': return <AgentSessionsCard active={active} />;
+    case 'mcp': return <div className="space-y-4"><Button asChild variant="outline"><Link to="/settings/tools"><ToolConnectionLinkLabel /></Link></Button><AgentSessionsCard active={active} /></div>;
+    case 'tools': return <ToolConnectionsPanel active={active} />;
     case 'models': return <div className="space-y-6">
       <ModelConnectionsPanel active={active} />
       <IntegrationSettingsPanel section="models" active={active} />
@@ -107,6 +111,8 @@ function SettingsSectionContent({ section, active }: { section: SettingsSection;
     case 'guide': return <SettingsGuide />;
   }
 }
+
+function ToolConnectionLinkLabel() { return <>{useToolConnectionCopy().toolsDirection}</>; }
 
 function AppearancePanel({ active }: { active: boolean }) {
   const { t, i18n } = useTranslation();

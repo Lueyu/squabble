@@ -15,7 +15,8 @@ export interface ResearchMemberState { memberId: string; attempt: number; taskId
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown' | 'skipped';
   resultAcceptance: ResultAcceptance; failure?: SafeFailure; startedAt?: string; lastActivityAt: string; completedAt?: string;
   recoveries: RecoveryAction[] }
-export interface ResearchRecoveryInput { memberId: string; action: RecoveryAction; requestKey: string; expectedRevision: number }
+export interface ResearchRecoveryInput { memberId: string; action: RecoveryAction; requestKey: string; expectedRevision: number;
+  runtimeTarget?: import('./research-runtime.interface').RuntimeRecoveryTarget }
 /** Activity identity is independent of whether this task may access security tools. */
 export interface ResearchTaskActivityContext { sessionId: string; revision: number; memberId: string; memberName: string; turn: number;
   language: string; attempt?: number; cycleId?: string }

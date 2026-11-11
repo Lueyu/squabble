@@ -106,6 +106,12 @@ not a live migration version.
    losing them can break duplicate-delivery/replay protection. Include configured
    update-backup storage when moving an installation. Keep a dated protected
    backup outside the release tree; never commit it or show its contents.
+   Include `RESEARCH_ARTIFACT_ROOT`, document originals/import files and the
+   encrypted runtime/compute/Deep Agents tables introduced by migrations53–58.
+   Put the artifact root outside a replaceable release and verify its owner-bound
+   size/hash manifest with the restored DB. Optional parser/E2B template/model
+   versions and secrets are separate deployment dependencies; missing services
+   stay explicitly unconfigured rather than falling back to an unreviewed cloud.
 6. Verify the dump and restore it to a new isolated database before treating
    the backup as recoverable. Match PostgreSQL tools to the server version.
    Compare schema and selected row counts without exposing portfolio content.
