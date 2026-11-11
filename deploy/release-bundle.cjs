@@ -46,7 +46,7 @@ function buildRelease(imageFile, output) {
     anonymousManifestChecks: true, images, composeSha256: createHash('sha256').update(compose).digest('hex'),
     browser: { playwright: '1.65.0', nonroot: true, chromiumSandbox: true }, document: { doclingServe: '1.38.2', ocr: 'rapidocr', language: 'iso:zh', models: 'docling-model-manifest.json' } };
   writeFileSync(join(output, 'bundle-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  writeFileSync(join(output, 'README.txt'), 'Requires Docker Engine/Desktop Linux containers and Compose v2.24+.\nStart: docker compose up -d\nOpen: http://127.0.0.1:3000\nNo host Python, OCR, browser or model installation is required.\nKeep DB, settings-secrets, capability-secrets, research-artifacts, local-agents-data and sandbox-state in one matched backup. Never update using down -v.\n');
+  writeFileSync(join(output, 'README.txt'), 'Requires Docker Engine/Desktop Linux amd64 containers, cgroup v2 and Compose v2.24.4+.\nStart: docker compose up -d\nOpen: http://127.0.0.1:3000\nNo host Python, OCR, browser or model installation is required.\nKeep DB, settings-secrets, capability-secrets, research-artifacts, local-agents-data and sandbox-state in one matched backup. Never update using down -v.\n');
   process.stdout.write('Created immutable bundle; all six image manifests verified without credentials.\n');
 }
 

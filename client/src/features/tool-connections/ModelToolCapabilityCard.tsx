@@ -60,7 +60,7 @@ export function ModelToolCapabilityCard({ active }: { active: boolean }) {
       {(driver.isError || drivers.isError) && <p role="alert" className="text-sm text-destructive">{toolRequestError(driver.error ?? drivers.error)}</p>}
     </div>
     </details>
-    <div className="flex flex-wrap gap-2"><Button disabled={probe.isPending || disable.isPending} onClick={() => probe.mutate()}>
+    <div className="flex flex-wrap gap-2"><Button className="max-w-full whitespace-normal" disabled={probe.isPending || disable.isPending} onClick={() => probe.mutate()}>
       {probe.isPending ? (zh ? '正在验证…' : 'Verifying…') : (zh ? '验证并启用（最多 2 次模型请求）' : 'Verify and enable (up to 2 model requests)')}</Button>
       <Button variant="outline" disabled={probe.isPending || disable.isPending} onClick={() => disable.mutate()}>{zh ? '关闭此连接的工具调用' : 'Disable tools for this connection'}</Button></div>
     <p className="text-xs leading-5 text-muted-foreground">{zh ? '网络中断后再次点击将复用同一请求标识，核查已有回执；不会因自动重试重复付费。金额取决于模型价格与实际用量。' : 'After a network interruption, click again to reuse the saved request identity and check its receipt. Automatic retries are disabled. Amount depends on model pricing and actual usage.'}</p>

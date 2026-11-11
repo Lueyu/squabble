@@ -53,3 +53,12 @@ test('financial text classified as page furniture stays searchable without repla
   assert.equal(elements[0].locator.kind === 'pdf' && elements[0].locator.physicalPage, 1);
   assert.equal(markdown, '# Report\n\nNet income 20');
 });
+
+test('distinct financial numbers are not suppressed as prefixes of Markdown values', () => {
+  const markdown = 'Revenue 400\nMargin 1.25\nLoss -200';
+  const elements = extractDocumentElements({ texts: ['Revenue 40', 'Margin 1.2', 'Loss -20'].map((text, index) => ({
+    self_ref: `#/texts/${index}`, text, prov: [{ page_no: 1 }],
+  })) }, 'pdf');
+  const lines = documentSearchText(markdown, elements).split('\n');
+  for (const expected of ['Revenue 40', 'Margin 1.2', 'Loss -20']) assert.ok(lines.includes(expected), expected);
+});

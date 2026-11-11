@@ -25,5 +25,12 @@ test('malformed or unsafe existing registry and origins fail before any export',
 test('existing registry values with apostrophes round-trip through source env syntax', () => {
   const { environmentValue } = require('./source-host-settings.cjs');
   const value = JSON.stringify([{ id: "o'neil", endpoint: 'http://127.0.0.1:9010/mcp' }]);
-  assert.equal(require('dotenv').parse(`TOOL_MCP_LOCAL_SERVICES_JSON=${environmentValue(value)}\n`).TOOL_MCP_LOCAL_SERVICES_JSON, value);
+  const source = `TOOL_MCP_LOCAL_SERVICES_JSON=${environmentValue(value)}\n`;
+  // The Docker-only CI job has no host npm install. Verify against the actual
+  // bundled parser there, while source developers use their installed parser.
+  const parsed = process.env.BUNDLE_TEST_APP_IMAGE
+    ? require('node:child_process').execFileSync('docker', ['run', '--rm', '--network', 'none', '--entrypoint', 'node',
+      process.env.BUNDLE_TEST_APP_IMAGE, '-e', 'process.stdout.write(require("dotenv").parse(process.argv[1]).TOOL_MCP_LOCAL_SERVICES_JSON)', source], { encoding: 'utf8' })
+    : require('dotenv').parse(source).TOOL_MCP_LOCAL_SERVICES_JSON;
+  assert.equal(parsed, value);
 });

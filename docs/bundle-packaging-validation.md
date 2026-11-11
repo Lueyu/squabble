@@ -75,7 +75,7 @@ The actual local Docling image is
 **7,566,255,830 bytes** as reported by Engine. The exported model manifest contains
 **103 files / 912,467,185 bytes**, SHA-256
 `968d35d623d89db62c08bafd00410f3ad86956b5dd462ec983f24520c7c4796b`.
-The package inventory records actual CPU Torch **2.14.1+cpu**, torchvision
+The upstream image runs Python **3.12.15**. The package inventory records actual CPU Torch **2.14.1+cpu**, torchvision
 **0.29.1+cpu**, RapidOCR **3.10.0**, ONNX Runtime **1.31.0** and Docling Serve
 **1.38.2**. Both inventories are checked in under `workers/documents/`.
 
@@ -115,12 +115,74 @@ probe. JavaScript rendering passed. No `SYS_ADMIN` or `--no-sandbox` was used.
 An initial stricter probe added `cap-drop ALL` and hit the upstream profile's
 conditional `chroot` denial; the actual app Compose configuration retains the
 default bounding capability set and passes. Compute jobs retain cap-drop ALL.
-Final application-image verification is still a separate pending gate.
+The final application-image dynamic-rendering probe also passed after the
+app-only preview restart described below.
+
+## Prepared application and fresh deployment
+
+The actual application image runs Node **24.22.2** and `pg_dump` **16.15**, and built successfully as
+`sha256:fc20c82caa9cd39fc4db7c2cee596ae2b9d2ce1145b65c440041131c44f42f9b`,
+**4,436,269,962 bytes**. The clean production install used 544 locked packages.
+The local build selected a signed Ubuntu mirror after official-origin responses
+were incomplete; standard Dockerfile defaults remain official origins.
+
+Fresh project `squabble-bundle-acceptance-20261111` created all new volumes and
+started app, PostgreSQL, Docling, AKTools, analytics preparation and broker, plus
+the synthetic MCP fixture. Under severe host memory pressure the initial
+`compose --wait` observed the app as unhealthy before it recovered; this is
+recorded as an initial failure, not a passing cold-boot command. All actual
+services subsequently became healthy and `/api/health` returned `{"status":"ok"}`.
+The configuration now gives app startup a 120-second grace period while still
+requiring successful HTTP health. Final fresh-command proof is pending the
+updated configuration/release gate.
+
+Inside the actual application image, `node deploy/browser-smoke.cjs` passed with
+uid1000, Chromium158, its sandbox enabled and dynamic rendering. The packaged
+broker's actual acceptance also passed statistics, exploration, network denial,
+read-only rootfs, credential isolation and confirmed termination against worker
+image `sha256:4594759d7ca8cc0edffa3e7d81b21f6060fe0a0d5284d0ed2490054c5abc6107`;
+observed worker memory peak **191,737,856 bytes**. The staging stack remains for
+the independent first-account/authorization/custom-MCP UI acceptance.
+
+Production dependency assembly now waits for the dependency stage explicitly
+and uses `--prefer-offline` with integrity-locked npm packages. This avoids both
+cold parallel-stage `ENOTCACHED` and imported-cache failures: mutable cache mounts
+are [not exported by GitHub Actions cache](https://docs.docker.com/build/ci/github-actions/cache/#cache-mounts).
+Clean-runner CI remains required; a warm local build does not establish this gate.
+
+The final preview rebuild recorded before/after source SHA-256
+`70469b75c664e6970e112df2142e098f6b1e8cd413718d3637740c18ed4012f4`
+over 1,422 source files, unchanged throughout build. Commit reference is
+`9386acf5ec49b730525891913bffae211023d889`; pending changes are represented by
+the source hash rather than a claim of a clean commit. Resulting image:
+`sha256:a159d91f9e090ed7ce953a3cb7ae0c9437b83b65b1596d9ab5fe22b4f28350db`,
+**4,436,280,479 bytes**. Only the application container was recreated in
+**10.472 s**; HTTP/container health passed, retaining the fixture database,
+credentials, grants and all sidecars for independent UI acceptance. This image
+includes the deterministic lossless-text search supplement; original parser
+Markdown/JSON remain separate. Exact runtime labels contain the source hash.
+
+Actual source-host export also passed against the disposable deployment using
+`node deploy/source-host-export-smoke.cjs squabble-bundle-acceptance-20261111`.
+It exported real generated token files into a temporary fictional `.env` tree,
+preserved custom MCP/document origins and database/model values, then removed
+that private temporary tree. It made no change to the real source `.env` or any
+deployment/account state. Application-side Node MCP SDK discovery independently
+passed against the actual AKTools gateway and returned only `get_data`.
+
+Targeted packaging contracts passed **7/7** Node tests and **3/3** Python gateway
+tests after the final configuration edits. The demo now merges its overrides
+inside the include path list, following the documented Compose include pattern.
+Actual `docker compose config` verified all seven demo services, port 3001, the
+root-resolved demo seed and ten separately prefixed volumes; an explicit custom
+project name also prefixed every volume correctly. No demo containers were
+started or existing volumes changed during this check.
 
 ## Remaining actual checks
 
-Fresh whole-suite boot, final app-image Chromium, matched recovery and public
-release archive verification are pending. The release workflow now cold-boots
+Final cold-boot command and public release archive verification are pending.
+The independent root workflow owns matched restoration and actual user journeys.
+The release workflow now cold-boots
 the exact published image set with fresh disposable volumes, then runs actual
 Chromium, offline document corpus, MCP and broker checks before archiving. It
 stops heavier services before running the full sandbox exhaustion/recovery suite

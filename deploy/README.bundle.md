@@ -1,6 +1,7 @@
 # Bundled Web deployment
 
-The supported runtime is Docker Linux **amd64** with Compose v2.24 or newer.
+The supported runtime is Docker Linux **amd64** with Compose v2.24.4 or newer,
+cgroup v2 and working memory/CPU/PID/seccomp controls.
 Windows uses Docker Desktop / WSL2. macOS and arm64 are future validation targets;
 the current image digests deliberately do not claim native arm64 support.
 
@@ -38,6 +39,16 @@ mirrors. npm integrity checks and Ubuntu archive signatures remain enabled.
 Ordinary release users pull the already prepared images and need none of these
 build settings.
 
+The standalone demo uses the same prepared engines with its own project volumes
+and loopback port 3001:
+
+```sh
+docker compose -f docker-compose.demo.yml up -d --build
+```
+
+Its demo overrides are merged inside the include list so included resources do
+not conflict with the outer Compose model.
+
 For an existing Windows/macOS **source Web server**, start only dependencies and
 export generated credentials into private files without editing endpoints:
 
@@ -50,6 +61,8 @@ The export script preserves existing DB/model/account settings in `.env`, create
 one `.env.before-bundle` backup, writes only tool configuration and never prints
 tokens. Start/restart the source Web server through the normal project workflow.
 Only the source-host override publishes internal services, all on loopback.
+The container application and its database are both inactive in this mode; the
+existing source server continues to use its existing database.
 
 ## Isolation and persistence
 

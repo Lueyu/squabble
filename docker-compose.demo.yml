@@ -1,52 +1,9 @@
 # Standalone demo inherits the same prepared engines and isolation as production.
 include:
-  - path: [docker-compose.yml, docker-compose.source.yml]
+  - path:
+      - docker-compose.yml
+      - docker-compose.source.yml
+      - deploy/compose.demo-overrides.yml
+    project_directory: .
 
 name: squabble-demo
-
-services:
-  db:
-    image: ${DB_IMAGE:-postgres:16-alpine}
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: portfolio
-    volumes:
-      - ./scripts/db/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./scripts/db/02_demo_seed.sql:/docker-entrypoint-initdb.d/02_demo_seed.sql:ro
-      - ./scripts/db/03_agent_builder.sql:/docker-entrypoint-initdb.d/03_agent_builder.sql:ro
-      - ./scripts/db/04_user_api_settings.sql:/docker-entrypoint-initdb.d/04_user_api_settings.sql:ro
-      - dpa-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d portfolio"]
-      interval: 3s
-      timeout: 3s
-      retries: 20
-
-  app:
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      SERVER_HOST: 0.0.0.0
-      SERVER_PORT: 3000
-      DATABASE_URL: "postgres://postgres:postgres@db:5432/portfolio"
-      JWT_SECRET: ${JWT_SECRET:-}
-      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:-}
-      REGISTER_ENABLED: "true"
-      AGENT_GATEWAY_ENABLED: "false"
-      LOCAL_AGENTS_MODE: companion
-      LOCAL_AGENTS_DATA_DIR: /app/.local-agents
-    ports: !override
-      - "127.0.0.1:${HOST_DEMO_PORT:-3001}:3000"
-    volumes:
-      - settings-secrets:/app/.secrets
-      - local-agents-data:/app/.local-agents
-    depends_on:
-      db:
-        condition: service_healthy
-
-volumes:
-  dpa-data:
-  settings-secrets:
-  local-agents-data:

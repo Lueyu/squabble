@@ -1,0 +1,12 @@
+# Merged inside docker-compose.demo.yml's include before it imports resources.
+# Paths resolve from the repository root set by project_directory.
+services:
+  db:
+    volumes:
+      - ./scripts/db/02_demo_seed.sql:/docker-entrypoint-initdb.d/02_demo_seed.sql:ro
+  app:
+    environment:
+      REGISTER_ENABLED: "true"
+      AGENT_GATEWAY_ENABLED: "false"
+    ports: !override
+      - "127.0.0.1:${HOST_DEMO_PORT:-3001}:3000"

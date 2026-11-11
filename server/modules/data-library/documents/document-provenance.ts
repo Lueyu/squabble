@@ -6,12 +6,13 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 /** Markdown exporters may omit page furniture. Index its original text while retaining the unmodified export and locators. */
 export function documentSearchText(markdown: string, elements: readonly DocumentElement[]): string {
   const normalize = (text: string) => text.replace(/\s+/gu, ' ').trim();
-  const exported = normalize(markdown), seen = new Set<string>(), supplements: string[] = [];
+  const exported = new Set([...markdown.split(/\r?\n/gu), ...markdown.split(/\n\s*\n/gu)].map(normalize));
+  const seen = new Set<string>(), supplements: string[] = [];
   for (const element of elements) {
     // Docling table containers contain serialized geometry, not prose. Their cells remain in Markdown/structured artifacts.
     if (element.locator.elementId.startsWith('#/tables/') && !(element.locator.kind === 'docx' && element.locator.cellId)) continue;
     const text = normalize(element.text);
-    if (!text || seen.has(text) || exported.includes(text)) continue;
+    if (!text || seen.has(text) || exported.has(text)) continue;
     seen.add(text); supplements.push(element.text);
   }
   return [markdown, ...supplements].filter(Boolean).join('\n\n');

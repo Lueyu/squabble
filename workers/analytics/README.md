@@ -138,6 +138,13 @@ rows, rejects duplicate dates, and computes adjacent price ratios. It never
 treats close levels as returns. Server validation rejects a financial-row
 dataset sent through the raw-return template.
 
+Daily labels accept `YYYY-MM-DD`, compact `YYYYMMDD`, and the timezone-free
+midnight form emitted by AKTools, such as `2025-01-02T00:00:00.000`.
+Zero fractional seconds up to nanosecond precision retain the stated calendar
+date. Non-midnight values, timezone suffixes and invalid dates are rejected;
+normalization never shifts a date or changes the original dataset rows. The
+same rule applies to calendar labels, and normalized duplicate prices fail.
+
 For a complete Tushare calendar, include that dataset ID in `datasetVersionIds`
 and set `calendarDatasetVersionId` to it. Defaults are `calendarDateColumn:
 "cal_date"` and `calendarOpenColumn: "is_open"`; only explicit open sessions are

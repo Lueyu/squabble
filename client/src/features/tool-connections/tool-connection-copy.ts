@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 
 export const TOOL_CONNECTION_COPY = {
-  en: { title: 'Tool connections', description: 'Choose the external services and exact tools available to research.',
+  en: { title: 'Tools and capabilities', description: 'Enable prepared local capabilities and connect additional tools when needed.',
     create: 'Add connection', provider: 'Service', endpoint: 'HTTPS MCP endpoint', credential: 'API key or bearer token',
     optionalKey: 'Optional for a public MCP server. Saved encrypted on this server.', save: 'Save connection', loading: 'Loading connections…',
     empty: 'No external services connected.', discover: 'Discover tools', discoverHint: 'Discovery contacts the service and reads its catalog. It does not run a business tool. Discovery charges may be unknown.',
@@ -27,7 +27,7 @@ export const TOOL_CONNECTION_COPY = {
     budgetHint: 'Provider charges remain unknown until usage is reported. Local limits do not guarantee a provider monetary cap.',
     status: { unconfigured: 'Disconnected', configured: 'Configured', authorization_required: 'Authorization required', discovered: 'Catalog ready for review',
       restricted: 'Restricted', unavailable: 'Unavailable', reconfirmation_required: 'Catalog changed · review required' } },
-  zh: { title: '工具连接', description: '为研究选择外部服务，并启用经过审阅的具体工具版本。',
+  zh: { title: '工具与能力', description: '开启已准备的本地能力，按需添加自己的工具和云服务。',
     create: '添加连接', provider: '服务', endpoint: 'HTTPS MCP 地址', credential: 'API 密钥或 Bearer 令牌',
     optionalKey: '公开 MCP 服务可留空。凭据在本服务器加密保存。', save: '保存连接', loading: '正在读取连接…',
     empty: '尚未连接外部服务。', discover: '发现工具', discoverHint: '发现会联系服务并读取目录，不运行业务工具。发现操作的计费可能未知。',

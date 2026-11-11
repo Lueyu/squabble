@@ -25,11 +25,11 @@ RUN npm run build:web
 FROM ${BASE_REGISTRY}/node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS production-deps
 WORKDIR /app
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
-# This dependency edge waits for the complete cache population on cold builds;
-# the production install may then remain offline even with parallel BuildKit.
+# Wait for initial cache population on cold builds. Prefer the verified cache,
+# while allowing missing tarballs when an imported layer lacks mutable caches.
 COPY --from=dependencies /app/package.json /app/package-lock.json /app/.npmrc ./
 COPY --from=dependencies /app/scripts/setup-git-hooks.js scripts/
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --offline --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ --replace-registry-host=always
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --prefer-offline --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ --replace-registry-host=always
 
 # ---------- Runtime stage ----------
 # Exact Playwright 1.65.0 amd64 image includes matching Chromium/OS libraries.

@@ -1,4 +1,4 @@
-"""File-only worker entrypoint. Run untrusted code only inside the configured E2B template."""
+"""File-only worker entrypoint. Run untrusted code only inside the configured isolated sandbox."""
 import hashlib
 import importlib.metadata
 import json

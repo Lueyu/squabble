@@ -3,6 +3,8 @@
 services:
   app:
     profiles: [container-app]
+  db:
+    profiles: [container-app]
   docling:
     ports: ["127.0.0.1:${HOST_DOCLING_PORT:-5002}:5002"]
   aktools:

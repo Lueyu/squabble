@@ -1,5 +1,6 @@
 {
   "platform": "linux/amd64",
+  "python": "3.12.15",
   "image": "ghcr.io/docling-project/docling-serve-cpu@sha256:7b31b3c2efa17534dfcffb61665b71bbc959ad309b5b7ed82c3bbdcc63cc3d58",
   "upstreamTagAtVerification": "v1.38.2",
   "compressedLayerBytes": 2217541197,
