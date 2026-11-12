@@ -51,6 +51,10 @@ is needed for local Docker.
 
 - [Team paper portfolios / 团队模拟盘审核入口](superpowers/specs/2026-11-12-team-paper-review.zh-CN.md): approved product and technical specifications, now implemented with editable organization canvases and 10 starting templates. 原型与详细方案已批准；实现入口见 [使用指南](team-workspace.md)，实际检查和限制见 [验证记录](team-workspace-validation.md)。
 
+### Planned product evolution · 已确认方向的后续设计
+
+- [Independent agents and guided teams / 独立股友与引导式团队](superpowers/specs/2026-11-12-independent-agents-guided-teams-design.zh-CN.md): approved product direction; written specification awaiting review, not an implemented release. Covers holdings-first onboarding, reusable individual agents, isolated memories, autonomous paper teams, A2A integration and future RL interfaces. 用户已确认整体方向；正式文档待审阅，尚未实现。将“流程简洁易懂”作为硬验收条件，包含默认三步引导、一次 AI 设置、自动团队及 P0–P4 更新路线。
+
 ## Retained workflows and history · 保留流程与历史记录
 
 The retained analysis and Council APIs, report readers and advanced simulation
