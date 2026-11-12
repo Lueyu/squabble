@@ -13,6 +13,7 @@ import {councilSessions,councilReports,councilMessages} from '../../database/cou
 import {CouncilService} from '../council/council.service';
 import {newCheckpoint} from '../council/council.dialogue';
 import {researchCurrentViews} from '../../database/simple-experience.schema';
+import {waitForFixturePublications} from '../council/council-test.fixture';
 
 test('first AI report and latest same-day portfolio discussion are independent immutable selections',{skip:!process.env.EXPERIENCE_TEST_DATABASE_URL},async()=>{
   const url=process.env.EXPERIENCE_TEST_DATABASE_URL!,namespace='report_history_'+randomUUID().replaceAll('-','');
@@ -21,6 +22,7 @@ test('first AI report and latest same-day portfolio discussion are independent i
   try{
     for(const name of readdirSync('scripts/db').filter(n=>/^\d\d_.*\.sql$/u.test(n)&&!n.startsWith('02_')&&(Number(n.slice(0,2))<=34 || n.startsWith('49_'))).sort())await client.unsafe(readFileSync('scripts/db/'+name,'utf8'));
     const owner=randomUUID(),db=drizzle(client),documents=new ResearchDocumentsService(db);
+    waitForFixturePublications(documents);
     const service=new CurrentResearchService(db,documents,{} as never,{} as never);
     const created=new Date('2026-11-06T01:00:00Z');
     async function portfolio(summary:string,mode='api',minute=0){const [run]=await db.insert(portfolioAnalysisRuns).values({owner,status:'completed',route:{mode},snapshot:{},progress:{},report:{summary},createdAt:new Date(+created+minute*60000)}).returning();return documents.importSource(owner,{type:'portfolio',id:run.id});}

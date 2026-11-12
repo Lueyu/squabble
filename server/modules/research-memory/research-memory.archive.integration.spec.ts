@@ -13,6 +13,7 @@ import { ResearchArchiveService, enqueueResearchArchive } from './research-memor
 import { researchArchiveJobs, researchMemories } from '../../database/research-memory.schema';
 import { CouncilService } from '../council/council.service';
 import { createDatabase } from '../../common/platform/database.provider';
+import { waitForSavedAvailability } from '../council/council-test.fixture';
 
 async function fixture(run: (value: { db: ReturnType<typeof drizzle>; client: postgres.Sql; owner: string;
   memory: ResearchMemoryService; jobs: ResearchArchiveService; queryCount: () => number }) => Promise<void>, max = 10) {
@@ -282,13 +283,17 @@ test('transient archive failures back off, stop after bounded attempts and suppo
 
 test('genuine cycles reselect memory while pause and task retry retain version pins', { skip: !process.env.MEMORY_TEST_DATABASE_URL },
   async () => fixture(async ({ db, owner, memory }) => {
-    const source = await seed(db, owner); await memory.archiveReport(owner, source.input);
+    const source = await seed(db, owner);
+    await waitForSavedAvailability(source.report.createdAt.toISOString());
+    await memory.archiveReport(owner, source.input);
     const council = new CouncilService(db, { validateConnectionIds: async () => {}, isConfigured: async () => true } as never,
       {} as never, {} as never, {} as never, undefined, undefined, memory);
     council['launch'] = () => {};
     const created = await council.createSession(owner, { ticker: 'AAPL', language: 'en', goal: 'comprehensive', recallEnabled: true });
     const original = (await db.select().from(councilSessions).where(eq(councilSessions.id, created.id)))[0].checkpoint!;
-    const newer = await seed(db, owner); await memory.archiveReport(owner, newer.input);
+    const newer = await seed(db, owner);
+    await waitForSavedAvailability(newer.report.createdAt.toISOString());
+    await memory.archiveReport(owner, newer.input);
     await council.pauseSession(owner, created.id); await council.runSession(owner, created.id);
     const resumed = (await db.select().from(councilSessions).where(eq(councilSessions.id, created.id)))[0].checkpoint!;
     assert.equal(resumed.cycleId, original.cycleId); assert.deepEqual(resumed.workflow?.memory, original.workflow?.memory);
@@ -299,7 +304,9 @@ test('genuine cycles reselect memory while pause and task retry retain version p
     const next = (await db.select().from(councilSessions).where(eq(councilSessions.id, created.id)))[0].checkpoint!;
     assert.notEqual(next.cycleId, original.cycleId);
     assert.ok(next.workflow?.memory?.items.some(item => item.source.reportId === newer.report.id));
-    const latest = await seed(db, owner); await memory.archiveReport(owner, latest.input);
+    const latest = await seed(db, owner);
+    await waitForSavedAvailability(latest.report.createdAt.toISOString());
+    await memory.archiveReport(owner, latest.input);
     await db.update(councilSessions).set({ status: 'completed', checkpoint: { ...next, nextTurn: next.turns.length } })
       .where(eq(councilSessions.id, created.id));
     await council.runSession(owner, created.id);

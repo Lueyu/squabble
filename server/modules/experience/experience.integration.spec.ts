@@ -17,6 +17,7 @@ import {AutomaticResearchBudgetService} from '../paper-trading/automatic-researc
 import {automaticResearchTasks} from '../../database/investment-policy.schema';
 import {councilSessions,councilReports} from '../../database/council.schema';
 import {simpleCouncilRequests} from '../../database/simple-council.schema';
+import {waitForFixturePublications} from '../council/council-test.fixture';
 
 test('current analysis preserves good content, deduplicates retries and rejects late or foreign publications',{skip:!process.env.EXPERIENCE_TEST_DATABASE_URL&&!process.env.RESEARCH_TEST_DATABASE_URL},async()=>{
   const url=process.env.EXPERIENCE_TEST_DATABASE_URL??process.env.RESEARCH_TEST_DATABASE_URL!;
@@ -26,6 +27,7 @@ test('current analysis preserves good content, deduplicates retries and rejects 
     for(const file of readdirSync('scripts/db').filter(f=>/^\d\d_.*\.sql$/.test(f)&&!f.startsWith('02_')).sort())await client.unsafe(readFileSync('scripts/db/'+file,'utf8'));
     await client.unsafe(readFileSync('scripts/db/31_simple_experience.sql','utf8'));
     const db=drizzle(client),owner=randomUUID(),stranger=randomUUID(),documents=new ResearchDocumentsService(db),day=businessDate(new Date(),'Asia/Shanghai');
+    waitForFixturePublications(documents);
     let calls=0;
     const portfolio={create:async(requestedOwner:string)=>{calls++;const [run]=await db.insert(portfolioAnalysisRuns).values({owner:requestedOwner,status:'pending',route:{mode:'basic'},snapshot:{},progress:{}}).returning();return {id:run.id};}} as unknown as PortfolioAnalysisService;
     const research=new CurrentResearchService(db,documents,portfolio,{} as SimpleCouncilService);

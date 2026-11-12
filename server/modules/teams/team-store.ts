@@ -72,7 +72,7 @@ export class TeamStore {
         return { ...team, status: team.status as TeamDetail['status'], semanticRevision: draft.semanticRevision,
             currentVersion: version?.version ?? null, binding: binding ? bindingView(binding) : null, roleCount: draft.config.roles.length, departmentCount: draft.config.departments.length,
             hasDraft: !version || semanticHash(draft.config) !== version.semanticHash,
-            connectionCount: new Set(draft.config.roles.flatMap(role => role.executor ? [role.executor.executionMode === 'model' ? 'model:' + role.executor.connectionId : 'local:' + role.executor.localAgentId] : [])).size,
+            connectionCount: new Set(draft.config.roles.flatMap(role => role.executor ? [role.executor.executionMode === 'local' ? 'local:' + role.executor.localAgentId : role.executor.executionMode + ':' + role.executor.connectionId] : [])).size,
             runningCommissionCount: commissions.filter(c => ['queued', 'running', 'awaiting_review', 'cancelling', 'uncertain'].includes(c.state)).length,
             cost: combineTeamCosts(costs), equityUsd: nav?.equity ?? null, createdAt: team.createdAt.toISOString(), updatedAt: team.updatedAt.toISOString(),
             draft: { semanticRevision: draft.semanticRevision, baseVersionId: draft.baseVersionId, config: draft.config }, publishedVersion: version ? versionView(version) : null, capabilities: teamCapabilities() };

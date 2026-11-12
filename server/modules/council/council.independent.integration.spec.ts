@@ -126,14 +126,24 @@ test('independent submissions stay blind in actual execution, persist, and relea
         getExecutionInfo: async () => ({ provider: 'fixture', modelFast: 'fixture-model' }),
         chatFastJSON: async (prompt: Array<{ content: string }>) => {
           seen.push(JSON.stringify(prompt));
-          if (seen.length === 2) { summaryEntered(); await summaryGate; }
+          if (seen.length === 3) { summaryEntered(); await summaryGate; }
           return { data: { content: 'Public response', evidenceIds: [] }, tokens: 1 };
         } };
       const council = new CouncilService(drizzle(client), model as never, {} as never, {} as never, {} as never);
       const simple = new SimpleCouncilService(drizzle(client), council, model as never);
+      // This scenario needs an actual moderated group; a single person now answers directly.
+      simple.resolveMembers = async () => ({ members: team, executors: team.map(member => ({
+        memberId: member.id, identity: `fixture:${member.id}`, connection: member.id,
+        provider: 'fixture', model: 'fixture-model', identityVerified: true,
+      })) });
       const conversation = await simple.create(owner, { message: 'Original question', requestKey: 'summary-steering' });
       if (!('id' in conversation)) throw new Error('Unexpected clarification');
-      await awaitingSummary;
+      let summaryTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([awaitingSummary, new Promise<never>((_, reject) => {
+          summaryTimer = setTimeout(() => reject(new Error('Moderated summary did not start')), 15000);
+        })]);
+      } finally { if (summaryTimer) clearTimeout(summaryTimer); }
       await simple.addMessage(owner, conversation.id, { message: 'LATE_SUMMARY_QUESTION', requestKey: 'summary-followup' });
       continueSummary();
       for (let i = 0; i < 300; i++) {
@@ -141,8 +151,8 @@ test('independent submissions stay blind in actual execution, persist, and relea
         if (result.status !== 'running') break;
         await new Promise(resolve => setTimeout(resolve, 10));
       }
-      assert.equal(seen.length, 3, 'the outdated summary must be replaced with one responding to the late question');
-      assert.equal(seen[2].includes('LATE_SUMMARY_QUESTION'), true);
+      assert.equal(seen.length, 4, 'the outdated summary must be replaced with one responding to the late question');
+      assert.equal(seen[3].includes('LATE_SUMMARY_QUESTION'), true);
     });
 
     await t.test('specific claim challenges get public responses and stop after two unsuccessful supplements', async () => {

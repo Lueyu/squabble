@@ -18,6 +18,7 @@ import type { SimpleCouncilService } from '../council/simple-council.service';
 import type { PortfolioResearchRouteService } from './portfolio-research-route.service';
 import type { ModelRoute } from '../../../shared/model-route.interface';
 import { PortfolioResearchRouteService as RouteService } from './portfolio-research-route.service';
+import { waitForFixturePublications } from '../council/council-test.fixture';
 
 const url=process.env.EXPERIENCE_TEST_DATABASE_URL??process.env.RESEARCH_TEST_DATABASE_URL;
 test('facts-only material allows first AI research and executor changes invalidate deduplication',{skip:!url},async()=>{
@@ -26,6 +27,7 @@ test('facts-only material allows first AI research and executor changes invalida
   try{
     for(const file of readdirSync('scripts/db').filter(f=>/^\d\d_.*\.sql$/u.test(f)&&!f.startsWith('02_')).sort())await client.unsafe(readFileSync('scripts/db/'+file,'utf8'));
     const db=drizzle(client),owner=randomUUID(),documents=new ResearchDocumentsService(db),day=businessDate(new Date(),'Asia/Shanghai');
+    waitForFixturePublications(documents);
     let settingsSeen:unknown;
     const resolver=new RouteService(db,{readiness:async(_owner:string,settings:unknown)=>{settingsSeen=settings;return[];}} as never,
       {getDefaultModelRoute:async()=>({mode:'local',agentId:'native-opencode',agentSettings:{model:'gateway/deepseek-v4-flash'}})} as never,{} as never);

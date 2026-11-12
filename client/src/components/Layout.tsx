@@ -264,7 +264,7 @@ function Layout() {
           <Outlet />
         </main>
         {simple && !focusedFlow && <nav className="portfolio-mobile-nav" aria-label={zh ? '快捷导航' : 'Quick navigation'}>
-          {simpleItems.filter(item => ['overview', 'friends', 'daily', 'memory'].includes(item.id)).map(item => <NavLink key={item.path} to={item.path} end={item.end} className={item.id === currentRoute.section ? 'active' : undefined}><item.icon size={18} /><span>{item.label}</span></NavLink>)}
+          {simpleItems.filter(item => ['overview', 'friends', 'teams', 'research'].includes(item.id)).map(item => <NavLink key={item.path} to={item.path} end={item.end} className={item.id === currentRoute.section ? 'active' : undefined}><item.icon size={18} /><span>{item.label}</span></NavLink>)}
           <button type="button" onClick={() => setMobileOpen(true)} aria-expanded={mobileOpen}><Menu size={18} /><span>{zh ? '更多' : 'More'}</span></button>
         </nav>}
       </div>

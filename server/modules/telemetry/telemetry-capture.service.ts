@@ -4,6 +4,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 import { telemetrySpans } from '../../database/telemetry.schema';
 import type { TelemetrySpanRecord } from '../../../shared/telemetry.interface';
 import { createLangfuseExporter, stableTelemetryTraceId, type TelemetryExporter } from './telemetry-langfuse';
+import { telemetryDimensions } from './telemetry-identity.rules';
 
 interface CaptureOptions { maxPending?: number; flushTimeoutMs?: number }
 export interface TelemetryCaptureHealth {
@@ -29,7 +30,7 @@ function safeRecord(owner: string, input: TelemetrySpanRecord): TelemetrySpanRec
   if (!owner || !id || !runId || !sourceId || !Number.isFinite(start.getTime()) || end && !Number.isFinite(end.getTime())
     || !['task', 'agent', 'model', 'tool'].includes(input.kind)
     || !['queued', 'running', 'completed', 'failed', 'cancelled', 'unknown'].includes(input.status)) return null;
-  return { id, runId, sourceId, sessionId: identifier(input.sessionId), revision: measurement(input.revision),
+  return { ...telemetryDimensions(input), id, runId, sourceId, sessionId: identifier(input.sessionId), revision: measurement(input.revision),
     parentId: identifier(input.parentId), kind: input.kind, name: identifier(input.name, 100) ?? input.kind,
     title: input.kind === 'model' ? 'Model call' : input.kind === 'tool' ? 'Research tool' : 'Agent execution',
     scene: identifier(input.scene, 80) ?? 'analysis', status: input.status,

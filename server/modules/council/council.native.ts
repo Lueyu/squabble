@@ -24,8 +24,8 @@ export function agentAssignment(input: { ticker: string; language: string; membe
     'Also return sources:[{id,title,url,content}], researchStance:"positive|balanced|cautious", decision:"wait|reject|approve", dissent:[], nextReviewCondition. Each source needs a unique nonempty text id, a public http(s) url and an excerpt up to 2000 characters; up to 12 sources. Claims may cite supplied evidence IDs or your declared source IDs exactly. Do not claim source verification you did not perform.',
     'No trading candidate means research only. A candidate is immutable; its approval is subject to separate application risk controls.',
     JSON.stringify({ ...input, messages: input.messages.slice(-18).map((item) => ({ ...item, content: item.content.slice(0, 4000) })),
-      evidence: input.evidence.filter((item, index) => index < 20 || frozenIds.has(item.id))
-        .map((item) => ({ ...item, content: frozenIds.has(item.id) ? item.content : item.content.slice(0, 1500) })) }),
+      evidence: input.evidence.filter((item, index) => index < 20 || frozenIds.has(item.id) || item.agentMemory)
+        .map((item) => ({ ...item, content: frozenIds.has(item.id) || item.agentMemory ? item.content : item.content.slice(0, 1500) })) }),
   ].join('\n');
 }
 

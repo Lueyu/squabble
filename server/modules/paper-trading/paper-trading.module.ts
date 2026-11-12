@@ -106,6 +106,8 @@ import { StrategyInterviewService } from './strategy-interview.service';
     InvestmentPolicyService,
     AutomaticResearchBudgetService,
     UserInvestmentStrategyService,
+    PortfolioWorkspaceService,
+    TradingMarketService,
   ],
 })
 export class PaperTradingModule {}

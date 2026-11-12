@@ -966,3 +966,6 @@ export * from './research-compute.schema';
 export * from './deep-agent-driver.schema';
 export * from './tool-capabilities.schema';
 export * from './teams.schema';
+export * from './agent-roster.schema';
+export * from './team-run.schema';
+export * from './a2a-agents.schema';

@@ -17,6 +17,7 @@ import { StrategyStore } from '../paper-trading/strategy.store';
 import { StrategyService } from '../paper-trading/strategy.service';
 import { AgentBuilderService } from '../paper-trading/agent-builder.service';
 import { strategyPlans, strategyRuntime, strategyTasks } from '../../database/strategy.schema';
+import { waitForSavedAvailability } from '../council/council-test.fixture';
 
 test('reviewed exact submitted replacement preserves old endorsement/latch and rejects late user edits or missing dispatch proof', {
   skip: !process.env.MEMORY_TEST_DATABASE_URL,
@@ -46,6 +47,7 @@ test('reviewed exact submitted replacement preserves old endorsement/latch and r
       thesisCandidates: [scenario === 'tampered-supersedes' ? { ...candidate, supersedes: { ...candidate.supersedes!, reason: 'Unreviewed rewritten reason' } } : candidate],
       coverage: { goal: 'comprehensive', cycleId, revision: 1, complete: true, tasks: [{ id: taskId, key: 'summary', state: 'accepted', acceptedAttemptId: attemptId }] },
       evidence: [{ id: 'new-source', title: 'New verified filing', sourceUrl: 'https://example.test/new', fetchedAt: new Date().toISOString(), content: 'Fixture' }] }).returning();
+    await waitForSavedAvailability(report.createdAt.toISOString());
     if (scenario === 'edited') await f.memory.updateThesis(owner, f.thesis.id, { expectedVersion: f.thesis.version, action: 'confirm', changeReason: 'My new assessment while research was running' });
     if (scenario === 'missing-inventory') {
       const state = await db.transaction(async tx => { await lockMemoryOwner(tx, owner); return captureStrategyMemory(tx, owner, [report.id]); });

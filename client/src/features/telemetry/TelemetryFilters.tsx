@@ -9,6 +9,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Input } from '@/components/ui/input';
 import type { TelemetryFilters as Filters, TelemetryWorkspace } from '@shared/telemetry.interface';
 import { formatTime } from './telemetry-state';
+import TelemetryIdentityFilters from './TelemetryIdentityFilters';
 
 export default function TelemetryFilters({ filters, data, update }: {
   filters: Filters; data?: TelemetryWorkspace; update: (changes: Record<string, string | undefined>) => void;
@@ -33,7 +34,7 @@ export default function TelemetryFilters({ filters, data, update }: {
     update({ from: draft.from.toISOString(), to: end.toISOString() });
     setOpen(false);
   };
-  return <div className="telemetry-filters" aria-label={zh ? '运行筛选' : 'Telemetry filters'}>
+  return <><div className="telemetry-filters" aria-label={zh ? '运行筛选' : 'Telemetry filters'}>
     <Popover open={open} onOpenChange={value => {
       setOpen(value);
       if (value) setDraft(from && to ? { from: new Date(from), to: new Date(to) } : undefined);
@@ -51,9 +52,9 @@ export default function TelemetryFilters({ filters, data, update }: {
     </label>
     <NativeSelect aria-label={zh ? 'Agent' : 'Agent'} value={filters.agentId ?? ''}
       onChange={event => update({ agentId: event.target.value || undefined })}>
-      <option value="">{zh ? '全部 Agent' : 'All agents'}</option>
+      <option value="">{zh ? '全部执行身份' : 'All execution identities'}</option>
       {filters.agentId && !agents.some(agent => agent.id === filters.agentId) && <option value={filters.agentId}>{filters.agentId}</option>}
-      {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+      {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name} · {agent.rosterAgentVersionId?.slice(0, 8) ?? (zh ? '旧记录' : 'Legacy')} · {agent.model ?? (zh ? '模型未知' : 'Unknown model')}</option>)}
     </NativeSelect>
     <NativeSelect aria-label={zh ? '执行方式' : 'Execution mode'} value={filters.executionMode ?? ''}
       onChange={event => update({ executionMode: event.target.value || undefined })}>
@@ -63,5 +64,5 @@ export default function TelemetryFilters({ filters, data, update }: {
     </NativeSelect>
     <span className="telemetry-updated telemetry-muted">{data
       ? `${zh ? '最后更新' : 'Updated'} ${formatTime(data.generatedAt, i18n.language)}` : ''}</span>
-  </div>;
+  </div><TelemetryIdentityFilters filters={filters} data={data} update={update} zh={zh} /></>;
 }

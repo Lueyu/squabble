@@ -48,7 +48,7 @@ export const councilMessages = pgTable('council_messages', {
   owner: text('owner').notNull(),
   sessionId: uuid('session_id').notNull().references(() => councilSessions.id, { onDelete: 'cascade' }),
   role: varchar('role', { length: 16 }).$type<'researcher' | 'challenger' | 'manager' | 'user' | 'system'>().notNull(),
-  memberName: varchar('member_name', { length: 40 }).notNull(),
+  memberName: varchar('member_name', { length: 100 }).notNull(),
   content: text('content').notNull(),
   revision: integer('revision').notNull(),
   tokensUsed: integer('tokens_used').notNull().default(0),

@@ -9,6 +9,7 @@ import { monitorFixture, seedMonitor } from './research-memory.monitor.fixtures'
 import { ResearchMemoryService } from './research-memory.service';
 import { QuoteService } from '../quote/quote.service';
 import { retrievalCorpus } from './research-memory.retrieval.fixtures';
+import { waitForSavedAvailability } from '../council/council-test.fixture';
 
 test('one frozen pool supports different tasks beyond three seats without importing new versions or foreign memories', {
   skip: !process.env.MEMORY_TEST_DATABASE_URL,
@@ -20,6 +21,7 @@ test('one frozen pool supports different tasks beyond three seats without import
     publicationOutcome: 'succeeded', decision: 'wait', summary: 'Fictional multiple independent claims', dissent: [],
     nextReviewCondition: '', engine: 'llm', evidence: [{ id: 'filing', title: 'Fixture filing', content: 'Fictional report',
       sourceUrl: 'https://example.test/report', fetchedAt: new Date().toISOString() }] }).returning();
+  await waitForSavedAvailability(report.createdAt.toISOString());
   await memory.archiveReport(owner, { sessionId: session.id, ticker: 'AAPL', language: 'en',
     report: { ...report, createdAt: report.createdAt.toISOString() },
     thesisCandidates: retrievalCorpus().filter(item => item.kind === 'thesis').slice(0, 5).map(item => item.content!) });

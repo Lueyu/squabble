@@ -37,3 +37,13 @@ test('saved-response parsing preserves JSON and never puts private malformed tex
   assert.deepEqual(parseSavedTeamResponse({ text: '```json\n{"ok":true}\n```' }), { ok: true });
   assert.throws(() => parseSavedTeamResponse({ text: 'private model text' }), { message: 'LLM_INVALID_JSON' });
 });
+
+test('team execution retains exact friend identity and personality alongside role responsibility', () => {
+  const saved = structuredClone(context);
+  Object.assign(saved.members[0], { rosterAgentId: 'friend', rosterAgentVersionId: 'version', agentInstructions: 'PINNED_PERSONALITY' });
+  const member = teamCouncilMembers(saved)[0];
+  assert.equal(member.rosterAgentId, 'friend');
+  assert.equal(member.rosterAgentVersionId, 'version');
+  assert.match(member.instructions, /PINNED_PERSONALITY/u);
+  assert.match(member.instructions, /synthesize/u);
+});

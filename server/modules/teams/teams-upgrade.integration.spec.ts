@@ -1,14 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import postgres from 'postgres';
 test('fresh and genuine baseline60 upgrades agree after replay, preserving legacy ledger without invented team ownership', {skip:!process.env.TEAM_TEST_DATABASE_URL},async()=>{
   const url=process.env.TEAM_TEST_DATABASE_URL!,suffix=randomUUID().replaceAll('-',''),freshName='teams_fresh_'+suffix,upgradeName='teams_upgrade_'+suffix;
   const admin=postgres(url,{max:1,onnotice:()=>undefined}),fresh=postgres(url,{max:1,onnotice:()=>undefined,connection:{search_path:freshName}}),upgrade=postgres(url,{max:1,onnotice:()=>undefined,connection:{search_path:upgradeName}});
   try{
     await admin.unsafe('CREATE SCHEMA '+freshName);await admin.unsafe('CREATE SCHEMA '+upgradeName);
-    const base=readFileSync('scripts/db/01_schema.sql','utf8'),migration=readFileSync('scripts/db/61_teams.sql','utf8');
+    const base=readFileSync('scripts/db/01_schema.sql','utf8');
+    const migrations=readdirSync('scripts/db').filter(name=>/^\d+_.*\.sql$/u.test(name)&&Number(name.split('_')[0])>=61).sort()
+      .map(name=>readFileSync('scripts/db/'+name,'utf8'));
     await fresh.unsafe(base);
     const baseline=base.split('-- 61_teams.sql')[0];assert.ok(!baseline.includes('CREATE TABLE IF NOT EXISTS teams ('),'upgrade fixture must really predate teams');
     await upgrade.unsafe(baseline);
@@ -16,7 +18,7 @@ test('fresh and genuine baseline60 upgrades agree after replay, preserving legac
     const owner=randomUUID();await upgrade`INSERT INTO users(id,username,password_hash) VALUES(${owner},'legacy-fixture','unused')`;
     const [account]=await upgrade`INSERT INTO paper_accounts(owner,name,is_active,bot_enabled,cash_balance) VALUES(${owner},'Legacy running',true,true,12345.67) RETURNING *`;
     const before=await upgrade`SELECT id,owner,name,is_active,bot_enabled,cash_balance FROM paper_accounts WHERE id=${account.id}`;
-    await upgrade.unsafe(migration);await upgrade.unsafe(migration);await fresh.unsafe(migration);
+    for(const migration of migrations){await upgrade.unsafe(migration);await upgrade.unsafe(migration);await fresh.unsafe(migration);}
     assert.deepEqual(await upgrade`SELECT id,owner,name,is_active,bot_enabled,cash_balance FROM paper_accounts WHERE id=${account.id}`,before);
     assert.equal(Number((await upgrade`SELECT count(*) AS count FROM teams`)[0].count),0);
     assert.equal(Number((await upgrade`SELECT count(*) AS count FROM team_account_bindings`)[0].count),0);

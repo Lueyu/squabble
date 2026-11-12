@@ -11,6 +11,6 @@ import { TeamDecisionService } from './team-decision.service';
 import { TeamSourceAccessService } from './team-source-access.service';
 import { TeamsController } from './teams.controller';
 @Module({ imports: [CouncilModule, LocalAgentsModule], controllers: [TeamsController], providers: [TeamStore, TeamsService, TeamVersionService, TeamRuntimeAdapter,
-        TeamCommissionService, TeamCommissionWorker, TeamDecisionService, TeamSourceAccessService], exports: [TeamsService] })
+        TeamCommissionService, TeamCommissionWorker, TeamDecisionService, TeamSourceAccessService], exports: [TeamsService, TeamStore, TeamCommissionService, TeamDecisionService] })
 export class TeamsModule {
 }

@@ -35,6 +35,9 @@ import type { OverallDailyEvidence } from '../../../shared/daily-workspace.inter
 import { pinResearchSkill } from '../research-skills/research-skills.registry';
 import { researchSkillTitle } from '../research-skills/research-skills.catalog';
 import { DataLibraryService } from '../data-library/data-library.service';
+import { AgentRosterService } from '../agent-roster/agent-roster.service';
+import type { AgentSelection } from '../../../shared/agent-roster.interface';
+import { assertCouncilRosterPublication } from './council.roster';
 
 const key = z.string().trim().min(1).max(200);
 const message = z.string().trim().min(1).max(2000);
@@ -45,6 +48,7 @@ const context = z.discriminatedUnion('kind', [z.object({ kind: z.literal('portfo
   z.object({ kind: z.literal('report'), documentId: z.uuid() }).strict(), z.object({ kind: z.literal('decision'), orderId: z.uuid() }).strict()]);
 const skillId = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u).nullable().optional();
 const createSchema = z.object({ message, requestKey: key, context: context.optional(), skillId,
+  agents: z.array(z.strictObject({ agentId: z.uuid(), agentVersionId: z.uuid(), memberId: z.string().min(1).max(100).optional(), role: z.enum(['researcher', 'challenger', 'manager']).optional() })).min(1).max(6).optional(),
   toolPolicy: z.strictObject({ webResearch: z.boolean() }).optional() }).strict();
 const messageSchema = z.object({ message, requestKey: key, replyTo: z.uuid().optional(), skillId }).strict();
 const renameSchema = z.object({ title: z.string().trim().min(1).max(160), requestKey: key }).strict();
@@ -67,7 +71,8 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
     private readonly council: CouncilService, private readonly llm: LlmService,
     @Optional() private readonly localAgents?: LocalAgentsService, @Optional() private readonly settings?: SettingsService,
     @Optional() private readonly documents?: ResearchDocumentsService,
-    @Optional() private readonly library?: DataLibraryService) {}
+    @Optional() private readonly library?: DataLibraryService,
+    @Optional() private readonly roster?: AgentRosterService) {}
 
   /** Run after Council's module-init interruption sweep, never alongside it. */
   async onApplicationBootstrap():Promise<void>{
@@ -80,7 +85,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
         if(receipt.status!=='idle'||receipt.revision!==1||receipt.checkpoint?.inflight||receipt.checkpoint?.remote||(receipt.checkpoint?.simple?.calls??0)>0){
           await this.closeInitializingReceipt(receipt.owner,receipt.id,'问题已保留，请明确继续本讨论。 / Your question is saved. Resume this conversation explicitly.');return;
         }
-        try{await this.initializeMembers(receipt.owner,receipt.id,await this.resolveMembers(receipt.owner),!receipt.checkpoint?.simple?.overallDaily);}
+        try{await this.initializeMembers(receipt.owner,receipt.id,await this.resolveMembers(receipt.owner,receipt.checkpoint?.simple?.agentSelections),!receipt.checkpoint?.simple?.overallDaily);}
         catch{await this.closeInitializingReceipt(receipt.owner,receipt.id,'股友配置检查未完成，请重新继续本讨论。 / Member configuration could not be checked. Resume this conversation.');}
       })();
       this.initializingReceipts.set(receipt.id,job);
@@ -136,9 +141,9 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       if (!this.documents) throw new BadRequestException('Report documents unavailable');
       frozen.resolvedReferences = await this.documents.resolveReferences(owner, frozen.references);
     }
-    const pendingMembers=this.resolveMembers(owner).catch(()=>({members:[] as CouncilMember[],executors:[] as ActualExecutor[]}));
+    const pendingMembers=value.agents ? this.resolveMembers(owner,value.agents) : this.resolveMembers(owner).catch(()=>({members:[] as CouncilMember[],executors:[] as ActualExecutor[]}));
     let timer:ReturnType<typeof setTimeout>|undefined;
-    const immediate=await Promise.race([pendingMembers,new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),100);})]);
+    const immediate=value.agents ? await pendingMembers : await Promise.race([pendingMembers,new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),100);})]);
     if(timer)clearTimeout(timer);
     const initializing=immediate===null;
     const { members:resolvedMembers, executors } = immediate??{members:[],executors:[]};
@@ -149,7 +154,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       if (existing) { this.same(existing.inputHash, inputHash); return { id: existing.sessionId, created: false }; }
       const checkpoint = newCheckpoint(members, { independent: true });
       checkpoint.simple = { ...checkpoint.simple!, executors, contextLabel: frozen.label, contextDate: frozen.contextDate,commonEvidence: frozen.evidence,
-        automaticTaskId: options.automaticTaskId,researchOnly:options.researchOnly,overallDaily,initializing,skills };
+        automaticTaskId: options.automaticTaskId,researchOnly:options.researchOnly,overallDaily,initializing,skills,agentSelections:value.agents };
       const config = normalizeBuilderConfig({ name: 'Research conversation', template: 'guard', tickers: [frozen.ticker], minimumRating: 'Buy',
         customPrompt: '', maxOrderPct: 5, dailyLossLimitPct: 3, maxOrdersPerDay: 1, notifyOnProposal: false, priceRules: [], language: 'zh-CN' });
       config.council = { enabled: true, members, webResearch: value.toolPolicy?.webResearch === true };
@@ -183,7 +188,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
     const simple = row.checkpoint?.simple;
     const executors = simple?.executors.length ? simple.executors : session.messages.flatMap(item => item.actualExecutor ? [item.actualExecutor] : []);
     const actualExecutors = [...new Map(executors.map(item => [item.memberId, {...item,connectionId:item.connection}])).values()];
-    const sources = new Set(actualExecutors.map(item => item.identity));
+    const sources = new Set(actualExecutors.map(item => item.memberId));
     const attempts = await new CouncilMemberAttemptsService(this.db).list(owner,id,row.checkpoint?.cycleId);
     const latestAttempts = [...new Map(attempts.map(item=>[item.memberId,item])).values()];
     const projected = simple?.stage==='independent' ? await this.db.select().from(councilIndependentSubmissions).where(and(eq(councilIndependentSubmissions.owner,owner),
@@ -215,7 +220,6 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
 
   async addMessage(owner: string, id: string, input: ResearchConversationMessageInput, options: InternalOptions = {}): Promise<ResearchConversationView> {
     parse(z.uuid(), id); const value = parse(messageSchema, input);
-    const actual = await this.resolveMembers(owner);
     const inputHash = hash({ operation: 'message', id, ...value });
     const created = await this.db.transaction(async tx => {
       await lockMemoryOwner(tx, owner);
@@ -223,6 +227,15 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       if (!row) throw new NotFoundException('Research conversation not found');
       const [prior] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
       if (prior) { this.same(prior.inputHash, inputHash); return false; }
+      const savedMembers = row.profileSnapshot.council?.members ?? [];
+      const selections = row.checkpoint?.simple?.agentSelections ?? (savedMembers.some(member => member.rosterAgentId)
+        ? savedMembers.map(member => ({ agentId: member.rosterAgentId!, agentVersionId: member.rosterAgentVersionId!, memberId: member.id, role: member.role })) : undefined);
+      // Continuing private history never discovers new people or upgrades pinned versions.
+      // Legacy unavailable conversations may retain user notes, but never discover people on continuation.
+      if (!savedMembers.length && selections?.length) throw new ConflictException('AGENT_SELECTION_REQUIRED');
+      const resolved = selections ? await this.resolveMembers(owner, selections) : undefined;
+      const actual = { members: savedMembers, executors: row.checkpoint?.simple?.executors ?? resolved?.executors ?? [] };
+      await assertCouncilRosterPublication(tx, row);
       if (row.checkpoint?.runtimePending?.length) throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
       if (row.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
       const selectedId = row.checkpoint?.simple?.skills?.at(-1)?.id ?? null;
@@ -252,7 +265,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       const checkpoint = convert ? newCheckpoint(actual.members, { independent: true }) : row.checkpoint;
       if (convert && checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, executors: actual.executors, commonEvidence: row.evidenceSnapshot,
         contextDate:row.checkpoint?.simple?.contextDate,contextLabel:row.checkpoint?.simple?.contextLabel,
-        researchOnly:row.checkpoint?.simple?.researchOnly,overallDaily:row.checkpoint?.simple?.overallDaily };
+        researchOnly:row.checkpoint?.simple?.researchOnly,overallDaily:row.checkpoint?.simple?.overallDaily,agentSelections:selections };
       if (checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, automaticTaskId: options.automaticTaskId,
         skills, steeringRevision: (checkpoint.simple.steeringRevision ?? 0) + 1 };
       await tx.update(councilSessions).set({ revision, updatedAt: new Date(), continuationSummary,
@@ -307,7 +320,19 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       .where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id))); }
   }
 
-  async resolveMembers(owner: string): Promise<{ members: CouncilMember[]; executors: ActualExecutor[] }> {
+  async resolveMembers(owner: string, selections?: AgentSelection[]): Promise<{ members: CouncilMember[]; executors: ActualExecutor[] }> {
+    if (selections && !this.roster) throw new BadRequestException('AGENT_ROSTER_UNAVAILABLE');
+    if (this.roster) {
+      const chosen = selections ?? (await this.roster.list(owner, {})).items.filter(row => row.status === 'active').slice(0, 3).map(row => ({ agentId: row.id, agentVersionId: row.currentVersionId }));
+      if (chosen.length) {
+        const resolved = await this.roster.resolveMembers(owner, chosen);
+        const managers = resolved.filter(member => member.role === 'manager');
+        if (resolved.length > 1 && managers.length > 1) throw new BadRequestException('AGENT_MULTIPLE_MANAGERS');
+        const members = resolved.map((member, index) => ({ ...member,
+          role: resolved.length > 1 && !managers.length && index === resolved.length - 1 ? 'manager' as const : member.role }));
+        return { members, executors: members.map(member => ({ memberId: member.id, identity: `roster:${member.rosterAgentId}:${member.rosterAgentVersionId}`, connection: member.agentId ?? member.connectionId ?? 'default', connectionId: member.agentId ?? member.connectionId, provider: member.executionMode === 'local' ? 'local' : 'configured', model: 'unknown', identityVerified: true, modelVerified: false })) };
+      }
+    }
     const [preferences] = await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));
     const allowed = (id: string) => !preferences?.defaultMembers.length || preferences.defaultMembers.includes(id);
     const defaultRoute=this.settings?await this.settings.getDefaultModelRoute(owner).catch(()=>null):null;

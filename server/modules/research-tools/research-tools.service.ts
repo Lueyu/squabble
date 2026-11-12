@@ -44,6 +44,10 @@ import { captureTelemetry, TelemetryCaptureService } from '../telemetry/telemetr
 import type { TelemetrySpanRecord } from '../../../shared/telemetry.interface';
 import { ToolCapabilityGrantsService } from '../tool-capabilities/tool-capability-grants.service';
 import type { ToolCapabilityPackId } from '../../../shared/tool-capabilities.interface';
+import { assertCouncilRosterMember, councilRosterSources, councilRosterToolIds, readCouncilRosterMemory } from '../council/council.roster';
+import type { AgentRosterDatabase } from '../../database/agent-roster-context';
+import { researchDocumentVersions } from '../../database/research-documents.schema';
+import { researchDatasetVersions } from '../../database/research-artifacts.schema';
 
 type SessionRow = typeof councilSessions.$inferSelect;
 interface ScopedSession { session: SessionRow; authority: string; review?: boolean; workKey?: string | null }
@@ -98,8 +102,8 @@ export class ResearchToolsService {
     return RESEARCH_TOOLS.filter((tool: ResearchToolDefinition) => tool.kind !== 'web' && this.availableDefinition(tool)).map(toolDescriptor);
   }
 
-  async isCurrent(owner: string, scope: ResearchToolScope): Promise<boolean> {
-    try { return Boolean(await this.currentSession(owner, scope)); } catch { return false; }
+  async isCurrent(owner: string, scope: ResearchToolScope, settlement = false): Promise<boolean> {
+    try { return Boolean(await this.currentSession(owner, scope, this.db, false, settlement)); } catch { return false; }
   }
 
   async bundle(owner: string, scope: ResearchToolScope): Promise<ResearchToolBundle> {
@@ -108,7 +112,10 @@ export class ResearchToolsService {
     if (result.status === 'cancelled' || result.status === 'failed') {
       return { descriptors: [], snapshot: JSON.stringify(result) };
     }
-    return { descriptors: RESEARCH_TOOLS.filter((tool: ResearchToolDefinition) => (tool.kind !== 'web' || scope.webResearch)
+    const current = await this.currentSession(owner, scope);
+    const member = current?.session.profileSnapshot.council?.members.find(item => item.id === scope.memberId);
+    const allowed = current && member ? new Set(await this.db.transaction(tx => councilRosterToolIds(tx, current.session, member, RESEARCH_TOOLS.map(tool => tool.name), current.workKey ?? undefined))) : new Set<string>();
+    return { descriptors: RESEARCH_TOOLS.filter((tool: ResearchToolDefinition) => allowed.has(tool.name) && (tool.kind !== 'web' || scope.webResearch)
       && this.availableDefinition(tool, Boolean(scope.managedRuntime || scope.runtimeScope))
       && (scope.ticker !== 'PORTFOLIO' || PORTFOLIO_TOOLS.has(tool.name))
       && (scope.ticker === 'PORTFOLIO' || !tool.name.startsWith('get_portfolio_')))
@@ -144,7 +151,7 @@ export class ResearchToolsService {
     const assertActive = (): void => {
       if (!active || options.signal?.aborted || scope.expiresAt <= Date.now()) throw new ScopeEnded();
     };
-    const guard = async (): Promise<SessionRow> => {
+    const guard = async (settlement = false): Promise<SessionRow> => {
       assertActive();
       if (capabilityPack) {
         if (!this.capabilities) throw new Error('TOOL_CAPABILITY_DISABLED');
@@ -152,11 +159,19 @@ export class ResearchToolsService {
           revision: (await this.capabilities.require(owner, capabilityPack, capabilityDataClasses)).revision };
         else await this.capabilities.requireCurrent(owner, capability.packId, capability.revision, capability.dataClasses);
       }
-      if (options.shouldContinue && !(await options.shouldContinue())) throw new ScopeEnded();
+      if (options.shouldContinue) {
+        try { if (!(await options.shouldContinue())) throw new ScopeEnded(); }
+        catch (error) {
+          const response = error && typeof error === 'object' && 'getResponse' in error && typeof error.getResponse === 'function'
+            ? error.getResponse() as { code?: string } : undefined;
+          if (!settlement || response?.code !== 'AGENT_ARCHIVED') throw error;
+        }
+      }
       assertActive();
-      const current = await this.currentSession(owner, scope);
+      const current = await this.currentSession(owner, scope, this.db, false, settlement);
       if (!current || authority && current.authority !== authority) throw new ScopeEnded();
       const team = current.session.checkpoint?.teamContext;
+      await this.db.transaction(tx => this.assertRosterTool(tx, current, scope, tool.name, [], settlement));
       if (team) {
         const member = team.members.find(item => item.memberId === scope.memberId);
         if (!member || !['get_discussion_context', 'get_research_memory'].includes(tool.name) && !member.allowedToolIds.includes(tool.name)) throw new ScopeEnded();
@@ -193,23 +208,25 @@ export class ResearchToolsService {
           collectionPoll = setInterval(() => {
             if (!active || checkingCollectionScope) return;
             checkingCollectionScope = true;
-            void guard().catch(() => { active = false; collection.abort(); })
+            void guard(true).catch(() => { active = false; collection.abort(); })
               .finally(() => { checkingCollectionScope = false; });
           }, 1000);
           collectionPoll.unref();
         }
         const result: ResearchToolResult = await this.handle(tool, owner, scope, session,
-          parsed.data as HandlerInput, guard, review, collection.signal);
-        await guard();
+          parsed.data as HandlerInput, guard, review, collection.signal, () => guard(true));
+        await guard(true);
         const archived = await this.archiveProviderResult(tool, owner, scope, result, authority!, assertActive, false, capability);
-        await guard();
+        await guard(true);
         return archived;
       } catch (error) {
         collection.abort();
         if (error instanceof ScopeEnded || !active || options.signal?.aborted) {
           return researchFailure('cancelled', options.signal?.aborted ? 'RESEARCH_CANCELLED' : 'RESEARCH_SCOPE_EXPIRED', started);
         }
-        const code: string = error instanceof Error && (/^RESEARCH_(TASK_LIMIT|DAILY_LIMIT|BUDGET_UNAVAILABLE|INVALID_PEERS)$/.test(error.message)
+        const response = error && typeof error === 'object' && 'getResponse' in error && typeof error.getResponse === 'function' ? error.getResponse() as { code?: string } : undefined;
+        const rosterCode = response?.code ?? (error instanceof Error && error.message.startsWith('AGENT_') ? error.message : undefined);
+        const code: string = rosterCode?.startsWith('AGENT_') ? rosterCode : error instanceof Error && (/^RESEARCH_(TASK_LIMIT|DAILY_LIMIT|BUDGET_UNAVAILABLE|INVALID_PEERS)$/.test(error.message)
           || error.message === 'BROWSER_PUBLIC_SOURCE_REQUIRED' || /^TOOL_CAPABILITY_(DISABLED|UNAVAILABLE|REVIEW_REQUIRED|REVISION_CHANGED|DATA_NOT_AUTHORIZED|PUBLIC_NETWORK_REQUIRED)$/u.test(error.message))
           ? error.message : 'RESEARCH_PROVIDER_ERROR';
         return researchFailure('failed', code);
@@ -237,7 +254,7 @@ export class ResearchToolsService {
   }
 
   private async currentSession(owner: string, scope: ResearchToolScope,
-    database: ScopeDatabase = this.db, lock = false): Promise<ScopedSession | null> {
+    database: ScopeDatabase = this.db, lock = false, settlement = false): Promise<ScopedSession | null> {
     if (!owner || !scope || !Number.isFinite(scope.expiresAt) || scope.expiresAt <= Date.now()
       || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu.test(scope.sessionId)
       || !Number.isInteger(scope.revision) || scope.revision < 1 || !Number.isInteger(scope.turn) || scope.turn < 0
@@ -251,7 +268,7 @@ export class ResearchToolsService {
     if (row.teamCommissionId && !row.checkpoint?.teamContext) return null;
     if (row.checkpoint?.teamContext) {
       if (scope.teamId !== row.checkpoint.teamContext.teamId) return null;
-      await assertTeamExecutionFence(database as PostgresJsDatabase, owner, row.checkpoint.teamContext);
+      await assertTeamExecutionFence(database as PostgresJsDatabase, owner, row.checkpoint.teamContext, { allowPublication: settlement });
     }
     const memberIds: string[] = row.profileSnapshot.council?.members.map((member) => member.id)
       ?? ['researcher', 'challenger', 'manager'];
@@ -297,6 +314,59 @@ export class ResearchToolsService {
       refs: teamWorkInputs(team.plan, current.workKey, (team.inputSnapshot.inputRefs ?? []) as ResearchSourceRef[]) };
   }
 
+  private async assertRosterTool(tx: AgentRosterDatabase, current: ScopedSession, scope: ResearchToolScope, toolId: string, extraEvidence: CouncilEvidence[] = [], settlement = false): Promise<void> {
+    const session = current.session, member = session.profileSnapshot.council?.members.find(item => item.id === scope.memberId);
+    if (!member?.rosterAgentId && !member?.rosterAgentVersionId) return;
+    const visible = session.checkpoint?.simple?.stage === 'independent'
+      ? [...(session.checkpoint.simple.commonEvidence ?? session.evidenceSnapshot), ...(session.checkpoint.simple.privateEvidence?.[scope.memberId] ?? [])]
+      : session.evidenceSnapshot;
+    if (session.checkpoint?.teamContext && current.workKey && extraEvidence.length) {
+      const selected = await councilRosterSources(tx, session, [], current.workKey);
+      const selectedKeys = new Set(selected.map(teamSourceIdentity));
+      if (extraEvidence.some(item => item.sourceReferences?.some(ref => !selectedKeys.has(teamSourceIdentity(ref)))
+        || item.agentMemory?.sourceRefs.some(ref => !selectedKeys.has(teamSourceIdentity(ref))))) throw new Error('AGENT_SOURCE_NOT_SELECTED');
+      const permittedVersions = new Set(selected.filter(ref => ref.kind === 'document_version').map(ref => ref.id));
+      const snapshots = selected.filter(ref => ref.kind === 'data_snapshot');
+      if (snapshots.length) {
+        const rows = await tx.select({ sourceVersionId: researchDatasetVersions.sourceVersionId }).from(researchDatasetVersions)
+          .where(and(eq(researchDatasetVersions.owner, session.owner), inArray(researchDatasetVersions.id, snapshots.map(ref => ref.id))));
+        for (const row of rows) permittedVersions.add(row.sourceVersionId);
+      }
+      if (libraryEvidenceReferences(extraEvidence).some(ref => !permittedVersions.has(ref.versionId))) throw new Error('AGENT_SOURCE_NOT_SELECTED');
+    }
+    await assertCouncilRosterMember(tx, session, member, [...visible, ...extraEvidence], [toolId], current.workKey ?? undefined, settlement ? {} : undefined);
+  }
+
+  private async rosterPrivateSources(owner: string, scope: ResearchToolScope, session: SessionRow): Promise<ResearchSourceRef[] | null> {
+    const member = session.profileSnapshot.council?.members.find(item => item.id === scope.memberId);
+    if (!member?.rosterAgentId) return null;
+    const work = session.checkpoint?.teamContext ? await this.teamWorkScope(owner, scope, session) : null;
+    const evidence = session.checkpoint?.simple?.stage === 'independent'
+      ? [...(session.checkpoint.simple.commonEvidence ?? session.evidenceSnapshot), ...(session.checkpoint.simple.privateEvidence?.[scope.memberId] ?? [])] : session.evidenceSnapshot;
+    return this.db.transaction(async tx => {
+      await assertCouncilRosterMember(tx, session, member, evidence, [], work?.workKey);
+      return councilRosterSources(tx, session, evidence, work?.workKey);
+    });
+  }
+
+  private async rosterLibraryVersions(owner: string, refs: ResearchSourceRef[], sourceId?: string) {
+    const documents = refs.filter(ref => ref.kind === 'document_version');
+    if (!documents.length) return [];
+    const rows = await this.db.select().from(dataLibraryVersions).where(and(eq(dataLibraryVersions.owner, owner),
+      inArray(dataLibraryVersions.id, documents.map(ref => ref.id)), sourceId ? eq(dataLibraryVersions.sourceId, sourceId) : undefined));
+    return rows.filter(version => documents.some(ref => ref.id === version.id && ref.revision === String(version.version)));
+  }
+
+  private async assertRosterDatasets(owner: string, scope: ResearchToolScope, session: SessionRow, ids: string[]): Promise<void> {
+    const refs = await this.rosterPrivateSources(owner, scope, session);
+    if (refs === null) return;
+    if (!ids.length || !refs.length) throw new Error('AGENT_SOURCE_NOT_SELECTED');
+    const rows = await this.db.select({ id: researchDatasetVersions.id, sourceVersionId: researchDatasetVersions.sourceVersionId,
+      contentHash: researchDatasetVersions.contentHash }).from(researchDatasetVersions).where(and(eq(researchDatasetVersions.owner, owner), inArray(researchDatasetVersions.id, ids)));
+    if (ids.some(id => !rows.some(row => row.id === id && refs.some(ref => ref.kind === 'data_snapshot'
+      ? ref.id === row.id && ref.revision === row.contentHash : ref.kind === 'document_version' && ref.id === row.sourceVersionId)))) throw new Error('AGENT_SOURCE_NOT_SELECTED');
+  }
+
   /** Read-only tools may archive their server-produced results, never caller-supplied facts or live memory/report copies. */
   private async archiveProviderResult(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
     result: ResearchToolResult, authority: string, assertActive: () => void, external = false,
@@ -313,6 +383,7 @@ export class ResearchToolsService {
     if (!dependencyOnly && (!bounded.data || typeof bounded.data !== 'object' || !('evidenceId' in bounded.data)
       || bounded.data.evidenceId !== id)) return bounded;
     const evidence: CouncilEvidence = { id, role: tool.kind === 'news' || tool.kind === 'web' ? 'sentiment' : 'fundamental',
+      ...('sourceRefs' in result.data && Array.isArray(result.data.sourceRefs) ? { sourceReferences: result.data.sourceRefs as ResearchSourceRef[] } : {}),
       ...(['search_data_library', 'read_browser_source', 'get_financial_source_data', 'get_portfolio_financials', 'read_dataset_summary', 'run_statistics', 'run_backtest'].includes(tool.name) ? { libraryReferences: this.libraryReferences(result.data) }
         : derivedReferences.length ? { libraryReferences: derivedReferences } : {}),
       evidenceType: 'tool_result', title: `${dependencyOnly ? '[Source dependencies] ' : tool.kind === 'web' ? '[Web source · unverified] ' : ''}${tool.name} (${scope.ticker})`,
@@ -325,9 +396,10 @@ export class ResearchToolsService {
     await this.db.transaction(async tx => {
       // Match the workflow store's lock order; reload under lock so concurrent
       // results append to the current snapshot instead of replacing each other.
-      const current = await this.currentSession(owner, scope, tx, true);
+      const current = await this.currentSession(owner, scope, tx, true, true);
       if (capability) await this.capabilities!.requireCurrent(owner, capability.packId, capability.revision, capability.dataClasses, tx);
       if (!current || current.authority !== authority) throw new ScopeEnded();
+      await this.assertRosterTool(tx, current, scope, tool.name, [evidence], true);
       if (current.session.checkpoint?.teamContext && current.workKey) evidence.teamWorkKey = current.workKey;
       if (!await libraryEvidenceAvailable(tx, owner, [evidence], true)) throw new ScopeEnded();
       assertActive();
@@ -348,7 +420,7 @@ export class ResearchToolsService {
   async acceptExternalResult(owner: string, scope: ResearchToolScope, descriptor: AgentToolDescriptor,
     result: ResearchToolResult): Promise<ResearchToolResult> {
     if (descriptor.effect === 'external_write') return result;
-    const current = await this.currentSession(owner, scope);
+    const current = await this.currentSession(owner, scope, this.db, false, true);
     if (!current) throw new ScopeEnded();
     const active = () => { if (scope.expiresAt <= Date.now()) throw new ScopeEnded(); };
     return this.archiveProviderResult({ name: descriptor.id, description: descriptor.description,
@@ -384,11 +456,13 @@ export class ResearchToolsService {
   }
 
   private async handle(tool: ResearchToolDefinition, owner: string, scope: ResearchToolScope,
-    session: SessionRow, input: HandlerInput, guard: () => Promise<SessionRow>, review: boolean, signal?: AbortSignal): Promise<ResearchToolResult> {
+    session: SessionRow, input: HandlerInput, guard: () => Promise<SessionRow>, review: boolean, signal?: AbortSignal,
+    settlementGuard: () => Promise<SessionRow> = guard): Promise<ResearchToolResult> {
     if (tool.name === 'read_dataset_summary') {
       if (!this.datasets || !input.datasetVersionId) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
+      await this.assertRosterDatasets(owner, scope, session, [input.datasetVersionId]);
       const metadata = await this.datasets.read(owner, input.datasetVersionId), sample = await this.datasets.summary(owner, input.datasetVersionId, input.sampleSize ?? 12);
-      await guard();
+      await settlementGuard();
       return { status: metadata.coverage.status === 'complete' ? 'succeeded' : 'partial', data: { ...sample,
         dataset: sample.summary, dataAsOf: metadata.timing.dataAsOf, sourceVersion: metadata.sourceVersion,
         libraryReference: { sourceId: metadata.sourceVersion.sourceId, versionId: metadata.sourceVersion.sourceVersionId } },
@@ -397,8 +471,9 @@ export class ResearchToolsService {
     }
     if (tool.name === 'run_statistics' || tool.name === 'run_backtest') {
       if (!this.compute || !scope.runtimeScope) return researchFailure('unavailable', 'RESEARCH_MANAGED_RUNTIME_REQUIRED');
+      await this.assertRosterDatasets(owner, scope, session, input.datasetVersionIds ?? []);
       const result = await this.compute.invoke(owner, tool.name === 'run_statistics' ? 'statistics' : 'backtest', input, scope.runtimeScope, signal);
-      await guard();
+      await settlementGuard();
       const metadata = this.datasets ? await Promise.all((input.datasetVersionIds ?? []).map(id => this.datasets.read(owner, id))) : [];
       return { ...result, data: { ...(result.data && typeof result.data === 'object' ? result.data : {}),
         libraryReferences: metadata.map(item => ({ sourceId: item.sourceVersion.sourceId, versionId: item.sourceVersion.sourceVersionId })),
@@ -425,10 +500,26 @@ export class ResearchToolsService {
       this.runtimeBrowsers.set(key, { sessionId: opened.sessionId, leaseToken: managed.leaseToken });
       const command = input.action === 'navigate' ? { action: 'navigate' as const, url: input.url ?? '' }
         : input.action === 'next' || input.action === 'expand' ? { action: input.action, index: input.index ?? 0 } : { action: input.action };
-      const snapshot = await this.browsers.act(binding, opened.sessionId, command, signal);
       await guard();
+      const snapshot = await this.browsers.act(binding, opened.sessionId, command, signal);
+      await settlementGuard();
       return { status: 'succeeded', data: { ...snapshot, ...(snapshot.artifact ? { artifacts: [snapshot.artifact] } : {}) },
         sources: [{ title: snapshot.title ?? 'Browser source', url: snapshot.url, fetchedAt: snapshot.observedAt }], asOf: snapshot.observedAt, truncated: false };
+    }
+    if (['read_browser_source', 'search_data_library'].includes(tool.name)) {
+      const refs = await this.rosterPrivateSources(owner, scope, session);
+      if (refs !== null) {
+        const versions = await this.rosterLibraryVersions(owner, refs, tool.name === 'read_browser_source' ? input.sourceId : undefined);
+        if (!versions.length) return researchFailure('unavailable', 'AGENT_SOURCE_NOT_SELECTED');
+        const query = input.query?.toLocaleLowerCase();
+        const selected = versions.filter(version => !query || version.extractedText.toLocaleLowerCase().includes(query)).slice(0, input.limit ?? 10);
+        const items = selected.map(version => ({ sourceId: version.sourceId, versionId: version.id, title: 'Selected exact source version',
+          excerpt: version.extractedText.slice(Math.max(0, query ? version.extractedText.toLocaleLowerCase().indexOf(query) - 120 : 0),
+            Math.max(0, query ? version.extractedText.toLocaleLowerCase().indexOf(query) - 120 : 0) + 2000), observedAt: version.observedAt.toISOString() }));
+        await settlementGuard();
+        return { status: items.length ? 'succeeded' : 'unavailable', data: { items, sourceRefs: refs.filter(ref => selected.some(version => version.id === ref.id)) },
+          sources: [], asOf: new Date().toISOString(), truncated: selected.length < versions.length };
+      }
     }
     if (tool.name === 'read_browser_source' && session.checkpoint?.teamContext) {
       const team = session.checkpoint.teamContext;
@@ -440,7 +531,7 @@ export class ResearchToolsService {
       const versions = grants.length ? await this.db.select().from(dataLibraryVersions).where(and(eq(dataLibraryVersions.owner, owner), inArray(dataLibraryVersions.id, grants.map(grant => grant.sourceId)), eq(dataLibraryVersions.sourceId, input.sourceId ?? ''))) : [];
       const refs = versions.map(version => ({ kind: 'document_version' as const, id: version.id, revision: String(version.version), availability: 'available' as const }));
       const content = await readTeamSourceContents(this.db, owner, team.teamId, refs, team.dataCutoffAt);
-      await guard();
+      await settlementGuard();
       return { status: content.length ? 'succeeded' : 'unavailable', data: { items: content.map(item => ({ sourceId: input.sourceId, versionId: item.ref.id, content: item.content })) }, sources: [], asOf: team.dataCutoffAt, truncated: false };
     }
     if (tool.name === 'read_browser_source') return this.browserSource(owner, input.sourceId, guard, signal);
@@ -456,7 +547,7 @@ export class ResearchToolsService {
       if (team && !versions.length) return researchFailure('unavailable', 'RESEARCH_SOURCE_UNAVAILABLE');
       const result = await this.library.search(owner, { query: input.query, limit: input.limit, ...(team ? { sourceIds: [...new Set(versions.map(version => version.sourceId))] } : {}) });
       if (team) result.items = result.items.filter(item => versions.some(version => version.id === item.versionId && version.observedAt.getTime() <= Date.parse(team.dataCutoffAt)));
-      await guard();
+      await settlementGuard();
       if (!await this.library.validateReferences(owner, result.items)) return researchFailure('unavailable', 'RESEARCH_SOURCE_UNAVAILABLE');
       return { status: result.items.length ? 'succeeded' : 'unavailable', data: result,
         asOf: result.asOf, truncated: result.truncated,
@@ -467,7 +558,7 @@ export class ResearchToolsService {
       const result = await this.financial.query(owner, { provider: input.provider, symbol: scope.ticker, operation: input.operation,
         ...(input.market ? { market: input.market } : {}), ...(input.exchange ? { exchange: input.exchange } : {}),
         ...(input.from ? { from: input.from } : {}), ...(input.to ? { to: input.to } : {}), ...(input.adjustment ? { adjustment: input.adjustment } : {}) });
-      await guard();
+      await settlementGuard();
       return { status: result.status, data: result, sources: result.sources, asOf: result.asOf ?? result.observedAt,
         truncated: result.dataset?.truncated ?? false, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
     }
@@ -485,7 +576,7 @@ export class ResearchToolsService {
         const result = await this.financial.query(owner, { provider: input.provider, symbol: target.ticker, market: target.market,
           operation: input.operation, ...(target.exchange ? { exchange: target.exchange } : target.market === 'HK' ? { exchange: 'HKEX' } : {}),
           ...(input.from ? { from: input.from } : {}), ...(input.to ? { to: input.to } : {}), ...(input.adjustment ? { adjustment: input.adjustment } : {}) });
-        await guard();
+        await settlementGuard();
         return { status: result.status, data: result, sources: result.sources, asOf: result.observedAt,
           truncated: result.dataset?.truncated ?? false, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
       }
@@ -495,14 +586,25 @@ export class ResearchToolsService {
         await guard(); results.push({ instrumentId: instrument.instrumentId,
           result: await this.quote({ ...scope, ticker: instrument.ticker }, tool.source) });
       }
-      await guard();
+      await settlementGuard();
       return { status: results.length && results.every(item => item.result.status === 'succeeded') ? 'succeeded' : 'partial',
         data: { instruments: results, coverage: { totalInstruments: frozen.length, offset, returned: results.length,
           nextOffset: offset + selected.length < frozen.length ? offset + selected.length : null } },
         sources: results.flatMap(item => item.result.sources), asOf: new Date().toISOString(), truncated: false };
     }
     if (tool.name === 'get_quotes') return this.quote(scope, tool.source);
-    if (tool.name === 'get_research_report') return this.reports(owner, scope, input.limit ?? 1);
+    if (tool.name === 'get_research_report') {
+      const refs = await this.rosterPrivateSources(owner, scope, session);
+      if (refs !== null) {
+        const reports = refs.filter(ref => ref.kind === 'report_version');
+        const versions = reports.length ? await this.db.select().from(researchDocumentVersions).where(and(eq(researchDocumentVersions.owner, owner), inArray(researchDocumentVersions.id, reports.map(ref => ref.id)))) : [];
+        const selected = versions.filter(version => reports.some(ref => ref.id === version.id && ref.revision === String(version.version))).slice(0, input.limit ?? 1);
+        await settlementGuard();
+        return { status: selected.length ? 'succeeded' : 'unavailable', data: { reports: selected.map(version => ({ versionId: version.id,
+          title: version.title, version: version.version, content: version.content })), sourceRefs: reports }, sources: [], asOf: new Date().toISOString(), truncated: selected.length < versions.length };
+      }
+      return this.reports(owner, scope, input.limit ?? 1);
+    }
     if (tool.name === 'get_discussion_context') return this.context(owner, scope, session, input.limit ?? 8, review);
     if (tool.name === 'get_research_memory') return this.researchMemory(owner, scope, session, review, input.asOf);
     if (tool.name === 'get_peer_comparison') return this.peerComparison(owner, scope, session, guard);
@@ -574,6 +676,14 @@ export class ResearchToolsService {
   }
 
   private async researchMemory(owner: string, scope: ResearchToolScope, session: SessionRow, review = false, asOf?: string): Promise<ResearchToolResult> {
+    const member = session.profileSnapshot.council?.members.find(item => item.id === scope.memberId);
+    if (member?.rosterAgentId) {
+      const work = session.checkpoint?.teamContext ? await this.teamWorkScope(owner, scope, session) : null;
+      const items = review ? [] : await this.db.transaction(tx => readCouncilRosterMemory(tx, session, member, work?.workKey));
+      return { status: items.length ? 'succeeded' : 'unavailable', data: { format: 'scoped-agent-memory/v1', omissions: [], items: items.map(item => ({ ...item.agentMemory,
+        id: item.id, memoryId: item.agentMemory?.id, content: item.content })), sourceRefs: items.flatMap(item => item.agentMemory?.sourceRefs ?? []), libraryReferences: libraryEvidenceReferences(items) },
+        sources: [], asOf: asOf ?? session.checkpoint?.teamContext?.dataCutoffAt ?? new Date().toISOString(), truncated: false };
+    }
     const workflow = session.checkpoint?.workflow;
     let recall: ResearchMemoryRecall;
     if (review || scope.memoryReferences?.length === 0) {

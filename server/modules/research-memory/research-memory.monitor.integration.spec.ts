@@ -17,6 +17,7 @@ import { emptyTradingSnapshot } from '../paper-trading/trading-market.source';
 import { resolveTradingTicker } from '@shared/trading-market.interface';
 import { createDatabase } from '../../common/platform/database.provider';
 import type postgres from 'postgres';
+import { waitForSavedAvailability } from '../council/council-test.fixture';
 
 test('monitor migration is installed by production startup', { skip: !process.env.MEMORY_TEST_DATABASE_URL }, async () => {
   await monitorFixture(async (_db, client) => {
@@ -161,6 +162,7 @@ test('final dependency checks apply publication, observation, ingestion and comp
     const [report] = await db.insert(councilReports).values({ owner, sessionId: f.session.id, version: 2, revision: 1,
       publicationOutcome: 'succeeded', decision: 'wait', summary: 'Comparable conflicting filing', dissent: [], nextReviewCondition: '', engine: 'llm',
       evidence: [{ ...f.report.evidence[0], metadata: { sources: [{ ...source, facts: [{ ...source.facts[0], value: 90 }] }] } }] }).returning();
+    await waitForSavedAvailability(report.createdAt.toISOString());
     await f.memory.archiveReport(owner, { sessionId: f.session.id, ticker: 'AAPL', language: 'en', report: { ...report, createdAt: report.createdAt.toISOString() } });
     assert.equal(await f.gate(), 'MEMORY_DEPENDENCY_EXPIRED', 'aligned unresolved facts require review at final execution');
   });

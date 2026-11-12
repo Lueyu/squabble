@@ -16,6 +16,7 @@ import {ChannelService} from '../channel/channel.service';
 import {DailyChannelResearchService} from '../experience/daily-channel-research.service';
 import {businessDate} from '../experience/simple-experience.rules';
 import {strategyContentHash} from '../paper-trading/user-investment-strategy.rules';
+import {waitForSavedAvailability} from './council-test.fixture';
 
 const url=process.env.COUNCIL_TEST_DATABASE_URL;
 test('daily generation publishes and hands off an executable immutable proposal without another extraction call',{skip:!url},async()=>{
@@ -45,6 +46,8 @@ test('daily generation publishes and hands off an executable immutable proposal 
   assert.equal(result.status,'completed',result.error??'');assert.equal(calls,5);
   const report=result.reports.at(-1)!;assert.equal(report.coverage?.executionPlan?.readiness,'ready');
   const version=await documents.getVersion(owner,report.researchVersionId!);
+  assert.equal(version.sourceStatus,'available','The exact generated report retains its original source');
+  await waitForSavedAvailability(version.availableAt);
   assert.equal(version.snapshot?.executionPlan?.readiness,'ready');assert.equal(version.snapshot?.executionPlan?.strategy.entries[0].directive?.quantity,1);
   assert.match(version.sections.find(s=>s.id==='execution-strategy')!.content,/110/);assert.doesNotMatch(version.sections.find(s=>s.id==='execution-strategy')!.content,/"numericEvidence"/);
   const strategies=new UserInvestmentStrategyService(db,documents,{json:async()=>{extractions++;throw Error('Unexpected extraction');}} as never);

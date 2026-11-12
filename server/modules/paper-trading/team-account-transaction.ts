@@ -26,6 +26,8 @@ export async function teamAccountPolicySnapshot(tx: TeamDatabase, owner: string,
 export async function pauseTeamAccountInTransaction(tx: TeamDatabase, owner: string, accountId: string): Promise<Record<string, unknown>> {
     const snapshot = await teamAccountPolicySnapshot(tx, owner, accountId);
     await cancelInvestmentCandidates(tx, owner, accountId, 'Team handover paused all automation including protective orders');
+    await tx.update(paperOrders).set({ status: 'cancelled', reason: 'Team authority paused all account orders including protective orders' })
+        .where(and(eq(paperOrders.owner, owner), eq(paperOrders.accountId, accountId), inArray(paperOrders.status, ['pending', 'pending_approval', 'approved'])));
     await tx.update(paperAccounts).set({ botEnabled: false, updatedAt: new Date() }).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId)));
     await tx.update(builderProfiles).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(builderProfiles.owner, owner), eq(builderProfiles.accountId, accountId), eq(builderProfiles.status, 'active')));
     await tx.update(strategyMandates).set({ status: 'paused', updatedAt: new Date() }).where(and(eq(strategyMandates.owner, owner), eq(strategyMandates.accountId, accountId), eq(strategyMandates.status, 'published')));

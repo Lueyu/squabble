@@ -4,6 +4,8 @@ import type { CouncilCandidate, CouncilMember, CouncilRole, CouncilResearchKind 
 import { evidencePromptMetadata } from '../research-memory/research-memory.temporal';
 
 export interface CouncilEvidence {
+  sourceReferences?: import('../../../shared/team-workspace.interface').ResearchSourceRef[];
+  agentMemory?: Pick<import('../../../shared/agent-roster.interface').AgentMemory, 'id' | 'agentId' | 'scope' | 'origin' | 'sourceRefs' | 'sharedFrom'>;
   /** Server-owned producing work; it never grants access beyond that work's source scope. */
   teamWorkKey?: string;
   libraryReferences?: Array<{ sourceId: string; versionId: string }>;
@@ -107,7 +109,8 @@ export function frozenOwnerEvidence(evidence: CouncilEvidence[]): CouncilEvidenc
 
 export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
   const frozen = frozenOwnerEvidence(evidence);
-  const frozenIds = new Set(frozen.map(item => item.id));
+  const memories = evidence.filter(item => item.agentMemory);
+  const frozenIds = new Set([...frozen, ...memories].map(item => item.id));
   const priority = (item: CouncilEvidence): number => item.sourceName === 'Investor configuration' ? 0
     : item.evidenceType === 'financial' && /statement|财报/iu.test(item.title) ? 1
       : item.researchKind ? 2 : item.evidenceType === 'price' ? 3 : item.evidenceType === 'financial' ? 4
@@ -134,8 +137,9 @@ export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
       remaining -= bytes;
       return [excerpt];
     });
-  return [...frozen.map(item => ({ id: item.id, title: item.title, content: item.content,
+  return [...[...frozen, ...memories].map(item => ({ id: item.id, title: item.title, content: item.content,
     source: item.sourceName ?? '', fetchedAt: item.fetchedAt,
+    ...(item.agentMemory ? { agentMemory: item.agentMemory } : {}),
     ...(item.metadata ? { metadata: evidencePromptMetadata(item.metadata) } : {}) })), ...excerpts];
 }
 

@@ -52,7 +52,8 @@ test('financial sources show configuration without claiming a successful connect
 });
 
 test('research room contains a composer and persistent history without capability link cards', () => {
-  const { load, render } = fixture();
+  const { state, load, render } = fixture();
+  state.queries.set('agent-roster', { data: { items: [{ id: 'friend', name: 'Saved friend', status: 'active', currentVersionId: 'version', currentVersion: { config: { templateId: 'moderator' } } }] } });
   const html = render(load('pages/Analysis/ResearchWorkspacePage.tsx').default);
   assert.match(html, /Research history/);
   assert.match(html, /Send question/);

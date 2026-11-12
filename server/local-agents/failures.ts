@@ -25,6 +25,12 @@ export function safeExecutionFailure(error: unknown, stage: FailureStage = 'runt
   const preserved = safeFailureValue(row.failure);
   if (preserved) return preserved;
   const message = error instanceof Error ? error.message : '';
+  const a2aUnknown = ['A2A_DISPATCH_UNKNOWN', 'A2A_TIMEOUT', 'A2A_STATUS_UNKNOWN', 'A2A_CANCEL_UNKNOWN', 'A2A_CANCEL_PENDING', 'A2A_INPUT_REQUIRED', 'A2A_AUTH_REQUIRED', 'A2A_INVALID_OUTPUT'];
+  const a2aConfiguration = ['A2A_CONNECTION_NOT_FOUND', 'A2A_CONNECTION_DISABLED', 'A2A_CONNECTION_CHANGED', 'A2A_VERSION_UNSUPPORTED', 'A2A_ENDPOINT_RESTRICTED'];
+  if (a2aUnknown.includes(message)) return { code: message, stage, recoveries: ['check_existing'] };
+  if (a2aConfiguration.includes(message)) return { code: message, stage, recoveries: ['fix_configuration'] };
+  if (message === 'A2A_PUBLICATION_BLOCKED') return { code: message, stage, recoveries: [] };
+  if (['A2A_CANCELLED', 'A2A_TASK_FAILED', 'A2A_REJECTED'].includes(message)) return { code: message, stage, recoveries: ['retry_member'] };
   const transportUncertain=message==='LLM_REQUEST_TIMEOUT'||message==='LLM request failed. Check provider URL and server network.';
   const code = transportUncertain ? 'LOCAL_DISPATCH_UNCERTAIN' : /^LOCAL_[A-Z_]+$/u.test(message) ? message : stage === 'parse' ? 'LOCAL_INVALID_RESULT' : nativeFailureCode(error);
   const uncertain = ['LOCAL_DISPATCH_UNCERTAIN','LOCAL_PAUSED','LOCAL_INTERRUPTED'].includes(code);

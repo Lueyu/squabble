@@ -25,12 +25,15 @@ function readable(value: unknown, zh: boolean): string {
 function executorConnection(executor: TeamExecutor | null | undefined): string | null | undefined {
   if (executor === undefined) return undefined;
   if (executor === null) return null;
-  return executor.executionMode === 'model' ? executor.connectionId : executor.localAgentId;
+  return executor.executionMode === 'local' ? executor.localAgentId : executor.connectionId;
 }
 function executorModel(executor: TeamExecutor | null | undefined): string | null | undefined {
   if (executor === undefined) return undefined;
   if (executor === null) return null;
-  return executor.executionMode === 'model' ? executor.model : typeof executor.settings.model === 'string' ? executor.settings.model : null;
+  return executor.executionMode === 'model' ? executor.model : executor.executionMode === 'local' && typeof executor.settings.model === 'string' ? executor.settings.model : null;
+}
+function executorSettings(executor: TeamExecutor | null | undefined) {
+  return executor?.executionMode === 'a2a' ? undefined : executor?.settings;
 }
 
 /** Compare semantic identities and fields, independently of counts, geometry and display-only renames. */
@@ -65,7 +68,7 @@ export function teamPublicationDiff(previous: TeamVersion | null | undefined, co
     change.add(zh ? '执行连接标识' : 'Executor connection', executorConnection(before?.executor), executorConnection(after?.executor));
     change.add(zh ? '明确模型' : 'Explicit model', executorModel(before?.executor), executorModel(after?.executor));
     change.add(zh ? '模型档位' : 'Model tier', before?.executor?.executionMode === 'model' ? before.executor.tier ?? null : before ? null : undefined, after?.executor?.executionMode === 'model' ? after.executor.tier ?? null : after ? null : undefined);
-    change.add(zh ? '执行器设置' : 'Executor settings', before?.executor?.settings ?? (before ? null : undefined), after?.executor?.settings ?? (after ? null : undefined));
+    change.add(zh ? '执行器设置' : 'Executor settings', executorSettings(before?.executor) ?? (before ? null : undefined), executorSettings(after?.executor) ?? (after ? null : undefined));
     change.add(zh ? '工具范围' : 'Tool scope', before?.allowedToolIds, after?.allowedToolIds);
     change.add(zh ? '资料授权版本引用' : 'Source grant references', before?.sourceGrantIds, after?.sourceGrantIds);
     if (change.values.length) result.push({ id, label: `${zh ? '岗位' : 'Role'} · ${label(id, 'role', !after)}`, state: !before ? 'added' : !after ? 'removed' : 'changed', fields: change.values });

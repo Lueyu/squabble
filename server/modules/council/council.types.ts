@@ -6,6 +6,8 @@ import type { ResearchWorkflowConfig } from '../../../shared/research-workflow.i
 export interface DialogueTurn { memberId: string; phase: Exclude<CouncilPhase, 'progress'> }
 export interface ResearchRequest { kind: CouncilResearchKind; query?: string }
 export interface CouncilCheckpoint {
+  /** Exact pre-transport intents; only trusted runtime code writes these records. */
+  rosterDispatches?: Array<{ cycleId: string; revision: number; turn: number; memberId: string }>;
   teamContext?: import('../../../shared/team-workspace.interface').TeamExecutionContext;
   teamStartCommandId?: string;
   /** New cycles opt in; saved pre-upgrade cycles keep their original execution path. */
@@ -13,6 +15,7 @@ export interface CouncilCheckpoint {
   runtimePending?: import('../../../shared/research-runtime.interface').CouncilRuntimePending[];
   automaticTaskId?: string;
   simple?: {
+    agentSelections?: import('../../../shared/agent-roster.interface').AgentSelection[];
     skills?: import('../../../shared/research-workflow.interface').ResearchSkillPin[];
     /** Hidden daily research: sealed independent work, one reverse-check gate, then report. */
     researchOnly?: boolean;

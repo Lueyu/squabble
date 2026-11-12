@@ -10,16 +10,17 @@ function navigation() {
   return fixture().load('features/navigation/workspace-navigation.ts');
 }
 
-test('all ten destinations retain old entry ownership and direct-link fallbacks', () => {
+test('four daily destinations and three auxiliary destinations retain legacy deep-link ownership', () => {
   const { workspaceSections, resolveWorkspaceRoute } = navigation();
   assert.deepEqual(Array.from(workspaceSections('en'), row => row.path),
-    ['/', '/paper', '/teams', '/daily', '/research', '/holdings', '/data', '/memory', '/telemetry', '/settings']);
+    ['/', '/friends', '/teams', '/research', '/data', '/telemetry', '/settings']);
+  assert.deepEqual(Array.from(workspaceSections('en').filter(row => row.group === 'daily'), row => row.path), ['/', '/friends', '/teams', '/research']);
   assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').section, 'telemetry');
   assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').parent, '/telemetry?view=runs');
   assert.equal(resolveWorkspaceRoute('/paper/account-1/strategies', 'en').parent, '/paper/account-1');
   assert.equal(resolveWorkspaceRoute('/teams/team-a', 'en').section, 'teams');
   assert.equal(resolveWorkspaceRoute('/teams/team-a', 'en').parent, '/teams');
-  assert.equal(workspaceSections('zh-CN').find(row => row.id === 'assets').label, '资产与账户');
+  assert.equal(resolveWorkspaceRoute('/holdings', 'zh-CN').title, '资产与账户');
   assert.equal(resolveWorkspaceRoute('/transactions', 'en').section, 'assets');
   assert.equal(resolveWorkspaceRoute('/watchlist', 'zh-CN').section, 'assets');
   assert.equal(resolveWorkspaceRoute('/analysis/reports/report-1', 'en').section, 'daily');

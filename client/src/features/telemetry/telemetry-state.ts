@@ -22,7 +22,8 @@ export function telemetryFilters(params: URLSearchParams): TelemetryFilters {
     const value: string | null = params.get(key);
     if (value && Number.isFinite(Date.parse(value))) filters[key] = new Date(value).toISOString();
   }
-  for (const key of ['scene', 'agentId', 'executionMode', 'search'] as const) {
+  for (const key of ['scene', 'agentId', 'executionMode', 'search', 'rosterAgentId', 'rosterAgentVersionId', 'memberId',
+    'teamId', 'teamVersionId', 'commissionId', 'workKey', 'attemptId'] as const) {
     const value: string | undefined = params.get(key)?.trim();
     if (value) filters[key] = value;
   }

@@ -138,7 +138,9 @@ test('zero-form general discussion is owner scoped, idempotent, and persists wit
     const availableCouncil = new CouncilService(db, availableModel as never, {} as never, {} as never, {} as never);
     const available = new SimpleCouncilService(db, availableCouncil, availableModel as never);
     const resumed = await available.addMessage(owner, first.id, { message: 'Now the AI is connected, please continue.', requestKey: 'connected' });
-    assert.equal(resumed.mode, 'single', 'a previously unavailable conversation can acquire a real connected source');
+    assert.equal(resumed.mode, 'unavailable', 'continuing an empty historical conversation never silently imports newly connected people');
+    assert.equal(resumed.messages.at(-1)?.content, 'Now the AI is connected, please continue.');
+    assert.equal(resumed.actualExecutors.length, 0);
     for (let i = 0; i < 200; i++) {
       if ((await available.get(owner, first.id)).status !== 'running') break;
       await new Promise(resolve => setTimeout(resolve, 10));

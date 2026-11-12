@@ -29,12 +29,14 @@ export function teamCouncilMembers(context: TeamExecutionContext): CouncilMember
   return context.members.map(member => ({
     id: member.memberId, name: member.label, roleTitle: member.label,
     role: member.roleId === context.plan.leadRoleId ? 'manager' : 'researcher',
-    instructions: member.responsibility,
+    instructions: [member.agentInstructions, member.responsibility].filter(Boolean).join('\n\n'),
+    ...(member.rosterAgentId ? { rosterAgentId: member.rosterAgentId, rosterAgentVersionId: member.rosterAgentVersionId } : {}),
     model: member.executor.executionMode === 'model' && member.executor.tier === 'fast' ? 'fast' : 'slow',
     ...(member.executor.executionMode === 'model'
       ? { executionMode: 'model' as const, connectionId: member.executor.connectionId }
-      : { executionMode: 'local' as const, agentId: member.executor.localAgentId,
-        agentSettings: member.executor.settings }),
+      : member.executor.executionMode === 'a2a' ? { executionMode: 'a2a' as const, connectionId: member.executor.connectionId, a2aFingerprint: member.a2aFingerprint }
+        : { executionMode: 'local' as const, agentId: member.executor.localAgentId,
+          agentSettings: member.executor.settings }),
   }));
 }
 

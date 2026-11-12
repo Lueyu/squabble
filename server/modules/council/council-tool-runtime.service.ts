@@ -35,6 +35,7 @@ import type { MemberAttempt } from './council-member-attempts.service';
 import { CouncilMemberAttemptsService } from './council-member-attempts.service';
 import { councilMemberAttempts, councilRecoveryRequests } from '../../database/simple-council.schema';
 import { frozenPublicBrowserStartUrls } from './council-browser-scope';
+import { assertCouncilRosterMember, councilRosterToolIds } from './council.roster';
 
 type Session = typeof councilSessions.$inferSelect & { memberAttempt?: MemberAttempt };
 export class ResearchRuntimeSuspended extends Error {
@@ -83,7 +84,7 @@ export class CouncilToolRuntimeService {
     @Optional() private readonly deepDriver?: DeepAgentsDriver) {}
 
   async eligible(owner: string, row: Session, member: CouncilMember): Promise<boolean> {
-    if (member.executionMode === 'local' || row.checkpoint?.toolRuntimeVersion !== 1 || row.checkpoint.workflow) return false;
+    if (member.executionMode === 'local' || member.executionMode === 'a2a' || row.checkpoint?.toolRuntimeVersion !== 1 || row.checkpoint.workflow) return false;
     const identity = this.identity(owner, row, member), hash = canonicalHash(identity);
     const retained = await this.db.execute(sql`select route from agent_runtime_execution_routes where owner=${owner} and identity_hash=${hash}`);
     if (retained.length) return retained[0].route !== 'legacy';
@@ -197,7 +198,7 @@ export class CouncilToolRuntimeService {
     let retained = await this.journal.find(identity);
     let request: ModelStepRequest;
     let dataClasses: AgentDataClass[] = ['public', ...(input.evidence.some(item => item.sourceName === 'Frozen owner context') ? ['portfolio' as const] : []),
-      ...(input.evidence.some(item => item.libraryReferences?.length) ? ['private_material' as const] : [])];
+      ...(input.evidence.some(item => item.libraryReferences?.length || item.agentMemory || item.sourceReferences?.length) ? ['private_material' as const] : [])];
     let sourceVersions: AgentToolScope['sourceVersions'] = [];
     for (const ref of libraryEvidenceReferences(input.evidence)) {
       const [version] = await this.db.select().from(dataLibraryVersions).where(and(eq(dataLibraryVersions.owner, owner), eq(dataLibraryVersions.id, ref.versionId), eq(dataLibraryVersions.sourceId, ref.sourceId)));
@@ -225,7 +226,8 @@ export class CouncilToolRuntimeService {
       const driver = choices[0].route === 'deep_agents' ? 'deep_agents' : 'controlled';
       const granted = external.descriptors.filter(tool => dataClasses.every(kind => tool.dataClasses.includes(kind))
         && (driver !== 'deep_agents' || tool.effect !== 'external_write'));
-      const catalog = catalogSnapshot([...builtin, ...granted], external.connectionRevisions);
+      const permitted = new Set(await this.db.transaction(tx => councilRosterToolIds(tx, row, member, [...builtin, ...granted].map(tool => tool.connectionId === null ? tool.name : tool.id))));
+      const catalog = catalogSnapshot([...builtin, ...granted].filter(tool => permitted.has(tool.connectionId === null ? tool.name : tool.id)), external.connectionRevisions);
       request = { ...config, owner, connectionRevision: 1, maxOutputTokens: budget.enabled ? Math.min(1800, budget.maxOutputTokens) : 1800,
         timeoutMs: 120_000, catalog,
         messages: [...input.prompt.filter(message => message.role === 'system'), { role: 'user',
@@ -275,11 +277,23 @@ export class CouncilToolRuntimeService {
       return { ...original, sourceVersions: [...refs.values()].sort((a, b) => a.sourceVersionId.localeCompare(b.sourceVersionId)),
         allowedDataClasses: [...new Set([...dataClasses, ...policies.flatMap(policy => policy.dataClasses)])].sort() };
     };
-    const verify = async (descriptor?: AgentToolDescriptor): Promise<void> => {
+    const sessionCurrent = async (): Promise<boolean> => {
+      const [current] = await this.db.select({ revision: councilSessions.revision, status: councilSessions.status }).from(councilSessions)
+        .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, row.id), isNull(councilSessions.deletedAt)));
+      return current?.revision === row.revision && current.status === 'running';
+    };
+    const verify = async (descriptor?: AgentToolDescriptor, settlement = false): Promise<void> => {
+      await this.db.transaction(async tx => {
+        const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, row.id), isNull(councilSessions.deletedAt)));
+        if (!current) throw new Error('RUNTIME_SOURCE_OR_SCOPE_CHANGED');
+        const own = current.checkpoint?.simple?.stage === 'independent' ? current.checkpoint.simple.privateEvidence?.[member.id] ?? [] : current.evidenceSnapshot;
+        await assertCouncilRosterMember(tx, current, member, [...input.evidence, ...own], descriptor ? [descriptor.connectionId === null ? descriptor.name : descriptor.id] : [], undefined,
+          settlement ? { receiptId: run.id } : undefined);
+      });
       if (!await this.capabilities.enabled(owner, member.connectionId, member.model)) throw new Error('RUNTIME_CAPABILITY_REVOKED');
       const config = await this.model.resolve(owner, member.connectionId, member.model);
       if (config.connectionConfigHash !== request.connectionConfigHash) throw new Error('MODEL_CONNECTION_CHANGED');
-      if (!await input.shouldContinue() || !await this.tools.isCurrent(owner, toolScope)) throw new Error('RUNTIME_SOURCE_OR_SCOPE_CHANGED');
+      if (!(settlement ? await sessionCurrent() : await input.shouldContinue()) || !await this.tools.isCurrent(owner, toolScope, settlement)) throw new Error('RUNTIME_SOURCE_OR_SCOPE_CHANGED');
       if (!await libraryEvidenceAvailable(this.db, owner, input.evidence)) throw new Error('RUNTIME_SOURCE_OR_SCOPE_CHANGED');
       const authority = await currentAuthority(scope);
       if (descriptor?.connectionId && !authority.allowedDataClasses.every(kind => descriptor.dataClasses.includes(kind))) {
@@ -292,10 +306,20 @@ export class CouncilToolRuntimeService {
         }
       }
     };
-    const ports: RuntimeLoopPorts = { dispatch: this.dispatch,
-      shouldContinue: input.shouldContinue, assertScope: async (_scope, _stage, descriptor) => verify(descriptor),
+    const ports: RuntimeLoopPorts = { dispatch: {
+      reserve: async (tx, request) => {
+        const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, row.id), isNull(councilSessions.deletedAt)));
+        if (!current) throw new Error('RUNTIME_SOURCE_OR_SCOPE_CHANGED');
+        const own = current.checkpoint?.simple?.stage === 'independent' ? current.checkpoint.simple.privateEvidence?.[member.id] ?? [] : current.evidenceSnapshot;
+        await assertCouncilRosterMember(tx, current, member, [...input.evidence, ...own]);
+        return this.dispatch.reserve(tx, request);
+      },
+      settle: (who, id, usage, failed) => this.dispatch.settle(who, id, usage, failed),
+    },
+      shouldContinue: sessionCurrent, assertScope: async (_scope, stage, descriptor) => verify(descriptor, stage === 'accept'),
       tools: {
         invoke: async (descriptor, args, _scope, invocationId, signal) => {
+          await verify(descriptor);
           await input.activity(descriptor.name, 'running');
           try {
             let result: unknown;
@@ -317,7 +341,10 @@ export class CouncilToolRuntimeService {
           } catch (error) { await input.activity(descriptor.name, 'failed'); throw error; }
         },
         receipts: {
-          beforeDispatch: async (tx, invocation) => { await this.toolBudgets.reserve(owner, run.id, invocation.invocationId,
+          beforeDispatch: async (tx, invocation) => {
+            await assertCouncilRosterMember(tx, row, member, input.evidence,
+              [invocation.descriptor.connectionId === null ? invocation.descriptor.name : invocation.descriptor.id]);
+            await this.toolBudgets.reserve(owner, run.id, invocation.invocationId,
             { quantity: 1, unit: 'calls', priceVersion: 'operation-only-v1' }, tx); },
           received: async (who, invocationId) => this.toolBudgets.settle(who, invocationId, 1),
           unknown: async (who, invocationId) => this.toolBudgets.markUnknown(who, invocationId),
@@ -375,6 +402,7 @@ export class CouncilToolRuntimeService {
     let result: Awaited<ReturnType<ResearchRuntimeService['execute']>>;
     try { result = await executeRuntime({ owner, runId: run.id, modelRequest: request, scope,
       validateFinal: async text => {
+        await verify(undefined, true);
         const [current] = await this.db.select().from(councilSessions).where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, row.id), isNull(councilSessions.deletedAt)));
         if (!current) throw new Error('RUNTIME_SOURCE_OR_SCOPE_CHANGED');
         const available = current.checkpoint?.simple?.stage === 'independent'
@@ -385,6 +413,7 @@ export class CouncilToolRuntimeService {
         if (!last) throw new Error('RUNTIME_RESPONSE_REQUIRED');
         sources = await this.journal.freezeEvidence(owner, run.id, last.id, unique);
         if (!await libraryEvidenceAvailable(this.db, owner, sources)) throw new Error('RUNTIME_SOURCE_OR_SCOPE_CHANGED');
+        await this.db.transaction(tx => assertCouncilRosterMember(tx, current, member, sources, [], undefined, { receiptId: run.id }));
         await input.validate(text, sources);
       } }); } catch {
       throw new ResearchRuntimeSuspended(run.id, (await this.journal.read(owner, run.id)).state);

@@ -14,6 +14,7 @@ import type { QuoteService } from '../quote/quote.service';
 import type { EvidenceService, EvidenceInput } from '../research-core/evidence.service';
 import { ResearchToolsService } from './research-tools.service';
 import { ResearchMemoryService } from '../research-memory/research-memory.service';
+import { waitForSavedAvailability } from '../council/council-test.fixture';
 
 // CI/the disposable test harness initializes the base schema and additive migrations.
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
@@ -106,6 +107,7 @@ dbTest('real workflow scope is durable and memory tools/snapshots respect owner,
   const [archived] = await db.insert(researchMemories).values({ owner, ticker: 'AAPL', market: 'US', topic: 'general', language: 'en',
     sessionId: source.id, reportId: report.id, reportVersion: 1, reportRevision: 1, reportCreatedAt: report.createdAt,
     summary: report.summary, decision: 'wait' }).returning();
+  await waitForSavedAvailability(new Date(Math.max(report.createdAt.getTime(), archived.createdAt.getTime())).toISOString());
   const quotes = { getQuote: async () => { throw new Error('No network calls'); },
     detectMarket: (ticker: string) => ({ market: 'US', displaySymbol: ticker, symbolNative: ticker }) } as unknown as QuoteService;
   const memory = new ResearchMemoryService(db, quotes);

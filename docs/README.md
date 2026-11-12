@@ -1,18 +1,20 @@
 # Squabble documentation · 文档导航
 
 Squabble is an investing assistant built around portfolio research, multiple
-agent perspectives, readable reports and a stock-friend channel. The current Web
-journey is **Portfolio overview → Research reports → Choose a simulation → Review
-and apply its combination → Channel**. Accounts run independently; report imports
-remain disabled account drafts until explicitly applied.
+agent perspectives, readable reports and a stock-friend channel. The current
+guided Web journey is **Import holdings → Meet your agents → Create your team**;
+open Research later for a specific question. Explicit startup authorization bounds
+automatic team research and paper execution. Manual report imports remain disabled
+account drafts until explicitly applied.
 
 吵股是一款智能投资助手：围绕持仓开展多 Agent 研究，用报告和股友频道呈现观点与变化。
-当前 Web 日常流程是**投资总览 → 研究报告 → 选择模拟仓并核对组合 → 频道**；多个模拟仓独立运行，报告导入先保存默认停用的账户草稿，明确应用后才用于模拟执行。
+当前新手流程是**导入持仓 → 认识股友 → 创建自己的团队**，有具体问题再去研究室。一次启动确认约束自动研究与模拟执行；保留的手动报告导入仍先保存默认停用草稿，明确应用后才执行。
 
 ## Start and use · 安装与使用
 
 | Goal / 目标 | Guide / 指南 |
 |---|---|
+| Start with persistent agents and a guided team / 独立股友与三步建队 | [Guide](independent-agents.md) / [中文指南](independent-agents.zh-CN.md) · [Validation and limits](independent-agents-validation.md) |
 | Navigate V4, clarify a strategy and manage companions / V4 导航、策略问答与股友 | [AI companion workspace / AI 股友工作区](ai-friend-v4.md) |
 | Understand V4 account and daily contracts / V4 账户、日报与记忆契约 | [Portfolio workspace](v4-portfolio-workspace.md) · [Daily and memory](v4-daily-and-memory-workspace.md) · [Verification](v4-delivery.md) · [Imported-portfolio history](portfolio-history-reference.md) |
 | Run the Web app locally / 本地运行 Web | [Local setup](self-hosting.md#docker-compose) · [本地安装](self-hosting.zh-CN.md#docker-compose) |
@@ -51,9 +53,9 @@ is needed for local Docker.
 
 - [Team paper portfolios / 团队模拟盘审核入口](superpowers/specs/2026-11-12-team-paper-review.zh-CN.md): approved product and technical specifications, now implemented with editable organization canvases and 10 starting templates. 原型与详细方案已批准；实现入口见 [使用指南](team-workspace.md)，实际检查和限制见 [验证记录](team-workspace-validation.md)。
 
-### Planned product evolution · 已确认方向的后续设计
+### Independent-agent design and implementation · 独立股友设计与实现
 
-- [Independent agents and guided teams / 独立股友与引导式团队](superpowers/specs/2026-11-12-independent-agents-guided-teams-design.zh-CN.md): approved product direction; written specification awaiting review, not an implemented release. Covers holdings-first onboarding, reusable individual agents, isolated memories, autonomous paper teams, A2A integration and future RL interfaces. 用户已确认整体方向；正式文档待审阅，尚未实现。将“流程简洁易懂”作为硬验收条件，包含默认三步引导、一次 AI 设置、自动团队及 P0–P4 更新路线。
+- [Independent agents and guided teams / 独立股友与引导式团队](superpowers/specs/2026-11-12-independent-agents-guided-teams-design.zh-CN.md): approved specification implemented by this change. See the [current guide](independent-agents.md) and [verification record](independent-agents-validation.md) for actual checks and limits. 用户已批准并授权实施；默认三步引导、独立股友、团队自动运行、真实 A2A 与运行分析已形成实现，验收结果以验证记录和 PR 为准。RL/RSI 与五人新手实测仍为后续工作。
 
 ## Retained workflows and history · 保留流程与历史记录
 
@@ -75,3 +77,8 @@ past design or verification run, not a promise about the current checkout.
 Squabble does not operate a hosted service or support public server deployment.
 The [retired server guide](public-deployment.md) / [原服务器指南](public-deployment.zh-CN.md)
 explains that boundary; it is not a current deployment tutorial.
+
+## Independent agents and guided teams
+
+- [用户指南（中文）](independent-agents.zh-CN.md) / [User guide](independent-agents.md)
+- [Implementation validation and limits](independent-agents-validation.md)

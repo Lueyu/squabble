@@ -12,6 +12,8 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 
 **Team workspace review — 2026-11-12:** reviewed `3a561b1` plus the team workspace change. All five flows include the team additions: independent organization/display/layout revisions, immutable team versions, one active account binding, durable manual commissions through the existing Council workflow, exact decision/strategy/execution links and pure account asset reads. Team permissions and transitive sources are checked at dispatch, result acceptance, final publication, memory write and strategy application; research completion never applies a strategy. Validation is recorded in [team workspace validation](team-workspace-validation.md).
 
+**Independent-agent review — 2026-11-12:** reviewed `74f3744` plus this working tree across all five flows. Stable roster identity/version and scoped memories are separate from executor connections and account display metadata. A2A uses durable encrypted task receipts and exact connection fingerprints; unknown dispatch is not replayed. An explicit, revisioned team run agreement authorizes a bounded system actor to adopt an exact accepted report and apply a simulated combination. The final transaction checks agreement, source, roster, binding and account authority. Pause blocks new work, publication/application and all automatic paper orders, including protective orders. The real ledger remains read-only to this workflow; only its confirmed snapshot seeds a new independent paper account. Actual verification and unperformed novice testing are recorded separately in [validation](independent-agents-validation.md).
+
 ## Module ownership
 
 | Boundary | Responsibility | Dependency direction |
@@ -24,6 +26,9 @@ The development phase is Web-only. Desktop code remains for manual recovery; ord
 | `tool-capabilities` | Reviewed packs, cached deployment readiness and owner activation revisions | Health checks never invoke business tools; feature dispatch and publication recheck grants |
 | `workers/sandbox` | Restricted deployment broker and per-job Linux container lifecycle | Only the broker controls Docker; jobs have no network, host paths or application credentials |
 | `data-library` | Owned materials, encrypted subscriptions, version extraction, retrieval and financial-provider queries | Uses existing financial/settings adapters; never creates research tasks or ledger entries |
+| `agent-roster` | Stable owned people, immutable capability versions and explicitly scoped/provenance-preserving memories | Neutral transaction helpers enforce pinned and current source/tool ceilings |
+| `a2a-agents` | Constrained Agent Card discovery, encrypted credentials and durable v1 send/poll/cancel receipts | Uses budget/telemetry infrastructure; Council retains domain acceptance and publication |
+| `team-runs` | Explicit immutable startup agreements, finite recurring cycles and trusted system adoption/application | Consumes Teams and paper-trading APIs; final authority lives in neutral DB guards |
 | `teams` | Organization drafts, versions, account responsibility, finite commissions, source grants and decisions | Consumes Council, paper trading and memory; infrastructure receives neutral DB scope helpers |
 | `council`, `experience` | Research workflow, current-report projection and scheduling | Consume shared research services and retained history where required |
 | `portfolio-history` | Current marks and current-position historical references with public price/FX cache | Reads owned ledger inputs; writes only market-data caches; never imports research orchestration |
@@ -40,7 +45,12 @@ Static dependency directions are checked by ESLint and `npm run test:architectur
 
 ```mermaid
 flowchart LR
-    auth --> teamWorkspace["Teams: organization drafts, immutable versions and manual commissions"]
+    auth --> roster["Persistent agent roster: immutable capability versions and scoped memory"]
+    roster --> db
+    auth --> runAgreement["Explicit team run agreement; finite recurring cycles"]
+    runAgreement --> teamWorkspace
+    runAgreement --> strategy
+    auth --> teamWorkspace["Teams: drafts, immutable versions and finite commissions"]
     teamWorkspace --> council
     teamWorkspace --> strategy
     teamWorkspace --> db
@@ -90,6 +100,11 @@ flowchart LR
     experience --> council["Independent research and publication"]
     council --> core["Shared research core: models, evidence and portfolio context"]
     legacy["Retained analysis APIs"] --> core
+    council --> roster
+    council --> a2a["Durable encrypted A2A tasks; pinned endpoints and card fingerprints"]
+    a2a --> remoteAgent["Explicitly connected external Agent"]
+    a2a --> capture
+    a2a --> db
     core --> models["Configured model API"]
     council --> controlled["Durable API model/tool runtime; frozen driver and inputs"]
     controlled --> core
@@ -146,9 +161,9 @@ flowchart LR
 
 Protected controllers derive owner from `req.userContext.userId`; services scope reads/writes and joins by that owner. `AUTH_MODE=local` selects one local workspace identity and requires loopback binding with no proxy trust. Account mode uses first-party login and sessions. These are application ownership guarantees, not a blanket PostgreSQL RLS claim. Credentials are encrypted private settings; native task files and import images are private runtime artifacts, not fixture sources. See [privacy](privacy.md) and [local agents](local-agents.md).
 
-V4 uses eight owning destinations: overview, companions, daily, research, assets, data, memory and settings. `features/navigation/workspace-navigation.ts` owns route/parent classification and safe internal return paths; `use-workspace-navigation.ts` records React Router history and restores content scroll or direct hash targets. Existing URLs remain compatible, including `/paper#notifications` to the Settings integration. `features/strategy-interview/` owns authoring UI, `features/companions/` owns display preferences and shared `components/AnimalAvatar.tsx` preserves the original SVGs. Feature code does not import pages. Search is a destination catalog, not an implicit AI action.
+The guided navigation has four daily destinations (overview, persistent agents, teams and research) plus data/memory, telemetry and settings. Existing holdings, daily, paper-account and memory URLs remain compatible secondary routes. Companion metadata is not an agent roster. `features/navigation/workspace-navigation.ts` owns route/parent classification and safe internal return paths; `use-workspace-navigation.ts` records React Router history and restores content scroll or direct hash targets. Existing URLs remain compatible, including `/paper#notifications` to the Settings integration. `features/strategy-interview/` owns authoring UI, `features/companions/` owns display preferences and shared `components/AnimalAvatar.tsx` preserves the original SVGs. Feature code does not import pages. Search is a destination catalog, not an implicit AI action.
 
-V5 keeps these eight destinations. `/research` owns chat history and the strategy sidebar; `/strategy` in its composer opens the persisted interview in place. Existing `/strategies` links belong to Research. `/data` contains material previews, website subscriptions and inline financial-provider configuration; `/settings/data` redirects there. `/memory?tab=sources` shares the source inventory and version controls. Material pages, slides and images are research evidence, not account imports or endorsed investment claims. See [the data and research workspace guide](research-data-workspace.md).
+The retained V5 research/data surfaces integrate with this guided navigation. `/research` owns chat history and the strategy sidebar; `/strategy` in its composer opens the persisted interview in place. Existing `/strategies` links belong to Research. `/data` contains material previews, website subscriptions and inline financial-provider configuration; `/settings/data` redirects there. `/memory?tab=sources` shares the source inventory and version controls. Material pages, slides and images are research evidence, not account imports or endorsed investment claims. See [the data and research workspace guide](research-data-workspace.md).
 
 `GET /api/daily-workspace?date=` reads personal saved facts, all owned simulation facts and exact research versions using a repeatable-read, read-only transaction. This projection is not itself a frozen published report. `GET /api/research-memory/inventory` is an owner-only paginated source inventory; existing thesis lifecycle/version controls retain their authority. Provider configuration, import receipts, notification channels and scoped MCP sessions are composed into explicit workspaces without claiming new connection health or model adoption metrics.
 
@@ -159,7 +174,9 @@ V5 keeps these eight destinations. `/research` owns chat history and the strateg
 
 ```mermaid
 flowchart TD
-    teamVersion["Frozen team version, account, inputs, unique lead and bounded work DAG"] --> request
+    agentVersion["Pinned person/version; current source/tool ceilings and isolated memory scope"] --> teamVersion
+    dispatchProof["Exact server dispatch receipt; archive permits settlement only, pause/revocation still deny"] --> teamFence
+    teamVersion["Frozen team version, account, inputs, unique people and lead; bounded work DAG"] --> request
     request --> teamFence["Team/source/binding/budget fences; exact work and attempt identity"]
     teamFence --> teamScope["Published role and work-input intersection; scoped memory, evidence and tools"]
     selectedSkill["Explicit slash skill selection"] --> skillPin["Trusted manifest version and hash frozen in request and attempt"]
@@ -266,6 +283,10 @@ The older `server/modules/multi-agent/pipeline.service.ts` bull/bear/critic/risk
 
 ```mermaid
 flowchart TD
+    agreement["Explicit running agreement and revision; finite caps, binding and pinned members"] --> systemActor["Trusted system adoption of exact accepted report; import execution-strategy"]
+    systemActor --> teamDecision
+    agreement --> finalAuthority["Final apply transaction: agreement, source, roster, binding and account fence"]
+    finalAuthority --> authority
     teamDecision["Exact adopted team decision and accepted report/message/thesis versions; no inherited authority for user derivatives"] --> preview
     authority --> teamPolicy["Frozen team references; explicit handover continuation"]
     teamPolicy --> order
@@ -338,6 +359,7 @@ Report payload hashes, exact source-text hashes, strategy preview `strategyConte
 
 ```mermaid
 flowchart TD
+    runCycle["Original automatic cycle, agreement revision and exact decision; no synthetic fill"] --> teamAttribution
     teamAttribution["Original team version and decision references on actual account execution"] --> receipt
     report["Published report version and typed conditions"] --> brief["Compile briefs only from visible versions and tasks"]
     strategyChange["Strategy context for legacy report briefs"] --> brief

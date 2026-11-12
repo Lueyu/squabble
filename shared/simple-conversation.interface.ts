@@ -16,6 +16,7 @@ export interface DebateOutcome {
   nextEvidence: string[];
 }
 export interface CreateResearchConversationInput { message: string; context?: ResearchContext; requestKey: string; skillId?: string | null;
+  agents?: import('./agent-roster.interface').AgentSelection[];
   /** Explicit per-conversation authorization; omission keeps web research disabled. */
   toolPolicy?: { webResearch: boolean } }
 export interface ResearchConversationMessageInput { message: string; replyTo?: string; requestKey: string; skillId?: string | null }

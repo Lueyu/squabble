@@ -8,7 +8,10 @@ import type { ResearchEvent } from '../../../shared/research-events.interface';
 test('model-backed members publish lifecycle activity and correlate their final reply without private reasoning', async () => {
   const events: ResearchEvent[] = [];
   const member: CouncilMember = { id: 'analyst', name: 'Analyst', role: 'researcher', instructions: '', model: 'fast' };
-  const service = new CouncilService({ select: () => ({ from: () => ({ where: () => ({ orderBy: async () => [] }) }) }) } as never,
+  const service = new CouncilService({
+    select: () => ({ from: () => ({ where: () => ({ orderBy: async () => [] }) }) }),
+    transaction: async (action: (tx: unknown) => Promise<unknown>) => action({}),
+  } as never,
     { chatFastJSON: async () => {
       assert.ok(events.some(e => e.kind === 'task' && e.status === 'running'), 'activity must be visible while waiting for a model');
       return { data: { content: 'Public answer', reasoningSummary: ['Public rationale'], questions: [], evidenceIds: [] }, tokens: 3 };
