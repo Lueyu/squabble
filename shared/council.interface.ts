@@ -76,7 +76,7 @@ export interface CouncilMember {
   personality?: string;
   researchFocus?: CouncilResearchKind[];
   speakingStyle?: CouncilSpeakingStyle;
-  avatar?: 'value' | 'growth' | 'risk' | 'technical' | 'news' | 'macro' | 'moderator';
+  avatar?: import('./animal-avatar').AnimalAvatarId;
 }
 export interface CouncilConfig { enabled: boolean; members: CouncilMember[]; webResearch?: boolean }
 export interface CreateCouncilSession {

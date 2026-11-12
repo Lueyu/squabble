@@ -8,7 +8,7 @@ export default function CompanionIdentity({ id, zh, compact = false }: {
   const companion = companionById(id);
   return <div className={`companion-identity ${compact ? 'compact' : ''}`}>
     <CouncilMemberAvatar avatar={companion?.id ?? 'moderator'} role="researcher" className="companion-animal" />
-    <div><strong>{companion ? companion.name[zh ? 0 : 1] : zh ? '等待你的股友' : 'Choose your companion'}</strong>
+    <div><strong>{companion ? companion.name[zh ? 0 : 1] : zh ? '选择账户风格' : 'Choose an account style'}</strong>
       {!compact && <p>{companion ? companion.focus[zh ? 0 : 1] : zh ? '每个想法，一个独立模拟仓' : 'An independent account for each idea'}</p>}</div>
   </div>;
 }

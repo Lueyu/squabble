@@ -41,6 +41,12 @@ export function workspaceSections(language: string): WorkspaceSection[] {
       end: true,
     },
     {
+      id: 'assets',
+      path: '/holdings',
+      label: zh ? '持仓' : 'Holdings',
+      group: 'daily',
+    },
+    {
       id: 'friends',
       path: '/friends',
       label: zh ? '我的股友' : 'My agents',
@@ -94,8 +100,7 @@ export function resolveWorkspaceRoute(
       kind: 'root',
     };
   const retained: Record<string, { section: WorkspaceSectionId; title: string; parent: string }> = {
-    '/paper': { section: 'overview', title: zh ? '模拟账户' : 'Simulations', parent: '/' },
-    '/holdings': { section: 'assets', title: zh ? '资产与账户' : 'Assets & accounts', parent: '/' },
+    '/paper': { section: 'overview', title: zh ? '模拟账户' : 'Simulation accounts', parent: '/' },
     '/daily': { section: 'daily', title: zh ? '投资日报' : 'Daily report', parent: '/' },
     '/memory': { section: 'data', title: zh ? '记忆' : 'Memory', parent: '/data' },
   };
@@ -233,7 +238,7 @@ export function safeReturnPath(value: unknown): string | null {
     const parsed = new URL(value, 'https://squabble.invalid');
     if (parsed.origin !== 'https://squabble.invalid') return null;
     if (
-      !/^\/(?:$|paper(?:\/|$)|teams(?:\/|$)|daily(?:\/|$)|research(?:\/|$)|holdings(?:\/|$)|data(?:\/|$)|memory(?:\/|$)|settings(?:\/|$)|strategies(?:\/|$)|analysis(?:\/|$)|council(?:\/|$)|transactions$|watchlist$|import$|journal$|notifications$)/u.test(
+      !/^\/(?:$|paper(?:\/|$)|friends(?:\/|$)|teams(?:\/|$)|daily(?:\/|$)|research(?:\/|$)|holdings(?:\/|$)|data(?:\/|$)|memory(?:\/|$)|settings(?:\/|$)|strategies(?:\/|$)|analysis(?:\/|$)|council(?:\/|$)|telemetry(?:\/|$)|transactions$|watchlist$|import$|journal$|notifications$)/u.test(
         parsed.pathname,
       )
     )
@@ -306,6 +311,8 @@ export function workspaceDestinations(language: string) {
   const zh = language.startsWith('zh');
   return [
     ...workspaceSections(language),
+    { path: '/paper', label: zh ? '模拟账户' : 'Simulation accounts' },
+    { path: '/daily', label: zh ? '投资日报' : 'Daily report' },
     {
       path: '/strategies',
       label: zh ? '策略库与草稿' : 'Strategy library & drafts',

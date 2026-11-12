@@ -1,4 +1,5 @@
 import { readTeamCommissionCost } from './team-cost';
+import { agentWorkingInstructions } from '../../../shared/agent-working-instructions';
 import { Injectable } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
@@ -112,9 +113,11 @@ export class TeamCommissionService {
                 if (member.executor.executionMode === 'a2a') member.a2aFingerprint = await readA2aConnectionFingerprint(tx, owner, member.executor.connectionId);
                 const role = selected.find(role => role.id === member.roleId)!;
                 if (role.agentId && role.agentVersionId) {
-                    const { version: agentVersion } = await readAgentRosterVersion(tx, owner, role.agentId, role.agentVersionId, { allowedToolIds: member.allowedToolIds });
+                    const { profile, version: agentVersion } = await readAgentRosterVersion(tx, owner, role.agentId, role.agentVersionId, { allowedToolIds: member.allowedToolIds });
                     member.rosterAgentId = role.agentId; member.rosterAgentVersionId = role.agentVersionId;
-                    member.agentInstructions = agentVersion.config.instructions;
+                    member.avatar = profile.avatar;
+                    member.agentName = profile.name;
+                    member.agentInstructions = agentWorkingInstructions(agentVersion.config);
                 }
             }
             const warnings = hasLocal ? [{ code: 'TEAM_EXTERNAL_COST_UNKNOWN', message: 'Call count is bounded; external provider fees remain unknown' }] : [];

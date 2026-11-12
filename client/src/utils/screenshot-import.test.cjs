@@ -301,11 +301,12 @@ test('malformed completed result pauses the batch instead of treating it as succ
   assert.equal(calls.length, 1);
 });
 
-function screenshotPage(initialBatch = null, agents = [agent()]) {
+function screenshotPage(initialBatch = null, agents = [agent()], { failFirstCommit = false } = {}) {
   let stateCursor = 0, refCursor = 0, effectCursor = 0, sequence = 0;
   const states = [], refs = [], effects = [], calls = [], invalidated = [], records = new Map();
   if (initialBatch) records.set(initialBatch.id, initialBatch);
   const jsx = (type, props) => ({ type, props: props ?? {} });
+  function ImportSavedNextSteps() {}
   const imports = {
     react: {
       useState(initial) { const index = stateCursor++; if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial;
@@ -330,12 +331,13 @@ function screenshotPage(initialBatch = null, agents = [agent()]) {
       uploadImportImage: async (id, value) => { calls.push(['upload', value]); const batch = records.get(id); batch.images.push({ ...value, status: 'queued' }); return batch; },
       startImportBatch: async id => { calls.push(['start', id]); const batch = records.get(id); batch.status = 'running'; return batch; },
       cancelImportBatch: async id => { calls.push(['cancel', id]); return records.get(id); },
-      commitImportBatch: async (id, value) => { calls.push(['commit', value]); return { id: 'receipt', created: value.rowIds.length, updated: 0 }; },
+      commitImportBatch: async (id, value) => { calls.push(['commit', value]); if (failFirstCommit && calls.filter(call => call[0] === 'commit').length === 1) throw Error('Uncertain receipt'); return { id: 'receipt', created: value.rowIds.length, updated: 0 }; },
       editImportRow: async (id, rowId, patch) => { const batch = records.get(id); Object.assign(batch.rows.find(row => row.id === rowId), patch); return batch; },
       retryImportImage: async (id, imageId) => { calls.push(['retry', imageId]); return records.get(id); },
       recoverImportBatch: async id => { calls.push(['recover', id]); return records.get(id); },
     },
     './screenshot-import': helpers(),
+    './ImportSavedNextSteps': { ImportSavedNextSteps },
     '@/utils/local-agent-settings': { agentSettingsProblem: () => null, cleanAgentSettings: value => value },
     sonner: { toast: { error() {}, success() {} } },
   };
@@ -356,7 +358,7 @@ function fixtureBatch(patch = {}) { return { id: 'saved-batch', revision: 3, sta
   receipts: [], images: [{ id: 'image-one', filename: 'page.png', status: 'completed', fileAvailable: true, rowCount: 1 }],
   rows: [{ id: 'row-one', ticker: 'TEST', shares: 7, avgCost: null, sourceImageIds: ['image-one'], revision: 0, confirmed: true }], ...patch }; }
 function nodes(tree) { return Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : []; }
-function content(tree) { return Array.isArray(tree) ? tree.map(content).join('') : tree && typeof tree === 'object' ? content(tree.props?.children) : tree == null ? '' : String(tree); }
+function content(tree) { return Array.isArray(tree) ? tree.map(content).join('') : tree && typeof tree === 'object' ? content(tree.props?.children) : tree == null || typeof tree === 'boolean' ? '' : String(tree); }
 
 test('durable screenshot UI restores the last server batch and leaves recognition running when unmounted', () => {
   const page = screenshotPage(fixtureBatch()); page.render(); page.flush(); const tree = page.render();
@@ -364,14 +366,40 @@ test('durable screenshot UI restores the last server batch and leaves recognitio
   page.unmount(); assert.equal(page.calls.length, 0);
 });
 
-test('reviewed partial rows can save and analyze while other images are still running', async () => {
+test('the primary screenshot save keeps partial progress without queuing research and offers friends next', async () => {
   const page = screenshotPage(fixtureBatch()); page.render(); page.flush(); const tree = page.render();
-  const button = nodes(tree).find(node => node.type === 'Button' && content(node).includes('确认持仓并开始分析'));
+  const button = nodes(tree).find(node => node.type === 'Button' && content(node) === '保存持仓');
+  assert.ok(button, 'reviewed holdings need a primary save action');
   assert.equal(button.props.disabled, false); await button.props.onClick();
   const commit = page.calls.find(call => call[0] === 'commit')[1];
-  assert.equal(commit.analyze, true); assert.equal(JSON.stringify(commit.rowIds), JSON.stringify(['row-one']));
-  assert.ok(page.calls.some(call => call[0] === 'navigate' && call[1] === '/today'));
+  assert.equal(commit.analyze, false); assert.equal(JSON.stringify(commit.rowIds), JSON.stringify(['row-one']));
+  assert.equal(page.calls.filter(call => ['navigate', 'start', 'create'].includes(call[0])).length, 0, 'saving does not schedule or start a research journey');
+  const saved = page.render();
+  assert.ok(nodes(saved).some(node => node.type?.name === 'ImportSavedNextSteps'), 'saved receipt exposes an explicit continuation');
   assert.ok(page.invalidated.some(key => key[0] === 'holdings')); assert.ok(page.invalidated.some(key => key[0] === 'today'));
+});
+
+test('explicit screenshot research preserves the saved import handoff and opens its existing report page', async () => {
+  const page = screenshotPage(fixtureBatch()); page.render(); page.flush(); const tree = page.render();
+  const button = nodes(tree).find(node => node.type === 'Button' && content(node) === '保存并开始研究');
+  assert.ok(button);
+  await button.props.onClick();
+  assert.equal(page.calls.find(call => call[0] === 'commit')[1].analyze, true);
+  assert.ok(page.calls.some(call => call[0] === 'navigate' && call[1] === '/research/portfolio'));
+});
+
+test('unknown screenshot save results retain the original intent and prevent switching to research on retry', async () => {
+  const page = screenshotPage(fixtureBatch(), [agent()], { failFirstCommit: true });
+  page.render(); page.flush();
+  await nodes(page.render()).find(node => node.type === 'Button' && content(node) === '保存持仓').props.onClick();
+  const retry = page.render();
+  assert.equal(nodes(retry).find(node => node.type === 'Button' && content(node) === '保存并开始研究').props.disabled, true);
+  await nodes(retry).find(node => node.type === 'Button' && content(node) === '核对本次保存结果').props.onClick();
+  const commits = page.calls.filter(call => call[0] === 'commit');
+  assert.equal(commits.length, 2);
+  assert.deepEqual(commits[0][1], commits[1][1]);
+  assert.equal(commits[1][1].analyze, false);
+  assert.equal(page.calls.filter(call => call[0] === 'navigate').length, 0);
 });
 
 test('unknown original screenshot tasks expose query recovery and never retry extraction', async () => {

@@ -49,9 +49,11 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 
 当前新手主线为导入持仓→`/friends`添加独立股友→`/teams?guided=1`三步建队，研究室按需使用。`agent-roster`拥有稳定身份、不可变能力版本与personal/team/conversation分域记忆；连接、岗位和模拟账户头像不是股友身份。复用同一股友不复制其他团队记忆，显式分享保留原始来源权限。模板只声明只读工具上限，不能授予运行权限。`council.roster.ts`、`agent-roster-context.ts`与`council-execution-proof.ts`在派发、工具读取、结果验收和最终发布复验固定/当前权限；归档阻止新派发，已派发结果只有精确服务端receipt证明才能结算，暂停和来源撤销仍阻止发布。
 
+`/`投资总览与`/holdings?accountId=real|id`持仓为独立一级入口，`/paper`明确称为模拟账户。迁移66为稳定股友profile增加动物头像，`shared/animal-avatar.ts`定义ID；名字/简介/头像更新不创建能力版本，新会话与委托固定当时身份，历史快照保留回退。`AgentEditorDialog.tsx`保存实际工作指令与偏好，`shared/agent-working-instructions.ts`供个人及团队执行共用；英文推荐创建保存英文模板。`features/teams/guided-team-storage.ts`按owner分区保留标签页表单与进度，旧无owner缓存须逐项API验权；未知操作沿原始key与确切payload恢复，不能结束后另建。正式整改设计、计划及验收分别见`docs/ui-regression-repair-design.zh-CN.md`、`docs/ui-regression-repair-plan.md`与`docs/ui-regression-repair-validation.md`。
+
 `team-runs`保存明确确认的运行协议与不可变修订，按已验证交易日产生有限cycle/commission。系统actor只能采纳本cycle确切已验收报告并导入`execution-strategy`，最终账户应用事务复验协议、版本、binding、来源和权限。授权涵盖替换模拟组合；用户草稿保留。暂停取消全部自动模拟交易（含保护单），不伪称外部未知任务已取消。旧岗位仍可手动委托，关联/转换为股友并发布后才可自动运行。引导创建保留原请求与断点，未知结果不换key重建。
 
-`a2a-agents`支持真实A2A1.0 JSON-RPC的SendMessage/GetTask/CancelTask，原始结果和凭据加密保存，先持久化send意图再出站；未知派发不自动重发。能力卡声明不等于结构化交付已验证，遥测中的模型/工具/费用未知不能推断。公网固定DNS/禁止重定向/同源鉴权；本地地址需要用户trust及`A2A_LOCAL_SERVICES_JSON`精确登记能力卡与RPC地址。迁移62–65分别覆盖名册、运行协议、A2A与遥测维度。RL/RSI训练尚未实现。入口、测试与实际限制见`docs/independent-agents.md`、`docs/independent-agents.zh-CN.md`和`docs/independent-agents-validation.md`。
+`a2a-agents`支持真实A2A1.0 JSON-RPC的SendMessage/GetTask/CancelTask，原始结果和凭据加密保存，先持久化send意图再出站；未知派发不自动重发。能力卡声明不等于结构化交付已验证，遥测中的模型/工具/费用未知不能推断。公网固定DNS/禁止重定向/同源鉴权；本地地址需要用户trust及`A2A_LOCAL_SERVICES_JSON`精确登记能力卡与RPC地址。迁移62–65分别覆盖名册、运行协议、A2A与遥测维度，66覆盖动物身份及幂等回填。RL/RSI训练尚未实现。入口、测试与实际限制见`docs/independent-agents.md`、`docs/independent-agents.zh-CN.md`和`docs/independent-agents-validation.md`。
 
 ## Agent 运行分析
 

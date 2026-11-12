@@ -189,11 +189,14 @@
   color: var(--muted-foreground);
 }
 
+:root[data-workspace-experience='simple'][data-design-theme='classic']:not(.dark),
 :root[data-design-theme='classic']:not(.dark) .app-shell-simple {
   --background: #fff;
   --foreground: #1e302a;
   --card: #fff;
   --card-foreground: #1e302a;
+  --popover: #fff;
+  --popover-foreground: #1e302a;
   --primary: #26765c;
   --primary-foreground: #fff;
   --primary-border: #226b53;
@@ -215,6 +218,7 @@
   --sidebar-border: #e4ebe7;
 }
 
+:root[data-workspace-experience='simple'][data-design-theme='classic'].dark,
 :root[data-design-theme='classic'].dark .app-shell-simple {
   --primary: #82c5a6;
   --primary-foreground: #14281e;
@@ -339,6 +343,10 @@
   gap: 20px;
   margin-bottom: 34px;
 
+}
+
+.portfolio-onboarding {
+  margin-bottom: 28px;
 }
 
 .portfolio-page-header h1 {

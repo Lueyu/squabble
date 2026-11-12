@@ -6,7 +6,7 @@ export default function CompanionPicker({ value, onChange, zh, expanded = false,
   value: PortfolioCompanionId | null; onChange: (id: PortfolioCompanionId) => void;
   zh: boolean; expanded?: boolean; disabled?: boolean;
 }) {
-  return <div className={`companion-picker ${expanded ? 'expanded' : ''}`} role="group" aria-label={zh ? '选择动物股友' : 'Choose an animal companion'}>
+  return <div className={`companion-picker ${expanded ? 'expanded' : ''}`} role="group" aria-label={zh ? '选择账户风格' : 'Choose an account style'}>
     {companions.map(companion => <button key={companion.id} type="button" disabled={disabled}
       aria-pressed={value === companion.id} className="companion-option" onClick={() => onChange(companion.id)}>
       <CouncilMemberAvatar avatar={companion.id} role="researcher" className="companion-animal" />

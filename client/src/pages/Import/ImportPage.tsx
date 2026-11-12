@@ -41,6 +41,7 @@ import { useTranslation } from 'react-i18next';
 import { ImportAccountBoundary } from '@/features/assets/AccountAssetsPage';
 import ScreenshotImport from './ScreenshotImport';
 import TransactionImport from './TransactionImport';
+import { ImportSavedNextSteps } from './ImportSavedNextSteps';
 
 /** Field keys the CSV mapper can assign. */
 type MapField = 'ticker' | 'shares' | 'avgCost' | 'company';
@@ -203,6 +204,7 @@ function ImportPage() {
 function RealImportPage() {
   const { t } = useTranslation();
   const [mode, setMode] = useState<'csv' | 'ocr'>('ocr');
+  const [savePending, setSavePending] = useState(false);
   return (
     <div className="space-y-4">
       <div>
@@ -219,6 +221,7 @@ function RealImportPage() {
         <Button
           variant={mode === 'csv' ? 'default' : 'outline'}
           size="sm"
+          disabled={savePending}
           onClick={() => setMode('csv')}
         >
           <FileSpreadsheet size={14} className="mr-1" /> {t('import.csvFile')}
@@ -226,13 +229,18 @@ function RealImportPage() {
         <Button
           variant={mode === 'ocr' ? 'default' : 'outline'}
           size="sm"
+          disabled={savePending}
           onClick={() => setMode('ocr')}
         >
           <Camera size={14} className="mr-1" /> {t('import.screenshot')}
         </Button>
       </div>
 
-      {mode === 'csv' ? <CsvImport /> : <ScreenshotImport />}
+      {mode === 'csv' ? (
+        <CsvImport onSavePendingChange={setSavePending} />
+      ) : (
+        <ScreenshotImport onSavePendingChange={setSavePending} />
+      )}
       <TransactionImport />
       <ImportHistoryCard />
     </div>
@@ -243,7 +251,9 @@ function RealImportPage() {
 // CSV flow
 // ---------------------------------------------------------------------
 
-function CsvImport() {
+function CsvImport({
+  onSavePendingChange,
+}: { onSavePendingChange?: (pending: boolean) => void } = {}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const zh = i18n.language.startsWith('zh');
@@ -257,21 +267,25 @@ function CsvImport() {
   const [buyDate, setBuyDate] = useState('');
   const [source, setSource] = useState<string>('generic');
   const [committing, setCommitting] = useState(false);
+  const [saveUnknown, setSaveUnknown] = useState(false);
   const [result, setResult] = useState<{
     created: number;
     skipped: number;
     failed: Array<{ ticker: string; reason: string }>;
   } | null>(null);
-  const requestIntent = useRef<{
-    fingerprint: string;
-    requestKey: string;
-  } | null>(null);
+  const requestIntent = useRef<Parameters<
+    typeof confirmMappedImport
+  >[0] | null>(null);
+  const inFlight = useRef(false);
+  const saveLocked = committing || saveUnknown;
 
   const readFile = (file: File) => {
+    if (requestIntent.current) return;
     setFilename(file.name);
     setResult(null);
     const reader = new FileReader();
     reader.onload = () => {
+      if (requestIntent.current) return;
       const text = String(reader.result ?? '');
       const parsed = Papa.parse<string[]>(text, {
         header: false,
@@ -301,43 +315,57 @@ function CsvImport() {
 
   const previewRows = matrix.length > 0 ? rowsFromMatrix(matrix, mapping) : [];
 
-  const commit = async (analyze = true) => {
+  const commit = async (analyze = false) => {
+    if (
+      inFlight.current ||
+      (requestIntent.current && requestIntent.current.analyze !== analyze)
+    ) return;
     if (previewRows.length === 0) {
       toast.warning(t('import.noRows'));
       return;
     }
     try {
+      inFlight.current = true;
       setCommitting(true);
-      const input = {
+      onSavePendingChange?.(true);
+      // Keep the exact payload until its original save outcome is known.
+      const input = requestIntent.current ??= {
         source: source === 'robinhood' ? 'robinhood' : 'csv',
         rows: previewRows,
         filename: filename || undefined,
         buyDate: buyDate || undefined,
         analyze,
+        requestKey: crypto.randomUUID(),
       } as const;
-      const fingerprint = JSON.stringify(input);
-      if (requestIntent.current?.fingerprint !== fingerprint)
-        requestIntent.current = {
-          fingerprint,
-          requestKey: crypto.randomUUID(),
-        };
-      const r = await confirmMappedImport({
-        ...input,
-        requestKey: requestIntent.current.requestKey,
-      });
+      const r = await confirmMappedImport(input);
+      requestIntent.current = null;
+      setSaveUnknown(false);
+      onSavePendingChange?.(false);
       setResult(r);
       toast.success(
         t('import.importComplete', { created: r.created, skipped: r.skipped }),
       );
       for (const queryKey of IMPORT_QUERY_KEYS)
         await queryClient.invalidateQueries({ queryKey: [...queryKey] });
-      if (analyze) navigate('/today');
+      if (input.analyze) navigate('/research/portfolio');
     } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (
+        status && status >= 400 && status < 500 &&
+        status !== 408 && status !== 429
+      ) {
+        requestIntent.current = null;
+        setSaveUnknown(false);
+        onSavePendingChange?.(false);
+      } else if (requestIntent.current) {
+        setSaveUnknown(true);
+      }
       toast.error(
         (error as { response?: { data?: { message?: string } } })?.response
           ?.data?.message ?? t('import.importFailed'),
       );
     } finally {
+      inFlight.current = false;
       setCommitting(false);
     }
   };
@@ -352,7 +380,9 @@ function CsvImport() {
           <select
             className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs sm:w-36"
             value={source}
+            disabled={saveLocked}
             onChange={(e) => {
+              if (requestIntent.current) return;
               const v = e.target.value;
               setSource(v);
               if (headers.length > 0) setMapping(suggestForPreset(headers, v));
@@ -367,7 +397,11 @@ function CsvImport() {
           <select
             className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs sm:w-28"
             value={encoding}
-            onChange={(e) => setEncoding(e.target.value as 'utf-8' | 'gbk')}
+            disabled={saveLocked}
+            onChange={(e) => {
+              if (!requestIntent.current)
+                setEncoding(e.target.value as 'utf-8' | 'gbk');
+            }}
           >
             <option value="utf-8">UTF-8</option>
             <option value="gbk">{t('import.gbkNote')}</option>
@@ -376,6 +410,7 @@ function CsvImport() {
             className="col-span-2 w-full sm:w-auto"
             size="sm"
             variant="outline"
+            disabled={saveLocked}
             onClick={() => fileRef.current?.click()}
           >
             <Upload size={14} className="mr-1" /> {t('import.selectFile')}
@@ -385,6 +420,7 @@ function CsvImport() {
             type="file"
             accept=".csv,text/csv"
             className="hidden"
+            disabled={saveLocked}
             onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0])}
           />
         </div>
@@ -418,8 +454,9 @@ function CsvImport() {
                     <select
                       className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                       value={mapping[field] ?? ''}
+                      disabled={saveLocked}
                       onChange={(e) =>
-                        setMapping((prev) => ({
+                        !requestIntent.current && setMapping((prev) => ({
                           ...prev,
                           [field]:
                             e.target.value === ''
@@ -487,14 +524,19 @@ function CsvImport() {
                   type="date"
                   className="h-9 w-40"
                   value={buyDate}
-                  onChange={(e) => setBuyDate(e.target.value)}
+                  disabled={saveLocked}
+                  onChange={(e) => {
+                    if (!requestIntent.current) setBuyDate(e.target.value);
+                  }}
                 />
               </div>
               <Button
                 className="mt-4"
-                onClick={() => commit(true)}
+                onClick={() => commit(false)}
                 disabled={
-                  committing || mapping.ticker == null || mapping.shares == null
+                  committing ||
+                  (saveUnknown && requestIntent.current?.analyze === true) ||
+                  mapping.ticker == null || mapping.shares == null
                 }
               >
                 {committing ? (
@@ -502,19 +544,32 @@ function CsvImport() {
                 ) : (
                   <CheckCircle2 size={14} className="mr-1" />
                 )}
-                {zh ? '确认持仓并开始分析' : 'Save and start analysis'}
+                {saveUnknown && requestIntent.current?.analyze === false
+                  ? (zh ? '核对本次保存结果' : 'Check this save result')
+                  : (zh ? '保存持仓' : 'Save holdings')}
               </Button>
               <Button
                 className="mt-4"
                 variant="outline"
-                onClick={() => commit(false)}
+                onClick={() => commit(true)}
                 disabled={
-                  committing || mapping.ticker == null || mapping.shares == null
+                  committing ||
+                  (saveUnknown && requestIntent.current?.analyze === false) ||
+                  mapping.ticker == null || mapping.shares == null
                 }
               >
-                {zh ? '仅保存持仓' : 'Save holdings only'}
+                {saveUnknown && requestIntent.current?.analyze === true
+                  ? (zh ? '核对本次保存结果' : 'Check this save result')
+                  : (zh ? '保存并开始研究' : 'Save and start research')}
               </Button>
             </div>
+            {saveUnknown && (
+              <p role="status" className="text-sm text-amber-700 dark:text-amber-300">
+                {zh
+                  ? '先核对本次保存结果，再修改持仓或开始新的保存。'
+                  : 'Check this save result before editing holdings or starting another save.'}
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
               {zh
                 ? '已有持仓会更新数量和成本，文件里没有的持仓会保留。'
@@ -558,6 +613,7 @@ function CsvImport() {
                 )}
               </div>
             )}
+            <ImportSavedNextSteps />
           </div>
         )}
       </CardContent>

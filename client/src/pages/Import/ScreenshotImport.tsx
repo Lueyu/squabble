@@ -51,6 +51,7 @@ import {
   screenshotImage,
   screenshotSelectionError,
 } from './screenshot-import';
+import { ImportSavedNextSteps } from './ImportSavedNextSteps';
 const statusText: Record<string, string> = {
   draft: '等待你选好截图',
   queued: '已排队，马上开始',
@@ -103,7 +104,9 @@ const readImage = (file: File) =>
     reader.onerror = () => reject(new Error('INVALID_IMAGE'));
     reader.readAsDataURL(file);
   });
-export default function ScreenshotImport() {
+export default function ScreenshotImport({
+  onSavePendingChange,
+}: { onSavePendingChange?: (pending: boolean) => void } = {}) {
   const { t, i18n } = useTranslation(),
     zh = i18n.language.startsWith('zh'),
     navigate = useNavigate(),
@@ -132,10 +135,15 @@ export default function ScreenshotImport() {
   const [busy, setBusy] = useState(false),
     [uploadCount, setUploadCount] = useState(0),
     [error, setError] = useState('');
+  const [savedBatchId, setSavedBatchId] = useState<string | null>(null);
+  const [saveUnknown, setSaveUnknown] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, Partial<ImportBatchRow>>>(
     {},
   );
-  const commitRequest = useRef<ImportBatchCommit | null>(null),
+  const commitRequest = useRef<{
+    batchId: string;
+    input: ImportBatchCommit;
+  } | null>(null),
     creatingId = useRef<string | null>(null),
     fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -152,6 +160,7 @@ export default function ScreenshotImport() {
       stateActive(query.state.data as ImportBatch | undefined) ? 1500 : false,
   });
   const batch = batchQuery.data;
+  const saveLocked = busy || saveUnknown;
   const preview = useQuery({
     queryKey: ['import', 'preview', id, batch?.revision],
     queryFn: () => previewImportBatch(id!),
@@ -172,8 +181,8 @@ export default function ScreenshotImport() {
     setId(value.id);
     queryClient.setQueryData(['import', 'batch', value.id], value);
   };
-  const action = async (run: () => Promise<void>) => {
-    if (busy) return;
+  const action = async (run: () => Promise<void>, recoveringSave = false) => {
+    if (busy || (commitRequest.current && !recoveringSave)) return;
     setBusy(true);
     setError('');
     try {
@@ -257,17 +266,41 @@ export default function ScreenshotImport() {
     });
   const commit = (analyze: boolean) =>
     action(async () => {
-      if (!batch || !preview.data) return;
+      if (!commitRequest.current && (!batch || !preview.data || !id)) return;
+      if (
+        commitRequest.current &&
+        commitRequest.current.input.analyze !== analyze
+      ) return;
       commitRequest.current ??= {
-        requestKey: crypto.randomUUID(),
-        expectedRevision: batch.revision,
-        holdingsRevision: preview.data.holdingsRevision,
-        rowIds: batch.rows.filter(pending).map((row) => row.id),
-        analyze,
+        batchId: id!,
+        input: {
+          requestKey: crypto.randomUUID(),
+          expectedRevision: batch!.revision,
+          holdingsRevision: preview.data!.holdingsRevision,
+          rowIds: batch!.rows.filter(pending).map((row) => row.id),
+          analyze,
+        },
       };
+      const original = commitRequest.current;
+      onSavePendingChange?.(true);
+      let sent = false;
       try {
-        const receipt = await commitImportBatch(id!, commitRequest.current);
+        // A batch read may already contain the durable receipt after a lost response.
+        const latest = saveUnknown
+          ? await fetchImportBatch(original.batchId)
+          : undefined;
+        const prior = latest?.receipts.find(
+          receipt => receipt.requestKey === original.input.requestKey,
+        );
+        if (latest) accept(latest);
+        const receipt = prior ?? await (async () => {
+          sent = true;
+          return commitImportBatch(original.batchId, original.input);
+        })();
+        setSavedBatchId(original.batchId);
         commitRequest.current = null;
+        setSaveUnknown(false);
+        onSavePendingChange?.(false);
         for (const queryKey of IMPORT_QUERY_KEYS)
           await queryClient.invalidateQueries({ queryKey: [...queryKey] });
         toast.success(
@@ -277,7 +310,7 @@ export default function ScreenshotImport() {
           ),
         );
         await refresh();
-        if (analyze) navigate('/today');
+        if (original.input.analyze) navigate('/research/portfolio');
       } catch (failure) {
         const status = (
           failure as {
@@ -286,13 +319,21 @@ export default function ScreenshotImport() {
             };
           }
         )?.response?.status;
-        if (status && status >= 400 && status < 500)
+        if (
+          sent && status && status >= 400 && status < 500 &&
+          status !== 408 && status !== 429
+        ) {
           commitRequest.current = null;
+          setSaveUnknown(false);
+          onSavePendingChange?.(false);
+        } else if (commitRequest.current) {
+          setSaveUnknown(true);
+        }
         throw failure;
       }
-    });
+    }, true);
   const changeDraft = (row: ImportBatchRow, patch: Partial<ImportBatchRow>) =>
-    setDrafts((current) => ({
+    !commitRequest.current && setDrafts((current) => ({
       ...current,
       [row.id]: { ...current[row.id], ...patch },
     }));
@@ -330,7 +371,9 @@ export default function ScreenshotImport() {
           <Button
             variant="outline"
             size="sm"
+            disabled={saveLocked}
             onClick={() => {
+              if (commitRequest.current) return;
               setId(null);
               setFresh(true);
               setDrafts({});
@@ -351,7 +394,9 @@ export default function ScreenshotImport() {
             className="h-9 min-w-0 flex-1 rounded-xl border bg-background px-2 text-sm"
             aria-label={copy('选择截图批次', 'Choose an image batch')}
             value={id ?? ''}
+            disabled={saveLocked}
             onChange={(event) => {
+              if (commitRequest.current) return;
               setId(event.target.value);
               setFresh(false);
               setDrafts({});
@@ -657,7 +702,7 @@ export default function ScreenshotImport() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={busy || !image.fileAvailable}
+                      disabled={saveLocked || !image.fileAvailable}
                       aria-label={copy(
                         `只重试 ${image.filename}`,
                         `Retry ${image.filename} only`,
@@ -679,7 +724,7 @@ export default function ScreenshotImport() {
                           className="absolute inset-0 w-full cursor-pointer opacity-0"
                           type="file"
                           accept="image/png,image/jpeg,image/webp"
-                          disabled={busy}
+                          disabled={saveLocked}
                           aria-label={copy(
                             `重新选择 ${image.filename}`,
                             `Reselect ${image.filename}`,
@@ -747,7 +792,7 @@ export default function ScreenshotImport() {
               {batch.status === 'draft' && (
                 <Button
                   size="sm"
-                  disabled={busy || !batch.images.length}
+                  disabled={saveLocked || !batch.images.length}
                   onClick={() =>
                     action(async () => accept(await startImportBatch(id!)))
                   }
@@ -759,7 +804,7 @@ export default function ScreenshotImport() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy}
+                  disabled={saveLocked}
                   onClick={() =>
                     action(async () =>
                       accept(
@@ -789,7 +834,7 @@ export default function ScreenshotImport() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={busy}
+                  disabled={saveLocked}
                   onClick={() =>
                     action(async () => accept(await cancelImportBatch(id!)))
                   }
@@ -819,7 +864,7 @@ export default function ScreenshotImport() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy}
+                  disabled={saveLocked}
                   onClick={confirmAll}
                 >
                   {copy('确认没有疑问的行', 'Confirm clear rows')}
@@ -903,6 +948,7 @@ export default function ScreenshotImport() {
                                 <button
                                   key={candidateIndex}
                                   className="mx-1 rounded border border-amber-400 px-2 py-1"
+                                  disabled={saveLocked}
                                   onClick={() =>
                                     changeDraft(row, {
                                       [conflict.field]: candidate.value,
@@ -952,6 +998,7 @@ export default function ScreenshotImport() {
                           </Label>
                           <Input
                             id={`import-${row.id}-${field}`}
+                            disabled={saveLocked}
                             value={value[field] ?? ''}
                             inputMode={
                               ['shares', 'avgCost', 'currentPrice'].includes(
@@ -984,6 +1031,7 @@ export default function ScreenshotImport() {
                           id={`import-${row.id}-market`}
                           className="h-10 w-full rounded-md border bg-background px-2 text-sm"
                           value={value.market ?? ''}
+                          disabled={saveLocked}
                           onChange={(event) =>
                             changeDraft(row, {
                               market: event.target.value
@@ -1011,6 +1059,7 @@ export default function ScreenshotImport() {
                           id={`import-${row.id}-currency`}
                           className="h-10 w-full rounded-md border bg-background px-2 text-sm"
                           value={value.currency ?? ''}
+                          disabled={saveLocked}
                           onChange={(event) =>
                             changeDraft(row, {
                               currency: event.target.value || null,
@@ -1055,7 +1104,7 @@ export default function ScreenshotImport() {
                         variant={
                           row.confirmed && !drafts[row.id] ? 'ghost' : 'outline'
                         }
-                        disabled={busy || (saved && !drafts[row.id])}
+                        disabled={saveLocked || (saved && !drafts[row.id])}
                         onClick={() => saveRow(row)}
                       >
                         <Check size={14} className="mr-1" />
@@ -1091,26 +1140,43 @@ export default function ScreenshotImport() {
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    variant="outline"
-                    disabled={busy || !confirmed}
+                    disabled={
+                      busy ||
+                      (!saveUnknown && (!confirmed || preview.isPending)) ||
+                      commitRequest.current?.input.analyze === true
+                    }
                     onClick={() => commit(false)}
                   >
-                    {copy('仅保存持仓', 'Save holdings only')}
+                    {busy && <Loader2 size={15} className="mr-2 animate-spin" />}
+                    {saveUnknown && commitRequest.current?.input.analyze === false
+                      ? copy('核对本次保存结果', 'Check this save result')
+                      : copy('保存持仓', 'Save holdings')}
                   </Button>
                   <Button
-                    disabled={busy || !confirmed || preview.isPending}
+                    variant="outline"
+                    disabled={
+                      busy ||
+                      (!saveUnknown && (!confirmed || preview.isPending)) ||
+                      commitRequest.current?.input.analyze === false
+                    }
                     onClick={() => commit(true)}
                   >
-                    {busy ? (
-                      <Loader2 size={15} className="mr-2 animate-spin" />
-                    ) : (
-                      <Sparkles size={15} className="mr-2" />
-                    )}
-                    {copy('确认持仓并开始分析', 'Save and start analysis')}
+                    <Sparkles size={15} className="mr-2" />
+                    {saveUnknown && commitRequest.current?.input.analyze === true
+                      ? copy('核对本次保存结果', 'Check this save result')
+                      : copy('保存并开始研究', 'Save and start research')}
                   </Button>
                 </div>
               </div>
             </div>
+          )}
+          {saveUnknown && (
+            <p role="status" className="text-sm text-amber-700 dark:text-amber-300">
+              {copy(
+                '先核对本次保存结果，再修改持仓或开始新的保存。',
+                'Check this save result before editing holdings or starting another save.',
+              )}
+            </p>
           )}
           {!!batch.receipts.length && (
             <p
@@ -1123,6 +1189,7 @@ export default function ScreenshotImport() {
               )}
             </p>
           )}
+          {(savedBatchId === id || !!batch.receipts.length) && <ImportSavedNextSteps />}
         </>
       )}
       {error && (

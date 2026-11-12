@@ -16,6 +16,7 @@ export interface ResearchWorkspaceRequest {
 
 export interface ResearchWorkspaceComposer {
   agents?: import('@shared/agent-roster.interface').AgentSelection[];
+  participants?: Array<{ id: string; name: string; specialty: string; avatar?: import('@shared/animal-avatar').AnimalAvatarId }>;
   skillId?: string | null;
   onSkillChange: (id: string | null) => void;
   onStrategy: (message: string) => void;

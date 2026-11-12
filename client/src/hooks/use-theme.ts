@@ -1,5 +1,5 @@
 /** Shared appearance preferences, synchronized across consumers and browser tabs. */
-import { useSyncExternalStore } from 'react';
+import { useLayoutEffect, useSyncExternalStore } from 'react';
 import type { SetStateAction } from 'react';
 
 export type Theme = 'light' | 'dark';
@@ -113,6 +113,16 @@ const getSnapshot = (): AppearanceState => appearance;
 const getServerSnapshot = (): AppearanceState => DEFAULT_APPEARANCE;
 
 applyAppearance();
+
+/** Body portals share the active workspace palette; leaving the shell releases it. */
+export function useAppearanceScope(simple: boolean): void {
+  useLayoutEffect(() => {
+    if (!simple) return;
+    const root = document.documentElement;
+    root.dataset.workspaceExperience = 'simple';
+    return () => { delete root.dataset.workspaceExperience; };
+  }, [simple]);
+}
 
 /** Existing mode API plus an independent visual design preference. */
 export function useTheme() {

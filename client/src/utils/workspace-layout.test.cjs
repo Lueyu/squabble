@@ -49,7 +49,7 @@ function shell(pathname, width) {
     '@tanstack/react-query': { useQuery: () => ({}), useQueryClient: () => ({}) },
     'lucide-react': require('lucide-react'),
     '@/api': {}, '@/api/http': { hasSession: () => true }, '@/api/auth-mode': { getAuthMode: () => 'local' }, '@/i18n': {},
-    '../hooks/use-theme': { useTheme: () => ({ theme: 'light', toggleTheme() {} }) },
+    '../hooks/use-theme': { useTheme: () => ({ theme: 'light', toggleTheme() {} }), useAppearanceScope() {} },
     '../hooks/use-market-quotes': {},
     '@/hooks/use-simple-experience': { useSimpleExperience: () => ({ enabled: true }) },
     '@/features/navigation/workspace-navigation': f.load('features/navigation/workspace-navigation.ts'),
@@ -79,11 +79,27 @@ function shell(pathname, width) {
 }
 
 for (const width of [1440, 1024, 1023, 768, 390]) {
+  test(`mobile shortcuts retain every daily workspace destination in order at ${width}px`, () => {
+    const page = shell('/holdings', width);
+    try {
+      const navigation = page.element('.portfolio-mobile-nav');
+      const expected = fixture().load('features/navigation/workspace-navigation.ts')
+        .workspaceSections('en').filter(item => item.group === 'daily').map(item => item.path);
+      assert.deepEqual([...navigation.querySelectorAll('a')].map(link => link.getAttribute('href')), Array.from(expected));
+      assert.equal(navigation.querySelector('button'), null, 'the sidebar menu already exposes tools and settings');
+      assert.ok(page.element('.app-topbar button[aria-expanded]'), 'the topbar keeps the mobile sidebar trigger');
+    } finally { page.dom.window.close(); }
+  });
+
   test(`settings adds secondary navigation without changing the primary shell at ${width}px`, () => {
     const assets = shell('/holdings', width), settings = shell('/settings/models', width);
     try {
-      assert.equal(assets.dom.window.document.querySelectorAll('.app-nav-link').length, 7);
-      assert.equal(settings.dom.window.document.querySelectorAll('.app-nav-link').length, 7);
+      for (const page of [assets, settings]) {
+        assert.ok(page.element('.app-nav-link[href="/"]'), 'investment overview stays a primary destination');
+        assert.ok(page.element('.app-nav-link[href="/holdings"]'), 'holdings is reachable on desktop and mobile');
+      }
+      assert.equal(assets.element('.workspace-parent-link'), null, 'holdings is a root destination');
+      assert.match(assets.element('.workspace-location').textContent, /Holdings/);
       for (const [selector, properties] of [
         ['.app-sidebar', ['width']], ['.app-brand', ['paddingLeft', 'paddingRight']],
         ['.app-brand-copy', ['display']], ['.app-nav-link > span', ['display']],

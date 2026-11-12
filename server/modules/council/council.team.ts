@@ -27,7 +27,8 @@ export function parseSavedTeamResponse(saved: { data?: unknown; text?: string })
 /** Organization roles are preserved; the retained manager role is only an execution adapter. */
 export function teamCouncilMembers(context: TeamExecutionContext): CouncilMember[] {
   return context.members.map(member => ({
-    id: member.memberId, name: member.label, roleTitle: member.label,
+    id: member.memberId, name: member.agentName ?? member.label, roleTitle: member.label,
+    ...(member.avatar ? { avatar: member.avatar } : {}),
     role: member.roleId === context.plan.leadRoleId ? 'manager' : 'researcher',
     instructions: [member.agentInstructions, member.responsibility].filter(Boolean).join('\n\n'),
     ...(member.rosterAgentId ? { rosterAgentId: member.rosterAgentId, rosterAgentVersionId: member.rosterAgentVersionId } : {}),

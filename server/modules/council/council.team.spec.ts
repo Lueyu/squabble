@@ -40,10 +40,16 @@ test('saved-response parsing preserves JSON and never puts private malformed tex
 
 test('team execution retains exact friend identity and personality alongside role responsibility', () => {
   const saved = structuredClone(context);
-  Object.assign(saved.members[0], { rosterAgentId: 'friend', rosterAgentVersionId: 'version', agentInstructions: 'PINNED_PERSONALITY' });
+  Object.assign(saved.members[0], { rosterAgentId: 'friend', rosterAgentVersionId: 'version', agentInstructions: 'PINNED_PERSONALITY', avatar: 'news', agentName: 'Actual friend' });
   const member = teamCouncilMembers(saved)[0];
   assert.equal(member.rosterAgentId, 'friend');
   assert.equal(member.rosterAgentVersionId, 'version');
   assert.match(member.instructions, /PINNED_PERSONALITY/u);
   assert.match(member.instructions, /synthesize/u);
+  assert.equal(member.avatar, 'news');
+  assert.equal(member.name, 'Actual friend');
+  assert.equal(member.roleTitle, 'Lead');
+  saved.plan.leadRoleId = 'expert';
+  assert.equal(teamCouncilMembers(saved)[0].avatar, 'news', 'changing the execution role cannot change appearance');
+  assert.equal(teamCouncilMembers(context)[0].avatar, undefined, 'legacy snapshots retain their display fallback');
 });

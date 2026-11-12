@@ -409,9 +409,111 @@ test('participant changes retain the actual moderator and reject two moderators 
     assert.doesNotMatch(document.body.textContent, /Analyst gives the final summary/);
     await click('Other moderator');
     assert.match(document.body.textContent, /Choose one moderator/);
+    assert.equal(document.querySelector('[role=alert]').closest('details'), null, 'selection errors remain visible while the picker is closed');
     assert.equal(document.querySelector('textarea'), null);
     assert.equal(calls.length, 0);
     await click('Other moderator');
     assert.ok(document.querySelector('textarea'));
+  });
+});
+
+test('new research keeps selected identities in a collapsed keyboard-accessible picker without repeating the room header', async () => {
+  await scenario('/research?agent=selected', ({ f }) => {
+    f.load('api/agent-roster.ts').agentRosterApi.list = async () => ({ items: [
+      { id: 'selected', name: 'Cashflow cat', specialty: 'Read every long cash-flow statement in detail', avatar: 'technical', status: 'active', availability: 'configured', currentVersionId: 'cat-v1', currentVersion: { config: { templateId: 'financials' } } },
+      { id: 'offline', name: 'Offline bear', specialty: 'Challenge evidence', avatar: 'risk', status: 'active', availability: 'unavailable', currentVersionId: 'bear-v1', currentVersion: { config: { templateId: 'bear' } } },
+    ] });
+  }, async ({ calls, click, settle }) => {
+    const picker = document.querySelector('details.research-participant-picker');
+    assert.ok(picker, 'participant options use a native disclosure');
+    assert.equal(picker.open, false, 'new chats keep the full roster collapsed');
+    const summary = picker.querySelector('summary');
+    assert.match(summary.textContent, /Cashflow cat/);
+    assert.match(summary.textContent, /Adjust agents/);
+    assert.doesNotMatch(summary.textContent, /Offline bear|cash-flow statement/);
+    assert.equal(document.querySelector('.research-room-header'), null, 'the containing research workspace already names this room');
+    assert.ok(document.querySelector('textarea'), 'the composer remains in the primary pane');
+    await React.act(async () => summary.click());
+    await settle();
+    assert.equal(picker.open, true);
+    assert.equal(picker.querySelector('[aria-label="Offline bear"]').disabled, true);
+    assert.match(picker.textContent, /Restore connection/);
+    await React.act(async () => summary.click());
+    assert.equal(picker.open, false);
+    assert.equal(calls.length, 0, 'opening the picker never dispatches research');
+    await click('Open First saved research');
+    assert.equal(document.querySelector('details.research-participant-picker'), null, 'saved participant snapshots cannot be edited');
+    assert.match(document.querySelector('.research-room-header').textContent, /First saved research/);
+  });
+});
+
+test('a single-agent deep link shows that selected identity in the empty room and blocks unavailable agents up front', async () => {
+  await scenario('/research?agent=selected', ({ f }) => {
+    f.load('api/agent-roster.ts').agentRosterApi.list = async () => ({ items: [
+      { id: 'selected', name: 'Cashflow cat', specialty: 'Read cash flow', avatar: 'technical', status: 'active', availability: 'configured', currentVersionId: 'cat-v1', currentVersion: { config: { templateId: 'financials' } } },
+      { id: 'offline', name: 'Offline bear', specialty: 'Challenge evidence', avatar: 'risk', status: 'active', availability: 'unavailable', currentVersionId: 'bear-v1', currentVersion: { config: { templateId: 'bear' } } },
+    ] });
+  }, async ({ calls }) => {
+    const empty = document.querySelector('[data-research-empty]');
+    assert.ok(empty);
+    assert.match(empty.textContent, /Cashflow cat/);
+    assert.doesNotMatch(empty.textContent, /researches independently before comparing/);
+    assert.deepEqual([...empty.querySelectorAll('[data-persona]')].map(node => node.dataset.persona), ['technical']);
+    assert.equal(document.querySelector('[aria-label="Offline bear"]').disabled, true);
+    assert.match(document.body.textContent, /Restore connection/);
+    assert.equal(calls.length, 0);
+  });
+});
+
+test('saved chat keeps its frozen animal when a financial researcher becomes the discussion manager', async () => {
+  await scenario('/research?session=first', ({ saved }) => {
+    saved[0].members = [{ id: 'saved', name: 'Frozen cat', avatar: 'technical', role: 'manager', roleTitle: 'Portfolio lead' }];
+    saved[0].messages[0].role = 'manager';
+    saved[0].messages[0].memberName = 'Frozen cat';
+  }, async () => {
+    const message = document.querySelector('.council-message');
+    assert.equal(message.dataset.persona, 'technical');
+    assert.match(message.textContent, /Frozen cat/);
+    assert.match(message.textContent, /Portfolio lead/);
+  });
+});
+
+test('an unknown research request remains recoverable when its selected agent later becomes unavailable', async () => {
+  let unavailable = false;
+  await scenario('/research?agent=selected', ({ f, api, calls }) => {
+    f.load('api/agent-roster.ts').agentRosterApi.list = async () => ({ items: [{ id: 'selected', name: 'Cashflow cat', specialty: 'Cash flow', avatar: 'technical', status: 'active', availability: unavailable ? 'unavailable' : 'configured', currentVersionId: 'cat-v1', currentVersion: { config: { templateId: 'financials' } } }] });
+    api.createResearchConversation = async input => {
+      calls.push(input);
+      if (calls.length === 1) throw new Error('Response lost');
+      return session('created', 'Accepted original request');
+    };
+  }, async ({ type, click, client, settle, calls }) => {
+    await type('Keep this exact question'); await click('Send question');
+    unavailable = true;
+    await React.act(async () => client.invalidateQueries({ queryKey: ['agent-roster'] })); await settle();
+    assert.ok(document.querySelector('textarea'), 'The original request must remain recoverable');
+    await click('Send question');
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0], calls[1]);
+  });
+});
+
+test('a definitive rejection of an old request locks new questions when the agent is unavailable', async () => {
+  let unavailable = false;
+  await scenario('/research?agent=selected', ({ f, api, calls }) => {
+    f.load('api/agent-roster.ts').agentRosterApi.list = async () => ({ items: [{ id: 'selected', name: 'Cashflow cat', status: 'active', availability: unavailable ? 'unavailable' : 'configured', currentVersionId: 'v1', currentVersion: { config: { templateId: 'financials' } } }] });
+    api.createResearchConversation = async input => {
+      calls.push(input);
+      if (calls.length === 1) throw new Error('Unknown response');
+      throw { response: { status: 422 } };
+    };
+  }, async ({ type, click, client, settle, calls }) => {
+    await type('Original question'); await click('Send question');
+    unavailable = true;
+    await React.act(async () => client.invalidateQueries({ queryKey: ['agent-roster'] })); await settle();
+    await click('Send question');
+    assert.equal(Boolean(document.querySelector('textarea')), false);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0], calls[1]);
   });
 });

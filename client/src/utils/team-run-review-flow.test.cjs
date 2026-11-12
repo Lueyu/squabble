@@ -10,6 +10,16 @@ const { MemoryRouter } = require('react-router-dom');
 const { QueryClient, QueryClientProvider } = require('@tanstack/react-query');
 const fixture = require('./simple-test-loader.cjs');
 
+test('recent cycle links use the actual team history route and the budget is labelled as a cap', () => {
+  const f = fixture();
+  f.state.queries.set('team-run', { data: { agreement: { state: 'running', accountId: 'account', members: [], configuration: { market: 'CN', cadence: { delayMinutes: 60 }, budget: { daily: { costUsd: '2' }, monthly: { costUsd: '40' } } } }, recentCycles: [{ id: 'cycle', state: 'completed', tradingDate: '2026-11-12', commissionId: 'commission' }] } });
+  const { TeamRunPanel } = f.load('features/teams/TeamRunPanel.tsx');
+  const html = f.render(TeamRunPanel, { team: { id: 'team', status: 'active', publishedVersion: { config: { roles: [] } } }, zh: false });
+  assert.match(html, /href="\/teams\/team\?panel=history&amp;commissionId=commission"/);
+  assert.match(html, /Research budget cap/);
+  assert.match(html, /not recorded spending/);
+});
+
 test('expired run preview is explicitly renewed, unknown renewal keeps its exact key, and renewed terms require confirmation', async () => {
   const f = fixture({ realQuery: true }); let sequence = 0;
   f.state.randomUUID = () => 'intent-' + ++sequence;
@@ -23,7 +33,7 @@ test('expired run preview is explicitly renewed, unknown renewal keeps its exact
   };
   api.confirm = async (_id, input) => {
     calls.push(['confirm', input]);
-    if (input.previewId === 'expired') throw { response: { status: 409, data: { code: 'TEAM_PREVIEW_STALE' } } };
+    if (input.previewId === 'expired') throw { response: { status: 409, data: { error: { code: 'TEAM_PREVIEW_STALE' } } } };
     agreement = { id: 'agreement', revision: 1, state: 'confirmed', accountId: 'account', members: [], configuration: { market: 'CN', cadence: { delayMinutes: 60 }, budget: { daily: { costUsd: '2' }, monthly: { costUsd: '40' } } } };
     return agreement;
   };

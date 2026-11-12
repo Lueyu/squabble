@@ -98,7 +98,7 @@ export default function CreateSimulationAccount({
       <DialogContent className="companion-create-dialog max-h-[92dvh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {zh ? '和股友开始一个独立实验' : 'Start an independent experiment'}
+            {zh ? '新建模拟账户' : 'Create a simulation account'}
           </DialogTitle>
           <DialogDescription>
             {zh
@@ -107,7 +107,7 @@ export default function CreateSimulationAccount({
           </DialogDescription>
         </DialogHeader>
         <ol className="companion-steps" aria-label={zh ? '创建步骤' : 'Creation steps'}>
-          <li aria-current={!preview ? 'step' : undefined}>1 · {zh ? '股友与起点' : 'Companion & seed'}</li>
+          <li aria-current={!preview ? 'step' : undefined}>1 · {zh ? '账户风格与起点' : 'Account style & seed'}</li>
           <li aria-current={preview ? 'step' : undefined}>2 · {zh ? '核对并创建' : 'Review & create'}</li>
         </ol>
         <label className="space-y-2 text-sm">
@@ -125,7 +125,7 @@ export default function CreateSimulationAccount({
         {!preview ? (
           <div className="space-y-5">
             <CompanionPicker value={companionId} onChange={setCompanionId} zh={zh} disabled={prepare.isPending} />
-            <p className="text-xs leading-6 text-muted-foreground">{zh ? '股友形象与执行策略分开。账户建立后，再把你的想法聊成可核对的策略。' : 'Companion identity and execution rules are separate. After creating the account, clarify your ideas into a reviewable strategy.'}</p>
+            <p className="text-xs leading-6 text-muted-foreground">{zh ? '账户风格用于区分模拟实验。账户建立后，再把你的想法聊成可核对的策略。' : 'Account styles help distinguish your simulations. After creating the account, clarify your ideas into a reviewable strategy.'}</p>
             <div
               className="companion-seed-options"
               aria-label={zh ? '选择起点' : 'Choose starting point'}
@@ -229,7 +229,7 @@ export default function CreateSimulationAccount({
           <CompanionIdentity id={companionId} zh={zh} />
           {creationUnconfirmed && <div role="alert" className="rounded-lg border p-4 text-sm leading-6">{zh ? '创建结果尚未收到确认。重试会核对同一个创建请求，起点和名称已锁定，不会另建一个账户。' : 'The creation response is unconfirmed. Retry checks the same request with its frozen name and starting point, without creating another account.'}</div>}
           {companionIncomplete && createdAccountId.current && <div role="alert" className="rounded-lg border p-4 text-sm leading-6">
-            <p>{zh ? '模拟账户已经创建，股友选择尚未确认保存。重试只会继续保存股友，不会再建账户。' : 'The simulation account was created. Retry saves the companion without creating another account.'}</p>
+            <p>{zh ? '模拟账户已经创建，账户风格尚未确认保存。重试只会继续保存风格，不会再建账户。' : 'The simulation account was created. Retry saves the account style without creating another account.'}</p>
             <Link className="text-primary underline" to={simulationAccountPath(createdAccountId.current)} onClick={onClose}>{zh ? '先查看已创建的账户' : 'View the created account'}</Link>
           </div>}
           <StartInvestmentCard
