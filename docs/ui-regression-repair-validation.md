@@ -36,6 +36,9 @@ The following checks were executed in this working tree. Local evidence logs are
 | Mobile navigation and research-composition regressions |29 passed,0 failed/skipped; targeted TypeScript, ESLint and Stylelint checks passed | Targeted mobile repair run |
 | Appearance scope and holdings-context regressions |30 passed,0 failed/skipped; targeted lint/style checks passed | Targeted visual-polish run |
 | Final holdings-context copy regression |3 passed,0 failed/skipped after removing the watchlist-only notice from holdings/ledger context; independently rerun with the same result; selected account and unique team link retained | `account-context-final-red.log`, `account-context-final-green.log`; independent `account-assets-context.test.cjs` run |
+| Combined client run and fixture correction |636 cases,635 passed,1 failed,0 skipped: the existing auth-mode fixture did not mock the new appearance-scope hook. After adding that mock, all14 auth-mode cases passed. Final complete coverage remains a required Linux CI gate | `client-release-final.log`, `auth-mode-final-green.log` |
+| Pre-commit lint after the final holdings correction |Full ESLint, both TypeScript projects and Stylelint passed | `commit.log` |
+| Final architecture and knowledge reruns |Architecture10/10 and context15/15 passed without skips; context metadata valid with no errors | `architecture-release-final.log`, `context-release-final.log`, `check-context-release-final.log` |
 | Independent final code review and regression rerun |No actionable P1/P2 findings; import continuation, screenshot import and guided resume:72 passed,0 failed/skipped | Read-only peer review and independent targeted run |
 
 The focused database command was:
@@ -46,7 +49,7 @@ npx tsx --tsconfig tsconfig.node.json --test --test-concurrency=1 server/modules
 
 `AGENT_ROSTER_TEST_DATABASE_URL`, `TEAM_TEST_DATABASE_URL` and `COUNCIL_TEST_DATABASE_URL` pointed to a disposable PostgreSQL16 fixture. Real services and persistence used fake model transports. Cases covered ordinary conversation receipt replay, frozen old/new avatars and preferences, deterministic migration66 backfill, retained version/receipt contents, chosen avatars after replay, actual Team→Council snapshots, source/owner fences and fresh versus baseline60 upgrade/replay parity. No personal model or portfolio records were used.
 
-These focused runs overlap and must not be added together as a unique test total. An earlier complete client run passed607/607 with no skips, before the last import, mobile and appearance repairs. Final lint, Web build and the follow-up client rebuild passed as recorded above; the final complete client suite remains pending in this record. Complete native and server checks also remain pending. The knowledge-helper rerun above validates the edited paths and helper behavior; it does not establish semantic freshness or deployed behavior.
+These focused runs overlap and must not be added together as a unique test total. An earlier complete client run passed607/607 with no skips, before the last import, mobile and appearance repairs. The later636-case run exposed the stale auth-mode test mock described above; its corrected14-case file passed. Final lint, Web build and the follow-up client rebuild passed as recorded above. Complete client, native and server checks must pass in protected Linux CI. The knowledge-helper rerun validates the edited paths and helper behavior; it does not establish semantic freshness or deployed behavior.
 
 ## Interactive browser evidence
 
@@ -57,8 +60,9 @@ Playwright used a loopback-only fictional HTTP gateway serving the compiled clie
 - Recheck the1440×1000 desktop main pages without horizontal overflow. Dialog backgrounds matched the active palette in classic light (`rgb(255,255,255)`), classic dark (`rgb(14,16,19)`) and arcade (`rgb(238,238,218)`); each retained the simple workspace scope and had no page errors. Root visually inspected the final research and dialog screenshots. A final copy-only review removed the misplaced watchlist scope notice from holdings; its rendered regression passed3/3.
 - Complete guided startup through the real UI with fictional HTTP: enter a team name, select the saved fox agent, review a7 USD cap, refresh, confirm the cap is retained, then explicitly authorize startup. The full create/publish/account/binding/agreement/start sequence reached the matching team page showing the running state, without overflow or page errors.
 - Upload a fictional CSV, review it, choose the primary save action and follow “下一步：认识股友” to the roster. The saved HTTP payload had `analyze:false`; this continuation did not schedule research.
+- Click the recent-cycle original-decision link and reach the exact team history route with its selected `commissionId`. A fictional completed commission rendered its details and delivery/decision history. Switching the actual interface to English changed the navigation and headings while preserving the saved Chinese name. Both screenshots were visually inspected, with no page errors or horizontal overflow (`history-browser.log`, `final-team-history-desktop.png`, `final-team-history-english.png`).
 
-Screenshots and the gateway/scenario scripts remain local ignored evidence under `output/playwright/ui-repair/`. Theme/mobile visual rechecks passed. Exact history links and account-scoped returns have regression coverage, but an interactive commission-history acceptance scenario has not been exercised in this browser fixture.
+Screenshots and the gateway/scenario scripts remain local ignored evidence under `output/playwright/ui-repair/`. Theme/mobile and selected commission-history visual checks passed; account-scoped returns also have regression coverage.
 
 ## Recovery limits
 
@@ -74,7 +78,6 @@ The repository-owned contributor skill, module map, research/execution contracts
 
 ## Pending acceptance and delivery gates
 
-- Interactive commission-history acceptance remains unperformed; exact history-link and return-state regressions are passed. The completed desktop/mobile, theme, animal, CSV and guided-startup journeys are listed above; a DOM assertion is not visual acceptance.
 - Final focused and complete application verification with documented disposable prerequisites. Missing prerequisites or skipped integration are not passes. The Windows POSIX-only dev skip is recorded above.
 - Independent specification and code-quality reviews have resolved the identified template-tool, import-unknown and guided-authority findings. The final independent review found no actionable P1/P2 issues; new changes still require appropriate review.
 - PR and all required protected checks: **Lint & typecheck**, **Agent tests**, **Docker image build**. No final CI/merge result is recorded here yet.

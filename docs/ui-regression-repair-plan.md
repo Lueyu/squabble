@@ -46,14 +46,14 @@
 - [x] Save editable pre-start fields in owner-scoped tab storage; revalidate selected IDs/versions rather than treating a cached profile as authority. Storage and legacy-owner validation reviewed; interaction regressions are tracked separately.
 - [x] Provide an explicit safe exit for resolved obsolete creation progress, retaining existing team/account resources and unknown receipts. Source guard rejects exit while a pending operation remains.
 - [x] Use frozen animal identities in team and research selectors; render actual selected agents in empty states. Collapse the new-chat member picker so the composer remains accessible on mobile.
-- [x] Fix commission-history links to `/teams/:id?panel=history&commissionId=...`; use user-facing Chinese/English team descriptions and clearly labelled budget caps. Exact links are covered by regression tests; final browser history acceptance remains pending.
+- [x] Fix commission-history links to `/teams/:id?panel=history&commissionId=...`; use user-facing Chinese/English team descriptions and clearly labelled budget caps. Exact links passed regression tests and an interactive selected-commission browser check.
 - [x] Run guided creation, research member and team runtime client suites, including rendered interactions:128/128 with no skips in the adjacent suite. A full fictional HTTP browser startup retained selected members and budget across refresh and reached the running team.
 
 ## 5. Visual acceptance and integration review
 
 - [x] Inspect the main pages and relevant dialogs at1440×1000 and390×844 using fictional fixtures. Final daily mobile pages and desktop main pages had no horizontal overflow or page errors; the inspected animal dialog fits and scrolls.
 - [x] Exercise animal selection/save/reload, CSV save→friends, team startup through refresh, selected research participants and investment/holdings switching without a real model call. The validation record lists the exact exercised scenarios.
-- [ ] Exercise the commission-history link interactively. Exact history destinations and account-scoped return behavior currently have regression coverage rather than this browser scenario.
+- [x] Exercise the commission-history link interactively, render the selected fictional commission and switch the interface to English. No page errors or horizontal overflow; both screenshots were visually inspected.
 - [x] Check visible names, active navigation, accessible labels, wrapping, overflow, primary actions and collapsed controls through the recorded browser inspections and focused interaction tests. The mobile research composer is visible in the first viewport.
 - [x] Repair browser-discovered duplicate holdings links, portal palette inheritance, hidden mobile holdings navigation and the tall research-member list. Visual-polish tests:30/30; mobile tests:29/29; no skips. Final light/dark/arcade portal and mobile visual rechecks passed. Remove the misplaced watchlist-only notice from holdings/ledger context and pass its3/3 rendered regressions.
 - [x] Review `docs/architecture.md` five diagrams and contributor references semantically. Update the affected identity/route descriptions and verification evidence. Identity and client recovery are documented beside the unchanged authority edges.
