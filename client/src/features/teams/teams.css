@@ -1058,3 +1058,67 @@
     animation-duration: 0s !important;
   }
 }
+
+/* Quick-start execution list inside the creation dialog. */
+.team-quick-progress {
+  display: grid;
+  gap: 10px;
+}
+
+.team-quick-progress ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-quick-progress li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--team-panel);
+  border-radius: 8px;
+  background: var(--team-panel);
+}
+
+.team-quick-progress li span:last-child {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.team-quick-checklist li span:last-child {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.team-quick-progress li.is-failed { border-color: var(--destructive); }
+
+.team-quick-progress li.is-running span:first-child { font-weight: 650; }
+
+.team-quick-progress li.is-pending { color: var(--team-ink-muted); }
+
+/* Post quick-start orientation checklist on the workspace page. */
+.team-quick-checklist {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-quick-checklist li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--team-panel);
+  border-radius: 8px;
+  background: var(--team-panel);
+}
+
+.team-quick-checklist li.is-done { color: var(--team-ink-muted); }
+
