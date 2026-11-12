@@ -44,10 +44,11 @@ All database tests use disposable PostgreSQL16 databases with fictional records.
 | Native fixtures (Windows serial) |202 passed;1 POSIX-only process-group case skipped |
 | Development supervisor (Windows) |8 passed;1 POSIX-only case skipped |
 | Full lint / Web build |Passed; final changed-source build/CI recorded with PR |
-| Complete server and memory evaluation |Final aggregate results recorded before merge |
+| Complete memory evaluation |99 passed, no failures/skips/cancellations |
+| Final complete server revision |Required Linux PR CI is authoritative; initial Windows aggregate and focused repairs described below |
 | Actual browser desktop1440 / mobile390 |Added five recommended agents, selected three, reviewed seed/fees/replacement, started and paused; mobile scrollWidth390 at viewport390 |
 
-The first full client run exposed compatibility failures from the changed navigation and new roster query. A later run reached569/570; its remaining render fixture lacked an explicit persistent roster and was corrected. The subsequent complete run passed570/570 with zero skips. The first full server run was stopped at a stale test waiting forever for the removed hidden single-person summary; that scenario now uses a genuine moderated group with a bounded wait and passes. These incomplete runs are not pass evidence. Windows app/Docker database clock differences are handled in fictional fixtures by waiting for the saved availability timestamp; production source-time guards remain strict.
+The first full client run exposed compatibility failures from the changed navigation and new roster query. A later run reached569/570; its remaining render fixture lacked an explicit persistent roster and was corrected. The subsequent complete run passed570/570 with zero skips. The first full server run was stopped at a stale test waiting forever for the removed hidden single-person summary; that scenario now uses a genuine moderated group with a bounded wait and passes. These incomplete runs are not pass evidence. The initial full Windows server run completed1403 cases (1387 passed,16 failed,0 skipped) while fixes were being made. All failing cases were subsequently rechecked in focused suites; the exact final complete revision is gated by Linux PR CI. The later full memory evaluation passed99/99 with zero skips or cancellations. Windows app/Docker database clock differences are handled in fictional fixtures by waiting for the saved availability timestamp; production source-time guards remain strict.
 
 ## Limits
 
