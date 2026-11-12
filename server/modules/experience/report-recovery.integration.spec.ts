@@ -12,6 +12,7 @@ import { researchCurrentViews } from '../../database/simple-experience.schema';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { automaticResearchTasks } from '../../database/investment-policy.schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
+import { waitForFixturePublications } from '../council/council-test.fixture';
 
 test('saved daily-team reports recover locally from legacy formatting failures', {
   skip: !process.env.EXPERIENCE_TEST_DATABASE_URL,
@@ -27,6 +28,7 @@ test('saved daily-team reports recover locally from legacy formatting failures',
       await client.unsafe(readFileSync('scripts/db/' + name, 'utf8'));
     }
     const db = drizzle(client), owner = randomUUID(), documents = new ResearchDocumentsService(db);
+    waitForFixturePublications(documents);
     const service = new CurrentResearchService(db, documents, {} as never, {} as never);
     const date = '2026-11-06', raw = JSON.stringify({ response: { thesis: 'The retained daily finding.', risks: [], nextChecks: [] } });
     const [session] = await db.insert(councilSessions).values({ owner, ticker: 'PORTFOLIO', scene: 'portfolio_daily',

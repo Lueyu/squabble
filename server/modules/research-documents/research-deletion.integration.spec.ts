@@ -23,6 +23,7 @@ import { ResearchMemoryService } from '../research-memory/research-memory.servic
 import { normalizeBuilderConfig } from '../paper-trading/agent-builder.rules';
 import { newCheckpoint } from '../council/council.dialogue';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
+import { waitForSavedAvailability } from '../council/council-test.fixture';
 
 test('durable research deletion: owner/CAS receipts, independent versions and paid-task/source fences', {
   skip: !process.env.RESEARCH_TEST_DATABASE_URL,
@@ -59,6 +60,7 @@ test('durable research deletion: owner/CAS receipts, independent versions and pa
         decision: 'wait', summary: 'Fictional archived conclusion', dissent: [], nextReviewCondition: 'Check a fictional source',
         evidence: [], tokensUsed: 0, engine: 'llm', publicationOutcome: 'succeeded' }).returning();
       const version = await documents.importSource(owner, { type: 'council', id: report.id });
+      await waitForSavedAvailability(new Date(Math.max(report.createdAt.getTime(), Date.parse(version.createdAt))).toISOString());
       return { row, report, version };
     };
 

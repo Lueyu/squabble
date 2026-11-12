@@ -3,6 +3,23 @@ import { RESULT_LIMIT_BYTES, validOutput } from './research-tools.registry';
 import { boundMemoryToolData, isMemoryToolData } from '../research-memory/research-memory.context';
 import { containsEvidencePromptMetadata, isEvidencePromptMetadata } from '../research-memory/research-memory.temporal';
 
+interface ScopedAgentMemoryData {
+  format: 'scoped-agent-memory/v1'; items: Array<{ id: string; [key: string]: unknown }>;
+  omissions: Array<{ id: string; reason: string }>; [key: string]: unknown;
+}
+function isScopedAgentMemoryData(value: unknown): value is ScopedAgentMemoryData {
+  return Boolean(value && typeof value === 'object' && 'format' in value && value.format === 'scoped-agent-memory/v1'
+    && 'items' in value && Array.isArray(value.items) && 'omissions' in value && Array.isArray(value.omissions));
+}
+function boundScopedAgentMemory(data: ScopedAgentMemoryData, budget: number): ScopedAgentMemoryData {
+  const items: ScopedAgentMemoryData['items'] = [], omissions = [...data.omissions];
+  for (const item of data.items) {
+    if (Buffer.byteLength(JSON.stringify([...items, item]), 'utf8') <= budget) items.push(item);
+    else omissions.push({ id: item.id, reason: 'budget' });
+  }
+  return { ...data, items, omissions };
+}
+
 export function clipped(value: unknown, maximum: number): string {
   return typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/gu, ' ').slice(0, maximum) : '';
 }
@@ -39,7 +56,7 @@ export function researchFailure(status: ResearchToolResult['status'], errorCode:
 export function boundedResult(result: ResearchToolResult): ResearchToolResult {
   let shortened: boolean = result.truncated;
   const clean = (value: unknown, depth = 0, stringLimit = 3000): unknown => {
-    if (isMemoryToolData(value) || isEvidencePromptMetadata(value)) return value;
+    if (isMemoryToolData(value) || isScopedAgentMemoryData(value) || isEvidencePromptMetadata(value)) return value;
     if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
     if (typeof value === 'string') {
       if (value.length > stringLimit) shortened = true;
@@ -67,6 +84,7 @@ export function boundedResult(result: ResearchToolResult): ResearchToolResult {
     bounded = { ...bounded, data, truncated: true };
   }
   const boundMemory = (value: unknown, budget: number): unknown => {
+    if (isScopedAgentMemoryData(value)) return boundScopedAgentMemory(value, budget);
     if (isMemoryToolData(value)) return boundMemoryToolData(value, budget);
     if (Array.isArray(value)) return value.map(item => boundMemory(item, budget));
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)

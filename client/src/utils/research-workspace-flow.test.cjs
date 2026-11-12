@@ -77,6 +77,7 @@ async function scenario(path, configure, run) {
         React.createElement('div', null, children);
   }
   const api = f.load('api/research-conversations.ts');
+  f.load('api/agent-roster.ts').agentRosterApi.list = async () => ({ items: [{ id: 'fixture-agent', name: 'Fixture researcher', status: 'active', currentVersionId: 'fixture-v1', currentVersion: { config: { templateId: 'financials' } } }] });
   api.fetchResearchSkills = async () => [
     { id: 'strategy', command: '/strategy', title: '聊出策略', titleEn: 'Clarify a strategy', description: '多轮问答', descriptionEn: 'Clarify together', version: '1.0.0', mode: 'interview', requiredTools: [] },
     { id: 'financial-verification', command: '/financials', title: '财报解读', titleEn: 'Financial results', description: '核对财报', descriptionEn: 'Verify financials', version: '1.0.0', mode: 'research', requiredTools: ['get_financials'] },
@@ -393,5 +394,24 @@ test('a library deep link submits immutable source context only after an explici
     await type('Explain the claim in this source');
     await click('Send question');
     assert.deepEqual(JSON.parse(JSON.stringify(calls[0].context)), { kind: 'library', sourceId: 'source-version-owner', versionId: 'pinned-v1' });
+  });
+});
+
+test('participant changes retain the actual moderator and reject two moderators before submission', async () => {
+  await scenario('/research', ({ f }) => {
+    f.load('api/agent-roster.ts').agentRosterApi.list = async () => ({ items: [
+      ['Moderator', 'moderator'], ['Analyst', 'financials'], ['Other moderator', 'moderator'],
+    ].map(([name, templateId], index) => ({ id: 'person-' + index, name, status: 'active', currentVersionId: 'v-' + index, currentVersion: { config: { templateId } } })) });
+  }, async ({ click, calls }) => {
+    await click('Analyst');
+    await click('Analyst');
+    assert.match(document.body.textContent, /Moderator gives the final summary/);
+    assert.doesNotMatch(document.body.textContent, /Analyst gives the final summary/);
+    await click('Other moderator');
+    assert.match(document.body.textContent, /Choose one moderator/);
+    assert.equal(document.querySelector('textarea'), null);
+    assert.equal(calls.length, 0);
+    await click('Other moderator');
+    assert.ok(document.querySelector('textarea'));
   });
 });

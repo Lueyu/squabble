@@ -18,6 +18,7 @@ import { holdings } from '../../database/schema';
 import { channelMemories } from '../../database/channel.schema';
 import type { CouncilMember, DailyReverseCheck } from '../../../shared/council.interface';
 import { businessDate } from '../experience/simple-experience.rules';
+import { waitForSavedAvailability } from './council-test.fixture';
 
 const url = process.env.COUNCIL_TEST_DATABASE_URL;
 test('daily research executes a sealed independent barrier and mandatory reverse gate before Today publication', { skip: !url }, async t => {
@@ -70,6 +71,10 @@ test('daily research executes a sealed independent barrier and mandatory reverse
       let result = await council.getSession(owner, session.id);
       for (let i = 0; i < 500 && result.status === 'running'; i++) {
         await new Promise(resolve => setTimeout(resolve, 10)); result = await council.getSession(owner, session.id);
+      }
+      const reportVersionId = result.reports.at(-1)?.researchVersionId;
+      if (result.status === 'completed' && reportVersionId) {
+        await waitForSavedAvailability((await documents.getVersion(owner, reportVersionId)).availableAt);
       }
       return { owner, session: result, prompts };
     }

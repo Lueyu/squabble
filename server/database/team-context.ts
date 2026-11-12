@@ -11,6 +11,11 @@ import { createHash } from 'node:crypto';
 import type { InvestmentConfig } from '../../shared/investment-policy.interface';
 import { researchDocumentVersions } from './research-documents.schema';
 import { researchThesisVersions } from './research-memory.schema';
+import { assertTeamRunCommissionAuthority } from './team-run-authority';
+import { assertAgentRosterExecutionFence } from './agent-roster-context';
+import { readA2aConnectionFingerprint } from './a2a-agent-context';
+import { councilSessions } from './council.schema';
+import { hasCouncilDispatchProof } from './council-execution-proof';
 export type TeamDatabase = Pick<PostgresJsDatabase, 'select' | 'insert' | 'update' | 'execute'>;
 /** Owner lock serializes request receipts and all team authority changes. Acquire before entity rows. */
 export async function lockTeamOwner(tx: TeamDatabase, owner: string): Promise<void> {
@@ -39,6 +44,16 @@ export async function assertTeamExecutionFence(tx: TeamDatabase, owner: string, 
         throw new NotFoundException('TEAM_REFERENCE_NOT_FOUND');
     if (options.allowSettlement)
         return;
+    for (const member of context.members) {
+        const [session] = options.allowPublication && commission.sessionId ? await tx.select().from(councilSessions)
+            .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, commission.sessionId))) : [];
+        const allowArchivedSettlement = Boolean(session && await hasCouncilDispatchProof(tx, session, member.memberId, { publication: true }));
+        const grants = await tx.select().from(teamSourceGrants).where(and(eq(teamSourceGrants.ownerId, owner), eq(teamSourceGrants.teamId, context.teamId)));
+        const refs = member.sourceGrantIds.map(id => grants.find(grant => grant.id === id && grant.state === 'active'));
+        if (refs.some(ref => !ref)) throw new ConflictException('TEAM_SCOPE_REVOKED');
+        await assertAgentRosterExecutionFence(tx, owner, [member], { allowedToolIds: member.allowedToolIds, dataCutoffAt: context.dataCutoffAt, allowArchivedSettlement,
+            sourceRefs: refs.map(ref => ({ kind: ref!.sourceKind as 'report_version' | 'thesis_version' | 'document_version' | 'data_snapshot', id: ref!.sourceId, revision: ref!.sourceRevision, availability: 'available' })) });
+    }
     const [binding] = await tx.select().from(teamAccountBindings).where(and(eq(teamAccountBindings.ownerId, owner), eq(teamAccountBindings.id, context.bindingId)));
     if (team.status !== 'active' || team.scopeRevision !== context.scopeRevision || team.bindingRevision !== context.bindingRevision
         || !binding || binding.state !== 'active' || binding.teamId !== team.id || binding.accountId !== context.accountId
@@ -54,6 +69,12 @@ export async function assertTeamExecutionFence(tx: TeamDatabase, owner: string, 
     }
     for (const member of context.members) {
         const executor = member.executor;
+        if (executor.executionMode === 'a2a') {
+            const fingerprint = await readA2aConnectionFingerprint(tx, owner, executor.connectionId);
+            if (!member.a2aFingerprint || teamCanonicalHash(fingerprint) !== member.executorConfigRevision
+                || teamCanonicalHash(fingerprint) !== teamCanonicalHash(member.a2aFingerprint)) throw new ConflictException('TEAM_CAPABILITY_UNAVAILABLE');
+            continue;
+        }
         if (executor.executionMode !== 'model')
             continue;
         const [connection] = await tx.select().from(modelConnections).where(and(eq(modelConnections.owner, owner), eq(modelConnections.id, executor.connectionId)));
@@ -100,6 +121,8 @@ export async function assertTeamExecutionInTransaction(tx: TeamDatabase, owner: 
     if (options.dispatch)
         await lockTeamOwner(tx, owner);
     await assertTeamExecutionFence(tx, owner, context, { allowSettlement: options.settlement, allowPublication: options.publication });
+    if (!options.settlement)
+        await assertTeamRunCommissionAuthority(tx, owner, context.commissionId, options.dispatch, options.publication);
     if (!options.dispatch)
         return;
     const [commission] = await tx.select().from(teamCommissions).where(and(eq(teamCommissions.ownerId, owner), eq(teamCommissions.id, context.commissionId))).for('update');

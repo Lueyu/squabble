@@ -53,7 +53,8 @@ test('chat skill choice is pinned, idempotent, submitted to real execution and l
     const first = await service.create(owner, request);
     assert.ok('id' in first);
     if (!('id' in first)) throw new Error('Unexpected clarification');
-    const stored = async () => (await db.select().from(councilSessions).where(eq(councilSessions.id, first.id)))[0];
+    let conversationId = first.id;
+    const stored = async () => (await db.select().from(councilSessions).where(eq(councilSessions.id, conversationId)))[0];
     const frozen = JSON.stringify((await stored()).checkpoint?.simple?.skills);
     assert.equal(first.skills?.[0].id, request.skillId);
     assert.equal((await service.create(owner, request) as { id: string }).id, first.id);
@@ -67,14 +68,19 @@ test('chat skill choice is pinned, idempotent, submitted to real execution and l
     await db.update(councilSessions).set({ status: 'paused' }).where(eq(councilSessions.id, first.id));
     configured = true;
     await service.addMessage(owner, first.id, { message: 'Now use the pinned procedure', requestKey: 'execute-pinned' });
-    for (let count = 0; count < 300 && (await service.get(owner, first.id)).status === 'running'; count++) {
+    assert.equal(prompts.length, 0, 'an empty historical conversation never discovers newly connected people');
+    const explicit = await service.create(owner, { ...request, message: 'Use the pinned procedure with the connected member', requestKey: 'explicit-connected-discussion' });
+    if (!('id' in explicit)) throw new Error('Unexpected clarification');
+    conversationId = explicit.id;
+    assert.equal(JSON.stringify((await stored()).checkpoint?.simple?.skills), frozen);
+    for (let count = 0; count < 300 && (await service.get(owner, conversationId)).status === 'running'; count++) {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    const finished = await service.get(owner, first.id);
+    const finished = await service.get(owner, conversationId);
     assert.ok(prompts.length > 0);
     assert.ok(prompts.every(prompt => prompt.includes('financial-verification@1.0.0')));
     assert.ok(finished.researchEvents?.some(event => event.kind === 'skill' && event.skill?.id === 'financial-verification'));
-    const attempts = await db.select().from(councilMemberAttempts).where(eq(councilMemberAttempts.sessionId, first.id));
+    const attempts = await db.select().from(councilMemberAttempts).where(eq(councilMemberAttempts.sessionId, conversationId));
     assert.ok(attempts.some(attempt => JSON.stringify(attempt.inputSnapshot.skills) === frozen));
     configured = false;
     const source = await library.create(owner, { kind: 'page', title: 'Fixture annual disclosure', text: 'Revenue grew from 90 to 100. This is source evidence, not an adopted thesis.' });
@@ -169,7 +175,7 @@ test('chat skill choice is pinned, idempotent, submitted to real execution and l
     await assert.rejects(council.runSession(owner, fromReport.id), /RESEARCH_SOURCE_UNAVAILABLE/u);
 
     // A portfolio tool scope can read owner context but never query a fabricated PORTFOLIO quote.
-    const scope: ResearchToolScope = { sessionId: first.id, revision: finished.revision, memberId: 'model-default', memberName: 'AI',
+    const scope: ResearchToolScope = { sessionId: conversationId, revision: finished.revision, memberId: 'model-default', memberName: 'AI',
       turn: 0, ticker: 'PORTFOLIO', language: 'zh-CN', webResearch: false, expiresAt: Date.now() + 60_000 };
     assert.equal((await tools.call(owner, scope, { callId: 'scope-quote', name: 'get_quotes', arguments: {} })).status, 'unavailable');
     assert.equal((await tools.call(owner, scope, { callId: 'scope-provider', name: 'get_financial_source_data', arguments: { provider: 'alpha-vantage', operation: 'quote' } })).status, 'unavailable');
@@ -178,8 +184,8 @@ test('chat skill choice is pinned, idempotent, submitted to real execution and l
     await db.update(councilSessions).set({ status: 'running',
       profileSnapshot: { ...row.profileSnapshot, council: { ...row.profileSnapshot.council!, members: [...row.profileSnapshot.council!.members, secondMember] } },
       checkpoint: { ...row.checkpoint!, nextTurn: 0, turns: [{ memberId: 'model-default', phase: 'opening' }, { memberId: secondMember.id, phase: 'opening' }] },
-    }).where(eq(councilSessions.id, first.id));
-    const [attempt] = await db.insert(councilMemberAttempts).values({ owner, sessionId: first.id,
+    }).where(eq(councilSessions.id, conversationId));
+    const [attempt] = await db.insert(councilMemberAttempts).values({ owner, sessionId: conversationId,
       cycleId: row.checkpoint!.cycleId, memberId: secondMember.id, attempt: 1, revision: row.revision, turn: 1,
       resourceKey: 'local:fixture', inputHash: 'fixture-hash', inputSnapshot: {}, status: 'running' }).returning();
     const parallelScope = { ...scope, revision: row.revision, memberId: secondMember.id, turn: 1, attemptId: attempt.id };
@@ -190,9 +196,9 @@ test('chat skill choice is pinned, idempotent, submitted to real execution and l
     await db.update(councilMemberAttempts).set({ status: 'completed' }).where(eq(councilMemberAttempts.id, attempt.id));
     assert.equal((await tools.call(owner, parallelScope, { callId: 'closed-attempt', name: 'get_discussion_context', arguments: {} })).status, 'cancelled');
     const [queuedAttempt] = await db.update(councilMemberAttempts).set({ status: 'queued', dispatchStarted: false }).where(eq(councilMemberAttempts.id, attempt.id)).returning();
-    const [nativeRow] = await db.select().from(councilSessions).where(eq(councilSessions.id, first.id));
+    const [nativeRow] = await db.select().from(councilSessions).where(eq(councilSessions.id, conversationId));
     const nativeCheckpoint = { ...nativeRow.checkpoint!, nextTurn: 1, simple: { ...nativeRow.checkpoint!.simple!, stage: 'independent' as const } };
-    await db.update(councilSessions).set({ checkpoint: nativeCheckpoint }).where(eq(councilSessions.id, first.id));
+    await db.update(councilSessions).set({ checkpoint: nativeCheckpoint }).where(eq(councilSessions.id, conversationId));
     let nativePreflightTools: string[] = [];
     const native = { execute: async (nativeOwner: string, input: { researchScope?: ResearchToolScope; prompt: string;
       onDispatch: () => Promise<void>; onTask: (ref: { taskId: string }) => Promise<void> }) => {
@@ -209,7 +215,7 @@ test('chat skill choice is pinned, idempotent, submitted to real execution and l
     await runNative.runAgentMember(owner, { ...nativeRow, checkpoint: nativeCheckpoint, memberAttempt: queuedAttempt },
       { ...secondMember, executionMode: 'local', agentId: 'fixture-native' }, { memberId: secondMember.id, phase: 'opening' });
     assert.ok(nativePreflightTools.includes('search_data_library'), 'queued member becomes authorized before native preflight builds tools');
-    const nativeMessages = await db.select().from(councilMessages).where(eq(councilMessages.sessionId, first.id));
+    const nativeMessages = await db.select().from(councilMessages).where(eq(councilMessages.sessionId, conversationId));
     assert.ok(nativeMessages.some(message => message.metadata?.researchEvent?.kind === 'skill' && message.metadata.researchEvent.taskId === 'fixture-native-skill'));
   } finally {
     await client.end();

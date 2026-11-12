@@ -3,6 +3,29 @@
   background-color: var(--muted);
 }
 
+.telemetry-identity-filters {
+  margin: 0 0 1rem;
+}
+
+.telemetry-identity-filters summary {
+  cursor: pointer;
+  font-size: .875rem;
+}
+
+.telemetry-identity-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: .75rem;
+  margin-top: .75rem;
+}
+
+.telemetry-identity-filter-grid label {
+  display: grid;
+  gap: .25rem;
+  font-size: .8rem;
+  min-width: 0;
+}
+
 .telemetry-workspace {
   width: 100%;
   max-width: 1440px;

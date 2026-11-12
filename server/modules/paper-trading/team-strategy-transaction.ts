@@ -12,6 +12,7 @@ import { deriveTeamDecisionLineage } from '../../database/team-decision-lineage'
 import type { TeamDecisionRef, TeamExecutionContext } from '../../../shared/team-workspace.interface';
 import type { PortfolioStrategyAssignment } from '../../../shared/portfolio-workspace.interface';
 import { assertTeamStrategyReportAuthority } from './team-strategy-sources';
+import type { TeamRunAuthority } from '../../../shared/team-run.interface';
 /** Validate both explicit approval and provenance. Omitting refs cannot turn team output into a legacy strategy. */
 export async function teamStrategyAuthority(tx: TeamDatabase, owner: string, accountId: string, allocations: PortfolioStrategyAssignment[], refs: TeamDecisionRef[]) {
     if (new Set(refs.map(ref => ref.proposalId)).size !== refs.length)
@@ -84,11 +85,13 @@ export async function teamStrategyAuthority(tx: TeamDatabase, owner: string, acc
     const members = contexts.flatMap(c => teamCouncilMembers(c).filter(m => c.members.some(s => s.memberId === m.id && memberIds.has(s.roleId))));
     return { contexts, members: [...new Map(members.map(m => [m.id, m])).values()] };
 }
-export async function recordTeamStrategyApplied(tx: TeamDatabase, owner: string, accountId: string, policyRevision: number, allocations: PortfolioStrategyAssignment[], refs: TeamDecisionRef[], requestKey: string): Promise<void> {
+export async function recordTeamStrategyApplied(tx: TeamDatabase, owner: string, accountId: string, policyRevision: number, allocations: PortfolioStrategyAssignment[], refs: TeamDecisionRef[], requestKey: string, authority?: TeamRunAuthority): Promise<void> {
     for (const ref of refs) {
         const [origin] = await tx.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.id, ref.decisionId)));
         const [last] = await tx.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.proposalId, ref.proposalId))).orderBy(desc(teamDecisions.proposalRevision)).limit(1);
-        await tx.insert(teamDecisions).values({ ownerId: owner, teamId: origin.teamId, accountId, commissionId: origin.commissionId, proposalId: origin.proposalId, proposalRevision: last.proposalRevision + 1, event: 'applied', actorType: 'system', actorId: owner, basis: origin.basis, reason: 'User confirmed the account strategy combination', policyContext: { policyRevision, decisionId: origin.id, allocations: allocations.map(a => ({ strategyId: a.strategyId, strategyRevision: a.strategyRevision, allocationPct: a.allocationPct, enabled: a.enabled })) }, requestKey });
+        await tx.insert(teamDecisions).values({ ownerId: owner, teamId: origin.teamId, accountId, commissionId: origin.commissionId, proposalId: origin.proposalId, proposalRevision: last.proposalRevision + 1, event: 'applied', actorType: 'system', actorId: authority ? 'team-run:' + authority.agreementId : owner, basis: origin.basis, reason: authority ? 'System applied the paper combination under the confirmed team run agreement' : 'User confirmed the account strategy combination', policyContext: { policyRevision, decisionId: origin.id,
+            ...(authority ? { teamRunAgreementId: authority.agreementId, teamRunAgreementRevision: authority.revision, teamRunCycleId: authority.cycleId } : {}),
+            allocations: allocations.map(a => ({ strategyId: a.strategyId, strategyRevision: a.strategyRevision, allocationPct: a.allocationPct, enabled: a.enabled })) }, requestKey });
         for (const allocation of allocations)
             if (origin.commissionId)
                 await tx.insert(teamResearchLinks).values({ ownerId: owner, teamId: origin.teamId, commissionId: origin.commissionId, kind: 'strategy_revision', targetId: allocation.strategyId, targetRevision: String(allocation.strategyRevision), relation: 'executed', workKey: origin.basis.workKey, attemptId: origin.basis.acceptedAttemptId, metadata: { accountId, policyRevision, decisionId: origin.id } }).onConflictDoNothing();

@@ -16,6 +16,7 @@ import { paperAccounts, paperOrders, paperTrades, holdings } from '../../databas
 import { councilMessages, councilSessions } from '../../database/council.schema';
 import type { CouncilMember } from '../../../shared/council.interface';
 import type { OverallDailyEvidence } from '../../../shared/daily-workspace.interface';
+import { waitForFixturePublications } from '../council/council-test.fixture';
 
 test('explicit overall daily freezes all owner facts, seals independent work, reverse-checks and publishes separately with stable retries', {
   skip: !process.env.EXPERIENCE_TEST_DATABASE_URL,
@@ -29,6 +30,7 @@ test('explicit overall daily freezes all owner facts, seals independent work, re
     const db = drizzle(client), owner = randomUUID(), other = randomUUID(), day = '2026-11-09';
     for (const id of [owner, other]) await client`INSERT INTO users (id,username,password_hash) VALUES (${id},${`overall-${id.slice(0, 12)}`},'fixture-only')`;
     const documents = new ResearchDocumentsService(db);
+    waitForFixturePublications(documents);
     const historical = await documents.submit(owner, { idempotencyKey: 'original-personal', title: 'Original saved personal inputs', kind: 'portfolio',
       content: 'Original saved report', sections: [{ id: 'summary', title: 'Saved personal finding', content: 'Original saved report' }],
       snapshot: { businessDate: '2026-11-08', capturedAt: '2026-11-08T05:00:00Z', holdings: [{ ticker: 'HIST', shares: 9 }] } });

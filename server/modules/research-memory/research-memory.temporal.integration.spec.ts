@@ -19,6 +19,8 @@ import { evidenceExcerpts, type CouncilEvidence } from '../council/council.rules
 import { nativeWorkflowSources } from '../council/council.workflow-executor';
 import { FinnhubEvidenceService } from '../research-core/finnhub-evidence.service';
 import { renderEvidenceGraph } from './research-memory.render.fixture.cjs';
+import { researchArchiveJobs } from '../../database/research-memory.schema';
+import { waitForSavedAvailability } from '../council/council-test.fixture';
 
 const enabled = { skip: !process.env.MEMORY_TEST_DATABASE_URL };
 const metadata = (value = 100): EvidenceMetadata => ({ sources: [{ origin: 'provider', verification: 'server-verified',
@@ -152,6 +154,9 @@ test('real provider typed metadata survives tool archive, checkpoint, publicatio
   const [report] = await db.select().from(councilReports).where(eq(councilReports.sessionId, session.id));
   assert.deepEqual(report.evidence[0].metadata, evidence.metadata);
   assert.deepEqual(report.evidence.find(item => item.id === archived.id)?.metadata, evidence.metadata);
+  const [job] = await db.select().from(researchArchiveJobs).where(eq(researchArchiveJobs.reportId, report.id));
+  assert.ok(job, 'Publication enqueues the exact retained report');
+  await waitForSavedAvailability(new Date(Math.max(report.createdAt.getTime(), job.nextAttemptAt.getTime())).toISOString());
   await new ResearchArchiveService(db, service).tick();
   const listing = await service.list(owner, { ticker: 'AAPL' });
   const graph = await service.evidenceGraph(owner, listing.memories[0].id);

@@ -11,11 +11,12 @@ export default function TelemetryAgents({ data, selectAgent }: { data: Telemetry
   const { i18n } = useTranslation();
   const zh: boolean = i18n.language.startsWith('zh');
   return <>
-    <div className="telemetry-banner"><strong>{zh ? '同类任务比较' : 'Compare like tasks'}</strong><p>{zh ? '使用上方场景、时间与执行方式筛选。混合任务的差异不能视为能力排名。' : 'Use scene, time and execution filters above. Different task mixes do not establish an ability ranking.'}</p></div>
+    <div className="telemetry-banner"><strong>{zh ? '同类任务比较' : 'Compare like tasks'}</strong><p>{zh ? '按同一股友和固定能力版本比较，岗位身份单独保留。混合任务的差异不能视为能力排名；团队收益不能直接归因到个人。' : 'Compare a persistent friend and fixed capability version; seat identity remains separate. Different task mixes do not establish an ability ranking, and team returns are not individual causal returns.'}</p></div>
     {!data.agents.length ? <TelemetryEmpty>{zh ? '当前范围没有可识别的成员执行记录。' : 'No attributable member executions in this range.'}</TelemetryEmpty> : <>
       <div className="telemetry-agent-cards" data-ai-section-type="card-list">{data.agents.map((agent: TelemetryAgent) => <Card className="telemetry-agent-card" key={agent.id}>
         <div className="telemetry-agent-identity"><AnimalAvatar avatar={telemetryAvatar(`${agent.role} ${agent.id}`)} role="researcher" className="size-8" />
           <div><h3>{agent.name}</h3><p className="telemetry-muted telemetry-mono">{agent.executionMode || '—'} · {agent.model ?? (zh ? '模型未知' : 'Unknown model')}</p></div></div>
+        <p className="telemetry-muted telemetry-mono">{agent.rosterAgentVersionId ? `${zh ? '能力版本' : 'Capability version'} ${agent.rosterAgentVersionId.slice(0, 8)}` : (zh ? '旧记录 · 个人身份未知' : 'Legacy · person unknown')}</p>
         <div className="telemetry-coverage-value"><strong>{formatAmount(agent.executions)}</strong><span className="telemetry-muted">{zh ? '次成员执行' : 'executions'}</span></div>
         <p className="telemetry-muted">P95 {formatDuration(agent.p95DurationMs)} · {zh ? '估算' : 'est.'} {formatCost(agent.estimatedCostUsd)}</p>
         <div className="telemetry-progress"><i style={{ width: `${(agent.completionRate ?? 0) * 100}%` }} /></div>
@@ -26,8 +27,10 @@ export default function TelemetryAgents({ data, selectAgent }: { data: Telemetry
         <div className="telemetry-table-scroll"><Table className="telemetry-table"><TableHeader><TableRow>
           {[zh ? 'Agent / 角色' : 'Agent / role', zh ? '实际执行器 / 模型' : 'Executor / model', zh ? '执行数' : 'Executions', zh ? '完成率' : 'Completion', 'P95', zh ? '已知 tokens' : 'Known tokens', zh ? '估算费用' : 'Est. cost', zh ? '结果接受' : 'Accepted'].map((label: string) => <TableHead key={label}>{label}</TableHead>)}
         </TableRow></TableHeader><TableBody>{data.agents.map((agent: TelemetryAgent) => <TableRow key={agent.id}>
-          <TableCell><Button variant="ghost" className="telemetry-table-link" onClick={() => selectAgent(agent.id)}>{agent.name}</Button><p className="telemetry-muted">{agent.role}</p></TableCell>
-          <TableCell>{agent.provider ?? agent.executionMode ?? '—'} / {agent.model ?? (zh ? '未知' : 'Unknown')}</TableCell>
+          <TableCell><Button variant="ghost" className="telemetry-table-link" onClick={() => selectAgent(agent.id)}>{agent.name}</Button><p className="telemetry-muted">{agent.role}</p>
+            <p className="telemetry-muted telemetry-mono">{agent.rosterAgentVersionId ? `${zh ? '能力版本' : 'Version'} ${agent.rosterAgentVersionId.slice(0, 8)}` : (zh ? '个人身份未知' : 'Person unknown')}</p></TableCell>
+          <TableCell>{agent.provider ?? agent.executionMode ?? '—'} / {agent.model ?? (zh ? '未知' : 'Unknown')}
+            <p className="telemetry-muted">{zh ? '配置模型/策略：' : 'Configured model/policy: '}{agent.configuredModel ?? (zh ? '未知' : 'Unknown')}</p></TableCell>
           <TableCell>{formatAmount(agent.executions)}</TableCell><TableCell>{formatRate(agent.completionRate)}</TableCell>
           <TableCell>{formatDuration(agent.p95DurationMs)}</TableCell><TableCell>{formatAmount(agent.totalTokens, true)}</TableCell>
           <TableCell>{formatCost(agent.estimatedCostUsd)}</TableCell><TableCell>{agent.acceptanceKnown ? `${agent.accepted} / ${agent.acceptanceKnown}` : '—'}</TableCell>

@@ -25,7 +25,8 @@ async function waitForLock(client: postgres.Sql, pattern: string): Promise<void>
 }
 
 test('actual ledger serializes revocation and physical source deletion in both orderings; protective exits remain independent', {
-  skip: !process.env.MEMORY_TEST_DATABASE_URL, timeout: 60000,
+  // Eight separately migrated PostgreSQL schemas also run on slower Windows/Docker hosts.
+  skip: !process.env.MEMORY_TEST_DATABASE_URL, timeout: 180000,
 }, async t => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-03T15:00:00Z') });
   for (const mutation of ['exclude', 'source-delete', 'thesis-edit', 'recall-off'] as const) for (const first of ['revocation', 'fill'] as const) {

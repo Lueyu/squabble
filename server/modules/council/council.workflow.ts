@@ -50,7 +50,7 @@ export class CouncilWorkflow {
     if (row.revision !== revision || row.status !== 'running') return;
     await this.store.initialize(row, row.checkpoint?.teamContext ? teamTaskPlan(row.checkpoint.teamContext)
       : planResearchTasks(row.checkpoint!.workflow!.goal, members), this.callbacks.pin);
-    const connection = (m: CouncilMember) => m.executionMode === 'local' ? `native:${m.agentId}` : `api:${m.connectionId ?? 'default'}`;
+    const connection = (m: CouncilMember) => m.executionMode === 'local' ? `native:${m.agentId}` : m.executionMode === 'a2a' ? `a2a:${m.connectionId}` : `api:${m.connectionId ?? 'default'}`;
     const run = async (task: ResearchTask, currentTasks: ResearchTask[], batch: ResearchTask[] = []) => {
       const kind = task.state === 'submitted' ? 'review' : 'work';
       const member = kind === 'review' ? members.find(m => m.id === task.reviewerMemberId) ?? manager : members.find(m => m.id === task.memberId)!;
@@ -105,11 +105,15 @@ export class CouncilWorkflow {
             : code === 'MEMORY_CONTEXT_CHANGED' ? row.language === 'en'
               ? 'Memory changed before submission. Start a new research cycle to refresh its versions.'
               : '记忆在提交前发生变化。请开始新一轮研究以刷新版本。'
+            : code.startsWith('A2A_') ? row.language === 'en'
+              ? `External assistant requires review (${code}). Check the original task; no replacement was sent.`
+              : `外部股友需要核对（${code}）。请检查原任务，系统未重新派发。`
             : code.startsWith('LOCAL_') ? agentErrorMessage(code, row.language)
             : /^(DELIVERY_|REVIEW_)/.test(code) ? (row.language === 'en'
               ? 'The deliverable did not meet the required structure or citation checks. No result was accepted. Retry explicitly after checking the model.'
               : '交付内容未通过结构或引用校验，未采纳为结论。请检查模型后手动重试。') : safeAnalysisError(error, row.language);
-          if (['LOCAL_USAGE_LIMIT', 'LOCAL_RATE_LIMIT', 'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN'].includes(code)
+          if (['LOCAL_USAGE_LIMIT', 'LOCAL_RATE_LIMIT', 'LOCAL_LOGIN_REQUIRED', 'LOCAL_DISPATCH_UNCERTAIN',
+            'A2A_DISPATCH_UNKNOWN', 'A2A_TIMEOUT', 'A2A_STATUS_UNKNOWN', 'A2A_INPUT_REQUIRED', 'A2A_AUTH_REQUIRED'].includes(code)
             || /HTTP 429/.test(code)) blockedConnections.set(key, reason);
           if (analysisErrorCode(error) === 'LLM_BUDGET_EXCEEDED') budgetBlocked = reason;
           await this.store.finish(row, task, attempt, member, { error: reason });

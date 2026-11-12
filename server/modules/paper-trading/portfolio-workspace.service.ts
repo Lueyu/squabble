@@ -20,6 +20,9 @@ import type { ArchivePortfolioAccountResult, PortfolioAccountDetail, PortfolioAc
 import { teamStrategyAuthority, recordTeamStrategyApplied } from './team-strategy-transaction';
 import { releaseTeamAccountBinding, lockTeamOwner } from '../../database/team-context';
 import { pauseTeamAccountInTransaction } from './team-account-transaction';
+import { assertTeamRunAuthority } from '../../database/team-run-authority';
+import type { TeamRunAuthority } from '../../../shared/team-run.interface';
+import { teamRunCycles } from '../../database/team-run.schema';
 
 @Injectable()
 export class PortfolioWorkspaceService {
@@ -192,13 +195,19 @@ export class PortfolioWorkspaceService {
         allocatedPct: allocations.filter(a => a.enabled).reduce((sum, a) => sum + a.allocationPct, 0) };
     });
   }
-  async apply(owner: string, accountId: string, input: unknown) {
+  async apply(owner: string, accountId: string, input: unknown, authority?: TeamRunAuthority) {
     await this.policies.assertFeatureEnabled(owner);
     const hashInput = this.parse(z.object({ previewHash: z.string().length(64) }).passthrough(), input);
     const { previewHash, ...body } = hashInput;
     const request = { ...this.parse(workspaceCombinationSchema, body), previewHash };
     const reviewers = request.teamDecisionRefs?.length ? null : await this.reviewTeam?.resolveMembers(owner).catch(() => null);
     return this.mutate(owner, accountId, 'apply', request, async tx => {
+      if (authority) {
+        const { cycle } = await assertTeamRunAuthority(tx, owner, authority, accountId);
+        if (!request.teamDecisionRefs?.length) throw new ConflictException('TEAM_REAPPROVAL_REQUIRED');
+        // The trusted scheduler can only apply the decision recorded by its own exact cycle.
+        if (!request.teamDecisionRefs.some(ref => ref.decisionId === cycle.decisionId)) throw new ConflictException('TEAM_REAPPROVAL_REQUIRED');
+      }
       const { policy } = await this.current(tx, owner, accountId, request.expectedPolicyRevision);
       const [preview] = await tx.select().from(portfolioCombinationPreviews).where(and(eq(portfolioCombinationPreviews.owner, owner),
         eq(portfolioCombinationPreviews.accountId, accountId), eq(portfolioCombinationPreviews.previewHash, request.previewHash)))
@@ -223,9 +232,11 @@ export class PortfolioWorkspaceService {
       if (allocations.length) await tx.insert(portfolioStrategyAssignments).values(allocations.map(a => ({ ...a,
         owner, accountId, allocationPct: String(a.allocationPct), policyRevision: saved.revision })));
       await tx.insert(portfolioCombinationRevisions).values({ owner, accountId, policyRevision: saved.revision, allocations, teamDecisionRefs: request.teamDecisionRefs ?? [] });
-      await recordTeamStrategyApplied(tx, owner, accountId, saved.revision, allocations, request.teamDecisionRefs ?? [], request.requestKey);
-      await tx.delete(portfolioCombinationDrafts).where(and(eq(portfolioCombinationDrafts.owner, owner), eq(portfolioCombinationDrafts.accountId, accountId)));
+      await recordTeamStrategyApplied(tx, owner, accountId, saved.revision, allocations, request.teamDecisionRefs ?? [], request.requestKey, authority);
+      if (!authority) await tx.delete(portfolioCombinationDrafts).where(and(eq(portfolioCombinationDrafts.owner, owner), eq(portfolioCombinationDrafts.accountId, accountId)));
       await this.setRuntime(tx, owner, saved, running);
+      if (authority) await tx.update(teamRunCycles).set({ state: 'applied', policyRevision: saved.revision, updatedAt: new Date() })
+        .where(and(eq(teamRunCycles.ownerId, owner), eq(teamRunCycles.id, authority.cycleId)));
       return { accountId, status: saved.status as 'running' | 'paused', policy: policyView(saved) };
     });
   }

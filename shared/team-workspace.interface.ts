@@ -7,9 +7,11 @@ export type TeamExecutionChoice = 'keep_confirmed_rules' | 'pause_all';
 export interface TeamMoney { amount: string | null; currency: string }
 export type TeamExecutor =
   | { executionMode: 'model'; connectionId: string; model: string; tier?: string; settings: Record<string, unknown> }
-  | { executionMode: 'local'; localAgentId: string; settings: Record<string, unknown> };
+  | { executionMode: 'local'; localAgentId: string; settings: Record<string, unknown> }
+  | { executionMode: 'a2a'; connectionId: string };
 export interface TeamDepartment { id: string; parentDepartmentId: string | null; purpose: string }
 export interface TeamRole {
+  agentId?: string; agentVersionId?: string;
   id: string; departmentId: string | null; participation: 'placeholder' | 'enabled';
   responsibility: string; expectedOutput: string; executor: TeamExecutor | null;
   allowedToolIds: string[]; sourceGrantIds: string[];
@@ -123,6 +125,8 @@ export interface CommissionPreviewInput extends Omit<TeamCommissionPlan, 'schema
   dataCutoffAt: string | null; inputRefs: ResearchSourceRef[];
 }
 export interface TeamMemberSnapshot {
+  a2aFingerprint?: import('./a2a-agents.interface').A2aConnectionFingerprint;
+  rosterAgentId?: string; rosterAgentVersionId?: string; agentInstructions?: string;
   roleId: string; memberId: string; teamVersionId: string; label: string;
   responsibility: string; expectedOutput: string; executor: TeamExecutor;
   executorConfigRevision: string; capabilityFingerprint: string;

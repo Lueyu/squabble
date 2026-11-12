@@ -12,6 +12,7 @@ import type { ResearchEvent } from '../../../shared/research-events.interface';
 import type { ResearchDelivery, ResearchTask, ResearchTaskAttempt } from '../../../shared/research-workflow.interface';
 import { jsonChatMessages, LlmService } from '../research-core/llm.service';
 import { LocalAgentsService } from '../local-agents/local-agents.service';
+import { A2aAgentsService, type A2aExecutionResult } from '../a2a-agents/a2a-agents.service';
 import { ResearchMemoryService, type MemoryDatabase } from '../research-memory/research-memory.service';
 import { validateDelivery } from './council.tasks';
 import { byteExcerpt, evidenceExcerpts, frozenOwnerEvidence, type CouncilEvidence } from './council.rules';
@@ -25,13 +26,14 @@ import { packMemoryContext } from '../research-memory/research-memory.context';
 import { taskMemoryQuery } from '../research-memory/research-memory.ranking';
 import type { MemoryContextInventory } from '../../../shared/research-memory.interface';
 import { threadPromptContext, isPortfolioThread, hasThreadContext } from './council.thread';
+import { assertCouncilRosterMember, readCouncilRosterMemory } from './council.roster';
 
 type Session = typeof councilSessions.$inferSelect;
 export interface WorkflowOutput { delivery?: ResearchDelivery; review?: { accepted: boolean; feedback: string };
   batchReviews?: Array<{ taskId: string; accepted: boolean; feedback: string }>;
   tokens: number; taskId?: string; externalUsageUnknown?: boolean; sources: CouncilEvidence[] }
 export interface WorkflowExecutorDependencies {
-  db: PostgresJsDatabase; llm: LlmService; localAgents?: LocalAgentsService; memory?: ResearchMemoryService;
+  db: PostgresJsDatabase; llm: LlmService; localAgents?: LocalAgentsService; a2aAgents?: A2aAgentsService; memory?: ResearchMemoryService;
   store: CouncilWorkflowStore;
   tools?: ResearchToolsService;
   validateReferences?(row: Session): Promise<void>;
@@ -81,11 +83,11 @@ export function nativeWorkflowSources(raw: Record<string, unknown>, attemptId: s
 export class CouncilWorkflowExecutor {
   constructor(private readonly deps: WorkflowExecutorDependencies) {}
   activity(row: Session, event: ResearchEvent): Promise<void> { return this.deps.activity(row, event); }
-  async active(row: Session): Promise<boolean> {
+  async active(row: Session, allowPublication = false): Promise<boolean> {
     const [current] = await this.deps.db.select({ revision: councilSessions.revision, status: councilSessions.status })
       .from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
     if (current?.revision !== row.revision || current.status !== 'running') return false;
-    if (row.checkpoint?.teamContext) { try { await assertTeamExecutionFence(this.deps.db, row.owner, row.checkpoint.teamContext); } catch { return false; } }
+    if (row.checkpoint?.teamContext) { try { await assertTeamExecutionFence(this.deps.db, row.owner, row.checkpoint.teamContext, { allowPublication }); } catch { return false; } }
     return true;
   }
   async execute(row: Session, task: ResearchTask, attempt: ResearchTaskAttempt, member: CouncilMember, tasks: ResearchTask[],
@@ -96,6 +98,11 @@ export class CouncilWorkflowExecutor {
     const sourceRefs = teamContext && task.workKey ? teamWorkInputs(teamContext.plan, task.workKey,
       (teamContext.inputSnapshot.inputRefs ?? []) as import('../../../shared/team-workspace.interface').ResearchSourceRef[]) : [];
     if (teamContext && task.workKey) row = { ...row, evidenceSnapshot: teamVisibleEvidence(teamContext, task.workKey, tasks, row.evidenceSnapshot) };
+    const scopedMemory = member.rosterAgentId ? await db.transaction(tx => readCouncilRosterMemory(tx, row, member, task.workKey ?? undefined)) : [];
+    if (scopedMemory.length) row = { ...row, evidenceSnapshot: [...row.evidenceSnapshot, ...scopedMemory] };
+    const rosterFence = (toolIds: string[] = []) => member.rosterAgentId || member.rosterAgentVersionId || member.executionMode === 'a2a'
+      ? db.transaction(tx => assertCouncilRosterMember(tx, row, member, row.evidenceSnapshot, toolIds, task.workKey ?? undefined)) : Promise.resolve();
+    await rosterFence();
     const sourceDocuments = teamContext ? await readTeamSourceContents(db, row.owner, teamContext.teamId, sourceRefs, teamContext.dataCutoffAt) : [];
     const grantedEvidence: CouncilEvidence[] = sourceDocuments.map(source => ({ id: source.ref.id,
       title: `${source.ref.kind} · ${source.ref.revision}`, content: source.content,
@@ -105,6 +112,7 @@ export class CouncilWorkflowExecutor {
       turn: task.position, ticker: row.ticker, language: row.language, webResearch: row.profileSnapshot.council?.webResearch === true,
       expiresAt: Date.now() + 600_000, ...(row.checkpoint?.teamContext ? { teamId: row.checkpoint.teamContext.teamId } : {}) };
     const callTool = async (name: string, args: Record<string, unknown> = {}): Promise<ResearchToolResult> => {
+      await rosterFence([name]);
       const callId = `${attempt.id}:${name}`;
       const event = { id: randomUUID(), taskId: attempt.id, callId, sessionId: row.id, memberId: member.id, memberName: member.name,
         revision: row.revision, turn: task.position, kind: 'tool' as const, sequence: 0, toolName: name };
@@ -122,7 +130,7 @@ export class CouncilWorkflowExecutor {
       for (const name of names) toolResults.push({ name, result: await callTool(name) });
       const [updated] = await db.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id)));
       if (!updated || updated.revision !== attempt.revision || updated.status !== 'running') throw new Error('LOCAL_PAUSED');
-      row = updated;
+      row = scopedMemory.length ? { ...updated, evidenceSnapshot: [...updated.evidenceSnapshot, ...scopedMemory] } : updated;
     }
     const messages = await db.select().from(councilMessages).where(and(eq(councilMessages.owner, row.owner),
       eq(councilMessages.sessionId, row.id), eq(councilMessages.role, 'user'))).orderBy(councilMessages.createdAt);
@@ -132,7 +140,7 @@ export class CouncilWorkflowExecutor {
     const packingTarget = member.executionMode === 'local' ? 5500 : Math.max(0, inputLimit - 500);
     const recallQuery = { ticker: row.ticker, enabled: row.checkpoint?.workflow?.recallEnabled,
       query: taskMemoryQuery(row.checkpoint?.workflow?.goal ?? '', instructions[task.key], messages.at(-1)?.content ?? '') };
-    const recall = !review && frozen && memory ? await memory.refreshRecall(row.owner, frozen, recallQuery, row.checkpoint?.teamContext) : undefined;
+    const recall = !member.rosterAgentId && !review && frozen && memory ? await memory.refreshRecall(row.owner, frozen, recallQuery, row.checkpoint?.teamContext) : undefined;
     const suppliedIds = new Set(toolResults.flatMap(item => {
       const data = item.result.data as { evidenceId?: string } | undefined;
       return data?.evidenceId ? [data.evidenceId] : [];
@@ -160,7 +168,7 @@ export class CouncilWorkflowExecutor {
       ...(row.checkpoint?.teamContext ? { teamInput: row.checkpoint.teamContext.inputSnapshot, objective: row.checkpoint.teamContext.plan.objective,
         dataCutoffAt: row.checkpoint.teamContext.dataCutoffAt } : {}),
       ticker: row.ticker, peers: row.checkpoint!.workflow!.peers, member: { name: member.name,
-        ...(member.instructions ? { instructions: row.checkpoint?.teamContext ? member.instructions : member.instructions.slice(0, 500) } : {}) },
+        ...(member.instructions ? { instructions: row.checkpoint?.teamContext || member.rosterAgentId ? member.instructions : member.instructions.slice(0, 500) } : {}) },
       ...(messages.length ? { steering: messages.slice(-1).map(m => m.content) } : {}), memory: '',
       // Existing task pins survive deployments and retries. Skills carry no additional permissions.
       skills: task.skills, ...(task.reason ? { feedback: task.reason } : {}),
@@ -239,6 +247,7 @@ export class CouncilWorkflowExecutor {
       nativeDelivery !== 'companion-command');
     const onDispatch = async (submission?: { inputBytes: number }) => {
       await this.deps.validateReferences?.(row);
+      await rosterFence();
       if (member.executionMode === 'local' && submission) {
         inventory.requestTokens = submission.inputBytes;
         inventory.requestBudgetTokens = 32_000;
@@ -247,7 +256,7 @@ export class CouncilWorkflowExecutor {
         if (submission.inputBytes > 32_000) throw new Error('RESEARCH_CONTEXT_LIMIT');
       }
       // A revoked source or changed pinned version between preparation and reservation must not cross the transport boundary.
-      if (inventory.prepared.length && frozen && memory) {
+      if (!member.rosterAgentId && inventory.prepared.length && frozen && memory) {
         const fresh = await memory.refreshRecall(row.owner, frozen, recallQuery, row.checkpoint?.teamContext);
         const missing = inventory.prepared.filter(ref => !fresh.items.some(item => item.id === ref.id && item.kind === ref.kind && item.version === ref.version));
         if (missing.length) {
@@ -267,7 +276,36 @@ export class CouncilWorkflowExecutor {
     await activity('running', review ? (row.language === 'en' ? 'Reviewing the submitted research' : '正在验收研究交付')
       : (row.language === 'en' ? 'Researching the assigned task' : '正在完成研究任务'));
     let value: unknown, tokens = 0, taskId: string | undefined, externalUsageUnknown = false;
-    if (member.executionMode === 'local') {
+    if (member.executionMode === 'a2a') {
+      if (!this.deps.a2aAgents || !member.connectionId || !member.a2aFingerprint) throw new Error('A2A_CONNECTION_NOT_FOUND');
+      await this.deps.store.markRemote(row, task, attempt.id, { externalAgent: true, externalUsageUnknown: true });
+      let localTaskId: string | undefined;
+      let result: A2aExecutionResult;
+      try { result = await this.deps.a2aAgents.execute(row.owner, { connectionId: member.connectionId, fingerprint: member.a2aFingerprint,
+        messageId: attempt.messageId, prompt: `${promptContext.system}\n${JSON.stringify(promptContext.input)}`,
+        activityContext: { sessionId: row.id, revision: row.revision, cycleId: task.cycleId, memberId: member.id,
+          rosterAgentId: member.rosterAgentId, rosterAgentVersionId: member.rosterAgentVersionId, parentId: `workflow:${attempt.id}`, attemptId: attempt.id,
+          teamId: teamContext?.teamId, teamVersionId: teamContext?.teamVersionId, commissionId: teamContext?.commissionId, workKey: task.workKey },
+        budgetTaskId: row.taskId, budgetPurpose: `council:${task.key}:${attempt.kind}:${member.id}`, onDispatch,
+        onTask: ref => { localTaskId = ref.taskId; return this.deps.store.markRemote(row, task, attempt.id, { remoteTaskId: ref.taskId, remoteContextId: ref.contextId }); },
+        shouldContinue: async () => { await this.deps.validateReferences?.(row); return this.active(row, true); },
+        withHandoff: handoff => db.transaction(async tx => {
+          await assertTeamExecutionFence(tx, row.owner, row.checkpoint?.teamContext);
+          await assertCouncilRosterMember(tx, row, member, row.evidenceSnapshot, [], task.workKey ?? undefined);
+          const [current] = await tx.select().from(councilSessions).where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('share');
+          if (current?.revision !== row.revision || current.status !== 'running') throw new Error('A2A_PUBLICATION_BLOCKED');
+          await handoff();
+        }),
+      }); } catch (error) {
+        const receipt = localTaskId ? await this.deps.a2aAgents.inspectTask(row.owner, localTaskId).catch(() => null) : null;
+        if (receipt && ['completed', 'failed', 'cancelled', 'rejected'].includes(receipt.state)) await this.deps.store.markRemote(row, task, attempt.id,
+          { tokens: 0, externalUsageUnknown: true });
+        throw error;
+      }
+      taskId = result.taskId; externalUsageUnknown = true; value = result.data;
+      await this.deps.store.markRemote(row, task, attempt.id, { savedResponse: { data: result.data, text: result.text }, externalAgent: true, externalUsageUnknown: true });
+      if (!value) { try { value = JSON.parse(result.text); } catch { throw new Error('DELIVERY_INVALID'); } }
+    } else if (member.executionMode === 'local') {
       if (!this.deps.localAgents || !member.agentId) throw new Error('LOCAL_UNAVAILABLE');
       await this.deps.store.markRemote(row, task, attempt.id, { externalAgent: true, externalUsageUnknown: true });
       // claim() returns the new attempt without mutating the pre-claim task snapshot.
@@ -285,8 +323,9 @@ export class CouncilWorkflowExecutor {
             const [current] = await tx.select({ revision: councilSessions.revision, status: councilSessions.status }).from(councilSessions)
               .where(and(eq(councilSessions.owner, row.owner), eq(councilSessions.id, row.id))).for('share');
             if (current?.revision !== row.revision || current.status !== 'running') throw new Error('LOCAL_PAUSED');
+            await assertCouncilRosterMember(tx as never, row, member, row.evidenceSnapshot, [], task.workKey ?? undefined);
           };
-          if (memory) {
+          if (memory && !member.rosterAgentId) {
             try { await memory.withRecallHandoff(row.owner, frozen ?? { items: [], context: '', preferences: { autoArchive: false, recallEnabled: false } },
               recallQuery, inventory.prepared, handoff, activeHandoff, row.checkpoint?.teamContext); }
             catch (error) {
@@ -326,6 +365,8 @@ export class CouncilWorkflowExecutor {
       { savedResponse: { data: value } });
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('DELIVERY_INVALID');
     const raw = value as Record<string, unknown>;
+    const acceptExternal = () => member.executionMode === 'a2a' && taskId && this.deps.a2aAgents
+      ? this.deps.a2aAgents.acceptResult(row.owner, taskId, { structuredOutput: true, shouldContinue: () => this.active(row, true) }) : Promise.resolve();
     if (review) {
       if (batch.length) {
         if (!Array.isArray(raw.reviews) || raw.reviews.length !== batch.length
@@ -338,10 +379,12 @@ export class CouncilWorkflowExecutor {
             || typeof verdict.feedback !== 'string' || !verdict.feedback.trim() || verdict.feedback.length > 2000) throw new Error('REVIEW_INVALID');
           return { taskId: submitted.id, accepted: verdict.accepted, feedback: verdict.feedback };
         });
+        await acceptExternal();
         await activity('succeeded', row.language === 'en' ? 'Independent review verdicts recorded' : '已分别记录两份初稿的验收结论');
         return { ...usage, review: batchReviews.find(r => r.taskId === task.id), batchReviews, sources: [] };
       }
       if (typeof raw.accepted !== 'boolean' || typeof raw.feedback !== 'string' || !raw.feedback.trim() || raw.feedback.length > 2000) throw new Error('REVIEW_INVALID');
+      await acceptExternal();
       await activity('succeeded', row.language === 'en' ? 'Review recorded' : '已记录验收结果');
       return { ...usage, review: { accepted: raw.accepted, feedback: raw.feedback }, sources: [] };
     }
@@ -350,15 +393,16 @@ export class CouncilWorkflowExecutor {
     // Native tool calls may have added server-sourced evidence after dispatch.
     const visibleEvidence = teamContext && task.workKey ? teamVisibleEvidence(teamContext, task.workKey, tasks, current.evidenceSnapshot) : current.evidenceSnapshot;
     const parsed = member.executionMode === 'local' ? nativeWorkflowSources(raw, attempt.id, visibleEvidence, row.language) : { data: raw, sources: [] };
-    const delivery = validateDelivery(parsed.data, new Set([...visibleEvidence, ...grantedEvidence, ...parsed.sources].map(e => e.id)), task.skills);
+    const delivery = validateDelivery(parsed.data, new Set([...visibleEvidence, ...scopedMemory, ...grantedEvidence, ...parsed.sources].map(e => e.id)), task.skills);
     if (task.key === 'valuation' && this.deps.tools) {
       const parameters = raw.valuationScenario && typeof raw.valuationScenario === 'object' && !Array.isArray(raw.valuationScenario)
         ? raw.valuationScenario as Record<string, unknown> : {};
       const calculation = await callTool('get_valuation_scenarios', parameters);
       attachValuation(delivery, calculation, row.language);
     }
+    await acceptExternal();
     await activity('succeeded', row.language === 'en' ? 'Deliverable submitted for review' : '研究交付已提交，等待验收');
-    return { ...usage, delivery, sources: [...grantedEvidence, ...parsed.sources.map(source => ({ ...source,
+    return { ...usage, delivery, sources: [...scopedMemory, ...grantedEvidence, ...parsed.sources.map(source => ({ ...source,
       ...(teamContext && task.workKey ? { teamWorkKey: task.workKey } : {}) }))] };
   }
 }

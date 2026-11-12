@@ -60,9 +60,15 @@ export function TelemetryError({ retry, detail }: { retry: () => void; detail?: 
 
 export function CoverageNotes({ limitations }: { limitations: string[] }) {
   const { i18n } = useTranslation();
+  const identityNotes: Record<string, string> = {
+    'Identity/work filters select complete runs; overview and run totals retain all recorded members in those runs. Agent comparison includes only matching executions. Team investment outcomes are not individual causal returns.':
+      '身份和工作项筛选选择完整运行，总览与运行用量保留其中的全部成员。股友对比仅统计匹配的成员执行；团队投资结果不能直接归因到个人。',
+    'Persistent agent and immutable version references come only from saved execution metadata and owned frozen session/commission snapshots. Unlinked legacy identities, external internal models, tools and fees remain unknown.':
+      '股友与固定能力版本只关联已保存的运行元数据及所属用户的冻结会话、委托快照。旧记录没有关联时不猜配；外部助手的内部模型、工具和费用未知时保持未知。',
+  };
   if (!limitations.length) return null;
   return <details className="telemetry-limitations"><summary>{i18n.language.startsWith('zh') ? '数据范围与已知限制' : 'Data coverage and limitations'} ({limitations.length})</summary>
-    <ul>{limitations.map((item: string, index: number) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
+    <ul>{limitations.map((item: string, index: number) => <li key={`${index}-${item}`}>{i18n.language.startsWith('zh') ? identityNotes[item] ?? item : item}</li>)}</ul>
   </details>;
 }
 

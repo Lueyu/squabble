@@ -27,6 +27,7 @@ test('durable capture keeps owner-scoped idempotent terminal records across recr
   try {
     await admin`CREATE SCHEMA ${admin(namespace)}`;
     await client.unsafe(readFileSync('scripts/db/52_agent_telemetry.sql', 'utf8'));
+    await client.unsafe(readFileSync('scripts/db/65_agent_telemetry_identity.sql', 'utf8'));
     capture.recordSpan('owner-a', record);
     capture.recordSpan('owner-a', { ...record, status: 'completed', model: 'actual-model',
       completedAt: '2026-11-11T01:00:00.100Z', inputTokens: 2, outputTokens: 3, totalTokens: 5, estimatedCostUsd: 0.005 });

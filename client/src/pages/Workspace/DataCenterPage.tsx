@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import DataMaterials from '@/features/data-library/DataMaterials';
@@ -12,7 +12,7 @@ export default function DataCenterPage() {
   const [params, setParams] = useSearchParams();
   const tab = ['subscriptions', 'financial'].includes(params.get('tab') || '') ? params.get('tab')! : 'library';
   return <main className="workspace-v4 data-workspace">
-    <header className="workspace-v4-header"><div><h1>{zh ? '数据中心' : 'Data center'}</h1><p className="muted">{zh ? '把研究材料与金融数据放在一起，让每次研究都有来源。' : 'Keep research material and financial data together, with sources for every investigation.'}</p></div></header>
+    <header className="workspace-v4-header"><div><h1>{zh ? '资料与记忆' : 'Data & memory'}</h1><p className="muted">{zh ? '把研究材料与金融数据放在一起，让每次研究都有来源。' : 'Keep research material and financial data together, with sources for every investigation.'}</p></div><Button asChild variant="outline"><Link to="/memory">{zh ? '查看研究记忆' : 'View research memory'}</Link></Button></header>
     <div className="data-tabs" role="tablist" aria-label={zh ? '数据中心视图' : 'Data center views'}>{(['library', 'subscriptions', 'financial'] as const).map(value => <Button role="tab" id={`data-tab-${value}`} aria-controls={`data-panel-${value}`} aria-selected={tab === value} key={value} variant={tab === value ? 'default' : 'outline'} onClick={() => { const next = new URLSearchParams(params); if (value === 'library') next.delete('tab'); else next.set('tab', value); setParams(next, { replace: true }); }}>{({ library: zh ? '资料库' : 'Library', subscriptions: zh ? '网站订阅' : 'Subscriptions', financial: zh ? '金融数据源' : 'Financial sources' })[value]}</Button>)}</div>
     <section role="tabpanel" id={`data-panel-${tab}`} aria-labelledby={`data-tab-${tab}`}>
       {tab === 'library' && <DataMaterials />}

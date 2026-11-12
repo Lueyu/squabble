@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { AgentRosterModule } from '../agent-roster/agent-roster.module';
+import { A2aAgentsModule } from '../a2a-agents/a2a-agents.module';
 import { MultiAgentModule } from '../multi-agent/multi-agent.module';
 import { ResearchCoreModule } from '../research-core/research-core.module';
 import { CouncilController } from './council.controller';
@@ -20,6 +22,8 @@ import {
 
 @Module({
   imports: [
+    AgentRosterModule,
+    A2aAgentsModule,
     ResearchCoreModule,
     // Saved stock evidence still belongs to retained runs, not the shared core.
     MultiAgentModule,

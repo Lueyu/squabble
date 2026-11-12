@@ -42,8 +42,8 @@ export function workspaceSections(language: string): WorkspaceSection[] {
     },
     {
       id: 'friends',
-      path: '/paper',
-      label: zh ? '我的股友' : 'Companions',
+      path: '/friends',
+      label: zh ? '我的股友' : 'My agents',
       group: 'daily',
     },
     {
@@ -53,33 +53,15 @@ export function workspaceSections(language: string): WorkspaceSection[] {
       group: 'daily',
     },
     {
-      id: 'daily',
-      path: '/daily',
-      label: zh ? '投资日报' : 'Daily report',
-      group: 'daily',
-    },
-    {
       id: 'research',
       path: '/research',
       label: zh ? '研究室' : 'Research',
       group: 'daily',
     },
     {
-      id: 'assets',
-      path: '/holdings',
-      label: zh ? '资产与账户' : 'Assets & accounts',
-      group: 'daily',
-    },
-    {
       id: 'data',
       path: '/data',
-      label: zh ? '数据中心' : 'Data center',
-      group: 'workspace',
-    },
-    {
-      id: 'memory',
-      path: '/memory',
-      label: zh ? '记忆' : 'Memory',
+      label: zh ? '资料与记忆' : 'Data & memory',
       group: 'workspace',
     },
     {
@@ -91,7 +73,7 @@ export function workspaceSections(language: string): WorkspaceSection[] {
     {
       id: 'settings',
       path: '/settings',
-      label: zh ? '模型与设置' : 'Models & settings',
+      label: zh ? '设置' : 'Settings',
       group: 'workspace',
     },
   ];
@@ -111,6 +93,13 @@ export function resolveWorkspaceRoute(
       parent: root.path,
       kind: 'root',
     };
+  const retained: Record<string, { section: WorkspaceSectionId; title: string; parent: string }> = {
+    '/paper': { section: 'overview', title: zh ? '模拟账户' : 'Simulations', parent: '/' },
+    '/holdings': { section: 'assets', title: zh ? '资产与账户' : 'Assets & accounts', parent: '/' },
+    '/daily': { section: 'daily', title: zh ? '投资日报' : 'Daily report', parent: '/' },
+    '/memory': { section: 'data', title: zh ? '记忆' : 'Memory', parent: '/data' },
+  };
+  if (retained[pathname]) return { ...retained[pathname], kind: 'detail' };
   // /settings normalizes to its default panel. It has no distinct parent screen.
   if (pathname === '/settings/models')
     return {
@@ -124,14 +113,14 @@ export function resolveWorkspaceRoute(
   const account = pathname.match(/^\/paper\/([^/]+)(?:\/(.*))?$/u);
   if (account)
     return {
-      section: 'friends',
+      section: 'overview',
       title: account[2]
         ? zh
           ? '策略组合'
           : 'Strategy combination'
         : zh
-          ? '股友账户'
-          : 'Companion account',
+          ? '模拟账户'
+          : 'Simulation account',
       parent: account[2] ? '/paper/' + account[1] : '/paper',
       kind: 'detail',
     };

@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { History, Plus } from 'lucide-react';
 import { fetchResearchConversations } from '@/api/research-conversations';
+import { agentRosterApi } from '@/api/agent-roster';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -49,6 +50,23 @@ export default function ResearchWorkspacePage() {
       intent: createRequestIntent(() => crypto.randomUUID()),
     });
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [agentIds, setAgentIds] = useState<string[] | null>(() => params.get('agent') ? [params.get('agent')!] : null);
+  const roster = useQuery({ queryKey: ['agent-roster'], queryFn: agentRosterApi.list });
+  const availableAgents = roster.data?.items?.filter(agent => agent.status === 'active') ?? [];
+  const recommendedAgents = ['financials', 'bear', 'moderator'].flatMap(templateId => availableAgents.find(agent => agent.currentVersion.config.templateId === templateId) ?? []).slice(0, 3);
+  const chosenAgents = agentIds === null ? (recommendedAgents.length ? recommendedAgents : availableAgents.slice(0, 3)) : availableAgents.filter(agent => agentIds.includes(agent.id));
+  const agentSelection = chosenAgents.map(agent => ({ agentId: agent.id, agentVersionId: agent.currentVersionId }));
+  const moderators = chosenAgents.filter(agent => agent.currentVersion.config.templateId === 'moderator');
+  const moderator = moderators[0] ?? chosenAgents[chosenAgents.length - 1];
+  const participantProblem = selectedId ? null : roster.isPending
+    ? (zh ? '正在读取股友，准备好后再发送问题。' : 'Loading your agents. Wait before sending a question.')
+    : roster.isError || !roster.data
+      ? (zh ? '暂时无法读取股友，请重新读取后继续。' : 'Your roster is unavailable. Reload it before continuing.')
+      : !chosenAgents.length
+        ? (zh ? '所选股友已不可用。请明确选择其他股友，或先添加股友。' : 'The selected agent is unavailable. Choose another agent explicitly, or add an agent first.')
+        : moderators.length > 1
+          ? (zh ? '请只选择一位主持股友，再发送问题。' : 'Choose one moderator before sending your question.')
+          : null;
   const sessions = useQuery({
     queryKey: ['research-conversations'],
     queryFn: fetchResearchConversations,
@@ -140,12 +158,20 @@ export default function ResearchWorkspacePage() {
             {zh ? '新研究' : 'New research'}
           </Button>
         </div>
+        {tab === 'chats' && !selectedId && availableAgents.length > 0 && <section className="border-b px-4 py-3 space-y-2" aria-label={zh ? '本次研究股友' : 'Research participants'}><p className="text-sm font-medium">{zh ? '这次和谁聊？' : 'Who should join?'}</p><div className="flex flex-wrap gap-2">{availableAgents.map(agent => <Button key={agent.id} size="sm" variant={chosenAgents.some(item => item.id === agent.id) ? 'secondary' : 'outline'} aria-pressed={chosenAgents.some(item => item.id === agent.id)} disabled={Boolean(requests.current.get(draftKey)?.submission)} onClick={() => {
+          const selected = chosenAgents.map(item => item.id);
+          if (selected.includes(agent.id)) { if (selected.length > 1) setAgentIds(selected.filter(id => id !== agent.id)); }
+          else if (selected.length < 6) setAgentIds([...selected, agent.id]);
+        }}>{agent.name}</Button>)}</div><p className="text-xs text-muted-foreground">{chosenAgents.length === 1 ? (zh ? '单聊由这位股友直接回答。' : 'This agent answers directly.') : (zh ? `有限讨论，${moderator?.name ?? ''}负责最后收束。` : `Bounded discussion; ${moderator?.name ?? ''} gives the final summary.`)}</p></section>}
+        {tab === 'chats' && participantProblem && <section role="alert" className="border-b px-4 py-3 text-sm space-y-2"><p>{participantProblem}</p>{roster.isError && <Button size="sm" variant="outline" onClick={() => void roster.refetch()}>{zh ? '重新读取股友' : 'Reload agents'}</Button>}<Link className="underline" to="/friends">{zh ? '管理我的股友' : 'Manage my agents'}</Link></section>}
         {tab === 'strategies' ? interviewId && interviewId !== 'new'
           ? <InterviewWorkspace key={interviewId} id={interviewId} embedded />
           : strategyId ? <ResearchSavedStrategy key={strategyId} id={strategyId} />
             : <NewStrategyInterviewPage key="new-strategy" embedded onCreated={id => selectStrategy('interview', id)} />
           : <ArchivedCouncilPage
+          readOnly={Boolean(participantProblem)}
           workspace={{
+            agents: agentSelection.length ? agentSelection : undefined,
             skillId: skills[draftKey],
             onSkillChange: id => setSkills(previous => ({ ...previous, [draftKey]: id })),
             onStrategy: startStrategy,

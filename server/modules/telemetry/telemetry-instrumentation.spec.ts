@@ -104,10 +104,11 @@ test('a correlated local model route retains source identity without granting re
 
 test('real research tool outcome is captured with explicit cycle, parent and call correlation only', async () => {
   const spans: TelemetrySpanRecord[] = [];
-  const service = new ResearchToolsService(undefined as never, undefined as never, undefined as never, undefined as never,
+  const database = { transaction: async (run: (tx: unknown) => Promise<unknown>) => run({}) };
+  const service = new ResearchToolsService(database as never, undefined as never, undefined as never, undefined as never,
     undefined, undefined, { recordSpan: (_owner: string, span: TelemetrySpanRecord) => spans.push(span) } as never);
   Object.defineProperty(service, 'currentSession', { value: async () => ({ authority: 'scope', session: {
-    checkpoint: { cycleId: 'cycle' }, evidenceSnapshot: [], taskId: 'budget-task',
+    checkpoint: { cycleId: 'cycle' }, evidenceSnapshot: [], profileSnapshot: {}, taskId: 'budget-task',
   } }) });
   Object.defineProperty(service, 'validateLibraryEvidence', { value: async () => true });
   Object.defineProperty(service, 'handle', { value: async () => ({ status: 'succeeded', data: 'private-tool-data', sources: [], asOf: new Date().toISOString(), truncated: false }) });

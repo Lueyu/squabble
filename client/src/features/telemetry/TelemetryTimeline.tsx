@@ -44,6 +44,13 @@ export default function TelemetryTimeline({ run, spans }: { run: TelemetryRun; s
         <dl className="telemetry-facts"><dt>{zh ? '执行成员' : 'Member'}</dt><dd>{selected.agentName ?? '—'}</dd>
           <dt>{zh ? '实际执行器' : 'Executor'}</dt><dd>{selected.provider ?? selected.executionMode ?? '—'}</dd>
           <dt>{zh ? '模型' : 'Model'}</dt><dd>{selected.model ?? (zh ? '未知' : 'Unknown')}</dd>
+          <dt>{zh ? '配置模型/策略' : 'Configured model/policy'}</dt><dd>{selected.configuredModel ?? (zh ? '未知' : 'Unknown')}</dd>
+          <dt>{zh ? '股友 / 能力版本' : 'Friend / capability version'}</dt><dd className="telemetry-mono telemetry-wrap">{selected.rosterAgentId && selected.rosterAgentVersionId ? `${selected.rosterAgentId} / ${selected.rosterAgentVersionId}` : (zh ? '旧记录或身份未知' : 'Legacy or unknown identity')}</dd>
+          <dt>{zh ? '岗位成员' : 'Seat member'}</dt><dd className="telemetry-mono telemetry-wrap">{selected.memberId ?? selected.agentId ?? '—'}</dd>
+          <dt>{zh ? '团队 / 固定版本' : 'Team / fixed version'}</dt><dd className="telemetry-mono telemetry-wrap">{selected.teamId ?? '—'} / {selected.teamVersionId ?? '—'}</dd>
+          <dt>{zh ? '委托 / 工作项' : 'Commission / work item'}</dt><dd className="telemetry-mono telemetry-wrap">{selected.commissionId ?? '—'} / {selected.workKey ?? '—'}</dd>
+          <dt>{zh ? '工作尝试' : 'Work attempt'}</dt><dd className="telemetry-mono telemetry-wrap">{selected.attemptId ?? '—'}</dd>
+          {!!selected.relatedWorkRefs?.length && <><dt>{zh ? '同次复核关联' : 'Shared review references'}</dt><dd className="telemetry-mono telemetry-wrap">{selected.relatedWorkRefs.map(ref => `${ref.workKey} / ${ref.attemptId}`).join('; ')}</dd></>}
           <dt>{zh ? '步骤类型' : 'Step type'}</dt><dd>{kindLabels[selected.kind]}</dd>
           <dt>{zh ? '开始 / 耗时' : 'Started / duration'}</dt><dd>{formatTime(selected.startedAt, i18n.language)} / {formatDuration(selected.durationMs)}</dd>
           <dt>{zh ? '父步骤' : 'Parent span'}</dt><dd className="telemetry-mono">{selected.parentId ?? '—'}</dd>

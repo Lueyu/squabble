@@ -2337,3 +2337,133 @@ BEGIN
 END $$;
 DROP TRIGGER IF EXISTS team_commission_snapshot_immutable ON team_commissions;
 CREATE TRIGGER team_commission_snapshot_immutable BEFORE UPDATE ON team_commissions FOR EACH ROW EXECUTE FUNCTION fence_team_commission_snapshot();
+
+-- 62_agent_roster.sql
+-- Stable owned people, immutable capabilities, explicit private scopes. No records are invented on upgrade.
+CREATE TABLE IF NOT EXISTS agent_roster_profiles (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL, name text NOT NULL CHECK(length(name) BETWEEN 1 AND 80),
+ specialty text NOT NULL CHECK(length(specialty) BETWEEN 1 AND 300), description text NOT NULL DEFAULT '',
+ status text NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')), revision integer NOT NULL DEFAULT 1 CHECK(revision>0),
+ current_version_id uuid NOT NULL, created_at timestamptz(3) NOT NULL DEFAULT now(), updated_at timestamptz(3) NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS agent_roster_profiles_owner_id_idx ON agent_roster_profiles(owner_id,id);
+CREATE INDEX IF NOT EXISTS agent_roster_profiles_owner_status_idx ON agent_roster_profiles(owner_id,status,updated_at);
+CREATE TABLE IF NOT EXISTS agent_roster_versions (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL, agent_id uuid NOT NULL, version integer NOT NULL CHECK(version>0),
+ config_json jsonb NOT NULL CHECK(jsonb_typeof(config_json)='object'), created_at timestamptz(3) NOT NULL DEFAULT now(),
+ FOREIGN KEY(owner_id,agent_id) REFERENCES agent_roster_profiles(owner_id,id));
+CREATE UNIQUE INDEX IF NOT EXISTS agent_roster_versions_owner_agent_id_idx ON agent_roster_versions(owner_id,agent_id,id);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_roster_versions_number_idx ON agent_roster_versions(agent_id,version);
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='agent_roster_current_version_fk' AND conrelid='agent_roster_profiles'::regclass) THEN
+ ALTER TABLE agent_roster_profiles ADD CONSTRAINT agent_roster_current_version_fk FOREIGN KEY(owner_id,id,current_version_id)
+ REFERENCES agent_roster_versions(owner_id,agent_id,id) DEFERRABLE INITIALLY DEFERRED;
+ END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS agent_roster_requests (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL, request_key text NOT NULL CHECK(length(request_key) BETWEEN 1 AND 128),
+ operation text NOT NULL, input_hash text NOT NULL, result_json jsonb NOT NULL, completed_at timestamptz(3) NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS agent_roster_requests_owner_key_idx ON agent_roster_requests(owner_id,request_key);
+CREATE TABLE IF NOT EXISTS agent_roster_memories (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL, agent_id uuid NOT NULL, scope_json jsonb NOT NULL,
+ content text NOT NULL CHECK(length(content) BETWEEN 1 AND 16000), origin text NOT NULL CHECK(origin IN ('user_note','source_summary')),
+ source_refs_json jsonb NOT NULL CHECK(jsonb_typeof(source_refs_json)='array'), created_at timestamptz(3) NOT NULL DEFAULT now(),
+ FOREIGN KEY(owner_id,agent_id) REFERENCES agent_roster_profiles(owner_id,id),
+ CHECK((scope_json->>'kind'='personal' AND scope_json='{"kind":"personal"}'::jsonb)
+ OR (scope_json->>'kind'='team' AND scope_json ? 'teamId') OR (scope_json->>'kind'='conversation' AND scope_json ? 'conversationId')),
+ CHECK(origin<>'source_summary' OR jsonb_array_length(source_refs_json)>0));
+CREATE UNIQUE INDEX IF NOT EXISTS agent_roster_memories_owner_id_idx ON agent_roster_memories(owner_id,id);
+CREATE INDEX IF NOT EXISTS agent_roster_memories_agent_idx ON agent_roster_memories(owner_id,agent_id,created_at);
+CREATE TABLE IF NOT EXISTS agent_roster_memory_shares (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL, memory_id uuid NOT NULL, target_agent_id uuid NOT NULL,
+ target_scope_json jsonb NOT NULL, created_at timestamptz(3) NOT NULL DEFAULT now(),
+ FOREIGN KEY(owner_id,memory_id) REFERENCES agent_roster_memories(owner_id,id),
+ FOREIGN KEY(owner_id,target_agent_id) REFERENCES agent_roster_profiles(owner_id,id));
+CREATE UNIQUE INDEX IF NOT EXISTS agent_roster_shares_identity_idx ON agent_roster_memory_shares(owner_id,memory_id,target_agent_id,target_scope_json);
+CREATE INDEX IF NOT EXISTS agent_roster_shares_target_idx ON agent_roster_memory_shares(owner_id,target_agent_id);
+CREATE OR REPLACE FUNCTION agent_roster_prevent_snapshot_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'Agent capability and memory history is immutable'; END $$;
+DROP TRIGGER IF EXISTS agent_roster_versions_immutable ON agent_roster_versions;
+CREATE TRIGGER agent_roster_versions_immutable BEFORE UPDATE OR DELETE ON agent_roster_versions FOR EACH ROW EXECUTE FUNCTION agent_roster_prevent_snapshot_mutation();
+DROP TRIGGER IF EXISTS agent_roster_memories_immutable ON agent_roster_memories;
+CREATE TRIGGER agent_roster_memories_immutable BEFORE UPDATE OR DELETE ON agent_roster_memories FOR EACH ROW EXECUTE FUNCTION agent_roster_prevent_snapshot_mutation();
+DROP TRIGGER IF EXISTS agent_roster_shares_immutable ON agent_roster_memory_shares;
+CREATE TRIGGER agent_roster_shares_immutable BEFORE UPDATE OR DELETE ON agent_roster_memory_shares FOR EACH ROW EXECUTE FUNCTION agent_roster_prevent_snapshot_mutation();
+-- Preserve profile names and existing 100-character organization role labels in retained history.
+ALTER TABLE council_messages ALTER COLUMN member_name TYPE varchar(100);
+
+-- 63_team_runs.sql
+-- Standing paper-only authority and conservative reservations survive process restarts.
+CREATE TABLE IF NOT EXISTS team_run_agreements (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL, team_id uuid NOT NULL, account_id uuid NOT NULL,
+ revision integer NOT NULL DEFAULT 1 CHECK (revision > 0), state text NOT NULL CHECK (state IN ('confirmed','running','paused','suspended')),
+ configuration_json jsonb NOT NULL, scope_revision integer NOT NULL, member_snapshots jsonb NOT NULL,
+ confirmed_by text NOT NULL, confirmed_at timestamptz(3) NOT NULL DEFAULT now(), updated_at timestamptz(3) NOT NULL DEFAULT now(), suspension_reason text,
+ UNIQUE (owner_id,team_id), UNIQUE (owner_id,id)
+);
+CREATE TABLE IF NOT EXISTS team_run_cycles (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL, team_id uuid NOT NULL, agreement_id uuid NOT NULL,
+ agreement_revision integer NOT NULL CHECK (agreement_revision > 0), trading_date text NOT NULL,
+ state text NOT NULL CHECK (state IN ('reserved','researching','processing','applied','observed','blocked','uncertain','cancelled')),
+ commission_id uuid, report_version_id uuid, decision_id uuid, strategy_id uuid, policy_revision integer,
+ reserved_cost_usd numeric(24,8) NOT NULL CHECK (reserved_cost_usd > 0), reserved_calls integer NOT NULL CHECK (reserved_calls > 0), last_error text,
+ lease_owner text, lease_until timestamptz(3), created_at timestamptz(3) NOT NULL DEFAULT now(), updated_at timestamptz(3) NOT NULL DEFAULT now(),
+ FOREIGN KEY (owner_id,agreement_id) REFERENCES team_run_agreements(owner_id,id), UNIQUE (agreement_id,trading_date), UNIQUE (commission_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS team_run_cycles_active_idx ON team_run_cycles(agreement_id) WHERE state IN ('reserved','researching','processing','uncertain');
+CREATE INDEX IF NOT EXISTS team_run_cycles_owner_idx ON team_run_cycles(owner_id,created_at);
+CREATE TABLE IF NOT EXISTS team_run_agreement_revisions (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL, agreement_id uuid NOT NULL,
+ revision integer NOT NULL CHECK (revision > 0), state text NOT NULL CHECK (state IN ('confirmed','running','paused','suspended')),
+ account_id uuid NOT NULL, configuration_json jsonb NOT NULL, member_snapshots jsonb NOT NULL, scope_revision integer NOT NULL,
+ confirmed_by text NOT NULL, confirmed_at timestamptz(3) NOT NULL, suspension_reason text, created_at timestamptz(3) NOT NULL DEFAULT now(),
+ FOREIGN KEY (owner_id,agreement_id) REFERENCES team_run_agreements(owner_id,id), UNIQUE (agreement_id,revision)
+);
+-- Upgrade an already-created agreement without inventing prior consent revisions.
+INSERT INTO team_run_agreement_revisions(owner_id,agreement_id,revision,state,account_id,configuration_json,member_snapshots,scope_revision,confirmed_by,confirmed_at,suspension_reason)
+ SELECT owner_id,id,revision,state,account_id,configuration_json,member_snapshots,scope_revision,confirmed_by,confirmed_at,suspension_reason FROM team_run_agreements
+ ON CONFLICT (agreement_id,revision) DO NOTHING;
+DROP TRIGGER IF EXISTS team_run_revision_immutable ON team_run_agreement_revisions;
+CREATE TRIGGER team_run_revision_immutable BEFORE UPDATE OR DELETE ON team_run_agreement_revisions FOR EACH ROW EXECUTE FUNCTION reject_team_immutable_change();
+
+-- 64_a2a_agents_runtime.sql
+-- Dedicated A2A authority and receipts. No credentials or remote output in public telemetry.
+CREATE TABLE IF NOT EXISTS a2a_agent_connections (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, name text NOT NULL,
+ card_url text NOT NULL, secret_enc text, revision integer NOT NULL DEFAULT 1 CHECK(revision>0),
+ status text NOT NULL DEFAULT 'enabled' CHECK(status IN ('enabled','disabled')),
+ card_hash text NOT NULL, card_name text NOT NULL, card_version text NOT NULL,
+ protocol_version text NOT NULL DEFAULT '1.0' CHECK(protocol_version='1.0'), interface_url text NOT NULL, tenant text,
+ skills jsonb NOT NULL DEFAULT '[]', capabilities jsonb NOT NULL,
+ local_endpoint boolean NOT NULL DEFAULT false, created_at timestamptz(3) NOT NULL DEFAULT now(), updated_at timestamptz(3) NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS a2a_connections_owner_id_idx ON a2a_agent_connections(owner,id);
+CREATE TABLE IF NOT EXISTS a2a_agent_requests (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, request_key text NOT NULL,
+ input_hash text NOT NULL, result_json jsonb NOT NULL, completed_at timestamptz(3) NOT NULL DEFAULT now(), UNIQUE(owner,request_key)
+);
+CREATE TABLE IF NOT EXISTS a2a_agent_invocations (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner text NOT NULL, connection_id uuid NOT NULL,
+ message_id text NOT NULL, input_hash text NOT NULL, fingerprint_json jsonb NOT NULL, settlement_secret_enc text,
+ remote_task_id text, context_id text,
+ state text NOT NULL DEFAULT 'dispatch_intent' CHECK(state IN ('dispatch_intent','dispatch_unknown','submitted','working','completed','failed','cancelled','rejected','input_required','auth_required')),
+ acceptance text NOT NULL DEFAULT 'pending' CHECK(acceptance IN ('pending','accepted','invalid','blocked')),
+ cancellation text NOT NULL DEFAULT 'none' CHECK(cancellation IN ('none','requested','confirmed','refused','unknown')),
+ raw_response_enc text, output_bytes integer NOT NULL DEFAULT 0, failure_code text,
+ deadline_at timestamptz NOT NULL, created_at timestamptz(3) NOT NULL DEFAULT now(), updated_at timestamptz(3) NOT NULL DEFAULT now(),
+ UNIQUE(owner,connection_id,message_id), FOREIGN KEY(owner,connection_id) REFERENCES a2a_agent_connections(owner,id)
+);
+CREATE INDEX IF NOT EXISTS a2a_invocations_owner_updated_idx ON a2a_agent_invocations(owner,updated_at,id);
+
+-- 65_agent_telemetry_identity.sql
+-- Nullable frozen identity and trajectory references. Legacy records are not guessed/backfilled.
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS roster_agent_id text;
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS roster_agent_version_id text;
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS member_id text;
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS team_id text;
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS team_version_id text;
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS commission_id text;
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS work_key text;
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS attempt_id text;
+ALTER TABLE telemetry_spans ADD COLUMN IF NOT EXISTS configured_model text;
+CREATE INDEX IF NOT EXISTS telemetry_spans_owner_agent_version_idx ON telemetry_spans(owner,roster_agent_id,roster_agent_version_id,started_at);
+CREATE INDEX IF NOT EXISTS telemetry_spans_owner_commission_idx ON telemetry_spans(owner,commission_id,work_key,attempt_id);

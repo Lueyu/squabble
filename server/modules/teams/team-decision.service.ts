@@ -13,6 +13,8 @@ import { parseTeam, requestKeySchema, revisionSchema, sourceRefSchema, teamError
 import type { TeamDecisionBasis, ResearchSourceRef } from '../../../shared/team-workspace.interface';
 import type { TeamDatabase } from '../../database/team-context';
 import { deriveTeamDecisionLineage } from '../../database/team-decision-lineage';
+import type { TeamRunAuthority } from '../../../shared/team-run.interface';
+import { assertTeamRunAuthority } from '../../database/team-run-authority';
 const basisSchema = z.object({ teamVersionId: uuidSchema, bindingId: uuidSchema, bindingRevision: revisionSchema, commissionId: uuidSchema,
     sessionId: uuidSchema, cycleId: uuidSchema, workKey: z.string().min(1).max(128), acceptedAttemptId: uuidSchema, reportVersionId: uuidSchema.nullable(),
     thesisVersions: z.array(z.object({ thesisId: uuidSchema, versionId: uuidSchema }).strict()).max(100), sourceRefs: z.array(sourceRefSchema).max(100) }).strict();
@@ -81,7 +83,7 @@ export class TeamDecisionService {
         }
         return { commission, basis: { ...basis, sourceRefs: inputRefs } };
     }
-    async create(owner: string, id: string, input: unknown) {
+    async create(owner: string, id: string, input: unknown, authority?: TeamRunAuthority) {
         const request = parseTeam(z.object({ requestKey: requestKeySchema, proposalId: uuidSchema.optional(), expectedProposalRevision: revisionSchema, commissionId: uuidSchema,
             event: z.enum(['propose', 'observe', 'defer', 'reject', 'adopt']), basis: basisSchema, reason: z.string().trim().min(1).max(4000), proposedPolicyDraftId: z.string().max(128).optional() }).strict(), input);
         return this.store.mutate(owner, id, 'decision', request, async (tx) => {
@@ -90,12 +92,17 @@ export class TeamDecisionService {
             if (basis.commissionId !== request.commissionId)
                 teamError('TEAM_INVALID_INPUT');
             const verified = await this.verify(tx, owner, id, basis, request.event), commission = verified.commission, proposalId = request.proposalId ?? randomUUID();
+            if (authority) {
+                const { cycle } = await assertTeamRunAuthority(tx, owner, authority, commission.accountId);
+                if (cycle.commissionId !== commission.id) teamError('TEAM_REFERENCE_NOT_FOUND');
+            }
             const [last] = await tx.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.teamId, id), eq(teamDecisions.proposalId, proposalId))).orderBy(desc(teamDecisions.proposalRevision)).limit(1);
             if (request.proposalId && !last)
                 teamError('TEAM_REFERENCE_NOT_FOUND');
             this.store.revision(last?.proposalRevision ?? 0, request.expectedProposalRevision);
             const [decision] = await tx.insert(teamDecisions).values({ ownerId: owner, teamId: id, accountId: commission.accountId, commissionId: commission.id, proposalId, proposalRevision: (last?.proposalRevision ?? 0) + 1,
-                event: request.event, actorType: 'user', actorId: owner, basis: verified.basis, reason: request.reason, policyContext: request.proposedPolicyDraftId ? { proposedPolicyDraftId: request.proposedPolicyDraftId } : null, requestKey: request.requestKey }).returning();
+                event: request.event, actorType: authority ? 'system' : 'user', actorId: authority ? 'team-run:' + authority.agreementId : owner, basis: verified.basis, reason: request.reason,
+                policyContext: authority ? { teamRunAgreementId: authority.agreementId, teamRunAgreementRevision: authority.revision, teamRunCycleId: authority.cycleId } : request.proposedPolicyDraftId ? { proposedPolicyDraftId: request.proposedPolicyDraftId } : null, requestKey: request.requestKey }).returning();
             await tx.insert(teamResearchLinks).values({ ownerId: owner, teamId: id, commissionId: commission.id, kind: 'attempt', targetId: basis.acceptedAttemptId, targetRevision: null, relation: 'used', workKey: basis.workKey, attemptId: basis.acceptedAttemptId, metadata: { decisionId: decision.id } }).onConflictDoNothing();
             return { ...decision, createdAt: decision.createdAt.toISOString(), requestKey: request.requestKey };
         });

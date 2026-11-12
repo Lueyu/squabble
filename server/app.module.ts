@@ -47,6 +47,9 @@ import { DataLibraryModule } from './modules/data-library/data-library.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { ToolCapabilitiesModule } from './modules/tool-capabilities/tool-capabilities.module';
 import { TeamsModule } from './modules/teams/teams.module';
+import { AgentRosterModule } from './modules/agent-roster/agent-roster.module';
+import { TeamRunsModule } from './modules/team-runs/team-runs.module';
+import { A2aAgentsModule } from './modules/a2a-agents/a2a-agents.module';
 
 /**
  * Root Nest module. Aggregates feature modules and installs the global
@@ -62,6 +65,9 @@ import { TeamsModule } from './modules/teams/teams.module';
     TelemetryModule,
     ToolCapabilitiesModule,
     TeamsModule,
+    AgentRosterModule,
+    TeamRunsModule,
+    A2aAgentsModule,
     HealthModule,
     SystemUpdateModule,
     ResearchDocumentsModule,

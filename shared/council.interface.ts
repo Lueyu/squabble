@@ -57,8 +57,12 @@ export interface ResearchAcquisition {
   kind?: CouncilResearchKind;
 }
 export interface CouncilMember {
+  /** Stable owned identity and immutable capability version; agentId below remains a local connector. */
+  rosterAgentId?: string;
+  rosterAgentVersionId?: string;
   /** Native CLI members reuse a connected local account; model members use application API settings. */
-  executionMode?: 'model' | 'local';
+  executionMode?: 'model' | 'local' | 'a2a';
+  a2aFingerprint?: import('./a2a-agents.interface').A2aConnectionFingerprint;
   agentId?: string;
   agentSettings?: NativeAgentConfiguration;
   id: string;

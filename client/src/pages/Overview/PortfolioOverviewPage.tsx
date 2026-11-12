@@ -4,6 +4,7 @@ import { ArrowRight, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import PortfolioComparisonPanel from '@/features/portfolio-comparison/PortfolioComparisonPanel';
 import CouncilMemberAvatar from '@/pages/Council/CouncilMemberAvatar';
+import GuidedOnboarding from '@/features/onboarding/GuidedOnboarding';
 
 /** Opening overview reads current marks and saved NAV; public history warms asynchronously without research. */
 export default function PortfolioOverviewPage() {
@@ -28,6 +29,7 @@ export default function PortfolioOverviewPage() {
     <header className="portfolio-page-header"><div><h1>{zh ? '今天，和股友一起看看投资' : 'A fresh look at your investments'}</h1><p>{new Date().toLocaleDateString(i18n.language, { year: 'numeric', month: 'long', day: 'numeric' })} · {zh ? '独立记录，回看每一次判断' : 'Independent records for every investment idea'}</p></div>
       <Button asChild><Link to="/paper?create=1"><Plus size={16} />{zh ? '新建模拟仓' : 'New simulation'}</Link></Button>
     </header>
+    <GuidedOnboarding />
     <PortfolioComparisonPanel key={selected ?? 'all'} initialAccountIds={accountIds} showHeadline showAccounts persistView />
     <div className="portfolio-next-steps">
       <section><h2>{zh ? '我的真实资产' : 'My real portfolio'}</h2><p>{zh ? '查看持仓与现金，核对真实成交。模拟实验单独记录，不计入实仓资产。' : 'Review holdings, cash and recorded trades. Simulated funds are kept separate from your real portfolio.'}</p><Button asChild variant="outline"><Link to="/holdings?accountId=real">{zh ? '查看资产与账户' : 'View assets and accounts'}<ArrowRight size={15} /></Link></Button></section>

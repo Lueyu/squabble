@@ -86,7 +86,7 @@ export default function ArchivedCouncilPage({readOnly=false,embeddedSessionId,wo
       const skillSelection = commandedSkill ? { skillId: commandedSkill.id }
         : workspace?.skillId !== undefined ? { skillId: workspace.skillId } : {};
       const payload = id ? { message, ...skillSelection, ...(reply ? { replyTo: reply.id } : {}) }
-        : { message, ...skillSelection, ...((override || context) ? { context: override || context } : {}) };
+        : { message, ...skillSelection, ...(workspace?.agents?.length ? { agents: workspace.agents } : {}), ...((override || context) ? { context: override || context } : {}) };
       const requestIntent = workspace?.request.intent ?? intent.current;
       const submission = workspace?.request.submission ?? { ...payload, requestKey: requestIntent.keyFor({ id, ...payload }) };
       if (workspace) workspace.request.submission = submission;

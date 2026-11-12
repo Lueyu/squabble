@@ -2,10 +2,14 @@ import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { ResearchTaskAttempt } from '../../../shared/research-workflow.interface';
 import type { TelemetryFeedbackInput, TelemetryFilters, TelemetryRun, TelemetrySpan, TelemetrySpanRecord, TelemetryStatus } from '../../../shared/telemetry.interface';
+import { enrichTelemetryDimensions, matchesExecutionFilters, TELEMETRY_DIMENSION_KEYS, telemetryDimensions } from './telemetry-identity.rules';
 
 export interface TelemetrySessionFact {
   id: string; title: string; scene: string; status: string; revision: number; cycleId: string | null;
-  createdAt: Date; updatedAt: Date; members: Array<{ id: string; name: string; role: string; executionMode?: string }>;
+  createdAt: Date; updatedAt: Date; members: Array<{ id: string; name: string; role: string; executionMode?: string;
+    rosterAgentId?: string; rosterAgentVersionId?: string; configuredModel?: string }>;
+  team?: { teamId: string; teamVersionId: string; commissionId: string; cycleId: string | null;
+    members: Array<{ memberId: string; label?: string; rosterAgentId?: string; rosterAgentVersionId?: string; configuredModel?: string }> } | null;
 }
 export interface TelemetryAttemptFact {
   id: string; taskId?: string | null; sessionId: string; cycleId: string; revision: number; memberId: string; attempt: number;
@@ -58,7 +62,8 @@ export function normalizeTelemetryFilters(input: Record<string, unknown>, now = 
     return Math.min(parsed, max);
   };
   const result: NormalizedTelemetryFilters = { from: from.toISOString(), to: to.toISOString(), offset: number(input.offset, 0, 1000000), limit: Math.max(1, number(input.limit, 25, 100)) };
-  for (const key of ['scene', 'agentId', 'executionMode', 'status', 'search'] as const) {
+  for (const key of ['scene', 'agentId', 'executionMode', 'status', 'search', 'rosterAgentId', 'rosterAgentVersionId', 'memberId',
+    'teamId', 'teamVersionId', 'commissionId', 'workKey', 'attemptId'] as const) {
     const value = input[key];
     if (value === undefined || value === '') continue;
     if (typeof value !== 'string' || value.length > (key === 'search' ? 200 : 120)) throw new BadRequestException('TELEMETRY_FILTER_INVALID');
@@ -91,7 +96,9 @@ export function knownSum(values: Array<number | null>): number | null {
 
 /** The exact same bounded identity is returned by agent rows and consumed by run filters. */
 export function effectiveAgentKey(span: TelemetrySpan): string {
-  return `agent:${createHash('sha256').update(JSON.stringify([span.agentId, span.provider, span.model, span.executionMode ?? 'unknown'])).digest('hex').slice(0, 32)}`;
+  const identity = span.rosterAgentId && span.rosterAgentVersionId
+    ? ['roster', span.rosterAgentId, span.rosterAgentVersionId] : ['legacy', span.agentId];
+  return `agent:${createHash('sha256').update(JSON.stringify([...identity, span.provider, span.model, span.executionMode ?? 'unknown'])).digest('hex').slice(0, 32)}`;
 }
 
 function ancestors(span: TelemetrySpan, byId: Map<string, TelemetrySpan>): TelemetrySpan[] {
@@ -305,7 +312,7 @@ export function buildTelemetry(facts: TelemetryFacts, filters: NormalizedTelemet
   const captured = new Map<string, TelemetrySpanRecord[]>();
   for (const record of facts.captured) { const list = captured.get(record.runId) ?? []; list.push(record); captured.set(record.runId, list); }
   for (const [id, records] of captured) {
-    const head = records[0], spans: TelemetrySpan[] = records.map(record => ({ id: record.id, parentId: record.parentId, kind: record.kind,
+    const head = records[0], spans: TelemetrySpan[] = records.map(record => ({ ...telemetryDimensions(record), id: record.id, parentId: record.parentId, kind: record.kind,
       name: record.name, status: record.status, agentId: record.agentId, agentName: record.agentName, provider: record.provider, model: record.model,
       executionMode: record.executionMode, startedAt: record.startedAt, completedAt: record.completedAt, durationMs: record.durationMs,
       inputTokens: record.inputTokens, outputTokens: record.outputTokens, totalTokens: record.totalTokens, estimatedCostUsd: record.estimatedCostUsd,
@@ -332,12 +339,14 @@ export function buildTelemetry(facts: TelemetryFacts, filters: NormalizedTelemet
       quality: { completeDelivery: null, traceableEvidence: null, reverseCheck: null, adoption: null } });
     }
   }
+  for (const item of result) enrichTelemetryDimensions(item, facts);
   const executions = new Map(result.map(item => [item.run.id, telemetryExecutions(item, facts)]));
   for (const item of result) item.run.agentCount = new Set(executions.get(item.run.id)!.map(execution => effectiveAgentKey(execution.span))).size;
   return result.filter(item => item.run.startedAt >= filters.from && item.run.startedAt <= filters.to
     && (!filters.scene || item.run.scene === filters.scene) && (!filters.status || item.run.status === filters.status)
-    && (!filters.agentId || executions.get(item.run.id)!.some(execution => effectiveAgentKey(execution.span) === filters.agentId))
-    && (!filters.executionMode || executions.get(item.run.id)!.some(execution => execution.span.executionMode === filters.executionMode))
+    && (!(filters.agentId || filters.executionMode || TELEMETRY_DIMENSION_KEYS.some(key => filters[key as keyof TelemetryFilters]))
+      || executions.get(item.run.id)!.some(({ span }) => matchesExecutionFilters(span, filters)
+        && (!filters.agentId || effectiveAgentKey(span) === filters.agentId) && (!filters.executionMode || span.executionMode === filters.executionMode)))
     && (!filters.search || `${item.run.title} ${item.run.id} ${item.spans.map(span => `${span.name} ${span.model ?? ''}`).join(' ')}`.toLocaleLowerCase().includes(filters.search.toLocaleLowerCase())))
     .sort((a, b) => b.run.startedAt.localeCompare(a.run.startedAt) || a.run.id.localeCompare(b.run.id));
 }

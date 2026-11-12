@@ -10,6 +10,7 @@ import type { ResearchDelivery, ResearchSkillPin, ResearchTask, ResearchTaskAtte
 import type { TaskPlan } from './council.tasks';
 import type { CouncilEvidence } from './council.rules';
 import { packMemoryContext } from '../research-memory/research-memory.context';
+import { assertCouncilRosterMember } from './council.roster';
 
 type Session = typeof councilSessions.$inferSelect;
 type TaskRow = typeof councilResearchTasks.$inferSelect;
@@ -81,6 +82,13 @@ export class CouncilWorkflowStore {
         || current.revision !== row.revision || current.state !== 'running' || current.attempts.at(-1)?.id !== attemptId
         || current.attempts.at(-1)?.state !== 'running')) throw new Error('LOCAL_PAUSED');
       if (dispatch && row.checkpoint?.teamContext) await assertTeamExecutionInTransaction(tx, row.owner, row.checkpoint.teamContext, { dispatch: !current.attempts.find(a => a.id === attemptId)?.dispatched });
+      if (dispatch && session) {
+        const selectedAttempt = current.attempts.find(a => a.id === attemptId)!;
+        const memberId = selectedAttempt.kind === 'review' ? current.reviewerMemberId : current.memberId;
+        const member = session.profileSnapshot.council?.members.find(item => item.id === memberId);
+        if (member && (member.rosterAgentId || member.rosterAgentVersionId || member.executionMode === 'a2a'))
+          await assertCouncilRosterMember(tx, session, member, session.evidenceSnapshot, [], task.workKey ?? undefined);
+      }
       await tx.update(councilResearchTasks).set({ attempts: current.attempts.map(a => a.id === attemptId ? { ...a, ...patch,
         ...(patch.savedResponse ? { savedResponse: { ...a.savedResponse, ...patch.savedResponse } } : {}) } : a), updatedAt: new Date() }).where(eq(councilResearchTasks.id, task.id));
     });
@@ -98,17 +106,21 @@ export class CouncilWorkflowStore {
       let fresh = session?.status === 'running' && session.revision === row.revision && session.checkpoint?.cycleId === task.cycleId
         && current.revision === row.revision && current.attempts.at(-1)?.id === attempt.id;
       if (fresh && row.checkpoint?.teamContext) {
-        try { await assertTeamExecutionInTransaction(tx, row.owner, row.checkpoint.teamContext); }
+        try { await assertTeamExecutionInTransaction(tx, row.owner, row.checkpoint.teamContext, { publication: true }); }
         catch { fresh = false; }
       }
-      const unknown = Boolean(row.checkpoint?.teamContext && result.error && current.attempts.find(a => a.id === attempt.id)?.dispatched
+      if (fresh && session) {
+        try { await assertCouncilRosterMember(tx, session, member, [...session.evidenceSnapshot, ...(result.sources ?? [])], [], task.workKey ?? undefined, { receiptId: attempt.id }); }
+        catch { fresh = false; }
+      }
+      const unknown = Boolean((row.checkpoint?.teamContext || member.executionMode === 'a2a') && result.error && current.attempts.find(a => a.id === attempt.id)?.dispatched
         && current.attempts.find(a => a.id === attempt.id)?.tokens === undefined);
-      const attempts = current.attempts.map(a => a.id === attempt.id ? { ...a, ...result, externalAgent: member.executionMode === 'local',
-        state: !fresh ? 'cancelled' as const : unknown ? 'uncertain' as const : result.error ? 'failed' as const : 'succeeded' as const,
+      const attempts = current.attempts.map(a => a.id === attempt.id ? { ...a, ...result, externalAgent: member.executionMode === 'local' || member.executionMode === 'a2a',
+        state: member.executionMode === 'a2a' && unknown ? 'uncertain' as const : !fresh ? 'cancelled' as const : unknown ? 'uncertain' as const : result.error ? 'failed' as const : 'succeeded' as const,
         ...(unknown ? { externalUsageUnknown: true } : {}), finishedAt: new Date().toISOString() } : a);
       if (!fresh) {
         await tx.update(councilResearchTasks).set({ attempts,
-          ...(current.revision === row.revision && current.attempts.at(-1)?.id === attempt.id ? { state: 'cancelled' as const, reason: 'REVISION_CHANGED' } : {}) }).where(eq(councilResearchTasks.id, task.id)); return false;
+          ...(current.revision === row.revision && current.attempts.at(-1)?.id === attempt.id ? { state: member.executionMode === 'a2a' && unknown ? 'uncertain' as const : 'cancelled' as const, reason: 'REVISION_CHANGED' } : {}) }).where(eq(councilResearchTasks.id, task.id)); return false;
       }
       const accepted = result.review?.accepted === true || (task.key === 'summary' && !!result.delivery
         && (!row.checkpoint?.teamContext || task.assignment?.reviewMode === 'self_check'));
@@ -131,14 +143,14 @@ export class CouncilWorkflowStore {
           content: result.delivery.conclusion, revision: row.revision, tokensUsed: result.tokens ?? 0,
           metadata: { memory, referenceSnapshot: row.references, cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id,
             phase: task.key === 'summary' ? 'summary' : task.key === 'challenge' ? 'challenge' : 'opening', response,
-            evidenceIds: result.delivery.evidenceIds, externalAgent: member.executionMode === 'local', externalUsageUnknown: result.externalUsageUnknown } });
+            evidenceIds: result.delivery.evidenceIds, externalAgent: member.executionMode === 'local' || member.executionMode === 'a2a', externalUsageUnknown: result.externalUsageUnknown } });
       }
       if (result.review) await tx.insert(councilMessages).values({ owner: row.owner, sessionId: row.id, role: member.role,
         memberName: member.name, content: result.review.feedback, revision: row.revision, tokensUsed: result.tokens ?? 0,
         metadata: { memory, referenceSnapshot: row.references, cycleId: task.cycleId, turn: task.position, memberId: member.id, taskId: attempt.id, phase: 'response',
           response: { thesis: `${row.language === 'en' ? result.review.accepted ? 'Accepted. ' : 'Revision required. '
             : result.review.accepted ? '验收通过。' : '需要修订。'}${result.review.feedback}`, evidencePoints: [], risks: [], nextChecks: [] },
-          evidenceIds: current.delivery?.evidenceIds ?? [], externalAgent: member.executionMode === 'local', externalUsageUnknown: result.externalUsageUnknown } });
+          evidenceIds: current.delivery?.evidenceIds ?? [], externalAgent: member.executionMode === 'local' || member.executionMode === 'a2a', externalUsageUnknown: result.externalUsageUnknown } });
       if (result.sources?.length) await tx.update(councilSessions).set({
         evidenceSnapshot: [...new Map([...session.evidenceSnapshot, ...result.sources].map(source => [source.id, source])).values()].slice(-120), updatedAt: new Date(),
       }).where(eq(councilSessions.id, row.id));

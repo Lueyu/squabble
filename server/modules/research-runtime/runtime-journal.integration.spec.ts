@@ -73,7 +73,9 @@ test('expired dispatched work becomes unknown; closing it does not delete accoun
   const request = input(), run = await journal.create(request), owner = request.identity.owner;
   const lease = (await journal.claim(owner, run.id))!;
   const { step } = await journal.beginStep(owner, run.id, lease.token, { index: 0, request: {}, model: 'fake' });
-  await client`update agent_runtime_runs set lease_until=now()-interval '1 second' where id=${run.id}`;
+  // Recovery compares the host clock; Docker's database clock can lead it by more than a second.
+  const expiredAt = new Date(Date.now() - 60_000).toISOString();
+  await client`update agent_runtime_runs set lease_until=${expiredAt}::timestamptz where id=${run.id}`;
   assert.equal(await journal.recover(owner, run.id), 'provider_unknown');
   await journal.settleUnknown(owner, run.id);
   await journal.receive(owner, run.id, step.id, { text: 'late output' });

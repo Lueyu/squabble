@@ -4,7 +4,7 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "3a561b18bacbef8557996d18977e69b1f63380e8",
+    "commit": "74f3744c69b34fbfff0b38eee921267348806da3",
     "workingTreeChanges": true,
     "reviewedAt": "2026-11-12",
     "scope": [
@@ -20,7 +20,8 @@
       "Agent telemetry: owner-scoped run/attempt/span queries, metadata-only capture, explicit feedback, source-deletion fences and opt-in Langfuse export",
       "Agent tooling: durable single-step runtime and controlled/Deep Agents drivers; outbound owner-approved MCP/provider connections, editable write previews, immutable datasets/private artifacts, local parser jobs, run browsers and isolated fixed-template analytics",
       "Local Agent diagnostics: pure owner/source-scoped snapshots, native/Companion process evidence, bounded public activity, structured failures and separate acceptance/publication; flows3–5 retain financial and source authority",
-      "Team workspace: organization/version/binding/commission/source/decision contracts, neutral scope fences and read-only account assets; implementation validation recorded separately"
+      "Team workspace: organization/version/binding/commission/source/decision contracts, neutral scope fences and read-only account assets; implementation validation recorded separately",
+      "Persistent roster identity/version and isolated memory, guided holdings-first setup, bounded standing team agreement/system actor, real A2A and exact telemetry attribution; migrations62–65"
     ]
   },
   "areas": [
@@ -561,9 +562,60 @@
         "channel-publication",
         "asset-ledger"
       ]
+    },
+    {
+      "id": "independent-agents",
+      "paths": [
+        "server/modules/agent-roster/",
+        "server/modules/team-runs/",
+        "server/modules/a2a-agents/",
+        "server/database/agent-roster",
+        "server/database/team-run",
+        "server/database/a2a-agent",
+        "server/database/council-execution-proof.ts",
+        "client/src/features/agent-roster/",
+        "client/src/features/onboarding/",
+        "client/src/pages/Agents/",
+        "client/src/features/teams/GuidedTeamCreate",
+        "client/src/features/teams/guided-team",
+        "client/src/features/teams/TeamRunPanel",
+        "client/src/features/teams/TeamRosterBinding",
+        "shared/agent-roster.interface.ts",
+        "shared/team-run.interface.ts",
+        "shared/a2a-agents.interface.ts",
+        "scripts/db/62_agent_roster.sql",
+        "scripts/db/63_team_runs.sql",
+        "scripts/db/64_a2a_agents_runtime.sql",
+        "scripts/db/65_agent_telemetry_identity.sql"
+      ],
+      "entrypoints": [
+        "server/modules/agent-roster/agent-roster.service.ts",
+        "server/modules/team-runs/team-run.service.ts",
+        "server/modules/a2a-agents/a2a-agents.service.ts",
+        "client/src/features/teams/guided-team-create.ts"
+      ],
+      "references": [
+        "references/repository-map.md",
+        "references/research-and-execution.md",
+        "references/development-and-tests.md",
+        "references/deployment-and-recovery.md"
+      ],
+      "diagrams": [
+        "system-overview",
+        "research-report",
+        "strategy-execution",
+        "channel-publication",
+        "asset-ledger"
+      ]
     }
   ],
   "reviewNotes": {
+    "independentAgentsGuidedTeamsDesign": {
+      "baseline": "74f3744c69b34fbfff0b38eee921267348806da3",
+      "workingTreeChanges": true,
+      "reviewedAt": "2026-11-12",
+      "scope": "Documentation only: approved product direction for holdings-first onboarding, persistent individual agents, team-isolated memory, standing authorization for autonomous paper teams, bounded research, A2A and deferred RL interfaces. The written specification is awaiting user review. Existing system, research/report, strategy/execution, channel and real-ledger flows remain unchanged; current architecture diagrams continue to describe implemented behavior. The new specification explicitly separates planned functionality and future usability/behavior acceptance from current implementation. No runtime, routes, schema, grants or installed global skill behavior changed."
+    },
     "researchDataV5": "Reviewed baseline02e9d73 plus working-tree changes. System/research diagrams include owned material versions, encrypted subscription jobs, financial-source queries and explicitly frozen skill pins. Strategy authoring now belongs to Research while account apply remains explicit. Channel publication and real-ledger writers are unchanged; daily ledger reading gains animal identity/action summaries. Source exclusion and deletion extend through subsequent research and derived-memory availability; existing report reading remains historical. PostgreSQL stores originals and search indexes, with no claim about Codex internals. CI timeout increases from15 to20 minutes for the expanded full suite without reducing checks. Verification belongs to docs/v5-research-data-implementation.md, not an assumed deployed revision.",
     "architecture": "Reviewed 9e2d83a plus the portfolio-workspace working tree on 2026-11-09. All five diagrams checked: system routes and saved comparison, account strategy combinations, channel account/runtime identity and saved real-ledger comparison readers changed. Research diagram changes its page entry only; sealed submissions, saved-result recovery and immutable publication keep their existing authority.",
     "behavior": "Independent accounts compile enabled strategy snapshots into one account profile/mandate; drafts, previews and immutable combination revisions are account-scoped. Final fills preserve source/policy identity, shared cash and attributed exposure caps. Comparison reads saved observations only and never infers a cash-flow-adjusted return. Channel account selection is read-only; monitoring/fill identities include account and source entry. No broker order or real-ledger mutation is introduced.",
@@ -625,6 +677,12 @@
       "baseline": "e18b5febf61daf830100351051f216973a0b1599",
       "scope": "Reviewed capability grants/readiness, candidate discovery, local provider/broker and default tool images. System/research diagrams add deployment preparation and per-job Docker. Strategy/channel/real-ledger flows retain existing authority; tool grants never authorize investment execution. Actual runtime/image/platform verification is separately recorded.",
       "crossPlatform": "Current image qualification is Linux amd64; Windows uses Docker Desktop Linux containers/WSL2. Future native macOS/arm64/desktop installers are not certified by this source review."
+    },
+    "independentAgentsProductDesign": {
+      "baseline": "74f3744c69b34fbfff0b38eee921267348806da3",
+      "workingTreeChanges": true,
+      "reviewedAt": "2026-11-12",
+      "scope": "User approved specification and authorized implementation, PR merge after tests and local deployment. Reviewed implemented roster/version/memory, guided startup, standing team authorization/final application, real A2A durable receipts and metadata-only telemetry across all five architecture flows. Real-ledger mutation remains owned by import/transaction paths; its snapshot only initializes an independent paper account. Independent reviews and actual verification/remaining novice study are recorded in docs/independent-agents-validation.md; this entry does not certify a deployed revision."
     }
   },
   "notes": {

@@ -40,7 +40,7 @@ export function packDiscussionContext(input: ContextInput) {
     criticalEvidenceMissing: criticalEvidenceGaps(input.evidence.filter(item => included.has(item.id) || item.sourceName === 'Data Unavailable')),
     member: { name: input.member.name, role: input.member.roleTitle ?? input.member.role,
       personality: byteExcerpt(input.member.personality ?? '', limits.personality), focus: input.member.researchFocus,
-      style: input.member.speakingStyle, instructions: byteExcerpt(input.member.instructions, limits.custom) },
+      style: input.member.speakingStyle, instructions: input.member.rosterAgentId ? input.member.instructions : byteExcerpt(input.member.instructions, limits.custom) },
     investorInstructions: byteExcerpt(input.config.customPrompt, limits.custom),
     steering: [...input.userMessages.slice(0, -1).slice(-limits.history || input.userMessages.length)
       .map((message) => byteExcerpt(message, 140)), ...input.userMessages.slice(-1)],

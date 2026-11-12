@@ -10,6 +10,7 @@ import { buildTelemetry, effectiveAgentKey, knownSum, normalizeTelemetryFilters,
   type TelemetryFacts, type TelemetryProjection, type TelemetrySessionFact, type TelemetryMessageFact } from './telemetry.rules';
 import { getTelemetryIntegration } from './telemetry-langfuse';
 import { TelemetryCaptureService } from './telemetry-capture.service';
+import { matchesExecutionFilters, TELEMETRY_DIMENSION_KEYS, telemetryDimensions } from './telemetry-identity.rules';
 import type { TelemetryAgent, TelemetryFeedback, TelemetryRatio, TelemetryRunDetail, TelemetryWorkspace } from '../../../shared/telemetry.interface';
 
 type ReadDatabase = Pick<PostgresJsDatabase, 'select' | 'execute'>;
@@ -21,6 +22,8 @@ const LIMITATIONS = [
   'Recorded new model/native spans supply measured usage. Totals sum known measurements only; token coverage identifies incomplete runs. Cost remains unknown without a recorded rate.',
   'Completion, local acceptance, report publication, adoption and user feedback are separate outcomes. Financial returns are not per-run accuracy.',
   'Quality ratios use only runs with the corresponding saved evidence. Source/version traceability, seven-day adoption and dataset/experiment scores are unavailable locally; configuring Langfuse does not establish an evaluation result.',
+  'Identity/work filters select complete runs; overview and run totals retain all recorded members in those runs. Agent comparison includes only matching executions. Team investment outcomes are not individual causal returns.',
+  'Persistent agent and immutable version references come only from saved execution metadata and owned frozen session/commission snapshots. Unlinked legacy identities, external internal models, tools and fees remain unknown.',
 ];
 
 function bounded<T>(rows: T[], maximum: number): T[] {
@@ -66,7 +69,7 @@ export class TelemetryService {
           p95DurationMs: p95(runs.filter(run => run.status === 'completed').map(run => run.durationMs)), totalTokens: knownSum(runs.map(run => run.totalTokens)),
           estimatedCostUsd: knownSum(runs.map(run => run.estimatedCostUsd)), knownUsageRuns,
           tokenCoverageRate: runs.length ? knownUsageRuns / runs.length : null, trends: [...trends.values()].sort((a, b) => a.date.localeCompare(b.date)) },
-        agents: this.agents(projections, facts), runs: runs.slice(filters.offset, filters.offset + filters.limit),
+        agents: this.agents(projections, facts, filters), runs: runs.slice(filters.offset, filters.offset + filters.limit),
         quality: { completeDelivery: ratio(projections.map(item => item.quality.completeDelivery)),
           traceableEvidence: ratio(projections.map(item => item.quality.traceableEvidence)), reverseCheck: ratio(projections.map(item => item.quality.reverseCheck)),
           adoption: ratio(projections.map(item => item.quality.adoption)), evaluationAvailable: false,
@@ -107,10 +110,17 @@ export class TelemetryService {
   private async load(db: ReadDatabase, owner: string, filters: NormalizedTelemetryFilters, sessionId?: string, runId?: string): Promise<TelemetryFacts> {
     const sessions = bounded(await db.select({ id: councilSessions.id, title: councilSessions.title, scene: councilSessions.scene,
       status: councilSessions.status, revision: councilSessions.revision, cycleId: sql<string | null>`${councilSessions.checkpoint}->>'cycleId'`,
-      members: sql<TelemetrySessionFact['members']>`(select coalesce(jsonb_agg(jsonb_build_object('id',m->>'id','name',m->>'name','role',m->>'role','executionMode',m->>'executionMode')),'[]'::jsonb)
+      members: sql<TelemetrySessionFact['members']>`(select coalesce(jsonb_agg(jsonb_build_object('id',m->>'id','name',m->>'name','role',m->>'role','executionMode',m->>'executionMode',
+        'rosterAgentId',m->>'rosterAgentId','rosterAgentVersionId',m->>'rosterAgentVersionId','configuredModel',coalesce(m->'agentSettings'->>'model',m->>'model'))),'[]'::jsonb)
         from jsonb_array_elements(coalesce(${councilSessions.profileSnapshot}->'council'->'members','[]'::jsonb)) m)`,
+      team: sql<TelemetrySessionFact['team']>`(select jsonb_build_object('teamId',c.team_id,'teamVersionId',c.team_version_id,'commissionId',c.id,'cycleId',c.cycle_id,
+        'members',(select coalesce(jsonb_agg(jsonb_build_object('memberId',m->>'memberId','label',m->>'label','rosterAgentId',m->>'rosterAgentId',
+          'rosterAgentVersionId',m->>'rosterAgentVersionId','configuredModel',m->'executor'->>'model')),'[]'::jsonb)
+          from jsonb_array_elements(c.member_snapshots) m)) from team_commissions c where c.owner_id=${owner} and c.session_id=council_sessions.id limit 1)`,
       createdAt: councilSessions.createdAt, updatedAt: councilSessions.updatedAt }).from(councilSessions).where(and(eq(councilSessions.owner, owner), isNull(councilSessions.deletedAt),
-      sessionId ? eq(councilSessions.id, sessionId) : runId ? sql`false` : and(lte(councilSessions.createdAt, new Date(filters.to)), gte(councilSessions.updatedAt, new Date(filters.from)))))
+      sessionId ? eq(councilSessions.id, sessionId) : runId ? sql`exists(select 1 from telemetry_spans observed where observed.owner=${owner}
+        and observed.run_id=${runId} and observed.session_id=council_sessions.id::text)`
+        : and(lte(councilSessions.createdAt, new Date(filters.to)), gte(councilSessions.updatedAt, new Date(filters.from)))))
       .limit(MAX_SESSIONS + 1), MAX_SESSIONS);
     const ids = sessions.map(session => session.id), facts: TelemetryFacts = { sessions, attempts: [], tasks: [], messages: [], reports: [], captured: [], feedback: [] };
     if (ids.length) {
@@ -162,14 +172,17 @@ export class TelemetryService {
     return facts;
   }
 
-  private agents(projections: TelemetryProjection[], facts: TelemetryFacts): TelemetryAgent[] {
+  private agents(projections: TelemetryProjection[], facts: TelemetryFacts, filters: NormalizedTelemetryFilters): TelemetryAgent[] {
     const groups = new Map<string, { agent: TelemetryAgent; durations: Array<number | null>; tokens: Array<number | null>; costs: Array<number | null> }>();
     for (const projection of projections) for (const execution of telemetryExecutions(projection, facts)) {
       const span = execution.span, id = effectiveAgentKey(span), mode = span.executionMode ?? 'unknown', key = id;
+      if (!matchesExecutionFilters(span, filters) || filters.agentId && filters.agentId !== id || filters.executionMode && filters.executionMode !== span.executionMode) continue;
       if (!groups.has(key)) groups.set(key, { agent: { id, name: span.agentName ?? span.name, role: projection.roles.get(span.agentId ?? '') ?? span.kind,
+        ...telemetryDimensions(span),
         provider: span.provider, model: span.model, executionMode: mode, executions: 0, completed: 0, failed: 0, accepted: 0, acceptanceKnown: 0,
         completionRate: null, p95DurationMs: null, totalTokens: null, estimatedCostUsd: null, knownUsageExecutions: 0 }, durations: [], tokens: [], costs: [] });
       const group = groups.get(key)!, agent = group.agent; agent.executions++;
+      for (const dimension of TELEMETRY_DIMENSION_KEYS) if (agent[dimension] !== span[dimension]) agent[dimension] = null;
       if (span.status === 'completed') agent.completed++; if (span.status === 'failed') agent.failed++;
       if (span.status === 'completed') group.durations.push(span.durationMs);
       group.tokens.push(span.totalTokens); group.costs.push(span.estimatedCostUsd); if (execution.usageKnown) agent.knownUsageExecutions++;

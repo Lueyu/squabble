@@ -17,6 +17,11 @@ import { canonicalHash, compareDecimal, confirmSchema, parseTeam, requestKeySche
 import { requireTeamFeature } from './team-config';
 import { teamAccountPolicySnapshot } from '../paper-trading/team-account-transaction';
 import type { TeamBudget, TeamCommission, TeamCommissionPlan, TeamExecutionContext, TeamMemberSnapshot, TeamSemanticConfig, ResearchSourceRef, RecoveryInput, TeamCostSummary } from '../../../shared/team-workspace.interface';
+import type { TeamRunAuthority } from '../../../shared/team-run.interface';
+import { assertTeamRunAuthority } from '../../database/team-run-authority';
+import { teamRunCycles } from '../../database/team-run.schema';
+import { readAgentRosterVersion } from '../../database/agent-roster-context';
+import { readA2aConnectionFingerprint } from '../../database/a2a-agent-context';
 export function commissionContext(row: CommissionRow): TeamExecutionContext {
     return { audience: 'team', ownerId: row.ownerId, teamId: row.teamId, teamVersionId: row.teamVersionId, commissionId: row.id, accountId: row.accountId,
         bindingId: row.bindingId, bindingRevision: row.bindingRevision, scopeRevision: row.scopeRevision, deadlineAt: row.plan.deadlineAt, dataCutoffAt: row.plan.dataCutoffAt,
@@ -66,7 +71,7 @@ export class TeamCommissionService {
             const checks = await this.runtime.check(tx, owner, selected);
             if (checks.some(c => c.status !== 'supported'))
                 teamError('TEAM_CAPABILITY_UNAVAILABLE', 'Selected executor capability is not currently verified', { checks });
-            const hasLocal = selected.some(r => r.executor?.executionMode === 'local');
+            const hasLocal = selected.some(r => r.executor && r.executor.executionMode !== 'model');
             if (plan.budget.ceiling.currency !== 'USD')
                 teamError('TEAM_BUDGET_BLOCKED', 'This runtime accounts for research costs in USD');
             if (rates?.enabled && plan.budget.callLimit > rates.maxCallsPerTask)
@@ -103,8 +108,17 @@ export class TeamCommissionService {
                 label: version.displaySnapshot.roleLabels[role.id] ?? role.id, responsibility: role.responsibility, expectedOutput: role.expectedOutput, executor: role.executor!,
                 executorConfigRevision: checks.find(c => c.roleId === role.id)!.fingerprint!, capabilityFingerprint: checks.find(c => c.roleId === role.id)!.fingerprint!,
                 allowedToolIds: role.allowedToolIds, sourceGrantIds: memberGrants.get(role.id)!, scopeRevision: team.scopeRevision }));
+            for (const member of members) {
+                if (member.executor.executionMode === 'a2a') member.a2aFingerprint = await readA2aConnectionFingerprint(tx, owner, member.executor.connectionId);
+                const role = selected.find(role => role.id === member.roleId)!;
+                if (role.agentId && role.agentVersionId) {
+                    const { version: agentVersion } = await readAgentRosterVersion(tx, owner, role.agentId, role.agentVersionId, { allowedToolIds: member.allowedToolIds });
+                    member.rosterAgentId = role.agentId; member.rosterAgentVersionId = role.agentVersionId;
+                    member.agentInstructions = agentVersion.config.instructions;
+                }
+            }
             const warnings = hasLocal ? [{ code: 'TEAM_EXTERNAL_COST_UNKNOWN', message: 'Call count is bounded; external provider fees remain unknown' }] : [];
-            const identities = selected.map(({ executor }) => executor!.executionMode === 'model' ? 'model:' + executor!.connectionId : 'local:' + executor!.localAgentId);
+            const identities = selected.map(({ executor }) => executor!.executionMode === 'local' ? 'local:' + executor!.localAgentId : executor!.executionMode + ':' + executor!.connectionId);
             if (new Set(identities).size !== identities.length)
                 warnings.push({ code: 'TEAM_SHARED_EXECUTOR', message: 'Multiple roles share an execution connection; distinct roles do not establish independent models' });
             if (plan.parallelism === 2 && selected.some((role, index) => role.executor?.executionMode === 'local' && identities.indexOf(identities[index]) !== index))
@@ -112,10 +126,11 @@ export class TeamCommissionService {
             return { ...await this.store.preview(tx, owner, team, 'commission', { plan, inputSnapshot, members, accountId: binding.accountId, bindingId: binding.id, teamVersionId: version.id }, guards, warnings), requestKey: request.requestKey };
         });
     }
-    async create(owner: string, id: string, input: unknown) {
+    async create(owner: string, id: string, input: unknown, authority?: TeamRunAuthority) {
         const request = parseTeam(confirmSchema, input);
         return this.store.mutate(owner, id, 'commission-create', request, async (tx) => {
             requireTeamFeature(true);
+            if (authority) await assertTeamRunAuthority(tx, owner, authority);
             const team = await this.store.team(tx, owner, id, true), preview = await this.store.consume(tx, owner, team, 'commission', request);
             const plan = preview.payload.plan as TeamCommissionPlan, members = preview.payload.members as TeamMemberSnapshot[];
             if (Date.now() >= new Date(plan.deadlineAt).getTime())
@@ -127,7 +142,8 @@ export class TeamCommissionService {
             const costRates = rates && rates.inputUsdPerMillion !== null && rates.outputUsdPerMillion !== null ? { inputUsdPerMillion: rates.inputUsdPerMillion, outputUsdPerMillion: rates.outputUsdPerMillion } : null;
             if (canonicalHash(costRates) !== canonicalHash((preview.payload.inputSnapshot as Record<string, unknown>).costRates))
                 teamError('TEAM_PREVIEW_STALE', 'Cost rate assumptions changed');
-            const roles: TeamSemanticConfig['roles'] = members.map(m => ({ id: m.roleId, departmentId: null, participation: 'enabled', responsibility: m.responsibility, expectedOutput: m.expectedOutput, executor: m.executor, allowedToolIds: m.allowedToolIds, sourceGrantIds: m.sourceGrantIds }));
+            const roles: TeamSemanticConfig['roles'] = members.map(m => ({ id: m.roleId, departmentId: null, participation: 'enabled', responsibility: m.responsibility, expectedOutput: m.expectedOutput, executor: m.executor,
+                ...(m.rosterAgentId ? { agentId: m.rosterAgentId, agentVersionId: m.rosterAgentVersionId } : {}), allowedToolIds: m.allowedToolIds, sourceGrantIds: m.sourceGrantIds }));
             const checks = await this.runtime.check(tx, owner, roles);
             if (checks.some(c => c.status !== 'supported' || preview.guards.executorFingerprints.find(f => f.roleId === c.roleId)?.fingerprint !== c.fingerprint))
                 teamError('TEAM_PREVIEW_STALE', 'Executor configuration changed');
@@ -143,6 +159,7 @@ export class TeamCommissionService {
                 bindingRevision: team.bindingRevision, teamVersionId: String(preview.payload.teamVersionId), scopeRevision: team.scopeRevision, previewId: preview.id,
                 plan, inputSnapshot: preview.payload.inputSnapshot as Record<string, unknown>, members, rootBudgetTaskId, state: 'queued', budgetLimit: plan.budget, requestedBy: owner });
             await tx.insert(teamCommissionJobs).values({ ownerId: owner, commissionId, kind: 'prepare', commandKey: 'prepare:v1', payload: {} });
+            if (authority) await tx.update(teamRunCycles).set({ commissionId, state: 'researching', updatedAt: new Date() }).where(and(eq(teamRunCycles.ownerId, owner), eq(teamRunCycles.id, authority.cycleId)));
             return { commissionId, state: 'queued', rootBudgetTaskId, requestKey: request.requestKey };
         });
     }

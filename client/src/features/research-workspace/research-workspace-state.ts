@@ -10,10 +10,12 @@ export interface ResearchWorkspaceRequest {
     replyTo?: string;
     requestKey: string;
     skillId?: string | null;
+    agents?: import('@shared/agent-roster.interface').AgentSelection[];
   };
 }
 
 export interface ResearchWorkspaceComposer {
+  agents?: import('@shared/agent-roster.interface').AgentSelection[];
   skillId?: string | null;
   onSkillChange: (id: string | null) => void;
   onStrategy: (message: string) => void;
