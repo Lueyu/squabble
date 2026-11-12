@@ -10,6 +10,18 @@ export function teamLeadSuggestion(config: TeamSemanticConfig | undefined): stri
   const suggested = config?.roles.find(role => role.id === config.defaults.leadRoleId);
   return suggested?.participation === 'enabled' && suggested.executor ? suggested.id : '';
 }
+/** First-research default: every enabled and connected role participates, capped at the 6-role commission limit. */
+export function defaultCommissionParticipants(config: TeamSemanticConfig | undefined, leadRoleId: string): string[] {
+  const eligible = (config?.roles ?? []).filter(role => role.participation === 'enabled' && role.executor).map(role => role.id);
+  const ids = leadRoleId && eligible.includes(leadRoleId) ? [leadRoleId, ...eligible.filter(id => id !== leadRoleId)] : eligible;
+  return [...new Set(ids)].slice(0, 6);
+}
+/** datetime-local value in the viewer's timezone, one day ahead so the first commission is immediately valid. */
+export function defaultCommissionDeadline(now = new Date()): string {
+  const deadline = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${deadline.getFullYear()}-${pad(deadline.getMonth() + 1)}-${pad(deadline.getDate())}T${pad(deadline.getHours())}:${pad(deadline.getMinutes())}`;
+}
 export function validateCommissionForm(form: CommissionForm, now = new Date().toISOString()): CommissionFieldIssue[] {
   const issues: CommissionFieldIssue[] = []; const add = (field: string, message: string): void => { issues.push({ field, message }); };
   if (!form.objective.trim() || form.objective.trim().length > 2000) add('objective', 'Enter a research question (1–2000 characters).');

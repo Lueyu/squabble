@@ -10,13 +10,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { friendlyError } from '@/utils/error-message';
-import { suggestedTeamWork, teamLeadSuggestion, validateCommissionForm, type CommissionForm } from './team-commission-state';
+import { defaultCommissionDeadline, defaultCommissionParticipants, suggestedTeamWork, teamLeadSuggestion, validateCommissionForm, type CommissionForm } from './team-commission-state';
 import { TeamKeyValue, TeamNotice, TeamSelect } from './TeamPrimitives';
 import { PreviewReview, usePreviewExpired } from './TeamLifecycleDialogs';
 
 function blankForm(team: TeamDetail): CommissionForm {
   const config = team.publishedVersion?.config; const leadRoleId = teamLeadSuggestion(config);
-  return { objective: '', expectedOutput: '', leadRoleId, participantRoleIds: leadRoleId ? [leadRoleId] : [], dataCutoffAt: '', deadlineAt: '', budgetMode: 'cost_and_calls', amount: '', currency: 'USD', callLimit: '', paidRevisionLimit: '0', parallelism: config?.defaults.parallelism ?? 1 };
+  // First-research defaults: every ready role participates and the deadline starts one day out; the question and delivery stay explicit user input.
+  return { objective: '', expectedOutput: '', leadRoleId, participantRoleIds: defaultCommissionParticipants(config, leadRoleId), dataCutoffAt: '', deadlineAt: defaultCommissionDeadline(), budgetMode: 'cost_and_calls', amount: '', currency: 'USD', callLimit: '', paidRevisionLimit: '0', parallelism: config?.defaults.parallelism ?? 1 };
 }
 export function TeamCommissionDialog({ team, open, close, started, zh, online }: { team: TeamDetail; open: boolean; close: () => void; started: (commissionId: string) => void; zh: boolean; online: boolean }) {
   const [form, setForm] = useState<CommissionForm>(() => blankForm(team)); const [customWork, setCustomWork] = useState<TeamWorkItem[] | null>(null); const [sourceIds, setSourceIds] = useState<string[]>([]); const [supervisors, setSupervisors] = useState<string[]>([]);

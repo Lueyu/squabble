@@ -3,9 +3,10 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Archive, Check, Copy, FolderPlus, GitBranch, LayoutGrid, List, Plus, Redo2, Save, Undo2, UsersRound } from 'lucide-react';
+import type { PortfolioAccountSummary } from '@shared/portfolio-workspace.interface';
 import type { TeamDetail, TeamRelation } from '@shared/team-workspace.interface';
 import { teamKeys, teamsApi } from '@/api/teams';
-import { portfolioWorkspaceKeys } from '@/api/portfolio-workspace';
+import { portfolioWorkspaceApi, portfolioWorkspaceKeys } from '@/api/portfolio-workspace';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -24,6 +25,25 @@ import { useTeamDraft } from '@/features/teams/use-team-draft';
 import { addTeamObject, deleteTeamObjects, dissolveDepartment, duplicateTeamObjects, objectParent, relationLabel, restoreTeamVersion, validateTeamGraph, type TeamEditorState } from '@/features/teams/team-graph';
 import '@/features/teams/teams.css';
 
+/** Post quick-start orientation: what already exists, and the next explicit step. It never dispatches research by itself. */
+function TeamQuickStartChecklist({ team, state, accountsData, zh, locateRole, onStartResearch, onDismiss }: { team: TeamDetail; state: TeamEditorState; accountsData: PortfolioAccountSummary[] | undefined; zh: boolean; locateRole: (roleId: string) => void; onStartResearch: () => void; onDismiss: () => void }) {
+  const account = accountsData?.find(item => item.id === team.accountId);
+  const configuredRoles = state.config.roles.filter(role => role.participation === 'enabled' && role.executor);
+  const unconfiguredRole = state.config.roles.find(role => role.participation !== 'enabled' || !role.executor);
+  const researchReady = !!team.binding && !!team.currentVersionId && configuredRoles.length > 0;
+  return <TeamNotice>
+    <div className="team-section-title"><h2>{zh ? '开始使用这个团队' : 'Start using this team'}</h2><Button size="sm" variant="ghost" onClick={onDismiss}>{zh ? '知道了' : 'Got it'}</Button></div>
+    <ul className="team-quick-checklist">
+      <li className={team.currentVersionId ? 'is-done' : ''}><span>{zh ? '模板配置已发布为版本' : 'Template configuration published as version'}</span><span>{team.currentVersionId ? `v${team.currentVersion ?? ''}` : (zh ? '待发布' : 'Pending')}</span></li>
+      <li className={team.binding ? 'is-done' : ''}><span>{zh ? '模拟盘已关联' : 'Simulation account linked'}</span><span>{team.binding ? (account?.name ?? team.accountId) : (zh ? '待关联' : 'Pending')}</span></li>
+      <li className={unconfiguredRole ? '' : 'is-done'}><span>{zh ? '岗位执行连接' : 'Role executor connections'}</span><span>{configuredRoles.length}/{state.config.roles.length}</span></li>
+    </ul>
+    {unconfiguredRole && <div className="team-inline-actions"><Button variant="outline" size="sm" onClick={() => locateRole(unconfiguredRole.id)}>{zh ? `配置岗位「${state.display.roleLabels[unconfiguredRole.id] ?? unconfiguredRole.id}」` : `Configure “${state.display.roleLabels[unconfiguredRole.id] ?? unconfiguredRole.id}”`}</Button><Button asChild variant="ghost" size="sm"><Link to="/settings/models">{zh ? '管理模型连接' : 'Manage connections'}</Link></Button></div>}
+    <div className="team-inline-actions"><Button disabled={!researchReady || !team.capabilities.researchEnabled} onClick={onStartResearch}>{zh ? '发起第一次研究' : 'Start your first research'}</Button>{team.accountId && <Button asChild variant="outline"><Link to={`/holdings?accountId=${encodeURIComponent(team.accountId)}`}>{zh ? '查看资产' : 'View assets'}</Link></Button>}</div>
+    <p className="team-muted team-small">{zh ? '发起研究后，交付、采纳、策略应用与模拟成交仍是分开的确认步骤。' : 'After research starts, delivery, adoption, policy application and simulated fills remain separate confirmation steps.'}</p>
+  </TeamNotice>;
+}
+
 function TeamEditor({ team, zh }: { team: TeamDetail; zh: boolean }) {
   const client = useQueryClient(); const navigate = useNavigate(); const [params, setParams] = useSearchParams();
   const draft = useTeamDraft(team, zh); const state = draft.state; const [selected, setSelected] = useState<string[]>([]); const [locateId, setLocateId] = useState<string | null>(null); const [filter, setFilter] = useState('all');
@@ -35,6 +55,8 @@ function TeamEditor({ team, zh }: { team: TeamDetail; zh: boolean }) {
   const [relation, setRelation] = useState<{ from: string; to: string; kind: TeamRelation['kind']; scope: string } | null>(null);
   const networkReady = draft.online && !draft.needsReconcile;
   const readOnly = team.status === 'archived' || !team.capabilities.workspaceEnabled;
+  const quickStarted = params.get('quickStarted') === '1';
+  const quickAccounts = useQuery({ queryKey: portfolioWorkspaceKeys.accounts, queryFn: portfolioWorkspaceApi.accounts, enabled: quickStarted, retry: false });
   const sources = useQuery({ queryKey: teamKeys.sources(team.id), queryFn: () => teamsApi.sources(team.id), retry: false });
   const versions = useInfiniteQuery({ queryKey: teamKeys.versions(team.id), initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => teamsApi.versions(team.id, pageParam), getNextPageParam: page => page.nextCursor || undefined, enabled: panel === 'versions', retry: false });
   const update = (changes: Record<string, string | null>): void => { const next = new URLSearchParams(params); Object.entries(changes).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); }); setParams(next, { replace: true }); };
@@ -73,6 +95,7 @@ function TeamEditor({ team, zh }: { team: TeamDetail; zh: boolean }) {
   const relationImpacts = state.config.relations.filter(item => selected.includes(item.fromRoleId) || selected.includes(item.toRoleId) || selected.includes(item.id));
   return <section className="team-workspace team-editor-page" aria-label={zh ? '团队组织工作区' : 'Team organization workspace'}><header className="team-editor-header"><div><Button asChild variant="ghost" size="sm"><Link to="/teams"><ArrowLeft size={15} />{zh ? '返回团队' : 'Teams'}</Link></Button><div className="team-editor-identity"><span className="team-avatar">{state.display.avatar ? state.display.avatar.slice(0, 4) : <UsersRound size={25} />}</span><div><h1>{state.display.name}</h1><p>{team.status === 'archived' ? (zh ? '已归档 · 只读历史' : 'Archived · read-only history') : team.currentVersion ? `v${team.currentVersion} ${zh ? '已发布' : 'published'}` : (zh ? '尚未发布' : 'Not published')} · {team.accountId ? (zh ? '已关联模拟盘' : 'Simulation linked') : (zh ? '未关联账户' : 'Unlinked')}</p></div></div></div><div className="team-header-actions">{team.accountId && <Button asChild variant="outline"><Link to={`/holdings?accountId=${encodeURIComponent(team.accountId)}`}>{zh ? '查看资产' : 'View assets'}</Link></Button>}<Button variant="outline" disabled={readOnly || !networkReady || !team.currentVersionId} onClick={() => setBinding(true)}>{team.binding ? (zh ? '账户交接' : 'Account handoff') : (zh ? '关联账户' : 'Link account')}</Button><Button disabled={readOnly || !networkReady || !team.capabilities.researchEnabled || !team.binding || !team.currentVersionId} onClick={() => setCommission(true)}>{zh ? '发起研究' : 'Start research'}</Button></div></header>
     <div className="team-save-strip"><span className={draft.semanticDirty ? 'team-unsaved' : ''}>{zh ? '运行草稿' : 'Execution draft'} r{draft.baseline.semanticRevision} · {draft.semanticDirty ? (zh ? '有未保存改动' : 'unsaved changes') : (zh ? '已保存' : 'saved')}</span><span>{zh ? '布局' : 'Layout'} r{draft.baseline.layoutRevision} · {draft.layoutDirty ? (zh ? '等待保存' : 'pending save') : (zh ? '已保存' : 'saved')}</span><span>{zh ? '展示' : 'Display'} r{draft.baseline.displayRevision} · {draft.displayDirty ? (zh ? '有改动' : 'changed') : (zh ? '已保存' : 'saved')}</span><span>{zh ? '当前发布版本' : 'Published'} {team.currentVersion ? `v${team.currentVersion}` : '—'}</span></div>
+    {quickStarted && <TeamQuickStartChecklist team={team} state={state} accountsData={quickAccounts.data} zh={zh} locateRole={locate} onStartResearch={() => setCommission(true)} onDismiss={() => update({ quickStarted: null })} />}
     {!draft.online && <TeamNotice>{zh ? '当前离线。编辑只在此浏览器会话暂存；不能发布、关联或发起研究。联网后先核对服务器修订。' : 'Offline. Edits are stored only in this browser session. Publishing, binding and research are unavailable. Reconcile server revisions when online.'}</TeamNotice>}
     {readOnly && <TeamNotice>{team.status === 'archived' ? (zh ? '归档团队保留历史。新工作需要复制配置为新团队。' : 'Archived history remains readable. Copy a configuration into a new team for new work.') : (zh ? '当前实例尚未开启团队编辑。' : 'Team editing is disabled on this instance.')}</TeamNotice>}
     {!team.capabilities.researchEnabled && <p className="team-muted team-small">{zh ? '当前实例尚未开启新团队研究，历史检查与取消仍可使用。' : 'New team research is disabled on this instance. Historical checks and cancellation remain available.'}</p>}
