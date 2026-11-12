@@ -76,6 +76,8 @@ test('four starting points preview independently; a lost companion save retains 
   try {
     await React.act(async () => root.render(React.createElement(MemoryRouter, { initialEntries: ['/paper?create=1'] },
       React.createElement(Create, { onClose() {}, initialCompanionId: 'macro' }), React.createElement(Location))));
+    assert.match(document.body.textContent, /Create a simulation account/);
+    assert.match(document.body.textContent, /Account style & seed/);
     await change(document.querySelector('input[placeholder]'), 'Fictional account');
     await React.act(async () => button('Copy real holdings').click());
     await React.act(async () => button('Preview starting point').click());
@@ -110,7 +112,7 @@ test('four starting points preview independently; a lost companion save retains 
     assert.match(document.body.textContent, /simulation account was created/);
     assert.equal(Boolean(button('Refresh preview')), false, 'an already-created account cannot select a different seed');
     t.mock.timers.setTime(Date.parse('2100-01-01T00:00:00Z'));
-    await React.act(async () => button('Retry companion selection').click());
+    await React.act(async () => button('Retry account style').click());
     const createCalls = calls.filter(call => call[0] === 'create');
     assert.equal(createCalls.length, 2);
     assert.deepEqual(createCalls[0], createCalls[1]);

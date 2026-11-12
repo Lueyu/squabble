@@ -56,6 +56,7 @@ is needed for local Docker.
 ### Independent-agent design and implementation · 独立股友设计与实现
 
 - [Independent agents and guided teams / 独立股友与引导式团队](superpowers/specs/2026-11-12-independent-agents-guided-teams-design.zh-CN.md): approved specification implemented by this change. See the [current guide](independent-agents.md) and [verification record](independent-agents-validation.md) for actual checks and limits. 用户已批准并授权实施；默认三步引导、独立股友、团队自动运行、真实 A2A 与运行分析已形成实现，验收结果以验证记录和 PR 为准。RL/RSI 与五人新手实测仍为后续工作。
+- [UI repair design / 股友身份与页面职责整改](ui-regression-repair-design.zh-CN.md), [implementation plan / 实施计划](ui-regression-repair-plan.md) and [validation / 验证记录](ui-regression-repair-validation.md): animal identity, distinct investment/holdings destinations and retained guided setup requests. 本轮更正导航与身份链路；浏览器、CI 和部署状态以独立验证记录为准。
 
 ## Retained workflows and history · 保留流程与历史记录
 

@@ -135,3 +135,125 @@ test('missing cash after a refreshed seed keeps the guided review available afte
   await refreshGuidedTeamReview(f.record, () => {}, f.ports);
   assert.equal(f.record.reviewRequired, undefined); assert.equal(f.record.reviewEpochs.seed, 2);
 });
+
+test('an unknown account receipt is recovered before a changed team can end the old workflow', async () => {
+  const { executeGuidedTeam } = fixture().load('features/teams/guided-team-create.ts');
+  const f = scenario('account'); let saved;
+  await assert.rejects(executeGuidedTeam(f.record, record => { saved = clone(record); }, f.ports));
+  assert.equal(saved.pendingOperation, 'account');
+  f.mutateDetail({ currentVersionId: 'different-version' });
+  await assert.rejects(executeGuidedTeam(saved, record => { saved = clone(record); }, f.ports), error => error.stage === 'changed');
+  assert.equal(saved.accountId, 'account');
+  assert.equal(saved.pendingOperation, undefined);
+  const attempts = f.calls.filter(call => call.name === 'account');
+  assert.deepEqual(attempts[0].input, attempts[1].input);
+});
+
+test('guided team descriptions use the confirmed interface language', async () => {
+  const { executeGuidedTeam } = fixture().load('features/teams/guided-team-create.ts');
+  const f = scenario(); f.record.language = 'zh-CN';
+  await executeGuidedTeam(f.record, () => {}, f.ports);
+  assert.match(f.calls.find(call => call.name === 'create').input.description, /股友/);
+});
+
+test('a definitive conflict while preparing a preview exposes changed-state recovery', async () => {
+  const { executeGuidedTeam } = fixture().load('features/teams/guided-team-create.ts');
+  for (const operation of ['publishPreview', 'bindingPreview', 'agreementPreview']) {
+    const f = scenario();
+    const port = operation === 'agreementPreview' ? f.ports.runs : f.ports.teams;
+    port[operation === 'agreementPreview' ? 'preview' : operation] = async () => { throw { response: { status: 409, data: { code: 'TEAM_REVISION_CONFLICT' } } }; };
+    await assert.rejects(executeGuidedTeam(f.record, () => {}, f.ports), error => error.stage === 'changed');
+    assert.equal(f.record.reviewRequired, 'changed');
+    assert.equal(f.record.pendingOperation, undefined);
+    assert.equal(f.calls.filter(call => call.name === 'create').length, 1);
+  }
+});
+
+test('explicit roster and source authority rejections preserve created resources and allow setup to end', async () => {
+  const f = fixture();
+  const { executeGuidedTeam } = f.load('features/teams/guided-team-create.ts');
+  const storage = f.load('features/teams/guided-team-storage.ts');
+  for (const code of ['AGENT_ARCHIVED', 'AGENT_SCOPE_DENIED', 'AGENT_SOURCE_UNAVAILABLE', 'AGENT_EXECUTOR_UNAVAILABLE', 'AGENT_NOT_FOUND', 'TEAM_SCOPE_REVOKED', 'TEAM_SOURCE_UNAVAILABLE']) {
+    const setup = scenario();
+    const values = new Map();
+    const tab = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+    setup.ports.runs.preview = async () => {
+      throw { response: { status: code === 'AGENT_NOT_FOUND' ? 404 : 422, data: { error: { code } } } };
+    };
+    await assert.rejects(executeGuidedTeam(setup.record, record => storage.saveGuidedProgress('owner', record, tab), setup.ports), error => error.stage === 'changed', code);
+    const saved = storage.readGuidedProgress('owner', tab);
+    assert.equal(saved.teamId, 'team');
+    assert.equal(saved.accountId, 'account');
+    assert.equal(saved.bindingId, 'binding');
+    assert.equal(saved.pendingOperation, undefined);
+    assert.equal(setup.calls.some(call => call.name === 'confirm' || call.name === 'start'), false);
+    assert.equal(storage.endGuidedProgress('owner', saved, tab), true);
+    assert.equal(storage.readGuidedProgress('owner', tab), null);
+    const ended = JSON.parse([...values.values()][0]);
+    assert.equal(ended.key, saved.key);
+    assert.equal(ended.accountId, 'account');
+    assert.equal(ended.bindingId, 'binding');
+  }
+});
+
+test('a definitive roster rejection while confirming clears the pending mutation before allowing a safe end', async () => {
+  const { executeGuidedTeam } = fixture().load('features/teams/guided-team-create.ts');
+  const setup = scenario();
+  setup.ports.runs.confirm = async () => {
+    throw { response: { status: 422, data: { code: 'AGENT_SCOPE_DENIED' } } };
+  };
+  await assert.rejects(executeGuidedTeam(setup.record, () => {}, setup.ports), error => error.stage === 'changed');
+  assert.equal(setup.record.pendingOperation, undefined);
+  assert.equal(setup.record.agreement, undefined);
+  assert.equal(setup.record.accountId, 'account');
+  assert.equal(setup.calls.some(call => call.name === 'start'), false);
+});
+
+test('authority changes are considered only after recovering the exact unknown account receipt', async () => {
+  const { executeGuidedTeam } = fixture().load('features/teams/guided-team-create.ts');
+  const setup = scenario('account');
+  await assert.rejects(executeGuidedTeam(setup.record, () => {}, setup.ports));
+  assert.equal(setup.record.pendingOperation, 'account');
+  setup.ports.runs.preview = async () => {
+    throw { response: { status: 422, data: { code: 'AGENT_ARCHIVED' } } };
+  };
+  await assert.rejects(executeGuidedTeam(setup.record, () => {}, setup.ports), error => error.stage === 'changed');
+  const accounts = setup.calls.filter(call => call.name === 'account');
+  assert.equal(accounts.length, 2);
+  assert.deepEqual(accounts[0].input, accounts[1].input);
+  assert.equal(setup.record.accountId, 'account');
+  assert.equal(setup.record.pendingOperation, undefined);
+});
+
+test('unknown confirmation outcomes retain their exact payload and key even with an authority code in the response', async () => {
+  const { executeGuidedTeam } = fixture().load('features/teams/guided-team-create.ts');
+  for (const error of [new Error('Response lost'), ...[408, 429, 503].map(status => ({ response: { status, data: { code: 'AGENT_ARCHIVED' } } }))]) {
+    const setup = scenario();
+    const confirm = setup.ports.runs.confirm;
+    let first = true;
+    setup.ports.runs.confirm = async (...args) => {
+      const receipt = await confirm(...args);
+      if (first) { first = false; throw error; }
+      return receipt;
+    };
+    await assert.rejects(executeGuidedTeam(setup.record, () => {}, setup.ports));
+    assert.equal(setup.record.pendingOperation, 'agreement');
+    assert.equal(setup.record.reviewRequired, undefined);
+    assert.equal(await executeGuidedTeam(setup.record, () => {}, setup.ports), 'team');
+    const confirmations = setup.calls.filter(call => call.name === 'confirm');
+    assert.equal(confirmations.length, 2);
+    assert.deepEqual(confirmations[0].input, confirmations[1].input);
+  }
+});
+
+test('other definitive validation rejections do not become an authority-change escape hatch', async () => {
+  const { executeGuidedTeam } = fixture().load('features/teams/guided-team-create.ts');
+  for (const code of ['TEAM_PLAN_INVALID', 'TEAM_BUDGET_BLOCKED', 'UNRECOGNIZED_VALIDATION']) {
+    const setup = scenario();
+    const failure = { response: { status: 422, data: { code } } };
+    setup.ports.runs.preview = async () => { throw failure; };
+    await assert.rejects(executeGuidedTeam(setup.record, () => {}, setup.ports), error => error === failure);
+    assert.equal(setup.record.reviewRequired, undefined);
+    assert.equal(setup.record.pendingOperation, undefined);
+  }
+});

@@ -233,6 +233,9 @@ test('companion list uses stable animal fallbacks and offers only account operat
   f.state.queries.set('portfolio-accounts', { data: [{ id: 'legacy', name: 'Legacy companion account', status: 'paused', companionId: null, equityUsd: '12000', cashBalance: '5000', strategyCount: 0, policyRevision: 1 }] });
   const Page = f.load('pages/Paper/SimulationAccountsPage.tsx').default;
   const html = f.render(Page);
+  assert.match(html, /<h1[^>]*>Simulation accounts<\/h1>/);
+  assert.match(html, /New simulation account/);
+  assert.doesNotMatch(html, /My companions|Add companion/);
   assert.match(html, /data-persona="moderator"/);
   assert.match(html, /Delete Legacy companion account/);
   assert.match(html, /View account/);

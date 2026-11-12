@@ -10,17 +10,31 @@ function navigation() {
   return fixture().load('features/navigation/workspace-navigation.ts');
 }
 
-test('four daily destinations and three auxiliary destinations retain legacy deep-link ownership', () => {
+test('every primary destination remains valid as a saved return path', () => {
+  const { workspaceSections, safeReturnPath } = navigation();
+  for (const section of workspaceSections('zh-CN')) {
+    assert.equal(safeReturnPath(section.path), section.path, section.id);
+  }
+  const run = '/telemetry/runs/research%3Aexample?returnTo=%2Ftelemetry';
+  assert.equal(safeReturnPath(run), run);
+});
+
+test('investment and holdings are distinct primary roots while retained deep links keep ownership', () => {
   const { workspaceSections, resolveWorkspaceRoute } = navigation();
-  assert.deepEqual(Array.from(workspaceSections('en'), row => row.path),
-    ['/', '/friends', '/teams', '/research', '/data', '/telemetry', '/settings']);
-  assert.deepEqual(Array.from(workspaceSections('en').filter(row => row.group === 'daily'), row => row.path), ['/', '/friends', '/teams', '/research']);
+  const primary = workspaceSections('en');
+  assert.ok(primary.some(row => row.path === '/' && row.id === 'overview'));
+  assert.ok(primary.some(row => row.path === '/holdings' && row.id === 'assets'));
+  assert.ok(primary.some(row => row.path === '/friends' && row.id === 'friends'));
+  assert.equal(new Set(primary.map(row => row.path)).size, primary.length);
   assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').section, 'telemetry');
   assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').parent, '/telemetry?view=runs');
   assert.equal(resolveWorkspaceRoute('/paper/account-1/strategies', 'en').parent, '/paper/account-1');
   assert.equal(resolveWorkspaceRoute('/teams/team-a', 'en').section, 'teams');
   assert.equal(resolveWorkspaceRoute('/teams/team-a', 'en').parent, '/teams');
-  assert.equal(resolveWorkspaceRoute('/holdings', 'zh-CN').title, '资产与账户');
+  assert.equal(resolveWorkspaceRoute('/holdings', 'zh-CN').title, '持仓');
+  assert.equal(resolveWorkspaceRoute('/holdings', 'en').kind, 'root');
+  assert.equal(resolveWorkspaceRoute('/holdings', 'en').parent, '/holdings');
+  assert.equal(resolveWorkspaceRoute('/', 'en').section, 'overview');
   assert.equal(resolveWorkspaceRoute('/transactions', 'en').section, 'assets');
   assert.equal(resolveWorkspaceRoute('/watchlist', 'zh-CN').section, 'assets');
   assert.equal(resolveWorkspaceRoute('/analysis/reports/report-1', 'en').section, 'daily');
@@ -44,12 +58,24 @@ test('return destinations preserve internal query context and never leave the wo
   const { safeReturnPath, returnDestination } = navigation();
   const href = '/?period=1M&metric=return&accounts=a%2Cb#chart';
   assert.equal(safeReturnPath(href), href);
+  assert.equal(safeReturnPath('/friends?returnTo=%2Fteams%3Fguided%3D1'), '/friends?returnTo=%2Fteams%3Fguided%3D1');
   for (const invalid of ['https://evil.test', '//evil.test', '/\\evil.test', 'javascript:alert(1)', '/login', null]) {
     assert.equal(safeReturnPath(invalid), null);
   }
   assert.equal(returnDestination([], 9, href, '/paper').path, href);
   assert.equal(returnDestination([], 9, '//evil.test', '/paper').path, '/paper');
   assert.equal(returnDestination([{ key: 'old', index: 8, path: href, scrollTop: 460 }], 9, null, '/paper').kind, 'back');
+});
+
+test('search reaches holdings, saved daily reports and simulation accounts in either language', () => {
+  const { workspaceDestinations } = navigation();
+  for (const language of ['en', 'zh-CN']) {
+    const destinations = workspaceDestinations(language);
+    for (const path of ['/holdings', '/daily', '/paper', '/friends'])
+      assert.ok(destinations.some(row => row.path === path), `${language} search must include ${path}`);
+    assert.equal(new Set(destinations.map(row => row.path)).size, destinations.length);
+  }
+  assert.equal(workspaceDestinations('zh-CN').find(row => row.path === '/paper').label, '模拟账户');
 });
 
 test('back restores the original page key and forward branches discard obsolete visits', () => {

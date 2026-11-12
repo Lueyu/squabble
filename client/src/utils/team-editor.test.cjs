@@ -108,3 +108,22 @@ test('a placeholder default lead is never preselected as a disabled executing pa
   config.roles.find(role => role.id === 'lead').executor = { executionMode: 'local', localAgentId: 'native', settings: {} };
   assert.equal(teamLeadSuggestion(config), 'lead');
 });
+
+test('organization views keep a linked person’s animal and name separate from a changed seat label', () => {
+  const f = fixture();
+  const value = state();
+  value.config.roles[0].agentId = 'cat'; value.config.roles[1].agentId = 'bear';
+  value.display.roleLabels.analyst = 'Manager'; value.display.roleLabels.lead = 'Challenger';
+  const profiles = [{ id: 'cat', name: 'Cashflow cat', specialty: 'Cash flow', avatar: 'technical' }, { id: 'bear', name: 'Evidence bear', specialty: 'Check evidence', avatar: 'risk' }];
+  f.state.queries.set('agent-roster', { data: { items: profiles } });
+  const { toTeamFlow } = f.load('features/teams/team-flow-adapter.ts');
+  const nodes = toTeamFlow(value, [], 'all', false, profiles).nodes;
+  assert.equal(nodes.find(node => node.id === 'analyst').data.avatar, 'technical');
+  assert.equal(nodes.find(node => node.id === 'analyst').data.agentName, 'Cashflow cat');
+  assert.equal(nodes.find(node => node.id === 'lead').data.avatar, 'risk');
+  const { TeamOutline } = f.load('features/teams/TeamOutline.tsx');
+  const html = f.render(TeamOutline, { state: value, selected: [], select() {}, edit() {}, locate() {}, zh: false, readOnly: false });
+  assert.match(html, /Cashflow cat/); assert.match(html, /Evidence bear/);
+  assert.match(html, /data-persona="technical"/); assert.match(html, /data-persona="risk"/);
+  assert.match(html, /Manager/);
+});

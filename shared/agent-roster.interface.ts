@@ -1,6 +1,7 @@
 import type { CouncilMember, CouncilRole } from './council.interface';
 import type { NativeAgentConfiguration } from './local-agents.interface';
 import type { ResearchSourceRef } from './team-workspace.interface';
+import type { AnimalAvatarId } from './animal-avatar';
 
 /** Stable people are independent of the reusable execution connection. */
 export type AgentTemplateId = 'financials' | 'valuation' | 'bear' | 'risk' | 'moderator';
@@ -21,18 +22,21 @@ export interface AgentVersion {
   id: string; agentId: string; version: number; config: AgentVersionConfig; createdAt: string;
 }
 export interface AgentProfile {
+  avatar: AnimalAvatarId;
   id: string; name: string; specialty: string; description: string; status: 'active' | 'archived';
   revision: number; currentVersionId: string; currentVersion: AgentVersion;
   availability: 'configured' | 'unavailable'; createdAt: string; updatedAt: string;
 }
 export interface AgentTemplate {
+  avatar: AnimalAvatarId;
   id: AgentTemplateId; name: string; specialty: string; description: string; delivery: string;
-  nameEn: string; specialtyEn: string; descriptionEn: string; deliveryEn: string; instructions: string;
+  nameEn: string; specialtyEn: string; descriptionEn: string; deliveryEn: string; instructions: string; instructionsEn: string;
   /** Read-only declarations are ceilings; live owner grants remain separate. */
   allowedToolIds: readonly string[];
 }
 export interface AgentRosterPage { items: AgentProfile[]; nextCursor: string | null }
 export interface CreateAgentInput {
+  avatar?: AnimalAvatarId;
   requestKey: string; templateId?: AgentTemplateId; name?: string; specialty?: string; description?: string;
   instructions?: string; executor: AgentExecutor; allowedToolIds?: string[]; allowedSources?: ResearchSourceRef[];
   preferences?: Partial<AgentPreferences>;
@@ -41,6 +45,7 @@ export interface UpdateAgentInput extends Omit<Partial<CreateAgentInput>, 'reque
   requestKey: string; expectedRevision: number;
 }
 export interface AddRecommendedAgentsInput {
+  language?: 'zh-CN' | 'en';
   requestKey: string; executor: AgentExecutor; templateIds?: AgentTemplateId[];
 }
 export interface ArchiveAgentInput { requestKey: string; expectedRevision: number }

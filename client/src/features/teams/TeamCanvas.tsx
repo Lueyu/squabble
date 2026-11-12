@@ -2,12 +2,15 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Background, BackgroundVariant, Controls, Handle, MiniMap, NodeResizer, Panel, Position, ReactFlow, ReactFlowProvider, SelectionMode, applyNodeChanges, useReactFlow, type Connection, type NodeProps } from '@xyflow/react';
 import { ChevronDown, ChevronRight, Folder, Network, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useQuery } from '@tanstack/react-query';
+import { agentRosterApi } from '@/api/agent-roster';
+import { AgentIdentity } from '@/features/agent-roster/AgentIdentity';
 import { absolutePosition, departmentDescendants, moveTeamObjects, type TeamEditorState } from './team-graph';
 import { toTeamFlow, type TeamFlowNode } from './team-flow-adapter';
 import '@xyflow/react/dist/style.css';
 
 const RoleNode = memo(function RoleNode({ data, selected }: NodeProps<TeamFlowNode>) {
-  return <div className={`team-role-node${selected ? ' is-selected' : ''}`}><Handle type="target" position={Position.Top} /><div className="team-role-title"><span className="team-node-avatar"><UserRound size={19} /></span><strong>{data.label}</strong></div><p>{data.subtitle}</p><div className="team-node-badges">{data.placeholder && <span>○ {data.zh ? '待配置 / 不参与' : 'Placeholder / inactive'}</span>}{data.shared && <span><Network size={11} /> {data.zh ? '共用连接' : 'Shared connection'}</span>}</div><Handle type="source" position={Position.Bottom} /></div>;
+  return <div className={`team-role-node${selected ? ' is-selected' : ''}`}><Handle type="target" position={Position.Top} /><div className="team-role-title">{data.agentName ? <AgentIdentity avatar={data.avatar} name={data.agentName} avatarClassName="size-9" /> : <><span className="team-node-avatar"><UserRound size={19} /></span><strong>{data.label}</strong></>}</div>{data.agentName && data.agentName !== data.label && <p className="text-xs">{data.label}</p>}<p>{data.subtitle}</p><div className="team-node-badges">{data.placeholder && <span>○ {data.zh ? '待配置 / 不参与' : 'Placeholder / inactive'}</span>}{data.shared && <span><Network size={11} /> {data.zh ? '共用连接' : 'Shared connection'}</span>}</div><Handle type="source" position={Position.Bottom} /></div>;
 });
 const DepartmentNode = memo(function DepartmentNode({ id, data, selected }: NodeProps<TeamFlowNode>) {
   return <><NodeResizer isVisible={selected && !data.collapsed && !!data.onResize} minWidth={280} minHeight={180} onResizeEnd={(_, size) => data.onResize?.(id, size.width, size.height)} /><div className={`team-department-node${selected ? ' is-selected' : ''}`}><div className="team-department-title"><Folder size={17} /><strong>{data.label}</strong><Button variant="ghost" size="icon" className="nodrag nopan team-department-toggle" aria-label={`${data.collapsed ? (data.zh ? '展开' : 'Expand') : (data.zh ? '折叠' : 'Collapse')} ${data.label}`} disabled={!data.onToggle} onClick={event => { event.stopPropagation(); data.onToggle?.(id); }}>{data.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}</Button></div>{!data.collapsed && <p>{data.subtitle}</p>}</div></>;
@@ -16,11 +19,12 @@ const nodeTypes = { teamRole: RoleNode, teamDepartment: DepartmentNode };
 interface TeamCanvasProps { state: TeamEditorState; selected: string[]; select: (ids: string[]) => void; edit: (state: TeamEditorState) => void; connect: (from: string, to: string) => void; filter: string; zh: boolean; readOnly: boolean; locateId: string | null; fitInitial: boolean }
 function Canvas({ state, selected, select, edit, connect, filter, zh, readOnly, locateId, fitInitial }: TeamCanvasProps) {
   const flow = useReactFlow<TeamFlowNode>();
-  const adapted = toTeamFlow(state, selected, filter, zh);
+  const roster = useQuery({ queryKey: ['agent-roster'], queryFn: agentRosterApi.list, retry: false });
+  const adapted = toTeamFlow(state, selected, filter, zh, roster.data?.items);
   const [nodes, setNodes] = useState(adapted.nodes);
   const nodesRef = useRef(nodes); nodesRef.current = nodes;
   const [target, setTarget] = useState<string | null>(null);
-  useEffect(() => { setNodes(toTeamFlow(state, selected, filter, zh).nodes.map(node => ({ ...node, data: { ...node.data, onResize: readOnly ? undefined : (id: string, width: number, height: number) => edit({ ...state, layout: { ...state.layout, positions: { ...state.layout.positions, [id]: { ...state.layout.positions[id], width, height } } } }), onToggle: readOnly ? undefined : (id: string) => edit({ ...state, layout: { ...state.layout, collapsedDepartmentIds: state.layout.collapsedDepartmentIds.includes(id) ? state.layout.collapsedDepartmentIds.filter(value => value !== id) : [...state.layout.collapsedDepartmentIds, id] } }) } }))); }, [state, selected, filter, zh]);
+  useEffect(() => { setNodes(toTeamFlow(state, selected, filter, zh, roster.data?.items).nodes.map(node => ({ ...node, data: { ...node.data, onResize: readOnly ? undefined : (id: string, width: number, height: number) => edit({ ...state, layout: { ...state.layout, positions: { ...state.layout.positions, [id]: { ...state.layout.positions[id], width, height } } } }), onToggle: readOnly ? undefined : (id: string) => edit({ ...state, layout: { ...state.layout, collapsedDepartmentIds: state.layout.collapsedDepartmentIds.includes(id) ? state.layout.collapsedDepartmentIds.filter(value => value !== id) : [...state.layout.collapsedDepartmentIds, id] } }) } }))); }, [state, selected, filter, zh, roster.data]);
   useEffect(() => { if (!locateId) return; const p = absolutePosition(state, locateId); void flow.setCenter(p.x + 105, p.y + 60, { zoom: 1, duration: 250 }); }, [locateId, flow]);
   const candidate = (node: TeamFlowNode): string | null => {
     const current = { ...state, layout: { ...state.layout, positions: Object.fromEntries(nodesRef.current.map(n => [n.id, { ...state.layout.positions[n.id], ...n.position }])) } };

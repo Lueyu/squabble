@@ -1,9 +1,11 @@
 import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import type { AgentMemoryScope, AgentVersionConfig } from '../../shared/agent-roster.interface';
 import type { ResearchSourceRef } from '../../shared/team-workspace.interface';
+import type { AnimalAvatarId } from '../../shared/animal-avatar';
 
 const time = (name: string) => timestamp(name, { withTimezone: true, precision: 3 }).notNull().defaultNow();
 export const agentRosterProfiles = pgTable('agent_roster_profiles', {
+  avatar: text('avatar').$type<AnimalAvatarId>().notNull().default('technical'),
   id: uuid('id').primaryKey().defaultRandom(), ownerId: text('owner_id').notNull(), name: text('name').notNull(), specialty: text('specialty').notNull(),
   description: text('description').notNull().default(''), status: text('status').notNull().default('active'), revision: integer('revision').notNull().default(1),
   currentVersionId: uuid('current_version_id').notNull(), createdAt: time('created_at'), updatedAt: time('updated_at'),

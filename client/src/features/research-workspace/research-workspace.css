@@ -54,6 +54,81 @@
   display: none;
 }
 
+.research-participant-picker {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+}
+
+.research-participant-picker > summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 6px;
+}
+
+.research-participant-picker > summary::-webkit-details-marker {
+  display: none;
+}
+
+.research-participant-picker > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+
+.research-participant-heading,
+.research-participant-adjust {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.research-participant-heading {
+  justify-content: space-between;
+  color: var(--muted-foreground);
+}
+
+.research-participant-adjust {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.research-participant-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 12px;
+}
+
+.research-participant-selection > span {
+  gap: 6px;
+}
+
+.research-participant-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 8px;
+  max-height: min(36dvh, 320px);
+  overflow-y: auto;
+  margin-top: 12px;
+  padding: 2px;
+}
+
+.research-participant-option {
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.research-participant-mode {
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
 .research-history-list {
   display: flex;
   flex-direction: column;
@@ -300,6 +375,10 @@
   height: 32px;
 }
 
+.research-participant-picker[open] .research-participant-adjust svg {
+  transform: rotate(180deg);
+}
+
 .research-interview .interview-summary {
   position: static;
 }
@@ -403,6 +482,14 @@
   .research-workspace-shell .research-composer {
     width: calc(100% - 24px);
     margin: 12px;
+  }
+
+  .research-workspace-shell [data-research-empty] {
+    padding-block: 12px;
+  }
+
+  .research-workspace-shell [data-research-empty] > div:first-child {
+    display: none;
   }
 
   .research-skill-menu button {

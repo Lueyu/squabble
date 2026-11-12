@@ -33,13 +33,13 @@ export default function AccountCompanionEditor({ account, onClose }: { account: 
   });
   return <Dialog open onOpenChange={open => { if (!open && !mutation.isPending) onClose(); }}>
     <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
-      <DialogHeader><DialogTitle>{zh ? '选择陪你观察的股友' : 'Choose your companion'} · {account.name}</DialogTitle>
-        <DialogDescription>{zh ? '选择动物形象。资金、持仓和已确认的执行策略保持原样；研究成员在设置中单独配置。' : 'Choose an animal identity. Funds, holdings and confirmed strategies stay intact; configure research members separately in Settings.'}</DialogDescription>
+      <DialogHeader><DialogTitle>{zh ? '选择模拟账户风格' : 'Choose an account style'} · {account.name}</DialogTitle>
+        <DialogDescription>{zh ? '为模拟账户选择动物形象。独立股友在「我的股友」中管理。' : 'Choose an animal style for this simulation account. Manage independent agents in My agents.'}</DialogDescription>
       </DialogHeader>
       <CompanionPicker value={selected} onChange={setSelected} zh={zh} expanded disabled={mutation.isPending} />
-      {mutation.isError && <p role="alert" className="text-sm text-destructive">{zh ? '股友尚未更新。如果另一处已修改，请关闭后重新选择；否则可以重试。' : 'The companion was not updated. Reopen if it changed elsewhere, or retry.'}</p>}
+      {mutation.isError && <p role="alert" className="text-sm text-destructive">{zh ? '账户风格尚未更新。如果另一处已修改，请关闭后重新选择；否则可以重试。' : 'The account style was not updated. Reopen if it changed elsewhere, or retry.'}</p>}
       <footer className="flex justify-end gap-2"><Button variant="ghost" disabled={mutation.isPending} onClick={onClose}>{zh ? '取消' : 'Cancel'}</Button>
-        <Button disabled={!selected || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? zh ? '正在保存…' : 'Saving…' : zh ? '保存股友' : 'Save companion'}</Button></footer>
+        <Button disabled={!selected || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? zh ? '正在保存…' : 'Saving…' : zh ? '保存账户风格' : 'Save account style'}</Button></footer>
     </DialogContent>
   </Dialog>;
 }

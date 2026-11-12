@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { TeamListResult } from '@shared/team-workspace.interface';
 import { portfolioWorkspaceApi, portfolioWorkspaceKeys } from '@/api/portfolio-workspace';
 import http from '@/api/http';
+import { useSimpleExperience } from '@/hooks/use-simple-experience';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { readAssetAccount, assetHref, holdingsHref } from './account-context';
@@ -31,6 +32,7 @@ const accountViews = new Map<string, string>();
 
 export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'holdings' | 'transactions' }) {
   const { t } = useTranslation();
+  const { enabled: simple } = useSimpleExperience();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -66,10 +68,10 @@ export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'hold
         {id && id !== 'real' && <p className="text-xs text-muted-foreground">{t('assets.simulation')} · {selected?.name ?? id} · {teams.isPending ? t('common.loading') : teams.isError ? t('assets.teamUnavailable') : team?.name ?? t('assets.unbound')}{selected?.status === 'archived' ? ` · ${t('assets.archived')}` : ''}</p>}
         {accounts.isError && <p role="status" className="text-xs text-destructive">{t('assets.accountListUnavailable')}</p>}
       </div>
-      {id && <div className="flex flex-wrap gap-2">
-        <Button asChild size="sm" variant="outline"><Link to={assetHref(mode === 'holdings' ? '/transactions' : '/holdings', id)} state={{ returnTo }}>{t(mode === 'holdings' ? 'assets.ledger' : 'assets.viewAssets')}</Link></Button>
+      {id && (!simple || team) && <div className="flex flex-wrap gap-2">
+        {!simple && <><Button asChild size="sm" variant="outline"><Link to={assetHref(mode === 'holdings' ? '/transactions' : '/holdings', id)} state={{ returnTo }}>{t(mode === 'holdings' ? 'assets.ledger' : 'assets.viewAssets')}</Link></Button>
         <Button asChild size="sm" variant="ghost"><Link to={assetHref('/watchlist', id, new URLSearchParams({ returnTo }).toString())} state={{ returnTo }}>{t('assets.watchlist')}</Link></Button>
-        {id === 'real' && <Button asChild size="sm" variant="ghost"><Link to="/import?accountId=real" state={{ returnTo }}>{t('assets.import')}</Link></Button>}
+        {id === 'real' && <Button asChild size="sm" variant="ghost"><Link to="/import?accountId=real" state={{ returnTo }}>{t('assets.import')}</Link></Button>}</>}
         {team && <Button asChild size="sm" variant="ghost"><Link to={`/teams/${encodeURIComponent(team.id)}`} state={{ returnTo }}>{t('assets.openTeam')}</Link></Button>}
       </div>}
     </section>

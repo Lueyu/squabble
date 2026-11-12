@@ -10,14 +10,18 @@ test('sign-out clears only team recovery drafts and team creation input', () => 
     ['squabble.team-draft.team-a', 'private role instructions'],
     ['squabble.team-draft.team-b', 'another private draft'],
     ['squabble.team-create', 'private creation input'],
+    ['squabble.team-guided-create.owner-a.draft', 'private guided fields'],
+    ['squabble.team-guided-create.owner-b.progress', 'private creation receipt'],
+    ['squabble.team-guided-create.owner-a.ended.receipt', 'private ended receipt'],
     ['squabble.team-draft-preference', 'preserved preference'],
     ['squabble.team-create-help', 'preserved help state'],
+    ['squabble.team-guided-create-help', 'preserved guided help'],
     ['squabble.interview-composer.other', 'unrelated workspace draft'],
     ['navigation-visits', 'unrelated navigation state'],
   ]);
   const storage = { get length() { return values.size; }, key(index) { return [...values.keys()][index] ?? null; }, removeItem(key) { values.delete(key); } };
   clearTeamDraftStorage(storage);
-  assert.deepEqual([...values.keys()], ['squabble.team-draft-preference', 'squabble.team-create-help', 'squabble.interview-composer.other', 'navigation-visits']);
+  assert.deepEqual([...values.keys()], ['squabble.team-draft-preference', 'squabble.team-create-help', 'squabble.team-guided-create-help', 'squabble.interview-composer.other', 'navigation-visits']);
   const layout = fs.readFileSync(path.resolve(__dirname, '../components/Layout.tsx'), 'utf8');
   assert.match(layout, /clearTeamDraftStorage\(window\.sessionStorage\)/, 'the actual sign-out handler invokes the scoped cleanup');
 });

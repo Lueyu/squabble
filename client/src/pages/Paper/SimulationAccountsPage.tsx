@@ -84,18 +84,18 @@ export default function SimulationAccountsPage() {
       <header className="portfolio-page-header">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-[26px]">
-            {zh ? '我的股友' : 'My companions'}
+            {zh ? '模拟账户' : 'Simulation accounts'}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {zh
-              ? '每位股友独立管理一个模拟账户，想法与行动都可追溯。'
-              : 'Each companion manages an independent simulation with traceable ideas and actions.'}
+              ? '独立记录每个模拟账户的持仓、策略和成交，与真实账户分开比较。'
+              : 'Review holdings, strategies and trades for each simulation, separately from your real account.'}
           </p>
         </div>
-        <div className="companion-page-actions flex flex-wrap gap-2"><Button variant="outline" onClick={() => setLibrary(true)}>{zh ? '认识股友' : 'Meet the companions'}</Button>
+        <div className="companion-page-actions flex flex-wrap gap-2"><Button variant="outline" onClick={() => setLibrary(true)}>{zh ? '账户风格' : 'Account styles'}</Button>
         <Button onClick={() => setCreating(true)}>
           <Plus size={16} />
-          {zh ? '添加股友' : 'Add companion'}
+          {zh ? '新建模拟账户' : 'New simulation account'}
         </Button></div>
       </header>
       {(strategyId || orderId) && (
@@ -176,8 +176,8 @@ export default function SimulationAccountsPage() {
           </h2>
           <p className="max-w-md text-sm leading-7 text-muted-foreground">
             {zh
-              ? '选择股友与起点，核对持仓和现金，再配置策略组合。'
-              : 'Choose a companion and starting point, review holdings and cash, then configure your strategies.'}
+              ? '选择账户风格与起点，核对持仓和现金，再配置策略组合。'
+              : 'Choose an account style and starting point, review holdings and cash, then configure your strategies.'}
           </p>
           {!items.length && (
             <Button onClick={() => setCreating(true)}>
@@ -251,10 +251,10 @@ export default function SimulationAccountsPage() {
           : 'Archived accounts retain valuation records, holdings snapshots, confirmed strategies and trade history.'}
       </p>
       <Dialog open={library} onOpenChange={setLibrary}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl">
-        <DialogHeader><DialogTitle>{zh ? '找到合拍的动物股友' : 'Find your animal companion'}</DialogTitle>
-          <DialogDescription>{zh ? '每种视角都有长处，也有盲点。动物形象不自动修改研究成员或交易规则。' : 'Every perspective has strengths and blind spots. Animal identity does not change research members or trading rules.'}</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{zh ? '选择模拟账户风格' : 'Choose a simulation account style'}</DialogTitle>
+          <DialogDescription>{zh ? '账户风格是模拟账户的展示信息。独立股友在「我的股友」中管理。' : 'Account styles describe simulation accounts. Manage independent agents in My agents.'}</DialogDescription></DialogHeader>
         <CompanionPicker value={selectedCompanion} onChange={setSelectedCompanion} zh={zh} expanded />
-        <footer className="flex justify-end"><Button onClick={() => { setLibrary(false); setCreating(true); }}>{zh ? '和这位股友新建模拟仓' : 'Create a simulation with this companion'}</Button></footer>
+        <footer className="flex justify-end"><Button onClick={() => { setLibrary(false); setCreating(true); }}>{zh ? '按此风格新建模拟账户' : 'Create an account with this style'}</Button></footer>
       </DialogContent></Dialog>
       {creating && <CreateSimulationAccount onClose={closeCreate} initialCompanionId={selectedCompanion}
         initialOrigin={params.get('seedReal') === '1' ? 'holdings' : 'cash'} />}

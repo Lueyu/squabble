@@ -213,7 +213,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft size={14} />
-            {zh ? '我的股友' : 'My companions'}
+            {zh ? '模拟账户' : 'Simulation accounts'}
           </Link>
           <Select
             value={accountId}
@@ -266,7 +266,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline"><Link to={holdingsHref(accountId)}>{zh ? '查看资产' : 'View assets'}</Link></Button>
-            {data.status !== 'archived' && <Button variant="outline" onClick={() => setChoosingCompanion(true)}>{data.companionId ? zh ? '更换股友形象' : 'Change companion' : zh ? '选择股友' : 'Choose companion'}</Button>}
+            {data.status !== 'archived' && <Button variant="outline" onClick={() => setChoosingCompanion(true)}>{data.companionId ? zh ? '更换账户风格' : 'Change account style' : zh ? '选择账户风格' : 'Choose account style'}</Button>}
             <AccountStatusControl account={data} />
             {data.status !== 'archived' && (
               <Button asChild>
@@ -331,7 +331,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
           <p>{investment.actions.length ? zh ? `此账户保留了 ${investment.actions.length} 条当前可读取的模拟执行记录。查看状态、原因和对应策略。` : `${investment.actions.length} available simulation execution records. Review their status, reasons and strategies.` : zh ? '从一个问题开始，逐步核对规则。未确认并应用策略前，模拟仓不会自动买卖。' : 'Start with a question and review the rules step by step. This account does not trade automatically until a strategy is confirmed and applied.'}</p></div>
         <div className="flex flex-wrap gap-2">{investment.actions.length > 0 && <Button variant="outline" onClick={() => setTab('trades')}>{zh ? '查看模拟动态' : 'View activity'}</Button>}
           <Button asChild variant="outline"><Link to={`/strategies/new?accountId=${encodeURIComponent(accountId)}`}>{zh ? '一起聊出策略' : 'Clarify a strategy'}</Link></Button>
-          <Button asChild variant="ghost"><Link to={`/daily?accountId=${encodeURIComponent(accountId)}`}>{zh ? '阅读股友日报' : 'Read account daily'}</Link></Button></div>
+          <Button asChild variant="ghost"><Link to={`/daily?accountId=${encodeURIComponent(accountId)}`}>{zh ? '阅读账户日报' : 'Read account daily'}</Link></Button></div>
       </section>
       <PortfolioComparisonPanel accountIds={['real', accountId]} compact />
       <Tabs value={tab} onValueChange={setTab}>

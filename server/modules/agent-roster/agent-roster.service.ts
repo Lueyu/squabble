@@ -109,7 +109,7 @@ export class AgentRosterService {
 
   private async view(tx: RosterDb, owner: string, row: ProfileRow): Promise<AgentProfile> {
     const version = await this.versionRow(tx, owner, row.id, row.currentVersionId);
-    return { id: row.id, name: row.name, specialty: row.specialty, description: row.description, status: row.status as AgentProfile['status'], revision: row.revision,
+    return { id: row.id, avatar: row.avatar, name: row.name, specialty: row.specialty, description: row.description, status: row.status as AgentProfile['status'], revision: row.revision,
       currentVersionId: row.currentVersionId, currentVersion: versionView(version), availability: row.status === 'active' && await this.executorAvailable(tx, owner, version.config.executor) ? 'configured' : 'unavailable',
       createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
   }
@@ -134,7 +134,7 @@ export class AgentRosterService {
     const prepared = prepareAgent(input), id = randomUUID(), versionId = randomUUID();
     await this.assertExecutorReference(tx, owner, prepared.config.executor);
     await this.assertSources(tx, owner, prepared.config.allowedSources);
-    const [row] = await tx.insert(profiles).values({ id, ownerId: owner, name: prepared.name, specialty: prepared.specialty, description: prepared.description, currentVersionId: versionId }).returning();
+    const [row] = await tx.insert(profiles).values({ id, ownerId: owner, avatar: prepared.avatar, name: prepared.name, specialty: prepared.specialty, description: prepared.description, currentVersionId: versionId }).returning();
     await tx.insert(versions).values({ id: versionId, ownerId: owner, agentId: id, version: 1, config: prepared.config });
     return this.view(tx, owner, row);
   }
@@ -148,7 +148,7 @@ export class AgentRosterService {
     const request = parseRoster(recommendedSchema, input);
     return this.mutate(owner, 'recommended', request, null, async tx => {
       const items: AgentProfile[] = [];
-      for (const id of request.templateIds ?? AGENT_TEMPLATES.map(t => t.id)) items.push(await this.insert(tx, owner, { templateId: id, executor: request.executor }));
+      for (const id of request.templateIds ?? AGENT_TEMPLATES.map(t => t.id)) items.push(await this.insert(tx, owner, { templateId: id, executor: request.executor, preferences: { language: request.language ?? 'zh-CN' } }));
       return { items };
     });
   }
@@ -161,14 +161,14 @@ export class AgentRosterService {
       const config = { ...prior.config, ...(request.templateId ? { templateId: request.templateId } : {}), ...(request.instructions ? { instructions: request.instructions } : {}),
         ...(request.executor ? { executor: request.executor } : {}), ...(request.allowedToolIds ? { allowedToolIds: request.allowedToolIds.map(canonicalAgentToolId) } : {}), ...(request.allowedSources ? { allowedSources: request.allowedSources } : {}),
         preferences: { ...prior.config.preferences, ...request.preferences } };
-      await this.assertExecutorReference(tx, owner, config.executor);
-      await this.assertSources(tx, owner, config.allowedSources);
       let versionId = prior.id;
       if (rosterHash(config) !== rosterHash(prior.config)) {
+        await this.assertExecutorReference(tx, owner, config.executor);
+        await this.assertSources(tx, owner, config.allowedSources);
         versionId = randomUUID();
         await tx.insert(versions).values({ id: versionId, ownerId: owner, agentId: id, version: prior.version + 1, config });
       }
-      const [updated] = await tx.update(profiles).set({ name: request.name ?? row.name, specialty: request.specialty ?? row.specialty, description: request.description ?? row.description,
+      const [updated] = await tx.update(profiles).set({ avatar: request.avatar ?? row.avatar, name: request.name ?? row.name, specialty: request.specialty ?? row.specialty, description: request.description ?? row.description,
         currentVersionId: versionId, revision: row.revision + 1, updatedAt: new Date() }).where(and(eq(profiles.ownerId, owner), eq(profiles.id, id))).returning();
       return this.view(tx, owner, updated);
     });

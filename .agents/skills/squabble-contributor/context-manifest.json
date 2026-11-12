@@ -4,9 +4,9 @@
   "verifiedCommit": "7de30fb357a81078d33f0954518bfc3710435b2a",
   "verifiedAt": "2026-11-07",
   "reviewedAgainst": {
-    "commit": "74f3744c69b34fbfff0b38eee921267348806da3",
+    "commit": "261f07ce17b80fef7dfe525725a711e72b0f63de",
     "workingTreeChanges": true,
-    "reviewedAt": "2026-11-12",
+    "reviewedAt": "2026-11-13",
     "scope": [
       "V4 eight-destination navigation, safe return and scroll restoration; compatible legacy routes",
       "Persistent strategy interviews with exact wording, explicit acceptance, saved review and disabled account staging",
@@ -21,7 +21,8 @@
       "Agent tooling: durable single-step runtime and controlled/Deep Agents drivers; outbound owner-approved MCP/provider connections, editable write previews, immutable datasets/private artifacts, local parser jobs, run browsers and isolated fixed-template analytics",
       "Local Agent diagnostics: pure owner/source-scoped snapshots, native/Companion process evidence, bounded public activity, structured failures and separate acceptance/publication; flows3–5 retain financial and source authority",
       "Team workspace: organization/version/binding/commission/source/decision contracts, neutral scope fences and read-only account assets; implementation validation recorded separately",
-      "Persistent roster identity/version and isolated memory, guided holdings-first setup, bounded standing team agreement/system actor, real A2A and exact telemetry attribution; migrations62–65"
+      "Persistent roster identity/version and isolated memory, guided holdings-first setup, bounded standing team agreement/system actor, real A2A and exact telemetry attribution; migrations62–65",
+      "UI repair: stable animal identity and frozen conversation/commission display, shared saved working instructions/preferences, distinct investment/holdings navigation, import continuation and owner-partitioned guided drafts with exact pending-payload replay; migration66"
     ]
   },
   "areas": [
@@ -586,13 +587,20 @@
         "scripts/db/62_agent_roster.sql",
         "scripts/db/63_team_runs.sql",
         "scripts/db/64_a2a_agents_runtime.sql",
-        "scripts/db/65_agent_telemetry_identity.sql"
+        "scripts/db/65_agent_telemetry_identity.sql",
+        "scripts/db/66_agent_animal_identity.sql",
+        "shared/animal-avatar.ts",
+        "shared/agent-working-instructions.ts"
       ],
       "entrypoints": [
         "server/modules/agent-roster/agent-roster.service.ts",
         "server/modules/team-runs/team-run.service.ts",
         "server/modules/a2a-agents/a2a-agents.service.ts",
-        "client/src/features/teams/guided-team-create.ts"
+        "client/src/features/teams/guided-team-create.ts",
+        "client/src/features/agent-roster/AgentEditorDialog.tsx",
+        "client/src/features/agent-roster/AgentIdentity.tsx",
+        "client/src/features/teams/guided-team-storage.ts",
+        "shared/agent-working-instructions.ts"
       ],
       "references": [
         "references/repository-map.md",
@@ -683,6 +691,13 @@
       "workingTreeChanges": true,
       "reviewedAt": "2026-11-12",
       "scope": "User approved specification and authorized implementation, PR merge after tests and local deployment. Reviewed implemented roster/version/memory, guided startup, standing team authorization/final application, real A2A durable receipts and metadata-only telemetry across all five architecture flows. Real-ledger mutation remains owned by import/transaction paths; its snapshot only initializes an independent paper account. Independent reviews and actual verification/remaining novice study are recorded in docs/independent-agents-validation.md; this entry does not certify a deployed revision."
+    },
+    "uiRegressionRepair": {
+      "baseline": "261f07ce17b80fef7dfe525725a711e72b0f63de",
+      "workingTreeChanges": true,
+      "reviewedAt": "2026-11-13",
+      "scope": "Reviewed all five architecture flows and affected identity/navigation/import/team/research entrypoints. Migration66 places validated animal appearance on stable profiles; identity-only updates retain capability versions. New Council and Team commission snapshots freeze name/avatar; personal and team work share saved instructions/preferences. Holdings is a primary destination beside investment overview. Owner-partitioned tab caches verify legacy resource ownership and preserve exact unknown request keys/payloads. Existing diagrams retain module, research acceptance, startup/final apply, channel-source and real-ledger writer authority; concrete identity/client recovery details are documented beside them. Import-save continuation is navigation, not automatic research or execution.",
+      "validation": "Pre-documentation lint passed; static architecture10 and contributor context15 passed without failures/skips. Post-edit context helpers15 passed with zero failures/skips; structure valid=true with expected semantic-review warning and review-required drift. Windows dev8 passed with1 POSIX-only skip. Focused avatar DOM5 and roster/Council/Teams database82 passed without failures/skips; read-only fresh-schema reconstruction matched migration66 and fresh/baseline60 upgrade replay passed. Ninety local links, five Mermaid blocks/anchors and documentation diff whitespace checked. Final client/full application, browser acceptance, CI and deployment remain tracked in docs/ui-regression-repair-validation.md; no deployed revision or novice-study acceptance is claimed."
     }
   },
   "notes": {

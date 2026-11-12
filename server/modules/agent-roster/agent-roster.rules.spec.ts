@@ -33,3 +33,25 @@ test('capability validation rejects credentials, unexpected configuration and fo
   assert.throws(() => assertCeiling([], [], [{ kind: 'document_version', id: 'source', revision: '1', availability: 'available' }], []));
   assert.throws(() => assertCeiling([], [], [], ['unapproved-tool']));
 });
+
+test('animal identity is validated independently and frozen across role changes', async () => {
+  const { parseCreate, prepareAgent, snapshotMember } = await import('./agent-roster.rules');
+  const input = { requestKey: 'animal', avatar: 'news', executor: { executionMode: 'model' as const, model: 'slow' as const } };
+  assert.equal(parseCreate(input).avatar, 'news');
+  assert.throws(() => parseCreate({ ...input, avatar: 'untrusted-image-url' }));
+  const prepared = prepareAgent(input);
+  assert.equal(prepared.avatar, 'news');
+  const profile = { id: 'friend', name: 'Friend', currentVersionId: 'v1', avatar: 'news' as const };
+  const version = { id: 'v1', config: prepared.config };
+  assert.equal(snapshotMember(profile, version, { agentId: 'friend', agentVersionId: 'v1', role: 'manager' }).avatar, 'news');
+  assert.equal(snapshotMember(profile, version, { agentId: 'friend', agentVersionId: 'v1', role: 'challenger' }).avatar, 'news');
+});
+
+test('English template defaults persist English identity, work instructions and preferences', async () => {
+  const { prepareAgent } = await import('./agent-roster.rules');
+  const prepared = prepareAgent({ templateId: 'financials', executor: { executionMode: 'model', model: 'slow' }, preferences: { language: 'en' } });
+  assert.equal(prepared.name, 'Financials friend');
+  assert.match(prepared.config.instructions, /cash flow/u);
+  assert.equal(prepared.config.preferences.language, 'en');
+  assert.equal(prepared.avatar, 'technical');
+});

@@ -7,7 +7,7 @@ const { renderToStaticMarkup } = require('react-dom/server');
 const { MemoryRouter } = require('react-router-dom');
 
 module.exports = function fixture({ realQuery = false } = {}) {
-  const state = { language: 'en', queries: new Map(), requests: [] };
+  const state = { language: 'en', simpleExperience: true, queries: new Map(), requests: [] };
   const cache = new Map();
   function load(relative) {
     const filename = path.isAbsolute(relative) ? relative : path.resolve(__dirname, '..', relative);
@@ -16,7 +16,7 @@ module.exports = function fixture({ realQuery = false } = {}) {
     const requireModule = id => {
       if (id.endsWith('.css')) return {};
       if (id === 'react-i18next') return { useTranslation: () => ({ i18n: { language: state.language, resolvedLanguage: state.language }, t: key => key }) };
-      if (id === '@/hooks/use-simple-experience') return { useSimpleExperience: () => ({ enabled: true }) };
+      if (id === '@/hooks/use-simple-experience') return { useSimpleExperience: () => ({ enabled: state.simpleExperience }) };
       if (id === '@tanstack/react-query' && realQuery) return require(id);
       if (id === '@tanstack/react-query') return {
         useQuery: options => state.queries.get(JSON.stringify(options.queryKey)) ?? state.queries.get(options.queryKey[0]) ?? { data: undefined, isPending: false },

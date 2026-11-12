@@ -16,7 +16,7 @@ export function WorkspaceNavigationBar() {
   const route = resolveWorkspaceRoute(location.pathname, i18n.language);
   const section = workspaceSections(i18n.language).find(
     (item) => item.id === route.section,
-  ) ?? { label: route.section === 'assets' ? (zh ? '资产与账户' : 'Assets & accounts') : route.section === 'daily' ? (zh ? '投资日报' : 'Daily report') : route.title };
+  ) ?? { label: route.section === 'daily' ? (zh ? '投资日报' : 'Daily report') : route.title };
   const { goBack } = useWorkspaceNavigation();
   const accountId = new URLSearchParams(location.search).get('accountId') ?? 'real';
   const parent = route.section === 'assets' ? assetHref(route.parent, accountId) : route.parent;
@@ -89,6 +89,11 @@ export function WorkspaceSectionTabs() {
           ['/watchlist', zh ? '关注列表' : 'Watchlist'],
           ...(accountId === 'real' ? [['/import', zh ? '导入与对账' : 'Import & reconcile']] : []),
         ]
+      : section === 'overview'
+        ? [
+            ['/', zh ? '投资总览' : 'Overview'],
+            ['/paper', zh ? '模拟账户' : 'Simulation accounts'],
+          ]
       : section === 'daily' &&
           ['/daily', '/analysis', '/journal'].includes(pathname)
         ? [

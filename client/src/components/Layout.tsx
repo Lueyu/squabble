@@ -42,7 +42,7 @@ import {
   Brain,
   Bell,
 } from 'lucide-react';
-import { useTheme } from '../hooks/use-theme';
+import { useAppearanceScope, useTheme } from '../hooks/use-theme';
 import { getAggregateMarketStatus, forceRefreshAllQuotes } from '../hooks/use-market-quotes';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -97,6 +97,7 @@ function Layout() {
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
   const { enabled: simple } = useSimpleExperience();
+  useAppearanceScope(simple);
   const sectionIcons = { overview: LayoutDashboard, friends: Users, teams: Users, daily: BookOpen, research: FlaskConical, assets: Briefcase, data: Database, memory: Brain, telemetry: BarChart3, settings: Settings };
   const simpleItems = simple ? workspaceSections(i18n.language).map(item => ({ ...item, icon: sectionIcons[item.id], literal: true })) : [];
   const allItems = simple ? simpleItems : navItems;
@@ -264,8 +265,7 @@ function Layout() {
           <Outlet />
         </main>
         {simple && !focusedFlow && <nav className="portfolio-mobile-nav" aria-label={zh ? '快捷导航' : 'Quick navigation'}>
-          {simpleItems.filter(item => ['overview', 'friends', 'teams', 'research'].includes(item.id)).map(item => <NavLink key={item.path} to={item.path} end={item.end} className={item.id === currentRoute.section ? 'active' : undefined}><item.icon size={18} /><span>{item.label}</span></NavLink>)}
-          <button type="button" onClick={() => setMobileOpen(true)} aria-expanded={mobileOpen}><Menu size={18} /><span>{zh ? '更多' : 'More'}</span></button>
+          {simpleItems.filter(item => item.group === 'daily').map(item => <NavLink key={item.path} to={item.path} end={item.end} className={item.id === currentRoute.section ? 'active' : undefined}><item.icon size={18} /><span>{item.label}</span></NavLink>)}
         </nav>}
       </div>
     </div>

@@ -125,6 +125,9 @@ export interface CommissionPreviewInput extends Omit<TeamCommissionPlan, 'schema
   dataCutoffAt: string | null; inputRefs: ResearchSourceRef[];
 }
 export interface TeamMemberSnapshot {
+  /** Appearance frozen for this commission; legacy snapshots keep their role fallback. */
+  avatar?: import('./animal-avatar').AnimalAvatarId;
+  agentName?: string;
   a2aFingerprint?: import('./a2a-agents.interface').A2aConnectionFingerprint;
   rosterAgentId?: string; rosterAgentVersionId?: string; agentInstructions?: string;
   roleId: string; memberId: string; teamVersionId: string; label: string;

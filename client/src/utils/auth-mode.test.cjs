@@ -129,7 +129,7 @@ test('local sidebar replaces account identity and logout with the workspace labe
   for (const mode of ['local', 'account']) {
     const layout = load('components/Layout.tsx', { react, 'react/jsx-runtime': { jsx, jsxs: jsx },
       'react-i18next': language, 'react-router-dom': { useLocation: () => ({ pathname: '/' }) },
-      '../hooks/use-theme': { useTheme: () => ({ theme: 'light' }) },
+      '../hooks/use-theme': { useTheme: () => ({ theme: 'light' }), useAppearanceScope: () => {} },
       '@/api/http': { hasSession: () => true }, '@/api/auth-mode': { getAuthMode: () => mode },
       '@/hooks/use-simple-experience': { useSimpleExperience: () => ({ enabled: false }) },
       '@/features/navigation/workspace-navigation': load('features/navigation/workspace-navigation.ts'),

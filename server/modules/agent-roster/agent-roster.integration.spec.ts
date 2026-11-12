@@ -70,6 +70,156 @@ test('create replay survives service restart, owner isolation and immutable hist
   } finally { await f.dispose(); }
 });
 
+test('chosen animals persist and avatar edits leave capabilities, authorization and old conversation identity intact', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    const input = { requestKey: 'animal-create', avatar: 'news', executor: f.executor, allowedToolIds: ['get_financials'] };
+    const agent = await f.service.create(f.owner, input);
+    assert.equal(agent.avatar, 'news');
+    assert.deepEqual(await f.service.create(f.owner, input), agent);
+    assert.equal((await f.service.detail(f.owner, agent.id)).avatar, 'news');
+    const selection = { agentId: agent.id, agentVersionId: agent.currentVersionId, role: 'manager' as const };
+    const [frozen] = await f.service.resolveMembers(f.owner, [selection], { allowedToolIds: ['get_financials'] });
+    const snapshot = { council: { enabled: true, members: [frozen] } };
+    const [session] = await f.client`INSERT INTO council_sessions(owner,profile_version,profile_snapshot,ticker) VALUES(${f.owner},1,${JSON.stringify(snapshot)}::jsonb,'FIXTURE') RETURNING id`;
+    const request = { requestKey: 'animal-edit', expectedRevision: agent.revision, avatar: 'growth' };
+    const updated = await f.service.update(f.owner, agent.id, request);
+    assert.equal(updated.avatar, 'growth');
+    assert.equal(updated.currentVersionId, agent.currentVersionId);
+    assert.deepEqual(updated.currentVersion.config, agent.currentVersion.config);
+    assert.deepEqual(await f.service.update(f.owner, agent.id, request), updated);
+    const [next] = await f.service.resolveMembers(f.owner, [{ ...selection, role: 'challenger' }], { allowedToolIds: ['get_financials'] });
+    assert.equal(next.avatar, 'growth');
+    const [history] = await f.client`SELECT profile_snapshot FROM council_sessions WHERE id=${session.id}`;
+    assert.equal(history.profile_snapshot.council.members[0].avatar, 'news');
+    await assert.rejects(f.service.resolveMembers(f.owner, [selection], { allowedToolIds: ['write_external'] }), errorIs('AGENT_SCOPE_DENIED'));
+    await assert.rejects(f.service.update(f.owner, agent.id, { requestKey: 'invalid-animal', expectedRevision: updated.revision, avatar: 'https://image.invalid/a.png' }), errorIs('AGENT_INVALID_INPUT'));
+    const changedWork = await f.service.update(f.owner, agent.id, {
+      requestKey: 'edit-work', expectedRevision: updated.revision,
+      instructions: 'Focus on cash flow and flag uncertain facts.',
+      preferences: { userPreferences: 'Answer briefly.' },
+    });
+    assert.notEqual(changedWork.currentVersionId, agent.currentVersionId);
+    const [working] = await f.service.resolveMembers(f.owner, [{ ...selection, agentVersionId: changedWork.currentVersionId }]);
+    assert.match(working.instructions, /Focus on cash flow/u);
+    assert.match(working.instructions, /Answer briefly/u);
+    assert.equal((await f.service.version(f.owner, agent.id, agent.currentVersionId)).config.instructions, agent.currentVersion.config.instructions);
+  } finally { await f.dispose(); }
+});
+
+test('editing identity does not renew unavailable sources or create a new permission version', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    const source = await f.source();
+    const agent = await f.service.create(f.owner, { requestKey: 'scoped-identity', executor: f.executor, allowedSources: [source] });
+    await f.client`UPDATE data_library_sources SET enabled=false WHERE id=(SELECT source_id FROM data_library_versions WHERE id=${source.id})`;
+    const updated = await f.service.update(f.owner, agent.id, { requestKey: 'identity-only', expectedRevision: agent.revision, avatar: 'news' });
+    assert.equal(updated.currentVersionId, agent.currentVersionId);
+    assert.deepEqual(updated.currentVersion.config.allowedSources, [source]);
+    await assert.rejects(f.service.resolveMembers(f.owner, [{ agentId: agent.id, agentVersionId: agent.currentVersionId }], { sourceRefs: [source] }), errorIs('AGENT_SOURCE_UNAVAILABLE'));
+  } finally { await f.dispose(); }
+});
+
+test('ordinary conversation creation freezes the selected animal and saved preferences across later edits and receipt replay', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    const { CouncilService } = await import('../council/council.service');
+    const { SimpleCouncilService } = await import('../council/simple-council.service');
+    let modelCalls = 0;
+    const prompts: string[] = [];
+    const fakeResponse = async (prompt: unknown) => {
+      modelCalls++;
+      prompts.push(JSON.stringify(prompt));
+      return { data: { content: 'Fictional response with uncertainty retained.', evidenceIds: [], researchStance: 'balanced' }, tokens: 1 };
+    };
+    const llm = {
+      validateConnectionIds: async () => {},
+      isConfigured: async () => true,
+      getExecutionInfo: async () => ({ provider: 'fictional', modelFast: 'fake', modelSlow: 'fake' }),
+      chatFastJSON: fakeResponse,
+      chatSlowJSON: fakeResponse,
+    };
+    const council = new CouncilService(f.db, llm as never,
+      { collectEvidence: async () => [] } as never,
+      { getPortfolioContext: async () => ({ totalValue: 0, cash: 0, holdings: [] }) } as never,
+      { listRuns: async () => ({ items: [] }) } as never);
+    const simple = new SimpleCouncilService(f.db, council, llm as never, undefined, undefined, undefined, undefined, f.service);
+    const agent = await f.service.create(f.owner, {
+      requestKey: 'conversation-person', avatar: 'news', executor: f.executor,
+      instructions: 'Verify cash flow.', preferences: { language: 'en', userPreferences: 'Show missing data first.' },
+    });
+    const request = {
+      requestKey: 'ordinary-conversation', message: 'How can an investor evaluate uncertainty?',
+      agents: [{ agentId: agent.id, agentVersionId: agent.currentVersionId }],
+    };
+    const created = await simple.create(f.owner, request);
+    assert.ok('id' in created, 'an ordinary discussion must create a durable conversation');
+    if (!('id' in created)) throw new Error('Unexpected clarification');
+    assert.equal(created.members?.[0].avatar, 'news');
+    assert.match(created.members?.[0].instructions ?? '', /Show missing data first/u);
+    const jobs = (council as unknown as { jobs: Map<string, Promise<void>> }).jobs;
+    await jobs.get(`${f.owner}:${created.id}`);
+    assert.equal((await simple.get(f.owner, created.id)).status, 'completed');
+    assert.ok(modelCalls > 0, 'the actual conversation runner must reach the in-process fake model');
+    assert.match(prompts[0], /Show missing data first/u);
+    const callsAfterFirst = modelCalls;
+    const changed = await f.service.update(f.owner, agent.id, {
+      requestKey: 'change-after-conversation', expectedRevision: agent.revision,
+      avatar: 'growth', instructions: 'Review concentration.', preferences: { userPreferences: 'Be concise.' },
+    });
+    const replayed = await simple.create(f.owner, request);
+    assert.ok('id' in replayed);
+    if (!('id' in replayed)) throw new Error('Unexpected clarification');
+    assert.equal(replayed.id, created.id);
+    assert.equal(replayed.members?.[0].avatar, 'news');
+    assert.match(replayed.members?.[0].instructions ?? '', /Verify cash flow/u);
+    assert.match(replayed.members?.[0].instructions ?? '', /Show missing data first/u);
+    assert.equal(modelCalls, callsAfterFirst, 'receipt replay cannot dispatch another model request');
+    const next = await simple.create(f.owner, {
+      ...request, requestKey: 'next-ordinary-conversation',
+      agents: [{ agentId: agent.id, agentVersionId: changed.currentVersionId, role: 'manager' }],
+    });
+    assert.ok('id' in next);
+    if (!('id' in next)) throw new Error('Unexpected clarification');
+    await jobs.get(`${f.owner}:${next.id}`);
+    assert.equal((await simple.get(f.owner, next.id)).status, 'completed');
+    assert.equal(next.members?.[0].avatar, 'growth');
+    assert.equal(next.members?.[0].role, 'manager');
+    assert.match(next.members?.[0].instructions ?? '', /Be concise/u);
+    const [stored] = await f.client`SELECT profile_snapshot FROM council_sessions WHERE id=${created.id}`;
+    assert.equal(stored.profile_snapshot.council.members[0].avatar, 'news');
+    assert.equal(stored.profile_snapshot.council.members[0].rosterAgentVersionId, agent.currentVersionId);
+    assert.equal((await f.client`SELECT count(*)::int AS count FROM council_sessions`)[0].count, 2);
+    assert.ok(modelCalls > callsAfterFirst);
+    assert.match(prompts.at(-1)!, /Be concise/u);
+  } finally { await f.dispose(); }
+});
+
+test('migration66 backfills legacy identities deterministically, preserves history and replays without changing edited animals', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    const result = await f.service.recommended(f.owner, { requestKey: 'english-five', executor: f.executor, language: 'en' });
+    assert.equal(result.items[0].name, 'Financials friend');
+    assert.match(result.items[0].currentVersion.config.instructions, /cash flow/u);
+    assert.equal(result.items[0].currentVersion.config.preferences.language, 'en');
+    assert.deepEqual(await f.service.recommended(f.owner, { requestKey: 'english-five', executor: f.executor, language: 'en' }), result);
+    const versions = await f.client`SELECT id,config_json FROM agent_roster_versions ORDER BY id`;
+    const receipts = await f.client`SELECT result_json FROM agent_roster_requests ORDER BY id`;
+    await f.client.unsafe('ALTER TABLE agent_roster_profiles DROP COLUMN avatar');
+    const migration = readFileSync('scripts/db/66_agent_animal_identity.sql', 'utf8');
+    await f.client.unsafe(migration);
+    for (const agent of result.items) assert.equal((await f.service.detail(f.owner, agent.id)).avatar, agent.avatar);
+    assert.deepEqual(await f.client`SELECT id,config_json FROM agent_roster_versions ORDER BY id`, versions);
+    assert.deepEqual(await f.client`SELECT result_json FROM agent_roster_requests ORDER BY id`, receipts);
+    const first = result.items[0];
+    await f.service.update(f.owner, first.id, { requestKey: 'post-upgrade-animal', expectedRevision: first.revision, avatar: 'growth' });
+    await f.client.unsafe(migration);
+    assert.equal((await f.service.detail(f.owner, first.id)).avatar, 'growth');
+    await assert.rejects(f.client`UPDATE agent_roster_profiles SET avatar='invalid' WHERE id=${first.id}`);
+    await assert.rejects(f.client`UPDATE agent_roster_profiles SET avatar=NULL WHERE id=${first.id}`);
+  } finally { await f.dispose(); }
+});
+
 test('recommended templates are atomic and idempotent; duplicate people are rejected while same connections are reusable', { skip: !available }, async () => {
   const f = await fixture();
   try {
