@@ -19,7 +19,7 @@ Archiving prevents new selection and paid dispatch. Already-dispatched work may 
 ## Creating and operating a team
 
 1. Keep the recommended collaboration and name the team.
-2. Choose existing agents. Financials, challenge and moderation are selected by default.
+2. Choose existing agents. The recommended template selects financials, challenge and moderation by default; valuation, defensive and full-research member templates swap the group in one click, and you can always adjust the checkboxes yourself.
 3. Review the holdings copy, main market, budget and startup authorization, then start.
 
 Defaults cap calls at8/run,16/day and320/month. A run reserves at most half the daily dollar limit; the monthly dollar limit is twenty daily limits. Existing account/global limits still apply. Larger teams may need a higher existing call allowance; setup does not increase it implicitly.
