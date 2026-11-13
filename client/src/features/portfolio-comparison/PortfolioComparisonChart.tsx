@@ -58,9 +58,11 @@ export default function PortfolioComparisonChart({
     referenceIntraday || (!reference &&
     (granularity === 'observations' || granularity === 'hourly'
       || (timeWindow !== null && timeWindow.last - timeWindow.first < 2 * 86400000)));
-  const foreground = typeof window !== 'undefined' && typeof document !== 'undefined'
+  const chartTheme = typeof window !== 'undefined' && typeof document !== 'undefined'
     ? window.getComputedStyle(document.querySelector('.portfolio-comparison') ?? document.documentElement)
-      .getPropertyValue('--foreground').trim() || undefined : undefined;
+    : undefined;
+  const foreground = chartTheme?.getPropertyValue('--foreground').trim() || undefined;
+  const warningColor = chartTheme?.getPropertyValue('--warning').trim() || undefined;
   const option = useMemo(
     () => ({
       animationDuration: 200,
@@ -68,15 +70,15 @@ export default function PortfolioComparisonChart({
         enabled: true,
         description: reference
           ? zh
-            ? '按当前持仓回看历史价格的参考市值，不含现金，不代表实际收益。浅色虚线连接可比较的缺失区间，不代表已知价格。价格口径变化仍断线。'
-            : 'Current-position historical reference value, excluding cash, not actual returns. Faint dashed links join comparable missing intervals without inventing prices. Price-convention changes remain broken.'
+            ? '按当前持仓回看历史价格的参考市值，不含现金，不代表实际收益。浅色虚线连接缺失区间，警示虚线连接价格口径或跳变待核实区间；区间估值仍未知。'
+            : 'Current-position historical reference value, excluding cash, not actual returns. Faint dashes mark missing intervals; warning dashes link unverified price conventions or jumps. Interval valuations remain unknown.'
           : zh
             ? '实仓与模拟账户的已存估值。资产金额的浅色虚线仅连接缺少观察的区间，不代表新增估值；收益率缺失与财务口径变化仍断线。'
             : 'Saved real and simulation valuations. Faint dashed equity links mark missing observations without adding valuations. Missing returns and financial discontinuities remain broken.',
       },
       grid: { top: 16, left: 6, right: 66, bottom: 36 },
       tooltip: {
-        formatter: (params: unknown) => comparisonTooltip(params, i18n.language, metric, reference, quoteTimestamps),
+        formatter: (params: unknown) => comparisonTooltip(params, i18n.language, metric, reference, quoteTimestamps, series),
         trigger: 'axis',
         renderMode: 'richText',
         confine: true,
@@ -174,7 +176,7 @@ export default function PortfolioComparisonChart({
           emphasis: { focus: 'series' },
         };
         const bridges = comparisonGapBridges(item, metric, reference).map((bridge, index) => ({
-          id: `gap-bridge:${item.accountId}:${index}`,
+          id: `${bridge.kind === 'warning' ? 'warning' : 'gap'}-bridge:${item.accountId}:${index}`,
           name,
           type: 'line',
           data: bridge.data,
@@ -183,7 +185,9 @@ export default function PortfolioComparisonChart({
           showSymbol: false,
           silent: true,
           tooltip: { show: false },
-          lineStyle: { color, width: 1.5, type: 'dashed', opacity: 0.55 },
+          lineStyle: bridge.kind === 'warning'
+            ? { color: warningColor ?? color, width: 2, type: [8, 4], opacity: 0.95 }
+            : { color, width: 1.5, type: 'dashed', opacity: 0.55 },
           emphasis: { disabled: true },
           animation: false,
           z: 1,
@@ -205,6 +209,7 @@ export default function PortfolioComparisonChart({
       partialAccountIds,
       granularity,
       foreground,
+      warningColor,
       quoteTimestamps,
       referenceIntraday,
       referenceGranularity,
@@ -471,7 +476,7 @@ function ReferenceEvidence({
       {point.gaps.length > 0 && (
         <p>
           {[
-            ...new Set(point.gaps.map((gap) => comparisonGapLabel(gap, zh))),
+            ...new Set(point.gaps.map((gap) => comparisonGapLabel(gap, zh, true))),
           ].join(zh ? '；' : '; ')}
         </p>
       )}

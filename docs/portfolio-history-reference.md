@@ -46,6 +46,13 @@ For intraday non-USD conversion, daily FX rows have no trusted publication time,
 
 The sampling-only US Tencent source validates the requested quote identity, quote date and last minute evidence, and explicit `pandata.season` EST/EDT against an `America/New_York` round trip and verified regular sessions. Ordinary quote/order selection is unchanged. Missing or contradictory time metadata remains unavailable; the retrieval clock is never used as market time. A public MSFT probe on2026-11-13 verified this path without a database or personal account; Yahoo's two endpoints returned403 on the same host. This is availability evidence at that time, not a guarantee. Existing calendar verification currently covers2026; later years remain unavailable until their calendars are verified.
 
+Reference-only visual warning connectors may span a price-discontinuity or
+convention gap. They use a distinct warning style, connect only actual endpoints,
+and have no synthetic tooltip value or account-selection authority. The underlying
+point remains null and its exact risk remains visible. Actual NAV/return financial
+boundaries keep their original separation; a visual connector never authorizes a
+return or reconstructs split/dividend history.
+
 ## Verification
 
 The targeted command is:

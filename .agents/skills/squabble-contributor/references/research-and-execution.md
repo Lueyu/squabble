@@ -251,6 +251,11 @@ Import/history refinement: successful import commits enqueue only asynchronous p
 
 Migration67 adds retained paper observations, per-slot capture claims and real/paper `marketQuotes` facts. The recent reference reader consumes only selected owned quote facts, never stored NAV subtotals, to revalue current quantities. Valid partial coverage keeps its exact ticker set and original unknown full value; missing or corporate-action/price-basis boundaries remain distinguishable. Quote timestamps are genuine; daily rows have no fabricated time. Intraday FX uses strictly earlier dated rates. Unchanged market facts do not become a stream of fictitious new prices. Sampling-only US Tencent time parsing checks explicit EST/EDT, minute/date evidence and the verified New York calendar; ordinary order quoting is unchanged.
 
+Reference equity can show a separate warning connector across unverified price
+or convention intervals. It keeps nulls and source risks, is silent and excluded
+from tooltip values/account selection, and cannot create a NAV/return point.
+Actual-record financial boundaries and all return gaps remain unbridged.
+
 Research record deletion uses owner-fenced receipts and expected immutable version/session revision. `POST /api/research-documents/versions/:id/delete` tombstones and revokes exactly that version; latest-generated may point at a remaining visible sibling, while adopted points are cleared rather than silently re-adopting. `POST /api/research-conversations/:id/delete` rejects active or provider-uncertain work until settlement, hides that task and blocks late callbacks; its already published versions remain in report history. The original council source identity matters: deleting a manually revised sibling must not invalidate an unrelated original. Legacy synchronization cannot resurrect a tombstone. Memory keeps provenance but marks unavailable sources; new resolution, final account-locked execution and owner-locked channel publication recheck deletion. Financial ledgers and immutable execution snapshots are retained. Migration49 must accompany all readers selecting the new lifecycle columns.
 
 ## Team commissions and fixed attribution

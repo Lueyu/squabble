@@ -39,8 +39,10 @@ export interface ComparisonGapBridge {
   data: Array<[number, number]>;
   fromIndex: number;
   toIndex: number;
+  kind: 'gap' | 'warning';
 }
 
+const referencePriceWarnings = new Set(['PRICE_BASIS_CHANGED', 'PRICE_DISCONTINUITY_UNVERIFIED']);
 const financialBreaks = new Set([
   'INCOMPLETE_VALUATION', 'ESTIMATED_VALUATION',
   'CASH_FLOW_OR_BASELINE_CHANGED', 'RETURN_HISTORY_UNVERIFIED',
@@ -55,7 +57,7 @@ export function comparisonGapBridges(
 ): ComparisonGapBridge[] {
   if (metric !== 'equity') return [];
   const allowed = new Set(reference
-    ? ['MISSING_OBSERVATION', 'PRICE_MISSING', 'FX_MISSING', 'HISTORY_PENDING', 'PRIOR_CLOSE', 'PRIOR_FX']
+    ? ['MISSING_OBSERVATION', 'PRICE_MISSING', 'FX_MISSING', 'HISTORY_PENDING', 'PRIOR_CLOSE', 'PRIOR_FX', ...referencePriceWarnings]
     : ['MISSING_OBSERVATION']);
   const bridges: ComparisonGapBridge[] = [];
   let prior = -1;
@@ -66,10 +68,12 @@ export function comparisonGapBridges(
     if (prior >= 0 && index > prior + 1) {
       const span = series.points.slice(prior, index + 1);
       const missing = span.slice(1, -1);
-      const safe = !span.some(row => row.gaps.some(gap => financialBreaks.has(gap.split(':')[0])))
+      const warning = reference && span.some(row => row.gaps.some(gap => referencePriceWarnings.has(gap.split(':')[0])));
+      const safe = !span.some(row => row.gaps.some(gap => financialBreaks.has(gap.split(':')[0])
+          && !(reference && referencePriceWarnings.has(gap.split(':')[0]))))
         && missing.every(row => row.equityUsd === null && row.gaps.length > 0
           && row.gaps.every(gap => allowed.has(gap.split(':')[0])));
-      if (safe) bridges.push({ fromIndex: prior, toIndex: index, data: [
+      if (safe) bridges.push({ kind: warning ? 'warning' : 'gap', fromIndex: prior, toIndex: index, data: [
         [Date.parse(series.points[prior].timestamp), series.points[prior].equityUsd!],
         [Date.parse(point.timestamp), point.equityUsd],
       ] });
@@ -152,13 +156,14 @@ export function comparisonTooltip(
   metric: PortfolioComparisonMetric,
   reference = false,
   quoteTimestamps: Array<number | ComparisonQuoteObservation> = [],
+  series: PortfolioComparisonSeries[] = [],
 ): string {
   const items = Array.isArray(parameters) ? parameters : [parameters];
   const entries = items.filter(
     (item): item is { data: [number, number | null]; seriesName?: string; seriesId?: string } =>
       item !== null &&
       typeof item === 'object' &&
-      !String(item.seriesId ?? '').startsWith('gap-bridge:') &&
+      !/^(?:gap|warning)-bridge:/u.test(String(item.seriesId ?? '')) &&
       Array.isArray(item.data) &&
       Number.isFinite(item.data[0]),
   );
@@ -184,13 +189,20 @@ export function comparisonTooltip(
       const time = reference && hasQuoteTime(item) ? ` (${observedAt(item.data[0])})` : '';
       const value = item.data[1] == null ? '—' : metric === 'return'
         ? `${item.data[1].toFixed(2)}%` : money.format(item.data[1]);
-      return `${item.seriesName ?? ''}${time}: ${value}`;
+      const gaps = reference && item.data[1] == null ? series.find(row => row.accountId === item.seriesId)?.points
+        .find(point => Date.parse(point.timestamp) === item.data[0])?.gaps ?? [] : [];
+      const warnings = [...new Set(gaps.filter(gap => referencePriceWarnings.has(gap.split(':')[0]))
+        .map(gap => comparisonGapLabel(gap, language.startsWith('zh'), true)))];
+      return `${item.seriesName ?? ''}${time}: ${value}${warnings.length ? ` · ${warnings.join('; ')}` : ''}`;
     }),
   ].join('\n');
 }
 
-export function comparisonGapLabel(code: string, zh: boolean): string {
+export function comparisonGapLabel(code: string, zh: boolean, reference = false): string {
   const prefix = code.split(':')[0];
+  if (reference && referencePriceWarnings.has(prefix)) return prefix === 'PRICE_BASIS_CHANGED'
+    ? (zh ? '价格口径待核实；估值未知，仅作警示连接' : 'Price conventions unverified; valuation unknown, warning connection only')
+    : (zh ? '价格跳变待核实；估值未知，仅作警示连接' : 'Price change unverified; valuation unknown, warning connection only');
   const historyLabels: Record<string, [string, string]> = {
     PRIOR_CLOSE: [
       '沿用此前最近收盘价，具体日期见来源',

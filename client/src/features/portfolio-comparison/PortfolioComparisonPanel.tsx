@@ -30,7 +30,7 @@ import type {
   PortfolioComparisonPeriod,
 } from '@shared/portfolio-comparison.interface';
 import PortfolioComparisonChart from './PortfolioComparisonChart';
-import { accountColor, comparisonGapLabel, comparisonSamplingLabel } from './comparison-chart-options';
+import { accountColor, comparisonGapBridges, comparisonGapLabel, comparisonSamplingLabel } from './comparison-chart-options';
 import {
   portfolioWorkspaceApi,
   portfolioWorkspaceKeys,
@@ -167,6 +167,8 @@ export default function PortfolioComparisonPanel({
   const chartSeries = reference
     ? historicalReferenceSeries(selected, history.data)
     : selected;
+  const referenceWarning = reference && chartSeries.some(item =>
+    comparisonGapBridges(item, metric, true).some(bridge => bridge.kind === 'warning'));
   const referenceAvailable = history.data?.series.some(
     (item) => item.coverage.totalPositions > 0,
   );
@@ -501,10 +503,12 @@ export default function PortfolioComparisonPanel({
               ? 'USD · 保存的估值记录'
               : 'USD · Saved observations'}
           {' · '}{comparisonSamplingLabel(comparison.data?.granularity, zh, reference, history.data?.intradayGranularity)}
-          {' · '}{metric === 'equity'
-            ? (zh ? '浅色虚线连接缺失区间，不代表新增估值'
-              : 'Dashed links mark missing intervals, not additional valuations')
-            : (zh ? '缺少收益率或财务口径变化时断线' : 'Missing returns and financial discontinuities remain broken')}
+          {' · '}<span style={referenceWarning ? { color: 'var(--warning)' } : undefined}>{metric === 'equity'
+            ? referenceWarning
+              ? (zh ? '警示虚线连接未知区间，不代表当日估值' : 'Warning dashes link unknown intervals, not daily valuations')
+              : (zh ? '浅色虚线连接缺失区间，不代表新增估值'
+                : 'Dashed links mark missing intervals, not additional valuations')
+            : (zh ? '缺少收益率或财务口径变化时断线' : 'Missing returns and financial discontinuities remain broken')}</span>
         </span>
         <span className="shrink-0 leading-5">
           {zh ? '点选曲线进入对应账户' : 'Select a line to open its account'}
@@ -523,7 +527,7 @@ export default function PortfolioComparisonPanel({
                 <strong>{label(item)}：</strong>
                 {[
                   ...new Set(
-                    item.gaps.map((gap) => comparisonGapLabel(gap, zh)),
+                    item.gaps.map((gap) => comparisonGapLabel(gap, zh, reference)),
                   ),
                 ].join(zh ? '；' : '; ')}
               </p>

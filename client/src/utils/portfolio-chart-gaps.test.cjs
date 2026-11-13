@@ -24,15 +24,62 @@ test('equity bridges only a declared observation gap using its unchanged known e
   assert.equal(options.comparisonGapBridges(input, 'return').length, 0);
 });
 
-test('incomplete balances, financial continuity changes and price convention changes never receive a gap bridge', () => {
+test('actual NAV and financial continuity changes never receive a price-warning bridge', () => {
   const { comparisonGapBridges } = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
   assert.equal(typeof comparisonGapBridges, 'function');
   for (const gap of ['INCOMPLETE_VALUATION', 'CASH_FLOW_OR_BASELINE_CHANGED', 'PRICE_BASIS_CHANGED:FICT', 'PRICE_DISCONTINUITY_UNVERIFIED:FICT']) {
     const input = series([point(1, 100), point(2, null, [gap]), point(4, 120)]);
-    assert.equal(comparisonGapBridges(input, 'equity', true).length, 0, gap);
+    assert.equal(comparisonGapBridges(input, 'equity', false).length, 0, gap);
+    if (!gap.startsWith('PRICE_')) assert.equal(comparisonGapBridges(input, 'equity', true).length, 0, gap);
   }
   assert.equal(comparisonGapBridges(series([point(1, 100), point(2, null, []), point(4, 120)]), 'equity').length, 0);
   assert.equal(comparisonGapBridges(series([point(1, 100), point(2, null, ['MISSING_OBSERVATION']), point(4, 120, ['CASH_FLOW_OR_BASELINE_CHANGED'])]), 'equity').length, 0);
+});
+
+test('a partial reference price jump has a warning-only connector while its original valuation remains unknown', () => {
+  const f = fixture();
+  const options = f.load('features/portfolio-comparison/comparison-chart-options.ts');
+  const { historicalReferenceSeries } = f.load('features/portfolio-comparison/comparison-display.ts');
+  const priceAsOf = Array.from({ length: 12 }, (_, index) => ({ ticker: `FICT${index}`, date: '2026-11-04', source: 'fixture' }));
+  const history = { series: [{ accountId: 'real', coverage: { completePoints: 0 }, points: [4, 5, 6].map((day, index) => ({
+    date: `2026-11-0${day}`, valueUsd: null, knownValueUsd: 100 + index * 10,
+    coveredPositions: 12, totalPositions: 13, priceAsOf, fxAsOf: [],
+    gaps: ['PRICE_MISSING:UNAVAILABLE', ...(day === 5 ? ['PRICE_DISCONTINUITY_UNVERIFIED:FICT0'] : [])],
+  })) }] };
+  const original = JSON.stringify(history);
+  const reference = historicalReferenceSeries([{ accountId: 'real' }], history)[0];
+  assert.deepEqual(Array.from(reference.points, row => row.equityUsd), [100, null, 120]);
+  const [bridge] = options.comparisonGapBridges(reference, 'equity', true);
+  assert.equal(bridge?.kind, 'warning');
+  assert.deepEqual(JSON.parse(JSON.stringify(bridge.data)), [
+    [Date.parse(reference.points[0].timestamp), 100], [Date.parse(reference.points[2].timestamp), 120],
+  ]);
+  assert.equal(options.comparisonLineData(reference, 'equity')[1][1], null);
+  assert.equal(options.comparisonGapBridges(reference, 'return', true).length, 0);
+  assert.equal(options.comparisonGapBridges(reference, 'equity', false).length, 0);
+  assert.equal(JSON.stringify(history), original);
+  for (const gap of ['PRICE_BASIS_CHANGED:FICT0', 'PRICE_DISCONTINUITY_UNVERIFIED:FICT0']) {
+    const input = series([point(4, 100), point(5, null, [gap]), point(6, 120)]);
+    assert.equal(options.comparisonGapBridges(input, 'equity', true)[0]?.kind, 'warning');
+    input.points[1].gaps.push('CASH_FLOW_OR_BASELINE_CHANGED');
+    assert.equal(options.comparisonGapBridges(input, 'equity', true).length, 0);
+  }
+});
+
+test('reference unknown-day tooltip explains the warning without exposing connector values', () => {
+  const { comparisonTooltip, comparisonGapLabel } = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
+  const input = series([point(4, 100), point(5, null, ['PRICE_DISCONTINUITY_UNVERIFIED:FICT']), point(6, 120)]);
+  const timestamp = Date.parse(input.points[1].timestamp);
+  const text = comparisonTooltip([
+    { seriesId: 'real', seriesName: 'Reference', data: [timestamp, null] },
+    { seriesId: 'warning-bridge:real:0', seriesName: 'Warning connector', data: [timestamp, 999] },
+  ], 'en-US', 'equity', true, [], [input]);
+  assert.match(text, /Reference: —/);
+  assert.match(text, /price change.*unverified/i);
+  assert.doesNotMatch(text, /999|Warning connector/);
+  assert.equal(comparisonTooltip([{ seriesId: 'warning-bridge:real:0', data: [timestamp, 999] }], 'en-US', 'equity', true), '');
+  assert.match(comparisonGapLabel('PRICE_BASIS_CHANGED:FICT', false, true), /unknown.*warning/i);
+  assert.doesNotMatch(comparisonGapLabel('PRICE_BASIS_CHANGED:FICT', false), /warning/i);
 });
 
 test('reference gaps can use a separately marked connection without converting missing prices into observations', () => {
@@ -96,6 +143,26 @@ test('chart captions expose the actual sampling and distinguish a visual gap con
   assert.match(markup, /Latest saved valuation per hour/);
   assert.match(markup, /Dashed links mark missing intervals/);
   assert.match(markup, /not additional valuations/);
+});
+
+test('reference warning is explained within the existing caption without declaring an unknown day valued', () => {
+  const f = fixture();
+  const account = { ...series([]), name: 'Real portfolio', kind: 'real', status: 'real', colorIndex: -1,
+    equityUsd: null, returnPct: null, strategyCount: 0, gaps: [] };
+  f.state.queries.set('portfolio-comparison', { data: { granularity: 'daily', series: [account] } });
+  f.state.queries.set('portfolio-history', { data: { series: [{ accountId: 'real',
+    coverage: { completePoints: 2, totalPositions: 1 }, points: [4, 5, 6].map(day => ({
+      date: `2026-11-0${day}`, valueUsd: day === 5 ? null : 100 + day,
+      knownValueUsd: 100 + day, coveredPositions: 1, totalPositions: 1,
+      priceAsOf: [{ ticker: 'FICT', date: `2026-11-0${day}`, source: 'fixture' }], fxAsOf: [],
+      gaps: day === 5 ? ['PRICE_DISCONTINUITY_UNVERIFIED:FICT'] : [],
+    })), gaps: ['PRICE_DISCONTINUITY_UNVERIFIED:FICT'] }] } });
+  f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default = () => null;
+  const Panel = f.load('features/portfolio-comparison/PortfolioComparisonPanel.tsx').default;
+  const markup = f.render(Panel);
+  assert.match(markup, /portfolio-chart-caption[^]*Warning dashes link unknown intervals/);
+  assert.match(markup, /not daily valuations/);
+  assert.doesNotMatch(markup, /Price conventions changed; the line breaks here/);
 });
 
 test('intraday reference retains its actual quote timestamps and resolves the exact source observation', () => {
