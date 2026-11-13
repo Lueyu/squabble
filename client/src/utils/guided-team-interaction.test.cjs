@@ -109,6 +109,38 @@ test('a reviewed market and the visible default members survive refresh without 
   });
 });
 
+test('member presets pick matching agents and manual choice stays available', async () => {
+  await scenario(async ({ f, click, remount }) => {
+    const roster = [
+      { id: 'fin1', name: 'Cashflow owl', specialty: 'Read accounts and cash flow', avatar: 'technical', templateId: 'financials' },
+      { id: 'val1', name: 'Value rabbit', specialty: 'Estimate value', avatar: 'value', templateId: 'valuation' },
+      { id: 'bear1', name: 'Counterpoint cat', specialty: 'Find counterevidence', avatar: 'risk', templateId: 'bear' },
+      { id: 'mod1', name: 'Moderator dog', specialty: 'Clarify agreement', avatar: 'moderator', templateId: 'moderator' },
+    ].map(a => ({ id: a.id, name: a.name, specialty: a.specialty, avatar: a.avatar, availability: 'configured', status: 'active', currentVersionId: `${a.id}-v1`, currentVersion: { config: { templateId: a.templateId, executor: { executionMode: 'model', connectionId: 'model', model: 'fast' }, allowedToolIds: [] } } }));
+    f.state.queries.set('agent-roster', { data: { items: roster } });
+    window.sessionStorage.clear();
+    await remount();
+    await click('Next: choose agents');
+    const checked = () => [...document.querySelectorAll('[role=checkbox]')].filter(box => box.getAttribute('aria-checked') === 'true').map(box => box.getAttribute('aria-label'));
+    const pressed = text => [...document.querySelectorAll('button')].find(button => button.textContent === text)?.getAttribute('aria-pressed');
+    assert.equal(checked().sort().join('|'), ['Select Cashflow owl', 'Select Counterpoint cat', 'Select Moderator dog'].sort().join('|'));
+    assert.equal(pressed('Recommended'), 'true');
+    await click('Valuation');
+    assert.equal(checked().sort().join('|'), ['Select Cashflow owl', 'Select Value rabbit', 'Select Moderator dog'].sort().join('|'));
+    assert.equal(pressed('Valuation'), 'true');
+    await click('Full research');
+    assert.equal(checked().length, 4);
+    assert.equal(pressed('Full research'), 'true');
+    await click('Choose my own');
+    assert.equal(checked().length, 0);
+    assert.equal(pressed('Choose my own'), 'true');
+    await click('Select Counterpoint cat');
+    assert.equal(pressed('Choose my own'), 'true');
+    await click('Next: review startup');
+    assert.match(document.body.textContent, /Counterpoint cat/);
+  });
+});
+
 test('legacy ownership failures conceal private content and retain the old receipt without new requests', async () => {
   await scenario(async ({ f, remount, click }) => {
     const raw = JSON.stringify({ version: 1, key: 'legacy', name: 'Hidden private team', agents: [{ id: 'old-person' }], preview: { previewId: 'old' }, teamId: 'old-team', accountId: 'old-account' });
