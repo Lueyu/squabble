@@ -30,6 +30,15 @@ existing instance, not `npm run dev` or an ignored temporary helper.
 
 ## Choose checks by changed behavior
 
+For measured UI alignment and responsive-control fixes, use the frozen fictional
+matrix and commands in [.ui/README.md](../../../../.ui/README.md). Run
+`npm run test:ui-probe` for detector, fixture and improvement-gate contracts.
+`npm run ui:probe` scans only the dedicated loopback fixture, never a personal
+backend. Capture before and after with the same detector, matrix, browser and
+token fingerprint; missing scenarios and new serious findings fail the gate.
+Run-local evidence is not a human-approved visual baseline. Keep intentional
+horizontal scrolling and supported multiline controls distinct from clipping.
+
 Agent tooling (migrations53–58) uses `RESEARCH_TEST_DATABASE_URL` plus
 `TOOL_CONNECTIONS_TEST_DATABASE_URL`, both disposable PostgreSQL16. Include
 `research-runtime/*.spec.ts`, `research-runtime/drivers/*.spec.ts`,

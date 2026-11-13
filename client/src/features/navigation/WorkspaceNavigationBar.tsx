@@ -63,11 +63,13 @@ export function WorkspaceNavigationBar() {
           {section.label}
         </span>
       ) : (
-        <Link className="workspace-parent-link" to={parent}>
-          <span className="hidden sm:inline">
-            {zh ? '所属 · ' : 'Within · '}
+        <Link className="workspace-parent-link inline-flex min-h-6 items-center" to={parent}>
+          <span className="min-w-0 truncate">
+            <span className="hidden sm:inline">
+              {zh ? '所属 · ' : 'Within · '}
+            </span>
+            {section.label}
           </span>
-          {section.label}
         </Link>
       )}
     </div>

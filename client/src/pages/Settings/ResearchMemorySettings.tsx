@@ -15,7 +15,7 @@ export default function ResearchMemorySettings() {
   return <Card id="research-memory"><CardHeader><CardTitle>{copy.preferences}</CardTitle><CardDescription>{copy.preferencesHint}</CardDescription></CardHeader>
     <CardContent className="space-y-4">
       {error && <p role="alert" className="text-sm text-destructive">{errorMessage(error, copy.memoryFailed)}</p>}
-      {prefs.data && (['autoArchive', 'recallEnabled'] as const).map(key => <Label key={key} className="gap-3">
+      {prefs.data && (['autoArchive', 'recallEnabled'] as const).map(key => <Label key={key} className="min-h-6 gap-3">
         <Switch checked={prefs.data[key]} disabled={actions.preferences.isPending} onCheckedChange={value =>
           actions.preferences.mutate({ ...prefs.data!, [key]: value })} />{key === 'autoArchive' ? copy.archive : copy.recallSetting}
       </Label>)}

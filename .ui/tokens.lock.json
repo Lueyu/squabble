@@ -1,0 +1,685 @@
+{
+  "algorithm": "sha256-scoped-css-tokens-v1",
+  "sources": [
+    {
+      "file": "client/src/tailwind-theme.css",
+      "declarations": [
+        {
+          "condition": "@theme inline"
+        },
+        {
+          "selector": ":root",
+          "declarations": [
+            "--button-outline: rgb(0 0 0 / 10%)",
+            "--badge-outline: rgb(0 0 0 / 5%)",
+            "--opaque-button-border-intensity: -8",
+            "--elevate-1: rgb(0 0 0 / 3%)",
+            "--elevate-2: rgb(0 0 0 / 7%)",
+            "--background: hsl(38deg 32% 94.5%)",
+            "--foreground: hsl(28deg 22% 15%)",
+            "--card: hsl(40deg 30% 98%)",
+            "--card-foreground: hsl(28deg 22% 15%)",
+            "--popover: hsl(40deg 30% 98%)",
+            "--popover-foreground: hsl(28deg 22% 15%)",
+            "--primary: hsl(28deg 24% 19%)",
+            "--primary-foreground: hsl(40deg 35% 98%)",
+            "--secondary: hsl(36deg 22% 89%)",
+            "--secondary-foreground: hsl(28deg 22% 18%)",
+            "--muted: hsl(36deg 20% 91%)",
+            "--muted-foreground: hsl(28deg 10% 39%)",
+            "--accent: hsl(36deg 24% 87%)",
+            "--accent-foreground: hsl(28deg 22% 15%)",
+            "--info: hsl(212deg 90% 48%)",
+            "--info-foreground: hsl(0deg 0% 100%)",
+            "--destructive: hsl(0deg 68% 47%)",
+            "--destructive-foreground: hsl(0deg 0% 100%)",
+            "--success: hsl(152deg 58% 36%)",
+            "--success-foreground: hsl(150deg 60% 97%)",
+            "--warning: hsl(32deg 92% 44%)",
+            "--warning-foreground: hsl(36deg 100% 97%)",
+            "--border: hsl(34deg 17% 81%)",
+            "--input: hsl(34deg 17% 79%)",
+            "--ring: hsl(28deg 19% 42%)",
+            "--chart-1: hsl(152deg 55% 40%)",
+            "--chart-2: hsl(215deg 60% 50%)",
+            "--chart-3: hsl(32deg 90% 48%)",
+            "--chart-4: hsl(0deg 66% 50%)",
+            "--chart-5: hsl(265deg 55% 58%)",
+            "--sidebar: hsl(36deg 26% 91.5%)",
+            "--sidebar-foreground: hsl(28deg 18% 25%)",
+            "--sidebar-primary: hsl(28deg 24% 19%)",
+            "--sidebar-primary-foreground: hsl(40deg 35% 98%)",
+            "--sidebar-accent: hsl(35deg 24% 85%)",
+            "--sidebar-accent-foreground: hsl(28deg 22% 15%)",
+            "--sidebar-border: hsl(34deg 17% 80%)",
+            "--sidebar-ring: hsl(28deg 19% 42%)",
+            "--primary-border: hsl(from hsl(221deg 26% 12%) h s calc(l + var(--opaque-button-border-intensity)))",
+            "--secondary-border: hsl(from hsl(220deg 16% 94%) h s calc(l + var(--opaque-button-border-intensity)))",
+            "--destructive-border: hsl(from hsl(0deg 68% 47%) h s calc(l + var(--opaque-button-border-intensity)))",
+            "--accent-border: hsl(from hsl(220deg 16% 93.5%) h s calc(l + var(--opaque-button-border-intensity)))",
+            "--muted-border: hsl(from hsl(220deg 16% 94.5%) h s calc(l + var(--opaque-button-border-intensity)))",
+            "--font-sans: 'Inter', 'Inter var', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC', 'Helvetica Neue', 'Tahoma', 'Arial', 'sans-serif', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'",
+            "--font-serif: 'Playfair Display', 'Georgia', 'Cambria', 'Times New Roman', times, serif",
+            "--font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace",
+            "--radius: 0.75rem",
+            "--shadow-x: 0px",
+            "--shadow-y: 2px",
+            "--shadow-blur: 12px",
+            "--shadow-spread: 0px",
+            "--shadow-opacity: 0.02",
+            "--shadow-color: #000",
+            "--shadow-2xs: 0px 2px 12px 0px hsl(0deg 0% 0% / 2%)",
+            "--shadow-xs: 0px 2px 12px 0px hsl(0deg 0% 0% / 2%)",
+            "--shadow-sm: 0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 1px 2px -1px hsl(0deg 0% 0% / 3%)",
+            "--shadow: 0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 1px 2px -1px hsl(0deg 0% 0% / 3%)",
+            "--shadow-md: 0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 2px 4px -1px hsl(0deg 0% 0% / 3%)",
+            "--shadow-lg: 0px 2px 12px 0px hsl(0deg 0% 0% / 4%), 0px 4px 6px -1px hsl(0deg 0% 0% / 3%)",
+            "--shadow-xl: 0px 2px 12px 0px hsl(0deg 0% 0% / 4%), 0px 8px 10px -1px hsl(0deg 0% 0% / 3%)",
+            "--shadow-2xl: 0px 2px 12px 0px hsl(0deg 0% 0% / 6%)",
+            "--tracking-normal: 0em",
+            "--spacing: 0.25rem"
+          ]
+        },
+        {
+          "selector": ".dark",
+          "declarations": [
+            "--background: hsl(222deg 16% 6.5%)",
+            "--foreground: hsl(220deg 18% 91%)",
+            "--card: hsl(222deg 15% 9%)",
+            "--card-foreground: hsl(220deg 18% 91%)",
+            "--popover: hsl(222deg 15% 11%)",
+            "--popover-foreground: hsl(220deg 18% 91%)",
+            "--primary: hsl(220deg 18% 93%)",
+            "--primary-foreground: hsl(222deg 18% 9%)",
+            "--secondary: hsl(222deg 13% 14%)",
+            "--secondary-foreground: hsl(220deg 15% 88%)",
+            "--muted: hsl(222deg 13% 13%)",
+            "--muted-foreground: hsl(220deg 10% 58%)",
+            "--accent: hsl(222deg 13% 16%)",
+            "--accent-foreground: hsl(220deg 18% 91%)",
+            "--info: hsl(210deg 85% 62%)",
+            "--info-foreground: hsl(222deg 18% 9%)",
+            "--destructive: hsl(0deg 66% 58%)",
+            "--destructive-foreground: hsl(0deg 0% 98%)",
+            "--success: hsl(152deg 55% 48%)",
+            "--success-foreground: hsl(150deg 60% 97%)",
+            "--warning: hsl(36deg 92% 55%)",
+            "--warning-foreground: hsl(36deg 100% 97%)",
+            "--border: hsl(222deg 12% 16%)",
+            "--input: hsl(222deg 12% 16%)",
+            "--ring: hsl(220deg 15% 70%)",
+            "--chart-1: hsl(152deg 55% 48%)",
+            "--chart-2: hsl(215deg 55% 60%)",
+            "--chart-3: hsl(36deg 92% 55%)",
+            "--chart-4: hsl(0deg 66% 58%)",
+            "--chart-5: hsl(265deg 55% 68%)",
+            "--sidebar: hsl(222deg 16% 5%)",
+            "--sidebar-foreground: hsl(220deg 14% 82%)",
+            "--sidebar-primary: hsl(220deg 18% 93%)",
+            "--sidebar-primary-foreground: hsl(222deg 18% 9%)",
+            "--sidebar-accent: hsl(222deg 13% 11%)",
+            "--sidebar-accent-foreground: hsl(220deg 18% 88%)",
+            "--sidebar-border: hsl(222deg 12% 13%)",
+            "--sidebar-ring: hsl(220deg 15% 70%)",
+            "--elevate-1: rgb(255 255 255 / 4%)",
+            "--elevate-2: rgb(255 255 255 / 8%)",
+            "--shadow-2xs: 0px 2px 12px 0px hsl(0deg 0% 0% / 15%)",
+            "--shadow-xs: 0px 2px 12px 0px hsl(0deg 0% 0% / 15%)",
+            "--shadow-sm: 0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 1px 2px -1px hsl(0deg 0% 0% / 20%)",
+            "--shadow: 0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 1px 2px -1px hsl(0deg 0% 0% / 20%)",
+            "--shadow-md: 0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 2px 4px -1px hsl(0deg 0% 0% / 20%)",
+            "--shadow-lg: 0px 2px 12px 0px hsl(0deg 0% 0% / 25%), 0px 4px 6px -1px hsl(0deg 0% 0% / 25%)",
+            "--shadow-xl: 0px 2px 12px 0px hsl(0deg 0% 0% / 30%), 0px 8px 10px -1px hsl(0deg 0% 0% / 30%)",
+            "--shadow-2xl: 0px 2px 12px 0px hsl(0deg 0% 0% / 40%)"
+          ]
+        },
+        {
+          "selector": "@theme inline",
+          "declarations": [
+            "--color-background: var(--background)",
+            "--color-foreground: var(--foreground)",
+            "--color-card: var(--card)",
+            "--color-card-border: var(--border)",
+            "--color-card-foreground: var(--card-foreground)",
+            "--color-popover: var(--popover)",
+            "--color-popover-foreground: var(--popover-foreground)",
+            "--color-primary: var(--primary)",
+            "--color-primary-foreground: var(--primary-foreground)",
+            "--color-secondary: var(--secondary)",
+            "--color-secondary-foreground: var(--secondary-foreground)",
+            "--color-muted: var(--muted)",
+            "--color-muted-foreground: var(--muted-foreground)",
+            "--color-accent: var(--accent)",
+            "--color-accent-foreground: var(--accent-foreground)",
+            "--color-info: var(--info)",
+            "--color-info-foreground: var(--info-foreground)",
+            "--color-destructive: var(--destructive)",
+            "--color-destructive-foreground: var(--destructive-foreground)",
+            "--color-success: var(--success)",
+            "--color-success-foreground: var(--success-foreground)",
+            "--color-warning: var(--warning)",
+            "--color-warning-foreground: var(--warning-foreground)",
+            "--color-border: var(--border)",
+            "--color-input: var(--input)",
+            "--color-ring: var(--ring)",
+            "--color-chart-1: var(--chart-1)",
+            "--color-chart-2: var(--chart-2)",
+            "--color-chart-3: var(--chart-3)",
+            "--color-chart-4: var(--chart-4)",
+            "--color-chart-5: var(--chart-5)",
+            "--color-sidebar: var(--sidebar)",
+            "--color-sidebar-foreground: var(--sidebar-foreground)",
+            "--color-sidebar-primary: var(--sidebar-primary)",
+            "--color-sidebar-primary-foreground: var(--sidebar-primary-foreground)",
+            "--color-sidebar-accent: var(--sidebar-accent)",
+            "--color-sidebar-accent-foreground: var(--sidebar-accent-foreground)",
+            "--color-sidebar-border: var(--sidebar-border)",
+            "--color-sidebar-ring: var(--sidebar-ring)",
+            "--font-sans: var(--font-sans)",
+            "--font-mono: var(--font-mono)",
+            "--font-serif: var(--font-serif)",
+            "--radius-sm: calc(var(--radius) - 4px)",
+            "--radius-md: calc(var(--radius) - 2px)",
+            "--radius-lg: var(--radius)",
+            "--radius-xl: calc(var(--radius) + 4px)",
+            "--shadow-2xs: var(--shadow-2xs)",
+            "--shadow-xs: var(--shadow-xs)",
+            "--shadow-sm: var(--shadow-sm)",
+            "--shadow: var(--shadow)",
+            "--shadow-md: var(--shadow-md)",
+            "--shadow-lg: var(--shadow-lg)",
+            "--shadow-xl: var(--shadow-xl)",
+            "--shadow-2xl: var(--shadow-2xl)"
+          ]
+        },
+        {
+          "selector": ".font-serif",
+          "declarations": [
+            "font-family: var(--font-serif)"
+          ]
+        },
+        {
+          "selector": ".font-mono-nums",
+          "declarations": [
+            "font-family: var(--font-mono)"
+          ]
+        },
+        {
+          "selector": ".font-sans-nums",
+          "declarations": [
+            "font-family: var(--font-sans)"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "client/src/themes.css",
+      "declarations": [
+        {
+          "condition": "@media (width >= 1280px)"
+        },
+        {
+          "condition": "@media (width <= 640px)"
+        },
+        {
+          "condition": "@media (height <= 700px)"
+        },
+        {
+          "condition": "@media (width <= 1100px)"
+        },
+        {
+          "condition": "@media (width < 768px)"
+        },
+        {
+          "condition": "@media (prefers-reduced-motion: reduce)"
+        },
+        {
+          "selector": ":root",
+          "declarations": [
+            "--brand: #26765c",
+            "--brand-soft: #e3ece3",
+            "--brand-foreground: #fffdf5",
+            "--panel-shadow: 0 3px 16px #30291f05",
+            "--panel-border: var(--border)",
+            "--panel-radius: 1rem",
+            "--shell-pattern: none",
+            "--display-font: var(--font-sans)",
+            "--font-serif: var(--font-sans)"
+          ]
+        },
+        {
+          "selector": ".dark",
+          "declarations": [
+            "--brand: #7dd7ad",
+            "--brand-soft: #1c3028",
+            "--brand-foreground: #10241b",
+            "--panel-shadow: 0 4px 20px #0000000d"
+          ]
+        },
+        {
+          "selector": ":root[data-design-theme='arcade']",
+          "declarations": [
+            "--background: #eeeeda",
+            "--foreground: #25342b",
+            "--card: #f9f8e7",
+            "--card-foreground: var(--foreground)",
+            "--popover: #f9f8e7",
+            "--popover-foreground: var(--foreground)",
+            "--primary: #515c24",
+            "--primary-foreground: #fffde9",
+            "--secondary: #e1e5ca",
+            "--secondary-foreground: #293c2b",
+            "--muted: #e5e7d2",
+            "--muted-foreground: #58614b",
+            "--accent: #dce7c3",
+            "--accent-foreground: #293c2b",
+            "--border: #b6bfa3",
+            "--input: #9eac8c",
+            "--ring: #515c24",
+            "--sidebar: #dfe4cd",
+            "--sidebar-foreground: #2c3d2c",
+            "--sidebar-primary: #515c24",
+            "--sidebar-primary-foreground: #fffde9",
+            "--sidebar-accent: #cdd9ac",
+            "--sidebar-accent-foreground: #293c2b",
+            "--sidebar-border: #aab793",
+            "--brand: #515c24",
+            "--brand-soft: #e0e8c1",
+            "--brand-foreground: #fffde9",
+            "--chart-1: #417d5c",
+            "--chart-2: #6b69b6",
+            "--chart-3: #b57926",
+            "--chart-4: #b6534a",
+            "--chart-5: #7b6a91",
+            "--radius: 0.125rem",
+            "--panel-radius: 0.125rem",
+            "--panel-border: #778b67",
+            "--panel-shadow: 3px 3px 0 #778b6738",
+            "--display-font: 'Consolas', 'SFMono-Regular', 'Microsoft YaHei', monospace",
+            "--font-serif: var(--display-font)",
+            "--shell-pattern: linear-gradient(#75865c09 1px, transparent 1px), linear-gradient(90deg, #75865c09 1px, transparent 1px)"
+          ]
+        },
+        {
+          "selector": ":root[data-design-theme='arcade'].dark",
+          "declarations": [
+            "--background: #141b1a",
+            "--foreground: #e8efdb",
+            "--card: #1c2724",
+            "--popover: #24332c",
+            "--primary: #c4ed78",
+            "--primary-foreground: #22301b",
+            "--secondary: #2c3930",
+            "--secondary-foreground: #e8efdb",
+            "--muted: #25322d",
+            "--muted-foreground: #a3b49a",
+            "--accent: #354833",
+            "--accent-foreground: #e8efdb",
+            "--border: #3d5143",
+            "--input: #52664b",
+            "--ring: #c4ed78",
+            "--sidebar: #101713",
+            "--sidebar-foreground: #d3dfc5",
+            "--sidebar-primary: #c4ed78",
+            "--sidebar-primary-foreground: #22301b",
+            "--sidebar-accent: #293e2a",
+            "--sidebar-accent-foreground: #d7f6ac",
+            "--sidebar-border: #344834",
+            "--brand: #c4ed78",
+            "--brand-soft: #2a3a22",
+            "--brand-foreground: #22301b",
+            "--chart-1: #a8d969",
+            "--chart-2: #aaa0f0",
+            "--chart-3: #e8b75d",
+            "--chart-4: #f08279",
+            "--chart-5: #b2d9d1",
+            "--panel-border: #4c6347",
+            "--panel-shadow: 3px 3px 0 #090f0c",
+            "--shell-pattern: linear-gradient(#c4ed7805 1px, transparent 1px), linear-gradient(90deg, #c4ed7805 1px, transparent 1px)"
+          ]
+        },
+        {
+          "selector": ":root[data-design-theme='comic']",
+          "declarations": [
+            "--background: #f2e8d8",
+            "--foreground: #342d34",
+            "--card: #fff8ed",
+            "--card-foreground: var(--foreground)",
+            "--popover: #fff8ed",
+            "--popover-foreground: var(--foreground)",
+            "--primary: #8a3e2b",
+            "--primary-foreground: #fff8ed",
+            "--secondary: #eee0c7",
+            "--secondary-foreground: #342d34",
+            "--muted: #f0e4d2",
+            "--muted-foreground: #756252",
+            "--accent: #f3d99d",
+            "--accent-foreground: #342d34",
+            "--border: #c4af92",
+            "--input: #b9a387",
+            "--ring: #8a3e2b",
+            "--sidebar: #eedbb7",
+            "--sidebar-foreground: #42352e",
+            "--sidebar-primary: #8a3e2b",
+            "--sidebar-primary-foreground: #fff8ed",
+            "--sidebar-accent: #f8c980",
+            "--sidebar-accent-foreground: #342d34",
+            "--sidebar-border: #bba280",
+            "--brand: #8a3e2b",
+            "--brand-soft: #f7dfbc",
+            "--brand-foreground: #fff8ed",
+            "--chart-1: #468276",
+            "--chart-2: #876fbd",
+            "--chart-3: #bb771f",
+            "--chart-4: #c45f4b",
+            "--chart-5: #b3739b",
+            "--radius: 0.9rem",
+            "--panel-radius: 1.25rem",
+            "--panel-border: #57483c",
+            "--panel-shadow: 3px 4px 0 #57483c",
+            "--display-font: 'Trebuchet MS', 'Microsoft YaHei', var(--font-sans)",
+            "--font-serif: var(--display-font)",
+            "--shell-pattern: radial-gradient(#57483c12 0.8px, transparent 0.8px)"
+          ]
+        },
+        {
+          "selector": ":root[data-design-theme='comic'].dark",
+          "declarations": [
+            "--background: #211e29",
+            "--foreground: #f5eadd",
+            "--card: #2c2837",
+            "--popover: #36313f",
+            "--primary: #ffc477",
+            "--primary-foreground: #392915",
+            "--secondary: #403849",
+            "--secondary-foreground: #f5eadd",
+            "--muted: #373141",
+            "--muted-foreground: #bdb0bd",
+            "--accent: #524154",
+            "--accent-foreground: #f5eadd",
+            "--border: #5c4c61",
+            "--input: #78667d",
+            "--ring: #ffc477",
+            "--sidebar: #27202e",
+            "--sidebar-foreground: #f0dcc4",
+            "--sidebar-primary: #ffc477",
+            "--sidebar-primary-foreground: #392915",
+            "--sidebar-accent: #513949",
+            "--sidebar-accent-foreground: #ffcf91",
+            "--sidebar-border: #5d4860",
+            "--brand: #ffc477",
+            "--brand-soft: #4b3740",
+            "--brand-foreground: #392915",
+            "--chart-1: #7bc6ac",
+            "--chart-2: #bf9ce9",
+            "--chart-3: #f6bc67",
+            "--chart-4: #f18a7b",
+            "--chart-5: #eab2d2",
+            "--panel-border: #b69c8e",
+            "--panel-shadow: 3px 4px 0 #100d18",
+            "--shell-pattern: radial-gradient(#e8ccac0b 0.8px, transparent 0.8px)"
+          ]
+        },
+        {
+          "selector": ":root[data-design-theme='orbit']",
+          "declarations": [
+            "--background: #e6edf0",
+            "--foreground: #183444",
+            "--card: #f2f7f7",
+            "--card-foreground: var(--foreground)",
+            "--popover: #f2f7f7",
+            "--popover-foreground: var(--foreground)",
+            "--primary: #246781",
+            "--primary-foreground: #f6fcff",
+            "--secondary: #dae6eb",
+            "--secondary-foreground: #183444",
+            "--muted: #dfe9ed",
+            "--muted-foreground: #536f7d",
+            "--accent: #cbe1e8",
+            "--accent-foreground: #183444",
+            "--border: #b8cdd5",
+            "--input: #a0bcc9",
+            "--ring: #246781",
+            "--sidebar: #d7e4e9",
+            "--sidebar-foreground: #234857",
+            "--sidebar-primary: #246781",
+            "--sidebar-primary-foreground: #f6fcff",
+            "--sidebar-accent: #c0dce5",
+            "--sidebar-accent-foreground: #194658",
+            "--sidebar-border: #b1cbd5",
+            "--brand: #246781",
+            "--brand-soft: #d5e9ee",
+            "--brand-foreground: #f6fcff",
+            "--chart-1: #277f93",
+            "--chart-2: #8778ba",
+            "--chart-3: #b27c34",
+            "--chart-4: #bd6059",
+            "--chart-5: #698e6b",
+            "--radius: 0.6rem",
+            "--panel-radius: 0.85rem",
+            "--panel-border: #b0cbd6",
+            "--panel-shadow: 0 4px 20px #27465a08",
+            "--display-font: var(--font-sans)",
+            "--font-serif: var(--display-font)",
+            "--shell-pattern: radial-gradient(#2467811c 0.7px, transparent 0.7px)"
+          ]
+        },
+        {
+          "selector": ":root[data-design-theme='orbit'].dark",
+          "declarations": [
+            "--background: #0b1823",
+            "--foreground: #dbeaf2",
+            "--card: #112534",
+            "--popover: #183242",
+            "--primary: #83dbed",
+            "--primary-foreground: #10303a",
+            "--secondary: #1b3646",
+            "--secondary-foreground: #dbeaf2",
+            "--muted: #183040",
+            "--muted-foreground: #93afbe",
+            "--accent: #1c4052",
+            "--accent-foreground: #dbeaf2",
+            "--border: #284858",
+            "--input: #3e6376",
+            "--ring: #83dbed",
+            "--sidebar: #0b1c29",
+            "--sidebar-foreground: #b6d1df",
+            "--sidebar-primary: #83dbed",
+            "--sidebar-primary-foreground: #10303a",
+            "--sidebar-accent: #163a4a",
+            "--sidebar-accent-foreground: #a6eafa",
+            "--sidebar-border: #254353",
+            "--brand: #83dbed",
+            "--brand-soft: #163a4a",
+            "--brand-foreground: #10303a",
+            "--chart-1: #73d3dd",
+            "--chart-2: #b8a0eb",
+            "--chart-3: #ebc18a",
+            "--chart-4: #f59891",
+            "--chart-5: #9dcba3",
+            "--panel-border: #315668",
+            "--panel-shadow: 0 4px 24px #0000001a, inset 0 1px 0 #83dbed09",
+            "--shell-pattern: radial-gradient(#83dbed1a 0.7px, transparent 0.7px)"
+          ]
+        },
+        {
+          "selector": ".app-wordmark",
+          "declarations": [
+            "font-family: var(--display-font)"
+          ]
+        },
+        {
+          "selector": ".app-page-title",
+          "declarations": [
+            "font-family: var(--display-font)"
+          ]
+        },
+        {
+          "selector": ":root[data-design-theme='classic']:not(.dark) .app-shell-simple",
+          "declarations": [
+            "--background: #f6f7fc",
+            "--foreground: #30354c",
+            "--card: #fff",
+            "--card-foreground: #30354c",
+            "--primary: #7456b5",
+            "--primary-foreground: #fff",
+            "--primary-border: #684ba7",
+            "--secondary: #eeebf8",
+            "--secondary-foreground: #54416e",
+            "--muted: #f0eff7",
+            "--muted-foreground: #676b80",
+            "--accent: #eae6f5",
+            "--border: #e2e4ef",
+            "--input: #d8dcea",
+            "--ring: #9578c5",
+            "--sidebar: #f0edf7",
+            "--sidebar-foreground: #58536c",
+            "--sidebar-accent: #e4dcf3",
+            "--sidebar-accent-foreground: #5b4187",
+            "--sidebar-border: #e2dcef"
+          ]
+        },
+        {
+          "selector": ":root[data-design-theme='classic'].dark .app-shell-simple",
+          "declarations": [
+            "--primary: #bda5ef",
+            "--primary-foreground: #251c39",
+            "--primary-border: #aa8edb",
+            "--ring: #bda5ef",
+            "--sidebar-accent: #292335",
+            "--sidebar-accent-foreground: #d4c1f4"
+          ]
+        },
+        {
+          "selector": "[data-design-theme='arcade'] .app-brand-caption",
+          "declarations": [
+            "font-family: var(--font-mono)"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "client/src/typography.css",
+      "declarations": [
+        {
+          "selector": "@plugin \"@tailwindcss/typography\"; @utility prose",
+          "declarations": [
+            "--tw-prose-body: var(--foreground)",
+            "--tw-prose-headings: var(--foreground)",
+            "--tw-prose-lead: var(--muted-foreground)",
+            "--tw-prose-links: var(--primary)",
+            "--tw-prose-bold: var(--foreground)",
+            "--tw-prose-counters: var(--muted-foreground)",
+            "--tw-prose-bullets: var(--primary)",
+            "--tw-prose-hr: var(--border)",
+            "--tw-prose-quotes: var(--foreground)",
+            "--tw-prose-quote-borders: var(--border)",
+            "--tw-prose-captions: var(--muted-foreground)",
+            "--tw-prose-kbd: var(--foreground)",
+            "--tw-prose-kbd-shadows: --alpha(var(--foreground) / 90%)",
+            "--tw-prose-code: var(--foreground)",
+            "--tw-prose-pre-code: var(--accent-foreground)",
+            "--tw-prose-pre-bg: var(--accent)",
+            "--tw-prose-th-borders: var(--border)",
+            "--tw-prose-td-borders: var(--border)",
+            "--tw-prose-invert-body: var(--foreground)",
+            "--tw-prose-invert-headings: var(--foreground)",
+            "--tw-prose-invert-lead: var(--muted-foreground)",
+            "--tw-prose-invert-links: var(--primary)",
+            "--tw-prose-invert-bold: var(--foreground)",
+            "--tw-prose-invert-counters: var(--muted-foreground)",
+            "--tw-prose-invert-bullets: var(--primary)",
+            "--tw-prose-invert-hr: var(--border)",
+            "--tw-prose-invert-quotes: var(--foreground)",
+            "--tw-prose-invert-quote-borders: var(--border)",
+            "--tw-prose-invert-captions: var(--muted-foreground)",
+            "--tw-prose-invert-kbd: var(--foreground)",
+            "--tw-prose-invert-kbd-shadows: --alpha(var(--foreground) / 90%)",
+            "--tw-prose-invert-code: var(--foreground)",
+            "--tw-prose-invert-pre-code: var(--accent-foreground)",
+            "--tw-prose-invert-pre-bg: var(--accent)",
+            "--tw-prose-invert-th-borders: var(--border)",
+            "--tw-prose-invert-td-borders: var(--border)"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "client/src/portfolio-workspace.css",
+      "declarations": [
+        {
+          "condition": "@media (width <= 900px)"
+        },
+        {
+          "condition": "@media (width <= 600px)"
+        },
+        {
+          "condition": "@media (width < 1100px)"
+        },
+        {
+          "condition": "@media (width < 768px)"
+        },
+        {
+          "condition": "@media (width >= 1280px)"
+        },
+        {
+          "condition": "@media (width <= 760px)"
+        },
+        {
+          "condition": "@media (width <= 640px)"
+        },
+        {
+          "selector": ":root[data-workspace-experience='simple'][data-design-theme='classic']:not(.dark), :root[data-design-theme='classic']:not(.dark) .app-shell-simple",
+          "declarations": [
+            "--background: #fff",
+            "--foreground: #1e302a",
+            "--card: #fff",
+            "--card-foreground: #1e302a",
+            "--popover: #fff",
+            "--popover-foreground: #1e302a",
+            "--primary: #26765c",
+            "--primary-foreground: #fff",
+            "--primary-border: #226b53",
+            "--secondary: #edf3ef",
+            "--secondary-foreground: #285a48",
+            "--muted: #f4f7f5",
+            "--muted-foreground: #64766d",
+            "--accent: #e9f3ed",
+            "--accent-foreground: #26765c",
+            "--border: #dfe7e2",
+            "--input: #d5e0d9",
+            "--ring: #26765c",
+            "--brand: #26765c",
+            "--brand-soft: #eaf4ed",
+            "--sidebar: #f4f7f5",
+            "--sidebar-foreground: #53685c",
+            "--sidebar-accent: #e7f2eb",
+            "--sidebar-accent-foreground: #26765c",
+            "--sidebar-border: #e4ebe7"
+          ]
+        },
+        {
+          "selector": ":root[data-workspace-experience='simple'][data-design-theme='classic'].dark, :root[data-design-theme='classic'].dark .app-shell-simple",
+          "declarations": [
+            "--primary: #82c5a6",
+            "--primary-foreground: #14281e",
+            "--primary-border: #82c5a6",
+            "--ring: #82c5a6",
+            "--brand: #82c5a6",
+            "--sidebar-accent: #243b30",
+            "--sidebar-accent-foreground: #b3dfc8"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "client/src/index.css",
+      "declarations": []
+    },
+    {
+      "file": "tailwind.config.ts",
+      "contentHash": "527c3317140c176443daa4a6d67d5e515760bda71b63777c2ee825b858e57af8"
+    }
+  ],
+  "hash": "c83cdf7904ce9fa834cd1edb2998209987cb99460fedc75c30ec270dd8924211"
+}

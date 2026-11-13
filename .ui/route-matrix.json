@@ -1,0 +1,290 @@
+{
+  "schemaVersion": 1,
+  "description": "Frozen fictional UI audit; scenario changes require a fresh before capture. Not an approved visual baseline.",
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "width": 768,
+      "height": 1000
+    },
+    {
+      "width": 390,
+      "height": 1000
+    },
+    {
+      "width": 320,
+      "height": 1000
+    }
+  ],
+  "browser": {
+    "name": "chromium",
+    "deviceScaleFactor": 1,
+    "colorScheme": "light",
+    "reducedMotion": "reduce",
+    "timezoneId": "Asia/Shanghai"
+  },
+  "routes": [
+    {
+      "id": "friends",
+      "route": "/friends",
+      "readySelector": "article",
+      "expectedCount": 5,
+      "sourceHint": {
+        "file": "client/src/features/agent-roster/AgentRosterCard.tsx",
+        "component": "AgentRosterCard"
+      },
+      "alignmentRules": [
+        {
+          "code": "MISALIGN_TOP",
+          "groupSelector": "article",
+          "targetSelector": ":scope div:has(> a[href^=\"/research?agent=\"])",
+          "edge": "top",
+          "tolerance": 2,
+          "sourceHint": {
+            "file": "client/src/features/agent-roster/AgentRosterCard.tsx",
+            "component": "AgentRosterCard"
+          }
+        },
+        {
+          "code": "MISALIGN_BOTTOM",
+          "groupSelector": "article",
+          "targetSelector": ":scope details",
+          "edge": "bottom",
+          "tolerance": 2,
+          "sourceHint": {
+            "file": "client/src/features/agent-roster/AgentRosterCard.tsx",
+            "component": "AgentRosterCard"
+          }
+        }
+      ],
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        },
+        {
+          "name": "longtext-en",
+          "language": "en",
+          "fixture": "longtext"
+        },
+        {
+          "name": "agent-editor",
+          "language": "en",
+          "action": "agent-editor",
+          "alignmentRules": []
+        },
+        {
+          "name": "memory-expanded",
+          "language": "en",
+          "action": "memory-expanded",
+          "alignmentRules": []
+        },
+        {
+          "name": "external-status",
+          "language": "en",
+          "fixture": "external",
+          "action": "external-status",
+          "alignmentRules": []
+        }
+      ]
+    },
+    {
+      "id": "teams-guided",
+      "route": "/teams?guided=1",
+      "readySelector": ".guided-team-page, .team-workspace, main h1",
+      "sourceHint": {
+        "file": "client/src/features/teams/GuidedTeamCreate.tsx",
+        "component": "GuidedTeamCreate"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        },
+        {
+          "name": "step2-zh-CN",
+          "language": "zh-CN",
+          "action": "guided-step2"
+        },
+        {
+          "name": "step3-zh-CN",
+          "language": "zh-CN",
+          "action": "guided-step3"
+        },
+        {
+          "name": "step2-en",
+          "language": "en",
+          "action": "guided-step2"
+        },
+        {
+          "name": "step3-en",
+          "language": "en",
+          "action": "guided-step3"
+        }
+      ]
+    },
+    {
+      "id": "teams-advanced",
+      "route": "/teams?advanced=1",
+      "readySelector": ".team-workspace",
+      "sourceHint": {
+        "file": "client/src/pages/Teams/TeamsPage.tsx",
+        "component": "TeamsPage"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        }
+      ]
+    },
+    {
+      "id": "research",
+      "route": "/research",
+      "readySelector": "main",
+      "sourceHint": {
+        "file": "client/src/pages/Workspace/ResearchWorkspacePage.tsx",
+        "component": "ResearchWorkspacePage"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        }
+      ]
+    },
+    {
+      "id": "overview",
+      "route": "/",
+      "readySelector": "main",
+      "sourceHint": {
+        "file": "client/src/pages/Overview/PortfolioOverviewPage.tsx",
+        "component": "PortfolioOverviewPage"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        }
+      ]
+    },
+    {
+      "id": "holdings",
+      "route": "/holdings?accountId=real",
+      "readySelector": "input[placeholder=\"Search ticker or company...\"], input[placeholder=\"搜索代码或公司名称...\"]",
+      "sourceHint": {
+        "file": "client/src/pages/Holdings/HoldingsPage.tsx",
+        "component": "HoldingsPage"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        }
+      ]
+    },
+    {
+      "id": "paper",
+      "route": "/paper",
+      "readySelector": "main",
+      "sourceHint": {
+        "file": "client/src/pages/Paper/SimulationAccountsPage.tsx",
+        "component": "SimulationAccountsPage"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        }
+      ]
+    },
+    {
+      "id": "data",
+      "route": "/data",
+      "readySelector": "main",
+      "sourceHint": {
+        "file": "client/src/pages/Workspace/DataCenterPage.tsx",
+        "component": "DataCenterPage"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        }
+      ]
+    },
+    {
+      "id": "memory",
+      "route": "/memory",
+      "readySelector": "main",
+      "sourceHint": {
+        "file": "client/src/pages/Workspace/MemoryWorkspacePage.tsx",
+        "component": "MemoryWorkspacePage"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "route": "/settings",
+      "readySelector": "#settings-page-title, #llm-default-route",
+      "sourceHint": {
+        "file": "client/src/pages/Settings/SettingsPage.tsx",
+        "component": "SettingsPage"
+      },
+      "states": [
+        {
+          "name": "default",
+          "language": "zh-CN"
+        },
+        {
+          "name": "english",
+          "language": "en"
+        }
+      ]
+    }
+  ]
+}

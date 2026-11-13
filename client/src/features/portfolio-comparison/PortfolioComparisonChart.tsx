@@ -301,7 +301,7 @@ function HistoricalValuations({
       className="portfolio-history-table"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>
+      <summary className="min-h-6 py-1">
         {reference
           ? zh
             ? '查看参考市值与历史价格来源'

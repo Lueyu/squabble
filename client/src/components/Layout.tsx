@@ -247,7 +247,7 @@ function Layout() {
             </div>}
           </div>
           {!focusedFlow && <div className="app-topbar-actions">
-            {simple && <><WorkspaceSearch /><NavLink to="/settings/notifications" className="workspace-alert-link" aria-label={zh ? '提醒与通知渠道' : 'Alerts and notification channels'}><Bell size={17} /></NavLink></>}
+            {simple && <><WorkspaceSearch /><NavLink to="/settings/notifications" className="workspace-alert-link inline-flex size-8 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={zh ? '提醒与通知渠道' : 'Alerts and notification channels'}><Bell size={17} /></NavLink></>}
             <div className="app-market-status"><MarketStatusIndicator simple={simple} /></div>
             <AppearancePicker />
           </div>}

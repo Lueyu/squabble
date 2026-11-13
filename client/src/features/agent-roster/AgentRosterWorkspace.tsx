@@ -8,6 +8,7 @@ import { agentRosterApi } from '@/api/agent-roster';
 import { fetchModelConnections } from '@/api/model-connections';
 import { fetchLocalAgents } from '@/api/local-agents';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { createRequestIntent } from '@/utils/simple-experience';
 import { AgentConnectionSetup } from './AgentConnectionSetup';
 import { defaultAgentExecutor } from './agent-roster-state';
@@ -94,7 +95,10 @@ export default function AgentRosterWorkspace() {
         {recommended.isPending ? (zh ? '正在添加…' : 'Adding…') : (zh ? '添加推荐股友' : 'Add recommended agents')}
       </Button>
     </section>}
-    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className={cn(
+      'grid sm:grid-cols-2 lg:grid-cols-3 gap-4 has-[details[open]]:items-start',
+      memoryAgent !== null && 'items-start',
+    )}>
       {active.map(agent => <AgentRosterCard key={agent.id} agent={agent} zh={zh}
         memoryOpen={memoryAgent === agent.id} archiving={archive.isPending}
         onEdit={() => edit(agent)} onMemory={() => setMemoryAgent(memoryAgent === agent.id ? null : agent.id)}

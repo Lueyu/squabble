@@ -102,7 +102,7 @@ export function AgentEditorDialog({ editing, templates, models, locals, defaultE
             placeholder={zh ? '例如：回答简短，先说明数据缺口。' : 'For example: keep answers concise and explain missing data first.'} />
         </div>
         <details>
-          <summary className="cursor-pointer text-sm">{zh ? '更多：个人介绍与连接' : 'More: introduction and connection'}</summary>
+          <summary className="cursor-pointer py-1 text-sm">{zh ? '更多：个人介绍与连接' : 'More: introduction and connection'}</summary>
           <div className="mt-3 space-y-3">
             <Label htmlFor="agent-description">{zh ? '个人介绍（仅用于名片）' : 'Introduction (shown on the card)'}</Label>
             <Textarea id="agent-description" value={description} maxLength={4000} onChange={event => setDescription(event.target.value)} />
@@ -124,7 +124,7 @@ export function AgentEditorDialog({ editing, templates, models, locals, defaultE
           </div>
         </details>
         <details>
-          <summary className="cursor-pointer text-sm">{zh ? '高级：资料和工具范围' : 'Advanced: data and tool scopes'}</summary>
+          <summary className="cursor-pointer py-1 text-sm">{zh ? '高级：资料和工具范围' : 'Advanced: data and tool scopes'}</summary>
           <AgentCapabilityEditor zh={zh} sources={sources} tools={tools ?? template?.allowedToolIds ?? []}
             availableTools={templates.flatMap(item => [...item.allowedToolIds])} onSources={setSources} onTools={setTools} />
         </details>
