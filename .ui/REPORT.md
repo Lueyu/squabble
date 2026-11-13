@@ -13,6 +13,7 @@
 | 关闭、通知和上下文操作 | 保持图标视觉大小；弹窗关闭16px、通知17px、上下文移除22px的操作盒均扩为32×32px。 |
 | 建队成员 | 整行成为可点击标签；复选框与40px头像对齐，实测整行点击只切换一次选择，不改变原保存/启动流程。 |
 | 次要入口 | 股友/图表 summary、引导步骤、返回链接和记忆偏好标签使用现有间距刻度达到至少24px的有效点击高度。 |
+| 平板顶部导航 | 768px英文截图另发现面包屑折成两行；平板改用搜索图标，工作区前缀在现有lg断点显示，保留完整可访问名称及长标题省略。此项另有单行/搜索打开断言。 |
 
 ## 前后截图
 
@@ -22,13 +23,13 @@
 | --- | --- | --- |
 | 股友卡片 · 1440px | ![整改前卡片](../docs/screenshots/ui-alignment/friends-before.png) | ![整改后卡片](../docs/screenshots/ui-alignment/friends-after.png) |
 | 英文持仓 · 320px | ![整改前工具栏](../docs/screenshots/ui-alignment/holdings-before.png) | ![整改后工具栏](../docs/screenshots/ui-alignment/holdings-after.png) |
-| 展开记忆 · 768px | ![整改前记忆按钮](../docs/screenshots/ui-alignment/memory-before.png) | ![整改后记忆按钮](../docs/screenshots/ui-alignment/memory-after.png) |
+| 展开记忆 · 768px，另行滚动到分享按钮的视角 | ![整改前记忆按钮](../docs/screenshots/ui-alignment/memory-before.png) | ![整改后记忆按钮](../docs/screenshots/ui-alignment/memory-after.png) |
 
 Agent 查看了以上截图及390×844研究室、持仓、股友和建队页面；研究输入框及底部导航保留在移动首屏可达范围内。截图检查不是人工批准记录。
 
 ## 确定性结果
 
-| 规则 | before-v3 | after-v5 |
+| 规则 | before-v3 | after-v6 |
 | --- | ---: | ---: |
 | MISALIGN_TOP | 11 | 0 |
 | MISALIGN_BOTTOM | 11 | 0 |
@@ -48,12 +49,12 @@ Agent 查看了以上截图及390×844研究室、持仓、股友和建队页面
 完整JSON、逐屏截图、构建和测试日志保存在本地忽略目录 `output/playwright/ui-audit/`。前两次夹具契约不完整的采集已作废；没有将缺页、错误边界或部分场景算作通过。最终比较命令：
 
 ```sh
-npm run ui:gate -- --vs output/playwright/ui-audit/before-v3/before.json --current output/playwright/ui-audit/after-v5/after.json
+npm run ui:gate -- --vs output/playwright/ui-audit/before-v3/before.json --current output/playwright/ui-audit/after-v6/after.json
 ```
 
 ## 其他验证与工具
 
-- 客户端完整测试636/636通过；后续点击区域类修改的目标测试28/28、图表测试5/5通过。
+- 客户端完整测试636/636通过；后续点击区域类修改的目标测试28/28、图表测试5/5及最后导航调整测试10/10通过。
 - 探针/夹具/gate测试23/23通过；覆盖缺失目标、折叠内容不可见、错误边界、响应契约、严重度升级、无效证据、环境变化和token/断点变化。
 - 全量lint、前后端类型检查、stylelint、Web构建通过；后续类修改又通过对应ESLint、客户端类型检查与构建。
 - contributor context测试15/15通过，check:context有效；独立只读审查没有未解决的P1/P2。

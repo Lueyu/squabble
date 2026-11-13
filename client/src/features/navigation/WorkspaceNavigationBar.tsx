@@ -56,11 +56,11 @@ export function WorkspaceNavigationBar() {
       )}
       {route.kind === 'root' ? (
         <span className="workspace-location">
-          <span className="hidden sm:inline">
+          <span className="hidden whitespace-nowrap lg:inline">
             {zh ? '我的工作区' : 'My workspace'}
           </span>
-          <ChevronRight size={13} />
-          {section.label}
+          <ChevronRight size={13} className="shrink-0" />
+          <span className="min-w-0 truncate">{section.label}</span>
         </span>
       ) : (
         <Link className="workspace-parent-link inline-flex min-h-6 items-center" to={parent}>
