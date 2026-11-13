@@ -129,6 +129,11 @@ Reviewed `9e2d83a` plus working-tree changes on 2026-11-09. `PortfolioWorkspaceS
 
 ## Exact source → draft → explicit application
 
+`UserInvestmentStrategyService.accountSnapshot` reuses the exact confirmation
+instant for both its returned snapshot and persisted `updatedAt`; a second clock
+read must not make an immediate `get` differ from the confirmation receipt. The
+advancing-clock regression is `user-investment-strategy.clock.spec.ts`.
+
 Daily simulation journey reviewed against `5dc6bdd` plus this change:
 
 - Current `ReportExecutionPlan`/`ReportStrategyTarget` imports the exact selected source into a chosen account draft, disabled until reviewed and applied through the combination API. Legacy strategy/order query links remain navigation inputs; they do not select or activate global authority.
