@@ -51,6 +51,8 @@ is needed for local Docker.
 
 ### Team workspace · 团队模拟盘
 
+- [Compact UI and team removal / 界面比例与团队移除](compact-ui-team-removal.md): existing layout with denser desktop dimensions, research-pane scrolling and archive-backed removal with atomic agreement pause and history retention.
+
 - [Team paper portfolios / 团队模拟盘审核入口](superpowers/specs/2026-11-12-team-paper-review.zh-CN.md): approved product and technical specifications, now implemented with editable organization canvases and 10 starting templates. 原型与详细方案已批准；实现入口见 [使用指南](team-workspace.md)，实际检查和限制见 [验证记录](team-workspace-validation.md)。
 
 ### Independent-agent design and implementation · 独立股友设计与实现

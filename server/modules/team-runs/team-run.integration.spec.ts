@@ -154,6 +154,31 @@ test('pause wins immediately before final automatic apply and cancels protective
   } finally { await f.dispose(); }
 });
 
+test('team removal wins before final automatic apply without deleting the accepted report', options, async () => {
+  const f = await setup();
+  try {
+    const accepted = await acceptedReport(f);
+    const originalApply = f.workspace.apply.bind(f.workspace);
+    let archived = false;
+    f.workspace.apply = async (owner, accountId, input, authority) => {
+      const current = await f.service.detail(f.owner, f.teamId);
+      const preview = await f.versions.archivePreview(f.owner, f.teamId, { requestKey: randomUUID(), expectedBindingRevision: current.bindingRevision,
+        expectedCurrentVersionId: current.currentVersionId, executionChoice: 'pause_all' });
+      await f.versions.archive(f.owner, f.teamId, { requestKey: randomUUID(), previewId: preview.previewId, previewHash: preview.previewHash });
+      archived = true;
+      return originalApply(owner, accountId, input, authority);
+    };
+    await f.scheduler.runOnce(new Date('2026-11-12T09:00:00Z'));
+    assert.equal(archived, true);
+    assert.equal((await f.service.detail(f.owner, f.teamId)).status, 'archived');
+    assert.equal((await f.db.select().from(teamRunAgreements))[0].state, 'paused');
+    assert.equal((await f.db.select().from(paperAccounts).where(eq(paperAccounts.id, f.account.id)))[0].botEnabled, false);
+    assert.equal((await f.db.select().from(portfolioStrategyAssignments)).length, 0);
+    assert.equal((await f.db.select().from(teamDecisions)).filter(row => row.event === 'applied').length, 0);
+    assert.equal((await f.db.select().from(councilReports).where(eq(councilReports.researchVersionId, accepted.version.id))).length, 1);
+  } finally { await f.dispose(); }
+});
+
 test('unknown commission survives restart without overlapping work or releasing reservations', options, async () => {
   const f = await setup();
   try {

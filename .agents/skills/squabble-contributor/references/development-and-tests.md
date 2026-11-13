@@ -30,6 +30,20 @@ existing instance, not `npm run dev` or an ignored temporary helper.
 
 ## Choose checks by changed behavior
 
+Desktop density and research-pane acceptance: `npm run build:client` then
+`npm run ui:density` renders18 fictional browser scenarios and asserts first-screen
+chart coverage, visible composers and separate message scrolling. `--dist <dir>`
+can verify that a prior compiled client fails the same assertions.
+
+Team removal reuses archive-preview/archive. Run
+`server/modules/teams/teams-archive.integration.spec.ts` and
+`server/modules/team-runs/team-run.integration.spec.ts` with a disposable
+`TEAM_TEST_DATABASE_URL`, plus `client/src/utils/team-removal.test.cjs`.
+Verify agreement snapshot/revision fences, atomic pause and reserved-cycle
+cancellation, handover/replayed old pause isolation, final-apply races, retained
+financial/report history and exact unknown-request retries. Do not archive a
+personal team or start a real Agent as a smoke test.
+
 For measured UI alignment and responsive-control fixes, use the frozen fictional
 matrix and commands in [.ui/README.md](../../../../.ui/README.md). Run
 `npm run test:ui-probe` for detector, fixture and improvement-gate contracts.

@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { teams, teamAccountBindings } from './teams.schema';
 import { teamRunAgreements, teamRunCycles, teamRunAgreementRevisions } from './team-run.schema';
 import type { TeamDatabase } from './team-context';
@@ -13,6 +13,37 @@ import { councilSessions } from './council.schema';
 import { hasCouncilDispatchProof } from './council-execution-proof';
 
 export const TEAM_RUN_ARCHIVE_ONLY_STOP = 'AGENT_ARCHIVED_SETTLEMENT_ONLY';
+
+export interface TeamRunArchiveSnapshot { id: string; revision: number; state: string }
+
+/** Caller holds the existing owner lock before taking agreement rows. */
+export async function readTeamRunArchiveSnapshot(tx: TeamDatabase, owner: string, teamId: string): Promise<TeamRunArchiveSnapshot | null> {
+  const [agreement] = await tx.select().from(teamRunAgreements)
+    .where(and(eq(teamRunAgreements.ownerId, owner), eq(teamRunAgreements.teamId, teamId))).for('update');
+  return agreement ? { id: agreement.id, revision: agreement.revision, state: agreement.state } : null;
+}
+
+/** Team archival revokes standing authority without deleting dispatched work or its reservations. */
+export async function pauseTeamRunForArchive(tx: TeamDatabase, owner: string, teamId: string, expected: unknown): Promise<void> {
+  const [agreement] = await tx.select().from(teamRunAgreements)
+    .where(and(eq(teamRunAgreements.ownerId, owner), eq(teamRunAgreements.teamId, teamId))).for('update');
+  const current = agreement ? { id: agreement.id, revision: agreement.revision, state: agreement.state } : null;
+  if (expected === undefined || canonicalHash(current) !== canonicalHash(expected)) {
+    throw new ConflictException('TEAM_PREVIEW_STALE');
+  }
+  if (!agreement) return;
+  const [paused] = await tx.update(teamRunAgreements).set({ state: 'paused', revision: agreement.revision + 1,
+    suspensionReason: 'Team archived; automatic team research stopped', updatedAt: new Date() })
+    .where(and(eq(teamRunAgreements.ownerId, owner), eq(teamRunAgreements.id, agreement.id))).returning();
+  await tx.insert(teamRunAgreementRevisions).values({ ownerId: owner, agreementId: paused.id,
+    revision: paused.revision, state: paused.state, accountId: paused.accountId, configuration: paused.configuration,
+    members: paused.members, scopeRevision: paused.scopeRevision, confirmedBy: paused.confirmedBy,
+    confirmedAt: paused.confirmedAt, suspensionReason: paused.suspensionReason });
+  await tx.update(teamRunCycles).set({ state: 'cancelled', lastError: 'Team archived before dispatch', updatedAt: new Date() })
+    .where(and(eq(teamRunCycles.ownerId, owner), eq(teamRunCycles.agreementId, paused.id),
+      eq(teamRunCycles.state, 'reserved'), sql`${teamRunCycles.commissionId} IS NULL`));
+}
+
 export function isArchiveOnlyTeamRun(row: { state: string; suspensionReason: string | null }): boolean {
   return row.state === 'suspended' && row.suspensionReason === TEAM_RUN_ARCHIVE_ONLY_STOP;
 }

@@ -8,6 +8,12 @@ blocked. Run `npm run build:client` before starting the fixture.
 The completed repair and screenshot comparisons are in [REPORT.md](REPORT.md).
 Run the fixture in one terminal and the probe/gate in another.
 
+For the later user-requested compact desktop proportions, run `npm run build:client`
+and `npm run ui:density`. This18-scenario acceptance uses a self-contained
+fictional HTTP server and real compiled CSS, without browser zoom or a personal
+backend. It checks overview chart visibility and research-pane scrolling, rather
+than updating any approved baseline. See the [compact UI and removal record](../docs/compact-ui-team-removal.md).
+
 ```powershell
 npm run ui:fixture -- --port 4173
 npm run ui:lock -- --check
