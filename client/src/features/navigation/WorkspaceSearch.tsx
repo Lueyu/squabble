@@ -43,7 +43,7 @@ export function WorkspaceSearch() {
         aria-label={zh ? '搜索功能' : 'Find a feature'}
       >
         <Search size={16} />
-        <span className="hidden sm:inline">
+        <span className="hidden lg:inline">
           {zh ? '搜索功能' : 'Find a feature'}
         </span>
       </Button>

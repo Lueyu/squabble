@@ -55,6 +55,9 @@ jobs:
       - name: Verify module dependency boundaries
         run: npm run test:architecture
 
+      - name: Verify deterministic UI probes and improvement gate
+        run: npm run test:ui-probe
+
       - name: Initialize isolated integration database
         env:
           PGPASSWORD: test-only

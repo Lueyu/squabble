@@ -37,7 +37,13 @@
     "test:architecture": "node --test scripts/module-boundaries.spec.cjs",
     "test:context": "node --test scripts/squabble-context.spec.cjs",
     "check:context": "node .agents/skills/squabble-contributor/scripts/check-context.cjs --repo .",
-    "test:bundle": "node --test deploy/*.spec.cjs workers/sandbox/*.spec.cjs"
+    "test:bundle": "node --test deploy/*.spec.cjs workers/sandbox/*.spec.cjs",
+    "ui:fixture": "node scripts/ui-probe/fixture-server.cjs",
+    "ui:lock": "node scripts/ui-probe/lock.cjs",
+    "ui:probe": "node scripts/ui-probe/probe.cjs",
+    "ui:probe:one": "node scripts/ui-probe/probe.cjs",
+    "ui:gate": "node scripts/ui-probe/gate.cjs",
+    "test:ui-probe": "node --test scripts/ui-probe/*.spec.cjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "3.0.90",

@@ -23,9 +23,9 @@ export function AgentMemoryPanel({ agent, zh }: { agent: AgentProfile; zh: boole
     <h3 className="font-medium text-foreground">{zh ? '个人记忆' : 'Personal memory'}</h3><p>{zh ? '写下希望这位股友记住的偏好。团队内容不会自动进入这里。' : 'Add preferences for this agent. Team information is not copied here automatically.'}</p>
     {memories.isError && <p role="alert">{zh ? '记忆暂时无法读取。' : 'Memory could not be loaded.'} <button className="underline" onClick={() => void memories.refetch()}>{zh ? '重新读取' : 'Reload'}</button></p>}
     <Textarea aria-label={zh ? '告诉股友记住什么' : 'What should this agent remember?'} maxLength={2000} value={note} onChange={e => setNote(e.target.value)} />
-    <Button size="sm" disabled={!note.trim() || save.isPending} onClick={() => save.mutate()}>{zh ? '记住这条偏好' : 'Remember this preference'}</Button>
+    <Button className="max-w-full whitespace-normal text-left" size="sm" disabled={!note.trim() || save.isPending} onClick={() => save.mutate()}>{zh ? '记住这条偏好' : 'Remember this preference'}</Button>
     <select aria-label={zh ? '分享给哪个团队' : 'Receiving team'} className="w-full border rounded-md p-2 bg-background" value={teamId} onChange={e => setTeamId(e.target.value)}><option value="">{zh ? '需要时，选择接收团队' : 'Choose a team when sharing'}</option>{teams.data?.items.filter(t => t.status === 'active').map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
-    <ul className="space-y-2">{memories.data?.items.map(memory => <li key={memory.id} className="rounded border p-2"><p className="whitespace-pre-wrap break-words">{memory.content}</p><Button size="sm" variant="ghost" disabled={!teamId || share.isPending} onClick={() => share.mutate(memory)}>{zh ? '只分享这条给所选团队' : 'Share only this note with the selected team'}</Button></li>)}</ul>
+    <ul className="space-y-2">{memories.data?.items.map(memory => <li key={memory.id} className="rounded border p-2"><p className="whitespace-pre-wrap break-words">{memory.content}</p><Button className="max-w-full whitespace-normal text-left" size="sm" variant="ghost" disabled={!teamId || share.isPending} onClick={() => share.mutate(memory)}>{zh ? '只分享这条给所选团队' : 'Share only this note with the selected team'}</Button></li>)}</ul>
     {message && <p role="status">{message}</p>}
   </div>;
 }
