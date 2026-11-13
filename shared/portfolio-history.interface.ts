@@ -2,11 +2,13 @@ import type { PortfolioComparisonPeriod } from './portfolio-comparison.interface
 
 export interface PortfolioHistoryPoint {
   date: string;
+  /** Present only for a genuine dated market observation, never a fabricated daily-close time. */
+  timestamp?: string;
   valueUsd: number | null;
   knownValueUsd: number;
   coveredPositions: number;
   totalPositions: number;
-  priceAsOf: Array<{ ticker: string; date: string; source: string }>;
+  priceAsOf: Array<{ ticker: string; date: string; timestamp?: string; source: string }>;
   fxAsOf: Array<{ currency: string; date: string; source: string }>;
   gaps: string[];
 }
@@ -33,7 +35,8 @@ export interface PortfolioHistoryView {
   readAt: string;
   refreshing: boolean;
   includesCash: false;
-  priceBasis: 'provider_close';
+  priceBasis: 'provider_close' | 'provider_quote' | 'mixed_close_and_quote';
+  intradayGranularity?: 'observations' | 'hourly';
   /** Provider close conventions are retained. No dividend/corporate-action ledger is reconstructed. */
   corporateActions: 'not_reconstructed';
   series: PortfolioHistorySeries[];

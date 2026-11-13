@@ -41,6 +41,8 @@ async function main() {
     ['teams/team-decision.service', 'TeamDecisionService'],
     ['teams/team-runtime-adapter', 'TeamRuntimeAdapter'],
     ['paper-trading/portfolio-assets.service', 'PortfolioAssetsService'],
+    ['experience/portfolio-valuation.scheduler', 'PortfolioValuationScheduler'],
+    ['portfolio-history/portfolio-intraday-reference.service', 'PortfolioIntradayReferenceService'],
     ['telemetry/telemetry-diagnostics.service', 'TelemetryDiagnosticsService'],
     ['local-agents/local-agents.service', 'LocalAgentsService'],
     ['research-runtime/runtime-journal.service', 'RuntimeJournalService'],

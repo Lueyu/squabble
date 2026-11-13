@@ -137,9 +137,9 @@ function Layout() {
       >
         <div className="flex h-full flex-col">
           <div className="app-brand flex items-center justify-between">
-            <NavLink to="/" className="flex items-center gap-2.5" aria-label={t('layout.appName')}>
-              {!simple && <Mascot className="app-brand-mark" />}
-              <div className="app-brand-copy">
+            <NavLink to="/" className="flex min-w-0 items-center gap-2.5" aria-label={t('layout.appName')}>
+              <Mascot className="app-brand-mark" />
+              <div className="app-brand-copy min-w-0">
                 <div className="app-wordmark">{simple ? 'squabble' : 'Squabble'}<span className="text-[var(--brand)]">.</span></div>
                 <div className="app-brand-caption">{simple ? (zh ? '一群股友，陪你验证想法' : 'Companions to test your ideas.') : 'BULLS. BEARS. YOU.'}</div>
               </div>

@@ -44,6 +44,11 @@
   background: var(--background);
 }
 
+.app-content > .workspace-section-tabs:has(+ .portfolio-page) {
+  width: 100%;
+  max-width: 1480px;
+}
+
 .workspace-section-tabs a {
   padding: 8px 12px;
   border-radius: 8px;

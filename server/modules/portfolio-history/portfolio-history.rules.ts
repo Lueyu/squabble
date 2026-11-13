@@ -35,7 +35,19 @@ function priorIndex<T>(rows: T[], getDate: (row: T) => string, day: string): num
   return found >= 0 && Date.parse(day) - Date.parse(getDate(rows[found])) <= 7 * dayMs ? found : -1;
 }
 
-export function referencePoints(positions: HistoryPosition[], prices: HistoryPrice[], rates: HistoryFx[], from: string, to: string): PortfolioHistoryPoint[] {
+/** The last verifiable positive observation fixes the comparable ticker set.
+ * Later unknown observations remain in the series without becoming its anchor. */
+export function referenceCohort(points: PortfolioHistoryPoint[]): ReadonlySet<string> | undefined {
+  const anchor = [...points].reverse().find(point => point.coveredPositions > 0 && point.coveredPositions <= point.totalPositions
+    && point.priceAsOf.length === point.coveredPositions
+    && point.priceAsOf.every(row => row.ticker.trim().length > 0)
+    && new Set(point.priceAsOf.map(row => row.ticker)).size === point.coveredPositions
+    && Number.isFinite(point.knownValueUsd) && point.knownValueUsd >= 0);
+  return anchor ? new Set(anchor.priceAsOf.map(row => row.ticker)) : undefined;
+}
+
+export function referencePoints(positions: HistoryPosition[], prices: HistoryPrice[], rates: HistoryFx[], from: string, to: string,
+  cohort?: ReadonlySet<string>): PortfolioHistoryPoint[] {
   const active = positions.filter(position => numeric(position.shares) !== 0);
   const priceIndex = new Map<string, HistoryPrice[]>(), rateIndex = new Map<string, HistoryFx[]>();
   for (const price of prices) if (numeric(price.close)! > 0) {
@@ -62,12 +74,13 @@ export function referencePoints(positions: HistoryPosition[], prices: HistoryPri
       const index = priorIndex(ownPrices, row => row.priceDate, date), price = ownPrices[index];
       const fx = identity.currency === 'USD' ? { currency: 'USD', rateDate: date, usdRate: '1', source: 'identity' }
         : ownRates[priorIndex(ownRates, row => row.rateDate, date)];
+      const previous = ownPrices[index - 1];
+      if (price && fx && previous && price.priceDate === date && previous.source !== price.source) gaps.add(`PRICE_BASIS_CHANGED:${position.ticker}`);
+      if (price && fx && previous && price.priceDate === date && Math.abs(Number(price.close) / Number(previous.close) - 1) > 0.25) gaps.add(`PRICE_DISCONTINUITY_UNVERIFIED:${position.ticker}`);
+      if (cohort && !cohort.has(position.ticker)) { gaps.add(`COHORT_EXCLUDED:${position.ticker}`); continue; }
       if (!price) gaps.add(`PRICE_MISSING:${position.ticker}`);
       if (!fx) gaps.add(`FX_MISSING:${identity.currency}`);
       if (!price || !fx) continue;
-      const previous = ownPrices[index - 1];
-      if (previous && price.priceDate === date && previous.source !== price.source) gaps.add(`PRICE_BASIS_CHANGED:${position.ticker}`);
-      if (previous && price.priceDate === date && Math.abs(Number(price.close) / Number(previous.close) - 1) > 0.25) gaps.add(`PRICE_DISCONTINUITY_UNVERIFIED:${position.ticker}`);
       point.knownValueUsd += quantity * Number(price.close) * Number(fx.usdRate); point.coveredPositions++;
       point.priceAsOf.push({ ticker: position.ticker, date: price.priceDate, source: price.source });
       if (!point.fxAsOf.some(row => row.currency === identity.currency)) point.fxAsOf.push({ currency: identity.currency, date: fx.rateDate, source: fx.source });

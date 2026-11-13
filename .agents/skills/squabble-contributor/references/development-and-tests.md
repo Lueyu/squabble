@@ -30,6 +30,21 @@ existing instance, not `npm run dev` or an ignored temporary helper.
 
 ## Choose checks by changed behavior
 
+Overview alignment and five-minute capture: run the `portfolio-valuation` and
+`portfolio-sampling` experience suites, `quote/us-observed-quote.spec.ts`,
+`portfolio-history/*spec.ts` and paper comparison suites against disposable
+`EXPERIENCE_TEST_DATABASE_URL`, `HISTORY_TEST_DATABASE_URL` and
+`STRATEGY_TEST_DATABASE_URL`. Verify expiry after waiting on locks, concurrent
+inventory edits, unchanged quote deduplication, unknown capture persistence,
+stable partial references, quote-time/FX lookahead and downsampling boundaries.
+The history service regression also checks wider daily/earlier-full observations
+recomputed for one fixed partial cohort, a zero-coverage tail and excluded-asset
+critical evidence; the original denominator and unknown full value must survive.
+After `build:client`, run `node scripts/ui-probe/overview-layout-browser.cjs`
+for wide/mobile, theme/language, card/footer and existing-logo acceptance. The
+chart behavior tests include real endpoint-only bridge layers, return isolated
+points and date-only versus genuine intraday tooltip/source evidence.
+
 Desktop density and research-pane acceptance: `npm run build:client` then
 `npm run ui:density` renders18 fictional browser scenarios and asserts first-screen
 chart coverage, visible composers and separate message scrolling. `--dist <dir>`

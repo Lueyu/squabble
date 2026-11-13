@@ -58,10 +58,11 @@ jobs:
       - name: Verify deterministic UI probes and improvement gate
         run: npm run test:ui-probe
 
-      - name: Verify compact viewport and research scrolling with fictional data
+      - name: Verify compact viewport, overview alignment and research scrolling
         run: |
           npm run build:client
           npm run ui:density
+          node scripts/ui-probe/overview-layout-browser.cjs
 
       - name: Initialize isolated integration database
         env:

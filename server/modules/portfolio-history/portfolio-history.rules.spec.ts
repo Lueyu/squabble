@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { historySymbol, referencePoints, currentMark } from './portfolio-history.rules';
+import { historySymbol, referenceCohort, referencePoints, currentMark } from './portfolio-history.rules';
 
 test('reference uses fixed quantities and only dated prior observations, never future FX or current saved prices', () => {
   const positions = [{ ticker: '0700', market: 'HK', currency: 'HKD', shares: '2', currentPrice: '999' }];
@@ -54,4 +54,33 @@ test('US/HK/CN identities are canonical, and cash-only accounts do not get a fic
   assert.equal(historySymbol('000001', 'CN')?.symbol, '000001.SZ');
   assert.equal(historySymbol('../secret', 'US'), null);
   assert.equal(referencePoints([], [], [], '2026-11-09', '2026-11-10')[0].valueUsd, null);
+});
+
+test('cohort selection ignores zero and malformed tails without accepting duplicate ticker identities', () => {
+  const point = { date: '2026-11-10', valueUsd: null, knownValueUsd: 10, coveredPositions: 1, totalPositions: 2,
+    priceAsOf: [{ ticker: 'FICT', date: '2026-11-10', source: 'fixture' }], fxAsOf: [], gaps: [] };
+  const points = [point, { ...point, priceAsOf: [point.priceAsOf[0], point.priceAsOf[0]] },
+    { ...point, coveredPositions: 0, knownValueUsd: 0, priceAsOf: [] }];
+  assert.deepEqual([...referenceCohort(points)!], ['FICT']);
+  assert.equal(referenceCohort(points.slice(1)), undefined);
+  assert.equal(referenceCohort([{ ...point, knownValueUsd: Infinity }]), undefined);
+  assert.equal(points[0], point);
+});
+
+test('fixed daily cohort keeps its own source and discontinuity risks and never claims the original total is complete', () => {
+  const positions = ['FICT', 'OTHER'].map(ticker => ({ ticker, market: 'US', currency: 'USD', shares: '2' }));
+  const prices = [{ symbol: 'FICT', market: 'US', currency: 'USD', priceDate: '2026-11-09', close: '100', source: 'fixture' },
+    { symbol: 'FICT', market: 'US', currency: 'USD', priceDate: '2026-11-10', close: '50', source: 'changed' },
+    { symbol: 'OTHER', market: 'US', currency: 'USD', priceDate: '2026-11-10', close: '999', source: 'fixture' }];
+  const points = referencePoints(positions, prices, [], '2026-11-09', '2026-11-10', new Set(['FICT']));
+  assert.deepEqual(points.map(point => point.knownValueUsd), [200, 100]);
+  assert.ok(points.every(point => point.totalPositions === 2 && point.coveredPositions === 1 && point.valueUsd === null));
+  assert.ok(points[1].gaps.includes('PRICE_BASIS_CHANGED:FICT'));
+  assert.ok(points[1].gaps.includes('PRICE_DISCONTINUITY_UNVERIFIED:FICT'));
+  assert.ok(points[1].gaps.includes('COHORT_EXCLUDED:OTHER'));
+  const excluded = referencePoints(positions, prices, [], '2026-11-10', '2026-11-10', new Set(['OTHER']))[0];
+  assert.equal(excluded.knownValueUsd, 1998);
+  assert.ok(excluded.gaps.includes('PRICE_BASIS_CHANGED:FICT'));
+  assert.ok(excluded.gaps.includes('PRICE_DISCONTINUITY_UNVERIFIED:FICT'));
+  assert.ok(excluded.gaps.includes('COHORT_EXCLUDED:FICT'));
 });

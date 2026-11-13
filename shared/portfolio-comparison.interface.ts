@@ -45,7 +45,7 @@ export interface PortfolioComparisonView {
   period: PortfolioComparisonPeriod;
   from: string;
   to: string;
-  granularity: 'observations' | 'daily';
+  granularity: 'observations' | 'hourly' | 'daily';
   methodology: 'saved_valuations_no_external_flows';
   series: PortfolioComparisonSeries[];
 }

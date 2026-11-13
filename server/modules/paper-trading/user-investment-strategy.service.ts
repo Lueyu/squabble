@@ -405,7 +405,7 @@ export class UserInvestmentStrategyService {
     const snapshot = map({ ...row, status: 'confirmed', preview, confirmedAt,
       updatedAt: confirm && row.status === 'draft' ? confirmedAt : row.updatedAt }) as ConfirmedInvestmentStrategy;
     if (confirm && row.status === 'draft') {
-      await tx.update(strategies).set({ status: 'confirmed', preview, confirmedAt, updatedAt: new Date() })
+      await tx.update(strategies).set({ status: 'confirmed', preview, confirmedAt, updatedAt: confirmedAt })
         .where(and(eq(strategies.owner, owner), eq(strategies.id, id)));
     }
     return snapshot;

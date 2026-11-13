@@ -36,6 +36,23 @@ Within a process, identical resources share an in-flight promise and at most fou
 
 Price rows are indexed in memory by canonical symbol/currency and date before building the reference series. Per-point lookup is binary search. A reviewer benchmark with 40 fictional positions and 14,920 price rows reduced a 365-day projection from about 1.25 seconds to about 10 milliseconds after warm-up; this is a local measurement rather than a service-level guarantee.
 
+## Retained intraday reference facts (migration67)
+
+The independent five-minute valuation sampler retains verified `marketQuotes` on owned real and paper observations, including a useful subset when full NAV remains unknown. `PortfolioIntradayReferenceService` reads only the authenticated owner's selected accounts and deduplicates quote facts in PostgreSQL. It requests no quote and writes no NAV. Current quantities, rather than the quantities or recorded totals of the historical account observation, determine this reference.
+
+Day/week views keep actual five-minute quote representatives; month views keep actual hourly representatives, including coverage and convention boundaries. Longer periods retain daily closes. `timestamp` exists only for a real provider observation, and `priceAsOf[].timestamp` preserves its exact source time. Repeated captures of an unchanged quote do not create new market points. Daily rows keep date-only source semantics. A differing unverified close/quote convention creates a boundary rather than silently joining different price bases.
+
+For intraday non-USD conversion, daily FX rows have no trusted publication time, so only earlier calendar dates may contribute, within the existing seven-day bound. Same-day or future daily FX cannot leak into a morning quote. Prior FX and source dates remain visible. A partial line still requires a stable covered ticker set; it never becomes complete NAV or an investment return. The latest valid positive-coverage observation selects that set. Both daily and observed references are recomputed from their constituent price facts and current quantities for the same set, retaining the full position denominator and explicit `COHORT_EXCLUDED` gaps. A narrower new quote must not erase the older daily line or relabel its wider subtotal. Later zero coverage remains unknown and does not replace the valid set; retained-constituent critical boundaries remain unknown. Old price history is not backfilled with fabricated intraday observations.
+
+The sampling-only US Tencent source validates the requested quote identity, quote date and last minute evidence, and explicit `pandata.season` EST/EDT against an `America/New_York` round trip and verified regular sessions. Ordinary quote/order selection is unchanged. Missing or contradictory time metadata remains unavailable; the retrieval clock is never used as market time. A public MSFT probe on2026-11-13 verified this path without a database or personal account; Yahoo's two endpoints returned403 on the same host. This is availability evidence at that time, not a guarantee. Existing calendar verification currently covers2026; later years remain unavailable until their calendars are verified.
+
+Reference-only visual warning connectors may span a price-discontinuity or
+convention gap. They use a distinct warning style, connect only actual endpoints,
+and have no synthetic tooltip value or account-selection authority. The underlying
+point remains null and its exact risk remains visible. Actual NAV/return financial
+boundaries keep their original separation; a visual connector never authorizes a
+return or reconstructs split/dividend history.
+
 ## Verification
 
 The targeted command is:

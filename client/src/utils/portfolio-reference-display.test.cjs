@@ -62,7 +62,22 @@ test('one unsupported holding does not hide a consistent covered subset, and a c
   const expanded = historicalReferenceSeries([{ accountId: 'real' }], { series: [partial] })[0];
   assert.equal(expanded.points.slice(0, invalid.length).every(p => p.equityUsd === null), true);
   partial.points.at(-1).priceAsOf.push({ ticker: 'FICT', date: '2026-11-09', source: 'duplicate' });
-  assert.equal(partialReferenceCoverage(partial), null, 'duplicate identity cannot anchor a partial-portfolio line');
+  assert.equal(partialReferenceCoverage(partial).covered, 1, 'an invalid last row cannot displace the prior verified anchor');
+});
+
+test('fixed cohort remains visible before a zero-coverage tail while exclusions and critical unknowns stay explicit', () => {
+  const { historicalReferenceSeries, partialReferenceCoverage } = fixture().load('features/portfolio-comparison/comparison-display.ts');
+  const point = (date, gaps = []) => ({ date, valueUsd: null, knownValueUsd: 100, coveredPositions: 1, totalPositions: 2,
+    priceAsOf: [{ ticker: 'FICT', date, source: 'fixture' }], fxAsOf: [], gaps: ['COHORT_EXCLUDED:OTHER', ...gaps] });
+  const reference = { accountId: 'real', coverage: { completePoints: 0 }, points: [point('2026-11-09'),
+    point('2026-11-10', ['PRICE_BASIS_CHANGED:FICT']), point('2026-11-11'),
+    { ...point('2026-11-12'), knownValueUsd: 0, coveredPositions: 0, priceAsOf: [], gaps: ['PRICE_MISSING:FICT', 'COHORT_EXCLUDED:OTHER'] }], gaps: [] };
+  const coverage = partialReferenceCoverage(reference);
+  assert.equal(coverage.covered, 1); assert.deepEqual(Array.from(coverage.missingTickers), ['OTHER']);
+  const result = historicalReferenceSeries([{ accountId: 'real' }], { series: [reference] })[0];
+  assert.deepEqual(Array.from(result.points, row => row.equityUsd), [100, null, 100, null]);
+  assert.equal(result.points.at(-1).gaps.includes('PRICE_MISSING:FICT'), true);
+  assert.equal(result.returnPct, null);
 });
 
 test('overview automatically shows available imported-position history and fills current account amounts', async () => {

@@ -17,7 +17,7 @@ export function comparisonPeriodStart(period: PortfolioComparisonPeriod, at: Dat
 }
 
 /** Keep observed timestamps. Missing intervals get a null separator, never interpolation. */
-export function comparisonObservations(input: SavedComparisonObservation[], granularity: 'observations' | 'daily'): PortfolioComparisonPoint[] {
+export function comparisonObservations(input: SavedComparisonObservation[], granularity: 'observations' | 'hourly' | 'daily'): PortfolioComparisonPoint[] {
   const sorted = input.filter(point => Number.isFinite(Date.parse(point.timestamp)))
     .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   const unique = new Map<string, SavedComparisonObservation>();
@@ -30,8 +30,12 @@ export function comparisonObservations(input: SavedComparisonObservation[], gran
   const validCount = trustedChain.filter(point => point.equityUsd !== null).length;
   const discontinuityAt = firstDiscontinuity < 0 ? Infinity : Date.parse(afterOpening[firstDiscontinuity].timestamp);
   const latest = new Map<string, SavedComparisonObservation>();
-  for (const point of observations) latest.set(granularity === 'daily' ? point.date : point.timestamp, point);
+  for (const point of observations) latest.set(granularity === 'daily' ? point.date : granularity === 'hourly' ? point.timestamp.slice(0,13) : point.timestamp, point);
   const samples = [...latest.values()];
+  // Aggregation cannot conceal a failed valuation or the first financial boundary.
+  for (const point of observations.filter((point,index)=>point.equityUsd===null || index>0 && point.continuity!==observations[index-1].continuity)) {
+    if(!samples.includes(point))samples.push(point);
+  }
   // Keep the actual return origin even when it precedes the first daily close.
   if (opening && !samples.includes(opening)) samples.push(opening);
   samples.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));

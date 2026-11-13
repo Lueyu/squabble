@@ -5,15 +5,19 @@ import { useTheme } from '@/hooks/use-theme';
 import type {
   PortfolioComparisonMetric,
   PortfolioComparisonSeries,
+  PortfolioComparisonView,
 } from '@shared/portfolio-comparison.interface';
 import type { PortfolioHistorySeries } from '@shared/portfolio-history.interface';
+import { referenceHistoryPoint } from './comparison-display';
 import {
-  accountColor,
+  chartAccountColor,
+  comparisonGapBridges,
   comparisonGapLabel,
   comparisonLineData,
+  comparisonSymbolIndices,
   comparisonTimeWindow,
+  comparisonTooltip,
   referenceDateLabel,
-  referenceTooltip,
 } from './comparison-chart-options';
 
 interface Props {
@@ -23,6 +27,8 @@ interface Props {
   reference?: boolean;
   historySeries?: PortfolioHistorySeries[];
   partialAccountIds?: string[];
+  granularity?: PortfolioComparisonView['granularity'];
+  referenceGranularity?: 'observations' | 'hourly';
   onSelectAccount?: (accountId: string) => void;
 }
 
@@ -33,6 +39,8 @@ export default function PortfolioComparisonChart({
   reference = false,
   historySeries,
   partialAccountIds,
+  granularity,
+  referenceGranularity,
   onSelectAccount,
 }: Props) {
   const { i18n } = useTranslation();
@@ -42,10 +50,19 @@ export default function PortfolioComparisonChart({
   const timeWindow = useMemo(() => comparisonTimeWindow(series), [series]);
   const singleObservation =
     timeWindow !== null && timeWindow.first === timeWindow.last;
+  const quoteTimestamps = useMemo(() => historySeries?.flatMap(item => item.points
+    .flatMap(point => point.timestamp && Number.isFinite(Date.parse(point.timestamp))
+      ? [{ accountId: item.accountId, timestamp: Date.parse(point.timestamp) }] : [])) ?? [], [historySeries]);
+  const referenceIntraday = reference && quoteTimestamps.length > 0;
   const intraday =
-    !reference &&
-    timeWindow !== null &&
-    timeWindow.last - timeWindow.first < 2 * 86400000;
+    referenceIntraday || (!reference &&
+    (granularity === 'observations' || granularity === 'hourly'
+      || (timeWindow !== null && timeWindow.last - timeWindow.first < 2 * 86400000)));
+  const chartTheme = typeof window !== 'undefined' && typeof document !== 'undefined'
+    ? window.getComputedStyle(document.querySelector('.portfolio-comparison') ?? document.documentElement)
+    : undefined;
+  const foreground = chartTheme?.getPropertyValue('--foreground').trim() || undefined;
+  const warningColor = chartTheme?.getPropertyValue('--warning').trim() || undefined;
   const option = useMemo(
     () => ({
       animationDuration: 200,
@@ -53,17 +70,15 @@ export default function PortfolioComparisonChart({
         enabled: true,
         description: reference
           ? zh
-            ? '按当前持仓回看历史价格的参考市值，不含现金，不代表实际收益。缺少资料的日期断线。'
-            : 'Current-position historical reference value, excluding cash. Not actual investment returns. Missing observations break the line.'
+            ? '按当前持仓回看历史价格的参考市值，不含现金，不代表实际收益。浅色虚线连接缺失区间，警示虚线连接价格口径或跳变待核实区间；区间估值仍未知。'
+            : 'Current-position historical reference value, excluding cash, not actual returns. Faint dashes mark missing intervals; warning dashes link unverified price conventions or jumps. Interval valuations remain unknown.'
           : zh
-            ? '实仓与模拟账户的历史估值。缺少资料的日期断线显示。'
-            : 'Saved real and simulation valuations. Missing observations break the line.',
+            ? '实仓与模拟账户的已存估值。资产金额的浅色虚线仅连接缺少观察的区间，不代表新增估值；收益率缺失与财务口径变化仍断线。'
+            : 'Saved real and simulation valuations. Faint dashed equity links mark missing observations without adding valuations. Missing returns and financial discontinuities remain broken.',
       },
       grid: { top: 16, left: 6, right: 66, bottom: 36 },
       tooltip: {
-        formatter: reference
-          ? (params: unknown) => referenceTooltip(params, i18n.language)
-          : undefined,
+        formatter: (params: unknown) => comparisonTooltip(params, i18n.language, metric, reference, quoteTimestamps, series),
         trigger: 'axis',
         renderMode: 'richText',
         confine: true,
@@ -91,7 +106,8 @@ export default function PortfolioComparisonChart({
         splitLine: { show: false },
         min: singleObservation ? timeWindow.first - 3600000 : undefined,
         max: singleObservation ? timeWindow.first + 3600000 : undefined,
-        minInterval: intraday ? 60000 : 86400000,
+        minInterval: (reference ? referenceGranularity : granularity) === 'hourly'
+          ? 3600000 : intraday ? 60000 : 86400000,
         axisLabel: {
           show: !singleObservation,
           color: dark ? '#a6b8ae' : '#65796f',
@@ -99,7 +115,7 @@ export default function PortfolioComparisonChart({
           fontSize: 12,
           formatter: (value: number) =>
             reference
-              ? referenceDateLabel(value, i18n.language)
+              ? referenceDateLabel(value, i18n.language, referenceIntraday)
               : new Intl.DateTimeFormat(zh ? 'zh-CN' : 'en-US', {
                   month: '2-digit',
                   day: '2-digit',
@@ -129,48 +145,55 @@ export default function PortfolioComparisonChart({
         },
         splitLine: { lineStyle: { color: dark ? '#2c3c34' : '#e3ebe6' } },
       },
-      series: series.map((item) => ({
-        id: item.accountId,
-        name:
-          (item.kind === 'real'
-            ? zh
-              ? '实仓'
-              : 'Real portfolio'
-            : item.name) +
-          (partialAccountIds?.includes(item.accountId)
-            ? zh
-              ? ' · 部分持仓'
-              : ' · Partial holdings'
-            : ''),
-        type: 'line',
-        data: comparisonLineData(item, metric),
-        connectNulls: false,
-        smooth: false,
-        showSymbol:
-          item.points.filter((point) => point.equityUsd !== null).length < 3,
-        symbol: 'circle',
-        symbolSize: 7,
-        lineStyle: {
-          width: item.kind === 'real' ? 2.8 : 2.2,
-          color:
-            item.kind === 'real' && dark
-              ? '#c9ded2'
-              : accountColor(item.accountId, item.colorIndex),
-          type:
-            item.kind === 'real' || item.colorIndex % 3 === 0
-              ? 'solid'
-              : item.colorIndex % 3 === 1
-                ? 'dashed'
-                : 'dotted',
-        },
-        itemStyle: {
-          color:
-            item.kind === 'real' && dark
-              ? '#c9ded2'
-              : accountColor(item.accountId, item.colorIndex),
-        },
-        emphasis: { focus: 'series' },
-      })),
+      series: series.flatMap((item) => {
+        const color = chartAccountColor(item.accountId, item.colorIndex, dark, foreground);
+        const symbols = new Set(comparisonSymbolIndices(item, metric));
+        const name = (item.kind === 'real' ? (zh ? '实仓' : 'Real portfolio') : item.name)
+          + (partialAccountIds?.includes(item.accountId)
+            ? (zh ? ' · 部分持仓' : ' · Partial holdings') : '');
+        const observed = {
+          id: item.accountId,
+          name,
+          type: 'line',
+          data: comparisonLineData(item, metric),
+          connectNulls: false,
+          smooth: false,
+          showSymbol: true,
+          symbol: 'circle',
+          symbolSize: (_value: unknown, params: { dataIndex: number }) => symbols.has(params.dataIndex) ? 7 : 0,
+          z: 2,
+          lineStyle: {
+            width: item.kind === 'real' ? 2.8 : 2.2,
+            color,
+            type:
+              item.kind === 'real' || item.colorIndex % 3 === 0
+                ? 'solid'
+                : item.colorIndex % 3 === 1
+                  ? 'dashed'
+                  : 'dotted',
+          },
+          itemStyle: { color },
+          emphasis: { focus: 'series' },
+        };
+        const bridges = comparisonGapBridges(item, metric, reference).map((bridge, index) => ({
+          id: `${bridge.kind === 'warning' ? 'warning' : 'gap'}-bridge:${item.accountId}:${index}`,
+          name,
+          type: 'line',
+          data: bridge.data,
+          connectNulls: false,
+          smooth: false,
+          showSymbol: false,
+          silent: true,
+          tooltip: { show: false },
+          lineStyle: bridge.kind === 'warning'
+            ? { color: warningColor ?? color, width: 2, type: [8, 4], opacity: 0.95 }
+            : { color, width: 1.5, type: 'dashed', opacity: 0.55 },
+          emphasis: { disabled: true },
+          animation: false,
+          z: 1,
+        }));
+        return [observed, ...bridges];
+      }),
     }),
     [
       series,
@@ -184,6 +207,12 @@ export default function PortfolioComparisonChart({
       reference,
       i18n.language,
       partialAccountIds,
+      granularity,
+      foreground,
+      warningColor,
+      quoteTimestamps,
+      referenceIntraday,
+      referenceGranularity,
     ],
   );
   const hasValues = series.some((item) =>
@@ -222,8 +251,8 @@ export default function PortfolioComparisonChart({
                 : 'Returns need a valid starting value and cash-flow history. Switch to equity to view available observations.'
               : reference
                 ? zh
-                  ? '可先查看当前持仓金额；缺失价格不会连接成曲线。'
-                  : 'Current account values remain available. Missing prices never become an invented line.'
+                  ? '可先查看当前持仓金额；不会为缺失价格添加虚构数据点。'
+                  : 'Current account values remain available. Missing prices never become invented observations.'
                 : zh
                   ? '当前区间还没有完整估值，稍后查看或选择更长时间。'
                   : 'No complete observations in this period. Try a longer period or check again later.'}
@@ -261,14 +290,15 @@ export default function PortfolioComparisonChart({
         <p className="px-3 text-center text-xs leading-6 text-muted-foreground">
           {reference
             ? zh
-              ? '当前仅有一天参考行情'
-              : 'One day of reference prices'
+              ? '当前仅有一条参考行情'
+              : 'One reference price observation'
             : zh
               ? '仅一条已存估值，等待下一次观察'
               : 'One saved valuation; waiting for the next observation'}{' '}
           ·{' '}
           {reference
-            ? series[0]?.points[0]?.date
+            ? referenceIntraday ? new Date(timeWindow.first).toLocaleString(i18n.language)
+              : series[0]?.points[0]?.date
             : new Date(timeWindow.first).toLocaleString(i18n.language)}
         </p>
       )}
@@ -321,8 +351,8 @@ function HistoricalValuations({
             <caption>
               {reference
                 ? zh
-                  ? '已覆盖持仓数量 × 历史收盘价 × 当日汇率 · 缺失项、现金、分红和交易不计入'
-                  : 'Covered current quantities × historical closes × dated FX · Excludes missing positions, cash, dividends and trades'
+                  ? '已覆盖持仓数量 × 有来源的收盘价或已存报价 × 当日汇率 · 缺失项、现金、分红和交易不计入'
+                  : 'Covered current quantities × sourced closes or saved quotes × dated FX · Excludes missing positions, cash, dividends and trades'
                 : zh
                   ? '所选账户的已存估值 · 缺少数值以“—”显示'
                   : 'Saved valuations for selected accounts · Missing values shown as “—”'}
@@ -361,7 +391,11 @@ function HistoricalValuations({
             </thead>
             <tbody>
               {series.flatMap((item) =>
-                item.points.map((point) => (
+                item.points.map((point) => {
+                  const evidence = referenceHistoryPoint(
+                    historySeries?.find(row => row.accountId === item.accountId), point,
+                  );
+                  return (
                   <tr key={`${item.accountId}:${point.timestamp}`}>
                     <th scope="row">
                       {item.kind === 'real'
@@ -371,9 +405,9 @@ function HistoricalValuations({
                         : item.name}
                     </th>
                     <td>
-                      <time dateTime={reference ? point.date : point.timestamp}>
+                      <time dateTime={reference && !evidence?.timestamp ? point.date : point.timestamp}>
                         {reference
-                          ? point.date
+                          ? evidence?.timestamp ? new Date(point.timestamp).toLocaleString(i18n.language) : point.date
                           : new Date(point.timestamp).toLocaleString(
                               i18n.language,
                             )}
@@ -387,10 +421,9 @@ function HistoricalValuations({
                     <td>
                       {reference ? (
                         <ReferenceEvidence
-                          point={historySeries
-                            ?.find((row) => row.accountId === item.accountId)
-                            ?.points.find((row) => row.date === point.date)}
+                          point={evidence}
                           zh={zh}
+                          language={i18n.language}
                         />
                       ) : point.returnPct === null ? (
                         '—'
@@ -399,7 +432,8 @@ function HistoricalValuations({
                       )}
                     </td>
                   </tr>
-                )),
+                  );
+                }),
               )}
             </tbody>
           </table>
@@ -412,9 +446,11 @@ function HistoricalValuations({
 function ReferenceEvidence({
   point,
   zh,
+  language,
 }: {
   point?: PortfolioHistorySeries['points'][number];
   zh: boolean;
+  language: string;
 }) {
   if (!point) return '—';
   return (
@@ -426,7 +462,7 @@ function ReferenceEvidence({
       <ul>
         {point.priceAsOf.map((row) => (
           <li key={row.ticker}>
-            {row.ticker} · {row.date} · {row.source}
+            {row.ticker} · {row.timestamp ? new Date(row.timestamp).toLocaleString(language) : row.date} · {row.source}
           </li>
         ))}
       </ul>
@@ -440,7 +476,7 @@ function ReferenceEvidence({
       {point.gaps.length > 0 && (
         <p>
           {[
-            ...new Set(point.gaps.map((gap) => comparisonGapLabel(gap, zh))),
+            ...new Set(point.gaps.map((gap) => comparisonGapLabel(gap, zh, true))),
           ].join(zh ? '；' : '; ')}
         </p>
       )}

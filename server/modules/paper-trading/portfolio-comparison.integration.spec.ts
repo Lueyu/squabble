@@ -10,6 +10,7 @@ import { portfolioValuePoints } from '../../database/portfolio-value-points.sche
 import { PortfolioComparisonService } from './portfolio-comparison.service';
 import { simulationPreviews, simulationSeeds } from '../../database/simulation-experiments.schema';
 import { simulationValuationBaselines } from '../../database/user-strategy-runtime.schema';
+import { paperEquityObservations } from '../../database/portfolio-observations.schema';
 import type { SimulationSeed } from '../../../shared/simulation-experiment.interface';
 
 test('comparison reads owned saved observations, preserves gaps and performs no valuation writes', async () => {
@@ -92,6 +93,21 @@ test('comparison reads owned saved observations, preserves gaps and performs no 
     assert.equal(legacy.equityUsd, 121);
     assert.ok(Math.abs(legacy.returnPct! - 21) < 1e-8);
     assert.equal(verified.series.find(item => item.accountId === unknown.id)!.returnPct, null);
+
+    await db.insert(paperEquityObservations).values([
+      {owner,accountId:deferred.id,slot:'missing-quote',dateKey:'2026-11-09',capturedAt:new Date('2026-11-09T16:00:00Z'),equityUsd:null,knownValueUsd:'100',complete:false,estimated:true,marketQuotes:[],gaps:['QUOTE_TIME_UNVERIFIED:ACME'],sourceFingerprint:'missing'},
+      {owner,accountId:deferred.id,slot:'recovered-quote',dateKey:'2026-11-09',capturedAt:new Date('2026-11-09T17:00:00Z'),equityUsd:'240',knownValueUsd:'240',complete:true,estimated:false,marketQuotes:[],gaps:[],sourceFingerprint:'recovered'},
+    ]);
+    await db.insert(paperSnapshots).values({owner,accountId:deferred.id,snapshotDate:'2026-11-09',valuedAt:new Date('2026-11-09T18:00:00Z'),equity:'999',cash:'999'});
+    const recovered=(await service.read(owner,'ALL',deferred.id,new Date('2026-11-09T19:00:00Z'))).series[0];
+    const quoteGap=recovered.points.find(point=>point.timestamp==='2026-11-09T16:00:00.000Z')!;
+    assert.equal(quoteGap.equityUsd,null);assert.equal(quoteGap.returnPct,null);
+    assert.ok(!quoteGap.gaps.includes('CASH_FLOW_OR_BASELINE_CHANGED'),'missing market data is not a financial discontinuity');
+    assert.equal(recovered.equityUsd,240,'later legacy daily facts cannot replace the intraday stream');
+    assert.ok(Math.abs(recovered.returnPct!-20)<1e-8,'known recovery can compare to the unchanged trusted opening');
+    await db.insert(paperEquityObservations).values({owner,accountId:deferred.id,slot:'changed-account',dateKey:'2026-11-09',capturedAt:new Date('2026-11-09T19:30:00Z'),equityUsd:null,knownValueUsd:'100',complete:false,estimated:true,marketQuotes:[],gaps:['ACCOUNT_CHANGED_DURING_CAPTURE'],sourceFingerprint:'changed'});
+    const changed=(await service.read(owner,'ALL',deferred.id,new Date('2026-11-09T20:00:00Z'))).series[0];
+    assert.equal(changed.returnPct,null);assert.ok(changed.gaps.includes('CASH_FLOW_OR_BASELINE_CHANGED'));
   } finally {
     await client.end();
     await admin.unsafe(`DROP SCHEMA IF EXISTS ${namespace} CASCADE`);

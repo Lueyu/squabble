@@ -68,7 +68,8 @@ async function run(options = {}) {
           assert.ok(metrics.horizontal <= 2, 'No document horizontal overflow');
           if (route === '/' && width >= 1366) {
             assert.ok(metrics.chart && metrics.chart.height >= 220, 'Keep the chart readable');
-            assert.ok(metrics.chart.bottom <= metrics.main.bottom + 2, 'Overview chart fits first viewport');
+            assert.ok(metrics.chart.bottom <= metrics.main.bottom + 2,
+              `Overview chart fits first viewport (${width}x${height} ${language}): ${JSON.stringify({ chart: metrics.chart, main: metrics.main })}`);
           }
           if (route === '/research') {
             assert.ok(metrics.messages && metrics.composer, 'Conversation and composer must render');

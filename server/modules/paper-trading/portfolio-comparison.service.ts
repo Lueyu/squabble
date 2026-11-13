@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { paperAccounts, paperSnapshots } from '../../database/schema';
 import { portfolioValuePoints } from '../../database/portfolio-value-points.schema';
+import { paperEquityObservations } from '../../database/portfolio-observations.schema';
 import { simulationSeeds } from '../../database/simulation-experiments.schema';
 import { simulationValuationBaselines } from '../../database/user-strategy-runtime.schema';
 import { investmentPolicies } from '../../database/investment-policy.schema';
@@ -30,7 +31,7 @@ export class PortfolioComparisonService {
     if (requested && (requested.length > 30 || requested.some(id => id !== 'real' && !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/iu.test(id)))) {
       throw new BadRequestException('COMPARISON_ACCOUNTS_INVALID');
     }
-    const granularity = period === '1D' ? 'observations' : 'daily';
+    const granularity = period === '1D' || period === '1W' ? 'observations' : period === '1M' ? 'hourly' : 'daily';
     const marks = await this.currentMarks?.read(owner, requested ?? undefined, at);
     return this.db.transaction(async tx => {
       const accounts = await tx.select().from(paperAccounts).where(eq(paperAccounts.owner, owner)).orderBy(asc(paperAccounts.createdAt), asc(paperAccounts.id));
@@ -38,7 +39,7 @@ export class PortfolioComparisonService {
       const selected = accounts.filter(account => requested ? requested.includes(account.id) : account.isActive);
       const ids = selected.map(account => account.id);
       const realFilter = and(eq(portfolioValuePoints.owner, owner), gte(portfolioValuePoints.capturedAt, from), lte(portfolioValuePoints.capturedAt, at));
-      const [real, latestReal, snapshots, seeds, policies, baselines] = await Promise.all([
+      const [real, latestReal, snapshots, seeds, policies, baselines, intraday] = await Promise.all([
         requested && !requested.includes('real') ? []
           : tx.select().from(portfolioValuePoints).where(realFilter).orderBy(asc(portfolioValuePoints.capturedAt)),
         tx.select().from(portfolioValuePoints).where(and(eq(portfolioValuePoints.owner, owner), lte(portfolioValuePoints.capturedAt, at))).orderBy(desc(portfolioValuePoints.capturedAt)).limit(1),
@@ -46,6 +47,7 @@ export class PortfolioComparisonService {
         ids.length ? tx.select().from(simulationSeeds).where(and(eq(simulationSeeds.owner, owner), inArray(simulationSeeds.accountId, ids))) : [],
         ids.length ? tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), inArray(investmentPolicies.accountId, ids))) : [],
         ids.length ? tx.select().from(simulationValuationBaselines).where(and(eq(simulationValuationBaselines.owner, owner), inArray(simulationValuationBaselines.accountId, ids))) : [],
+        ids.length ? tx.select().from(paperEquityObservations).where(and(eq(paperEquityObservations.owner,owner),inArray(paperEquityObservations.accountId,ids),lte(paperEquityObservations.capturedAt,at))).orderBy(asc(paperEquityObservations.capturedAt)) : [],
       ]);
       const series: PortfolioComparisonSeries[] = [];
       if (!requested || requested.includes('real')) {
@@ -57,7 +59,7 @@ export class PortfolioComparisonService {
             [...point.cashCheckpoints].sort((a, b) => a.currency.localeCompare(b.currency)),
             [...point.positionCheckpoints].sort((a, b) => a.id.localeCompare(b.id)),
           ])).digest('hex'),
-          gaps: [...(!point.complete ? ['INCOMPLETE_VALUATION'] : []), ...(point.estimated ? ['ESTIMATED_VALUATION'] : [])],
+          gaps: [...point.gaps,...(!point.complete ? ['INCOMPLETE_VALUATION'] : []), ...(point.estimated ? ['ESTIMATED_VALUATION'] : [])],
         }));
         const points = comparisonObservations(observations, granularity);
         const latest = latestReal[0];
@@ -72,7 +74,11 @@ export class PortfolioComparisonService {
           && seed.cash.every(cash => cash.availabilityKnown)
           && seed.gaps.every(isSimulationReviewModelNote);
         const seedAt = seed?.valuationStartedAt ?? seed?.capturedAt;
-        const rows = snapshots.filter(row => row.accountId === account.id);
+        const captured=intraday.filter(row=>row.accountId===account.id);
+        const firstCapture=captured[0]?.capturedAt.getTime()??Infinity;
+        // Once intraday capture begins its unknown facts take precedence. A legacy
+        // daily GET writer must not overwrite a later unavailable provider reading.
+        const rows = snapshots.filter(row => row.accountId === account.id && (row.valuedAt?.getTime()??Date.parse(row.snapshotDate))<firstCapture);
         const observations: SavedComparisonObservation[] = rows.map(row => ({
           timestamp: row.valuedAt?.toISOString() ?? `${row.snapshotDate}T00:00:00.000Z`, date: row.snapshotDate,
           equityUsd: row.valuedAt ? finite(row.equity) : null,
@@ -80,6 +86,15 @@ export class PortfolioComparisonService {
             ? `simulation:${account.id}` : null,
           gaps: row.valuedAt ? [] : ['VALUATION_TIMESTAMP_UNKNOWN'],
         }));
+        observations.push(...captured.map(row=>({timestamp:row.capturedAt.toISOString(),date:row.dateKey,
+          equityUsd:row.complete?finite(row.equityUsd):null,
+          // A missing quote/FX is an unknown valuation, not evidence of a deposit
+          // or changed inventory. Financial/corporate-action uncertainty still fences
+          // every subsequent return in the existing continuity rules.
+          continuity:trustedOpening&&seedAt&&row.capturedAt.getTime()>=Date.parse(seedAt)
+            &&!row.gaps.some(gap=>/^(?:CASH_|HOLDING_INVALID|ACCOUNT_CHANGED|CORPORATE_ACTION)/u.test(gap))?`simulation:${account.id}`:null,
+          gaps:[...row.gaps,...(!row.complete?['INCOMPLETE_VALUATION']:[])],
+        })));
         if (seedAt && trustedOpening && !observations.some(point => point.timestamp === seedAt)) {
           observations.push({ timestamp: seedAt, date: paperRiskDay(new Date(seedAt), policy?.baseConfig.timezone ?? 'Asia/Shanghai'), equityUsd: finite(seed.initialEquityUsd), continuity: `simulation:${account.id}`, gaps: [] });
         }

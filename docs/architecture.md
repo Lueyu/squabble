@@ -47,6 +47,8 @@ Static dependency directions are checked by ESLint and `npm run test:architectur
 <a id="system-overview"></a>
 ## 1. System overview
 
+**Overview and valuation review — 2026-11-13:** checked77d7357 plus this patch against all five flows. Flow1 adds a bounded five-minute valuation sampler, separate from research and order scheduling. Flow3 retains simulated daily snapshots but additionally reads timestamped paper observations. Flow5 adds owner-scoped retained quote facts to current-quantity reference reading, without rewriting NAV or the ledger. Flows2 and4 retain their research/publication authority. Migration67 is additive; UI alignment, existing-logo display and separate missing-interval connectors do not create financial observations. See [implementation and evidence](overview-chart-polish.md).
+
 **Compact UI and team removal review — 2026-11-13:** reviewed7672831 plus this patch against all five flows. Desktop density and the research pane keep the same page structure and financial/data contracts. Existing team archive preview/confirm now seals the standing agreement snapshot and atomically pauses that agreement, records its revision and cancels undispatched reserved cycles; the new list/detail removal entry fixes `pause_all` and retains account, trade, report and version history. Pausing or reconciling an old agreement first checks the current binding, so a successor team is unaffected. Dispatched/unknown external work retains its original receipt and cost fences; team archive does not inherit the friend-only settlement exception. Flows1–2 retain module/provider ownership, flow3 tightens synchronous revocation within the existing transaction, and flows4–5 retain publication/source and real-ledger writers. No route, API endpoint, schema or diagram edge was added. See [implementation and validation](compact-ui-team-removal.md).
 
 ```mermaid
@@ -68,6 +70,9 @@ flowchart LR
     auth --> comparison["Saved NAV and separate current account marks"]
     auth --> lookback["Current-position historical reference"]
     comparison --> lookback
+    sampler["Five-minute valuation capture; no research or orders"] --> data
+    sampler --> db
+    lookback -->|"Owned retained quote facts; not NAV"| db
     lookback --> cache["Dated public prices and FX; bounded background leases"]
     cache --> data
     cache --> db
@@ -329,6 +334,7 @@ flowchart TD
     pause["Pause selected account"] --> stop["Stop all its automation including protective exits"]
     stop --> history["Preserve snapshots, strategies and fills; other accounts continue"]
     ledger --> valuation["Saved timestamped valuations, also while paused"]
+    valuationSampler["Separate five-minute capture with fenced account/slot claim"] --> valuation
     valuation --> comparison["Pure read comparison; unknown data remains null"]
     valuation --> review["Immutable simulation review with coverage"]
     ledger --> channel["Account-labelled execution receipts"]
@@ -360,7 +366,7 @@ Migration `45_portfolio_workspace.sql` adds assignments, combination drafts/prev
 
 `PortfolioComparisonService.read` serves `/api/ai-investment/comparison?period=1M&accountIds=real,...` using a repeatable-read, read-only transaction over saved real value points, simulation snapshots and trusted openings. It makes no quote request, establishes no baseline, dispatches no research and writes no selection. Periods are `1D`, `1W`, `1M`, `3M`, `YTD`, `ALL`; day/week/month windows are rolling UTC day counts and YTD starts at UTC January 1. One-day output keeps observations; longer ranges retain daily samples and the actual return origin. Missing dates insert a null separator, not an interpolated observation. `saved_valuations_no_external_flows` reports a return only after two trusted observations with unchanged flow/checkpoint identity; cash-flow/baseline changes or unknown continuity leave subsequent returns null. Each series exposes its own `returnFrom` and valuation time; accounts with different observation origins are not falsely aligned to one inception.
 
-Valuation is separate from execution: while the scheduler is enabled, it attempts each non-archived account's daily snapshot at most every fifteen minutes even when trading is paused. These are daily rows updated with actual timestamps, not invented intraday history. Global `PAPER_TRADING_ENABLED=false` also disables this scheduler. `SimulationExperimentsService.review` retains distinct timestamp coverage (`initial_only`, `observed_period`, `unknown_timestamp`, `incomplete_period`), missing strategy-boundary valuation gaps and separate `modelNotes`. Equal NAV at a later observation can be a measured zero; initialization alone cannot. Shared-ledger strategy allocations do not create an independently measured per-strategy return.
+Valuation is separate from execution. `PortfolioValuationScheduler` captures real and non-archived paper accounts in five-minute slots, including paused accounts, using durable fenced claims. Its paper observations are append-only per slot; existing daily snapshots remain a compatibility projection and cannot override a newer unknown observation. The old strategy scheduler retains its trading cadence and daily compatibility writer. Global `PAPER_TRADING_ENABLED=false` disables the new sampler as well. Actual provider times, cash/position changes, missing FX and corporate-action verification bound completeness; the sampling clock never becomes a quote timestamp. `SimulationExperimentsService.review` retains distinct timestamp coverage (`initial_only`, `observed_period`, `unknown_timestamp`, `incomplete_period`), missing strategy-boundary valuation gaps and separate `modelNotes`. Shared-ledger strategy allocations do not create an independently measured per-strategy return.
 
 Report payload hashes, exact source-text hashes, strategy preview `strategyContentHash`, combination hashes and action receipts remain separate contracts. Do not substitute a hash of displayed prose or change archived research to match a later strategy.
 
@@ -427,6 +433,7 @@ flowchart TD
     positionImport --> holdings
     ledgerTx --> cash
     holdings --> metrics["Valuation with quote, FX and coverage"]
+    samplingClock["Independent five-minute claim; retained provider timestamps"] --> metrics
     cash --> metrics
     transactions --> metrics
     metrics --> today["Real asset view and frozen research context"]
@@ -441,6 +448,8 @@ flowchart TD
     currentPaper["Current owned paper positions and cash"] --> currentPositions
     currentPositions --> currentMarks["Current values with total, holdings-only or partial basis"]
     currentPositions --> reference["Historical reference for current quantities; not actual NAV"]
+    points -->|"Owned quote facts only; not recorded totals"| reference
+    paper -->|"Owned retained quote facts"| reference
     marketCache --> currentMarks
     marketCache --> reference
     currentMarks --> overview
@@ -478,7 +487,7 @@ Schema changes keep Drizzle definitions, fresh-install SQL and registered additi
 
 `PortfolioHistoryModule` is consumed by imports and account comparison. Completed import transactions enqueue `PortfolioHistoryService.prefetch` asynchronously; opening an existing portfolio also schedules missing public data. Additive migration48 stores shared dated public closes, historical FX and per-resource leases/backoff. Current marks expose total-assets, holdings-only or partially-known-assets coverage. A known null cannot fall back to an older NAV value or date.
 
-The independent lookback uses current quantities and dated closes/FX, excluding cash, trades and dividends. It never writes or extends actual historical NAV or return chains. The client automatically uses this explicitly labelled reference when there are not enough saved observations; it replaces whole series, keeps missing data as gaps, and always permits returning to actual account records even if history fails. Reference dates use UTC calendar-day labels, not fabricated observation times; the table retains exact provider price and FX source dates. See [historical reference contracts](portfolio-history-reference.md).
+The independent lookback uses current quantities and dated closes/FX, excluding cash, trades and dividends. Recent retained owner-scoped quote facts can supply genuine intraday times for day/week views and real hourly representatives for month views. Its last valid positive-coverage observation fixes the reference ticker set; both daily and observed values are recalculated from constituent facts, retaining the whole-position denominator and explicit exclusions when partial. It never writes or extends actual historical NAV or return chains. Missing values stay null; a separate labelled asset connector may span an ordinary missing interval, while financial/corporate-action boundaries and return gaps remain distinct. Daily rows keep date-only labels; quote rows retain actual provider times. Non-USD intraday FX uses prior dated rates because daily FX has no publication timestamp. The source table and explicit account-record switch remain available. See [historical reference contracts](portfolio-history-reference.md).
 
 All five diagrams were rechecked for this refinement: system/cache and ledger-reading flows change; strategy gains explicit archive/stop authority; historical-list consumers change the report reading flow without changing sealed research, saved-result recovery or publication; channel publication/source fences remain unchanged when an account is archived.
 
