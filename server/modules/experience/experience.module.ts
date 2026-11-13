@@ -20,6 +20,7 @@ import { DailyWorkspaceService } from './daily-workspace.service';
 import { DailyWorkspaceController } from './daily-workspace.controller';
 import { DailyWorkspaceResearchController } from './daily-workspace-research.controller';
 import { DailyWorkspaceResearchService } from './daily-workspace-research.service';
+import { PortfolioValuationScheduler } from './portfolio-valuation.scheduler';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { DailyWorkspaceResearchService } from './daily-workspace-research.servic
     ResearchFollowupService,
     ImportAnalysisHandoffService,
     PortfolioMetricsService,
+    PortfolioValuationScheduler,
     DailyChannelResearchService,
   ],
   exports: [TodayService, CurrentResearchService, ImportAnalysisHandoffService],

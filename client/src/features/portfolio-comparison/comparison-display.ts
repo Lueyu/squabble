@@ -1,4 +1,4 @@
-import type { PortfolioComparisonSeries } from '@shared/portfolio-comparison.interface';
+import type { PortfolioComparisonPoint, PortfolioComparisonSeries } from '@shared/portfolio-comparison.interface';
 import type {
   PortfolioHistorySeries,
   PortfolioHistoryView,
@@ -78,7 +78,7 @@ export function historicalReferenceSeries(
     const partial = partialReferenceCoverage(reference);
     const points =
       reference?.points.map((point) => ({
-        timestamp: `${point.date}T12:00:00.000Z`,
+        timestamp: point.timestamp ?? `${point.date}T12:00:00.000Z`,
         date: point.date,
         equityUsd: partial
           ? point.coveredPositions === partial.covered &&
@@ -117,6 +117,16 @@ export function historicalReferenceSeries(
       gaps: reference?.gaps ?? ['HISTORY_PENDING'],
     };
   });
+}
+
+/** Multiple saved quotes on one day retain their own evidence, never the first row for that day. */
+export function referenceHistoryPoint(
+  history: PortfolioHistorySeries | undefined,
+  point: PortfolioComparisonPoint,
+): PortfolioHistorySeries['points'][number] | undefined {
+  return history?.points.find(row => row.timestamp
+    ? Date.parse(row.timestamp) === Date.parse(point.timestamp)
+    : row.date === point.date && point.timestamp === `${row.date}T12:00:00.000Z`);
 }
 
 export function shouldShowReference(

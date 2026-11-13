@@ -15,6 +15,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 
 import { holdings } from '@server/database/schema';
 import { QuoteService } from './../quote/quote.service';
+import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import type {
   Holding,
   CreateHoldingDto,
@@ -75,31 +76,34 @@ export class HoldingsService {
    */
   async create(dto: CreateHoldingDto, userId: string): Promise<Holding> {
     const marketInfo = this.quoteService.detectMarket(dto.ticker);
-    const rows = await this.db
-      .insert(holdings)
-      .values({
-        ticker: dto.ticker,
-        company: dto.company,
-        sector: dto.sector,
-        buyDate: dto.buyDate,
-        // numeric columns are written as strings to preserve exact decimal values.
-        buyPrice: dto.buyPrice !== undefined ? String(dto.buyPrice) : undefined,
-        shares: String(dto.shares),
-        currentPrice: dto.currentPrice !== undefined ? String(dto.currentPrice) : undefined,
-        rating: dto.rating,
-        action: dto.action,
-        analysis: dto.analysis,
-        targetPrice: dto.targetPrice !== undefined ? String(dto.targetPrice) : undefined,
-        groupId: dto.groupId,
-        market: marketInfo.market,
-        currency: marketInfo.currency,
-        symbolNative: marketInfo.symbolNative,
-        displaySymbol: marketInfo.displaySymbol,
-        owner: userId,
-        createdBy: userId,
-        updatedBy: userId,
-      })
-      .returning();
+    const rows = await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      return tx
+        .insert(holdings)
+        .values({
+          ticker: dto.ticker,
+          company: dto.company,
+          sector: dto.sector,
+          buyDate: dto.buyDate,
+          // numeric columns are written as strings to preserve exact decimal values.
+          buyPrice: dto.buyPrice !== undefined ? String(dto.buyPrice) : undefined,
+          shares: String(dto.shares),
+          currentPrice: dto.currentPrice !== undefined ? String(dto.currentPrice) : undefined,
+          rating: dto.rating,
+          action: dto.action,
+          analysis: dto.analysis,
+          targetPrice: dto.targetPrice !== undefined ? String(dto.targetPrice) : undefined,
+          groupId: dto.groupId,
+          market: marketInfo.market,
+          currency: marketInfo.currency,
+          symbolNative: marketInfo.symbolNative,
+          displaySymbol: marketInfo.displaySymbol,
+          owner: userId,
+          createdBy: userId,
+          updatedBy: userId,
+        })
+        .returning();
+    });
     return this.mapRow(rows[0]);
   }
 
@@ -133,11 +137,14 @@ export class HoldingsService {
     patch.updatedAt = new Date();
     patch.updatedBy = userId;
 
-    const rows = await this.db
-      .update(holdings)
-      .set(patch)
-      .where(and(eq(holdings.id, id), eq(holdings.owner, userId)))
-      .returning();
+    const rows = await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      return tx
+        .update(holdings)
+        .set(patch)
+        .where(and(eq(holdings.id, id), eq(holdings.owner, userId)))
+        .returning();
+    });
     if (rows.length === 0)
       // NOTE: Chinese user-facing message (existing behavior; not mojibake).
       throw new NotFoundException('持仓不存在');
@@ -152,10 +159,13 @@ export class HoldingsService {
    * @throws NotFoundException if the holding does not belong to the user.
    */
   async remove(id: string, userId: string): Promise<{ success: true }> {
-    const rows = await this.db
-      .delete(holdings)
-      .where(and(eq(holdings.id, id), eq(holdings.owner, userId)))
-      .returning({ id: holdings.id });
+    const rows = await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, userId);
+      return tx
+        .delete(holdings)
+        .where(and(eq(holdings.id, id), eq(holdings.owner, userId)))
+        .returning({ id: holdings.id });
+    });
     if (rows.length === 0)
       // NOTE: Chinese user-facing message (existing behavior; not mojibake).
       throw new NotFoundException('持仓不存在');

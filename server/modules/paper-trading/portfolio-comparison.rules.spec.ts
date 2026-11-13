@@ -64,3 +64,17 @@ test('period boundaries use UTC and do not overflow short months', () => {
   assert.equal(comparisonPeriodStart('1M', new Date('2026-03-31T12:00:00Z')).toISOString(), '2026-03-01T12:00:00.000Z');
   assert.equal(comparisonPeriodStart('YTD', new Date('2026-11-09T12:00:00Z')).toISOString(), '2026-01-01T00:00:00.000Z');
 });
+
+test('hourly projection keeps origin, unknown facts and the exact discontinuity instead of hiding them', () => {
+  const start=observation('2026-11-03',100);
+  const bad={...start,timestamp:'2026-11-03T16:10:00Z',equityUsd:null,gaps:['INCOMPLETE_VALUATION']};
+  const changed={...start,timestamp:'2026-11-03T16:20:00Z',equityUsd:130,continuity:'changed'};
+  const close={...start,timestamp:'2026-11-03T16:55:00Z',equityUsd:140};
+  const middle={...start,timestamp:'2026-11-03T16:05:00Z',equityUsd:101};
+  const points=comparisonObservations([start,middle,bad,changed,close],'hourly');
+  assert.ok(!points.some(p=>p.timestamp===middle.timestamp),'an ordinary intermediate same-hour observation is reduced');
+  assert.ok(points.some(p=>p.timestamp===start.timestamp));
+  assert.ok(points.some(p=>p.timestamp===bad.timestamp&&p.equityUsd===null));
+  assert.ok(points.some(p=>p.timestamp===changed.timestamp&&p.gaps.includes('CASH_FLOW_OR_BASELINE_CHANGED')));
+  assert.equal(points.at(-1)?.returnPct,null);
+});

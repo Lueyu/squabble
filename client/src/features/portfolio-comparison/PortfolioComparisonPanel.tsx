@@ -30,7 +30,7 @@ import type {
   PortfolioComparisonPeriod,
 } from '@shared/portfolio-comparison.interface';
 import PortfolioComparisonChart from './PortfolioComparisonChart';
-import { accountColor, comparisonGapLabel } from './comparison-chart-options';
+import { accountColor, comparisonGapLabel, comparisonSamplingLabel } from './comparison-chart-options';
 import {
   portfolioWorkspaceApi,
   portfolioWorkspaceKeys,
@@ -371,7 +371,7 @@ export default function PortfolioComparisonPanel({
       )}
       {(referenceAvailable || reference) && (
         <div className="portfolio-reference-controls">
-          <div role="group" aria-label={zh ? '曲线口径' : 'Chart basis'}>
+          <div className="shrink-0" role="group" aria-label={zh ? '曲线口径' : 'Chart basis'}>
             <Button
               size="sm"
               variant={reference ? 'default' : 'ghost'}
@@ -392,8 +392,8 @@ export default function PortfolioComparisonPanel({
           <p className="portfolio-valuation-time">
             {reference
               ? zh
-                ? '按当前持仓数量回看历史价格 · 不含现金、交易与分红，不代表实际投资收益'
-                : 'Today’s quantities at historical prices · Excludes cash, trades and dividends; not your realized investment return'
+                ? '按当前持仓数量回看有来源行情 · 不含现金、交易与分红，不代表实际投资收益'
+                : 'Today’s quantities at sourced historical prices or saved quotes · Excludes cash, trades and dividends; not your realized investment return'
               : zh
                 ? '账户当时保存的资产记录；资料连续时才计算收益率'
                 : 'Assets saved at the time; returns require continuous records'}
@@ -415,7 +415,7 @@ export default function PortfolioComparisonPanel({
                 background: accountColor(item.accountId, item.colorIndex),
               }}
             />
-            <span>
+            <span className="min-w-0 break-words">
               {label(item)}
               {partialReferences.some(
                 (row) => row.account.accountId === item.accountId,
@@ -425,7 +425,7 @@ export default function PortfolioComparisonPanel({
                   : ' · Partial holdings'
                 : ''}
             </span>
-            <span className="portfolio-legend-value">
+            <span className="portfolio-legend-value whitespace-nowrap">
               {metric === 'equity'
                 ? money(
                     reference
@@ -485,21 +485,28 @@ export default function PortfolioComparisonPanel({
         partialAccountIds={partialReferences.map(
           (item) => item.account.accountId,
         )}
+        granularity={comparison.data?.granularity}
+        referenceGranularity={reference ? history.data?.intradayGranularity : undefined}
         onSelectAccount={(id) =>
           navigate(accountPath(id), { state: returnState })
         }
       />
       <div className="portfolio-chart-caption">
-        <span>
+        <span className="min-w-0 leading-5">
           {reference
             ? zh
-              ? 'USD · 当前持仓历史参考市值 · 缺失日期断线'
-              : 'USD · Current-position historical reference · Gaps remain visible'
+              ? 'USD · 当前持仓历史参考市值'
+              : 'USD · Current-position historical reference'
             : zh
-              ? 'USD · 保存的估值记录 · 缺失日期断线'
-              : 'USD · Saved observations · Gaps remain visible'}
+              ? 'USD · 保存的估值记录'
+              : 'USD · Saved observations'}
+          {' · '}{comparisonSamplingLabel(comparison.data?.granularity, zh, reference, history.data?.intradayGranularity)}
+          {' · '}{metric === 'equity'
+            ? (zh ? '浅色虚线连接缺失区间，不代表新增估值'
+              : 'Dashed links mark missing intervals, not additional valuations')
+            : (zh ? '缺少收益率或财务口径变化时断线' : 'Missing returns and financial discontinuities remain broken')}
         </span>
-        <span>
+        <span className="shrink-0 leading-5">
           {zh ? '点选曲线进入对应账户' : 'Select a line to open its account'}
         </span>
       </div>

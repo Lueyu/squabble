@@ -242,6 +242,12 @@
 
 }
 
+.app-shell-simple .app-brand-mark {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
 .app-shell-simple .app-wordmark {
   font-size: 26px;
   font-weight: 750;
@@ -632,6 +638,15 @@
 
 }
 
+@media (width >= 768px) {
+  .portfolio-account-grid > div {
+    display: grid;
+    grid-template-rows: subgrid;
+    grid-row: span 2;
+    row-gap: 8px;
+  }
+}
+
 .portfolio-account-card {
   padding: 20px 18px;
   border: 1px solid var(--border);
@@ -736,6 +751,10 @@
   font-size: 13px;
   white-space: nowrap;
 
+}
+
+.portfolio-account-grid > div > .portfolio-account-card + a {
+  min-height: 24px;
 }
 
 .portfolio-notice {
@@ -1009,6 +1028,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
+  margin-top: 24px;
 }
 
 .portfolio-next-steps > section {
@@ -1288,4 +1308,9 @@
 .portfolio-reference-controls > div {
   display: flex;
   gap: 4px;
+}
+
+.app-shell-simple .portfolio-reference-controls .portfolio-valuation-time {
+  margin: 0;
+  line-height: 20px;
 }

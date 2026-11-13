@@ -1,13 +1,17 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import type { PortfolioComparisonPeriod } from '../../../shared/portfolio-comparison.interface';
 import type { PortfolioHistoryView } from '../../../shared/portfolio-history.interface';
 import { PortfolioHistoryHoldings } from './portfolio-history.holdings';
 import { PortfolioHistoryCache } from './portfolio-history.cache';
 import { referencePoints, utcDay } from './portfolio-history.rules';
+import { PortfolioIntradayReferenceService } from './portfolio-intraday-reference.service';
+import { intradayReferencePoints } from './portfolio-intraday-reference.rules';
+import { combineReferencePoints } from './portfolio-history-merge';
 
 @Injectable()
 export class PortfolioHistoryService {
-  constructor(private readonly holdings: PortfolioHistoryHoldings, private readonly cache: PortfolioHistoryCache) {}
+  constructor(private readonly holdings: PortfolioHistoryHoldings, private readonly cache: PortfolioHistoryCache,
+    @Optional() private readonly intraday?: PortfolioIntradayReferenceService) {}
 
   /** Import hooks may await this in their background task; foreground reads never wait for providers. */
   async prefetch(owner: string): Promise<void> {
@@ -24,16 +28,26 @@ export class PortfolioHistoryService {
     const selection = accountIds ? [...new Set(accountIds.split(',').filter(Boolean))] : undefined;
     const portfolios = await this.holdings.read(owner, selection), positions = portfolios.flatMap(row => row.positions);
     const saved = await this.cache.read(positions, utcDay(new Date(Date.parse(from) - 7 * 86_400_000)), to, at);
+    const granularity = period === '1M' ? 'hourly' : 'observations';
+    const quoteFacts = this.intraday && ['1D', '1W', '1M'].includes(period)
+      ? await this.intraday.read(owner, portfolios.map(portfolio => portfolio.accountId), new Date(Date.parse(from) - 7 * 86_400_000), at) : [];
     void this.cache.prefetch(positions, at);
-    return { basis: 'current_positions_historical_prices', currency: 'USD', period, maximumDays: 365, from, to, readAt: at.toISOString(),
-      refreshing: saved.refreshing, includesCash: false, priceBasis: 'provider_close', corporateActions: 'not_reconstructed',
-      gaps: [...(period === 'ALL' ? ['HISTORY_LIMITED_TO_365_DAYS'] : []), ...saved.gaps],
-      series: portfolios.map(portfolio => {
-        const points = referencePoints(portfolio.positions, saved.prices, saved.fx, from, to), latest = points.at(-1)!;
+    let observedCount = 0, dailyCount = 0;
+    const series = portfolios.map(portfolio => {
+        const daily = referencePoints(portfolio.positions, saved.prices, saved.fx, from, to);
+        const observed = intradayReferencePoints(portfolio.positions, quoteFacts, saved.fx, from, at.toISOString(), granularity);
+        // Daily fallback covers only earlier dates. A close and a live quote
+        // never become two contradictory samples for the same calendar day.
+        const points = combineReferencePoints(daily, observed), latest = points.at(-1)!;
+        observedCount += observed.length; dailyCount += points.length - observed.length;
         return { accountId: portfolio.accountId, name: portfolio.name, kind: portfolio.kind, holdingsAsOf: at.toISOString(), points,
           coverage: { completePoints: points.filter(point => point.valueUsd !== null).length, totalPoints: points.length,
             coveredPositions: latest.coveredPositions, totalPositions: latest.totalPositions },
           gaps: [...new Set(points.flatMap(point => point.gaps))] };
-      }) };
+      });
+    return { basis: 'current_positions_historical_prices', currency: 'USD', period, maximumDays: 365, from, to, readAt: at.toISOString(),
+      refreshing: saved.refreshing, includesCash: false, priceBasis: observedCount ? dailyCount ? 'mixed_close_and_quote' : 'provider_quote' : 'provider_close',
+      ...(observedCount ? { intradayGranularity: granularity } : {}), corporateActions: 'not_reconstructed',
+      gaps: [...(period === 'ALL' ? ['HISTORY_LIMITED_TO_365_DAYS'] : []), ...saved.gaps], series };
   }
 }

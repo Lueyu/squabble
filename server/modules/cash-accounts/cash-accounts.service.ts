@@ -28,8 +28,11 @@ export class CashAccountsService {
     return (await this.list(owner)).find(row => row.currency === currency)!;
   }
   async ensureAccounts(owner: string): Promise<void> {
-    await this.db.insert(cashAccounts).values(ALL_CURRENCIES.map(currency => ({ owner, currency, balance: '0', createdBy: owner, updatedBy: owner })))
-      .onConflictDoNothing({ target: [cashAccounts.owner, cashAccounts.currency] });
+    await this.db.transaction(async tx => {
+      await lockMemoryOwner(tx, owner);
+      await tx.insert(cashAccounts).values(ALL_CURRENCIES.map(currency => ({ owner, currency, balance: '0', createdBy: owner, updatedBy: owner })))
+        .onConflictDoNothing({ target: [cashAccounts.owner, cashAccounts.currency] });
+    });
   }
   async confirm(owner: string, input: ConfirmCashInput): Promise<{ items: CashAccount[] }> {
     if (!input || typeof input.requestKey !== 'string' || !input.requestKey || input.requestKey.length > 150 || !Array.isArray(input.balances) || !input.balances.length || input.balances.length > 3 ||

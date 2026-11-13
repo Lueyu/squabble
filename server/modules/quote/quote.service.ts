@@ -18,6 +18,7 @@ import { firstValueFrom } from 'rxjs';
 import { holdings, watchlist } from '@server/database/schema';
 import type { QuoteResponse, Market, Currency } from '@shared/api.interface';
 import { tradingMarketDate } from '../paper-trading/trading-market.calendar';
+import { tencentObservedUsQuote } from './us-observed-quote';
 
 function quoteReading(market: Market, previousClose: number, source: string, observed?: number | string): Partial<QuoteResponse> {
   let quoteAt: string | undefined;
@@ -320,6 +321,19 @@ export class QuoteService {
     }
 
     return primary;
+  }
+
+  /** Sampling-only source: ordinary quote/order selection keeps its existing behavior. */
+  async fetchUsObservedQuote(symbol: string, at = new Date()): Promise<QuoteResponse | null> {
+    const requested = symbol.toUpperCase();
+    if (!/^[A-Z][A-Z0-9.-]{0,19}$/u.test(requested)) return null;
+    try {
+      const response = await firstValueFrom(this.httpService.get('https://web.ifzq.gtimg.cn/appstock/app/usMinute/query', {
+        params: { code: `us${requested}` }, timeout: 7000, maxContentLength: 1_000_000,
+        headers: { Accept: 'application/json' },
+      }));
+      return tencentObservedUsQuote(response.data, requested, at);
+    } catch { return null; }
   }
 
   /**

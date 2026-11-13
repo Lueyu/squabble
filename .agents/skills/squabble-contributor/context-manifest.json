@@ -24,7 +24,8 @@
       "Persistent roster identity/version and isolated memory, guided holdings-first setup, bounded standing team agreement/system actor, real A2A and exact telemetry attribution; migrations62–65",
       "UI repair: stable animal identity and frozen conversation/commission display, shared saved working instructions/preferences, distinct investment/holdings navigation, import continuation and owner-partitioned guided drafts with exact pending-payload replay; migration66",
       "UI alignment audit against842dc5d plus working-tree patch: card footer alignment, contained memory buttons, labeled team selections and larger dialog/context hit areas; fictional-only deterministic UI probes. All five architecture flows retain routes, API/persistence/financial authority and have no changed edges.",
-      "Compact UI and team removal against7672831 plus working-tree patch: unchanged layout/design with responsive density and a height-filling research pane; existing archive confirms an exact agreement snapshot and synchronously pauses standing authority, cancels only undispatched cycles and preserves financial/report history. Old pause/reconcile rechecks binding identity before touching accounts. All five flows reviewed; no endpoint/schema/diagram-edge changes."
+      "Compact UI and team removal against7672831 plus working-tree patch: unchanged layout/design with responsive density and a height-filling research pane; existing archive confirms an exact agreement snapshot and synchronously pauses standing authority, cancels only undispatched cycles and preserves financial/report history. Old pause/reconcile rechecks binding identity before touching accounts. All five flows reviewed; no endpoint/schema/diagram-edge changes.",
+      "Overview polish against77d7357 plus working-tree patch: tabs/cards/brand alignment, genuine five-minute owner/account valuation capture with retained paper observations and additive migration67; slot claims and final ledger/expiry fences, real hourly sampling, source-marked missing connectors and owned retained quote references. All five flows reviewed; diagrams1/3/5 reflect independent valuation and reference reads, research and publication unchanged."
     ]
   },
   "areas": [
@@ -84,7 +85,11 @@
         "server/modules/paper-trading/portfolio-comparison.service.ts",
         "server/modules/paper-trading/portfolio-comparison.rules.ts",
         "server/modules/paper-trading/portfolio-comparison.integration.spec.ts",
-        "client/src/features/portfolio-comparison/PortfolioComparisonPanel.tsx"
+        "client/src/features/portfolio-comparison/PortfolioComparisonPanel.tsx",
+        "server/modules/experience/portfolio-valuation.scheduler.ts",
+        "server/modules/portfolio-history/portfolio-intraday-reference.service.ts",
+        "server/database/portfolio-observations.schema.ts",
+        "scripts/db/67_portfolio_observations.sql"
       ],
       "references": [
         "references/repository-map.md",

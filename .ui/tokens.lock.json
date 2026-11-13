@@ -614,6 +614,9 @@
           "condition": "@media (width <= 600px)"
         },
         {
+          "condition": "@media (width >= 768px)"
+        },
+        {
           "condition": "@media (width < 1100px)"
         },
         {
@@ -681,5 +684,5 @@
       "contentHash": "527c3317140c176443daa4a6d67d5e515760bda71b63777c2ee825b858e57af8"
     }
   ],
-  "hash": "c83cdf7904ce9fa834cd1edb2998209987cb99460fedc75c30ec270dd8924211"
+  "hash": "d70adb010c648f36c78e15dc1ffce4bdfcc16f32dacbdae7dfc1d0835489b7f6"
 }

@@ -144,9 +144,14 @@
     margin-block: 8px;
   }
 
+  .app-shell-simple .portfolio-reference-controls .portfolio-valuation-time {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
   .app-shell-simple .portfolio-legend {
     gap: 8px 20px;
-    padding: 4px 0 8px;
+    padding: 0 0 4px;
   }
 
   .app-shell-simple .portfolio-legend button {

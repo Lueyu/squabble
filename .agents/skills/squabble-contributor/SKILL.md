@@ -63,6 +63,8 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 
 ## 团队模拟盘
 
+总览对齐与盘中估值见`docs/overview-chart-polish.md`：`PortfolioValuationScheduler`独立按5分钟slot采集实盘/非归档模拟盘，暂停仍可估值、总开关false停止；迁移67保存盘中paper事实、claim和真实报价provenance，不改变交易/研究节奏。日/周保留观测、月按小时、更长按日；未知点与财务continuity边界不能被聚合隐藏。`PortfolioIntradayReferenceService`仅读owned quote facts，按当前数量画含明确来源的部分持仓参考，不以knownValueUsd冒充净值。日内FX只用前日已知日期；US采集专用Tencent源验证season/分钟证据/纽约时区，不用抓取时刻代替行情时间。截图红框和existing logo由宽度/卡片subgrid修复；虚线连接层不生成数据点或收益。
+
 列表卡片和详情常用入口的“移除团队”复用归档预览/确认，固定`pause_all`并明确保留账户、成交、报告及版本，可在已归档查看。`team-version.service.ts`在同一事务复核运行协议快照、暂停协议并记修订、取消未派发周期；`team-run.service.ts`对旧暂停/对账复核当前绑定，不能影响接手团队。高级归档显式保留已确认规则的兼容入口保留，但团队自动研究协议也停止。比例调整集中在`client/src/workspace-density.css`，研究室由`Layout.tsx`的专用pane填充剩余高度。验证与截图见`docs/compact-ui-team-removal.md`。
 
 `/teams` 默认提供引导建队，组织高级编辑保留10种模板，统一资产页使用 `/holdings?accountId=real|id`。模板模式支持快速开始：一次确认内由客户端编排既有端点完成建队（可选默认连接自动启用全部岗位）、发布v1、新建（现金或实盘快照）或关联模拟盘；编排位于 `client/src/features/teams/team-quick-start.ts` 与 `use-team-quick-start.ts`，逐步幂等、断点可续传，不新增服务端契约、不调用模型。迁移61新增组织/布局独立修订、不可变团队版本、唯一有效绑定、预览/幂等回执、有限手动委托、来源授权与精确决定关联；已有Council执行workKey DAG，不另建模型引擎。团队私有召回、工具、最终发布与记忆写入沿可信team context检查，历史普通入口不能省scope绕过。采纳不应用策略，teamDecisionRefs随原组合preview/apply及signal/order/trade传递。测试、启用开关及真实剩余限制见 `docs/team-workspace.md` 与 `docs/team-workspace-validation.md`。

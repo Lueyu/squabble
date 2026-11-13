@@ -58,3 +58,10 @@ This iteration dispatches repairs manually by disjoint file families. There is
 no automatic crawler, clustering, nightly job, auto-merge or baseline approval.
 See [dictionary.md](dictionary.md) and [KNOWN.md](KNOWN.md) for the implemented
 rules and their limits.
+
+Overview alignment regression: after `npm run build:client`, run
+`node scripts/ui-probe/overview-layout-browser.cjs --output output/playwright/overview-polish/after`.
+It renders fictional accounts/teams in17 theme/language/viewport combinations,
+including3840×1958, and asserts page/tab edges, account/footer geometry,
+team links, spacing and existing-logo visibility. Before/after and chart-source
+evidence are recorded in [the overview implementation record](../docs/overview-chart-polish.md).

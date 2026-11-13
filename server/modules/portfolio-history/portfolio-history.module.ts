@@ -6,8 +6,9 @@ import { PortfolioHistoryHoldings } from './portfolio-history.holdings';
 import { PortfolioHistoryService } from './portfolio-history.service';
 import { PortfolioCurrentMarksService } from './portfolio-current-marks.service';
 import { PortfolioHistoryController } from './portfolio-history.controller';
+import { PortfolioIntradayReferenceService } from './portfolio-intraday-reference.service';
 
 @Module({ imports: [HttpModule], controllers: [PortfolioHistoryController],
-  providers: [PortfolioHistoryProvider, PortfolioHistoryCache, PortfolioHistoryHoldings, PortfolioHistoryService, PortfolioCurrentMarksService],
+  providers: [PortfolioHistoryProvider, PortfolioHistoryCache, PortfolioHistoryHoldings, PortfolioHistoryService, PortfolioCurrentMarksService, PortfolioIntradayReferenceService],
   exports: [PortfolioHistoryService, PortfolioCurrentMarksService] })
 export class PortfolioHistoryModule {}
