@@ -47,6 +47,8 @@ Static dependency directions are checked by ESLint and `npm run test:architectur
 <a id="system-overview"></a>
 ## 1. System overview
 
+**Compact UI and team removal review — 2026-11-13:** reviewed7672831 plus this patch against all five flows. Desktop density and the research pane keep the same page structure and financial/data contracts. Existing team archive preview/confirm now seals the standing agreement snapshot and atomically pauses that agreement, records its revision and cancels undispatched reserved cycles; the new list/detail removal entry fixes `pause_all` and retains account, trade, report and version history. Pausing or reconciling an old agreement first checks the current binding, so a successor team is unaffected. Dispatched/unknown external work retains its original receipt and cost fences; team archive does not inherit the friend-only settlement exception. Flows1–2 retain module/provider ownership, flow3 tightens synchronous revocation within the existing transaction, and flows4–5 retain publication/source and real-ledger writers. No route, API endpoint, schema or diagram edge was added. See [implementation and validation](compact-ui-team-removal.md).
+
 ```mermaid
 flowchart LR
     auth --> roster["Persistent agent roster: immutable capability versions and scoped memory"]

@@ -10,5 +10,6 @@
 @import url("./themes.css");
 @import url("./portfolio-workspace.css");
 @import url("./workspace-navigation.css");
+@import url("./workspace-density.css");
 
 @config "../../tailwind.config.ts";

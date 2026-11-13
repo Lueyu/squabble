@@ -8,6 +8,7 @@ import { canonicalHash, confirmSchema, parseTeam, requestKeySchema, revisionSche
 import { validateTeamGraph, semanticHash } from './team-graph';
 import { teamAccountPolicySnapshot, pauseTeamAccountInTransaction } from '../paper-trading/team-account-transaction';
 import type { TeamDatabase } from '../../database/team-context';
+import { pauseTeamRunForArchive, readTeamRunArchiveSnapshot } from '../../database/team-run-authority';
 const executionChoice = z.enum(['keep_confirmed_rules', 'pause_all']);
 @Injectable()
 export class TeamVersionService {
@@ -147,19 +148,21 @@ export class TeamVersionService {
             const guards = await this.store.guards(tx, team);
             if (team.accountId && !request.executionChoice)
                 teamError('TEAM_INVALID_INPUT', 'Choose whether confirmed rules continue');
+            const runAgreement = await readTeamRunArchiveSnapshot(tx, owner, id);
             const snapshot = team.accountId ? await teamAccountPolicySnapshot(tx, owner, team.accountId) : null;
             const inflightCommissions = await this.inflight(tx, owner, { teamId: id });
             if (snapshot) {
                 guards.accountPolicyRevision = snapshot.revision;
                 guards.accountAssignmentRevision = snapshot.assignmentRevision;
             }
-            return { ...await this.store.preview(tx, owner, team, 'archive', { ...request, accountId: team.accountId, expectedAccountBindingId: guards.bindingId, policySnapshot: snapshot?.policySnapshot ?? null, pendingReapproval: snapshot?.pending ?? [], inflightCommissions }, guards), requestKey: request.requestKey };
+            return { ...await this.store.preview(tx, owner, team, 'archive', { ...request, accountId: team.accountId, expectedAccountBindingId: guards.bindingId, policySnapshot: snapshot?.policySnapshot ?? null, pendingReapproval: snapshot?.pending ?? [], inflightCommissions, runAgreement }, guards), requestKey: request.requestKey };
         });
     }
     async archive(owner: string, id: string, input: unknown) {
         const request = parseTeam(confirmSchema, input);
         return this.store.mutate(owner, id, 'archive', request, async (tx) => {
             const team = await this.store.team(tx, owner, id, true), preview = await this.store.consume(tx, owner, team, 'archive', request);
+            await pauseTeamRunForArchive(tx, owner, id, preview.payload.runAgreement);
             if (!team.accountId) {
                 const inflight = await this.inflight(tx, owner, { teamId: id });
                 if (canonicalHash(inflight.map(row => row.id)) !== canonicalHash(((preview.payload.inflightCommissions ?? []) as {

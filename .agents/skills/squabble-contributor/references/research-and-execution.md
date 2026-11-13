@@ -255,6 +255,18 @@ Role source permissions are intersected with exact work, reviewer and dependency
 
 ## Automatic team cycles and individual identity
 
+Removing a team from the list/detail uses the existing archive preview and
+confirmation with `pause_all`. It retains history and the account, but makes
+the team read only. The preview freezes standing agreement identity/revision/state;
+confirmation rechecks and pauses it, writes its immutable revision and cancels
+only reserved cycles with no dispatched commission, in the same archive
+transaction. The advanced archive path can still explicitly keep confirmed
+rules; its automatic research agreement is stopped either way. A delayed or
+replayed pause/reconcile can stop an account only while its active binding still
+belongs to that exact agreement. Team archive does not permit late publication,
+automatic adoption/application or replay of unknown provider work; original
+receipts, cost reservations and financial records are retained.
+
 The user's explicit startup agreement authorizes a bounded system actor for one team/account/version. Each finite cycle reserves cross-cycle ceilings, creates an ordinary commission, adopts only its exact accepted report and imports the persisted `execution-strategy` section. Final apply atomically records the cycle and system authority after agreement revision, binding, source, roster and account fences. Later report edits do not inherit this authority. Existing user drafts are retained. The independent paper ledger starts from an explicitly reviewed real snapshot; real-ledger writers are unchanged.
 
 Roster versions preserve each person's base instructions, preferences and source/tool ceilings. Team role duties are separate. Runtime recall selects one actual personal/conversation/team scope and exact frozen inputs; source sharing preserves original provenance and current grant intersections. Archive prevents selection/new paid dispatch, while exact durable dispatch proofs allow pending output to settle. It never defeats pause, revoked sources/tools or disabled executor fingerprints. One persistent person cannot count as two independent workers in a commission. Single-person research replies directly; an explicit/template moderator is preserved rather than overwritten by array order.

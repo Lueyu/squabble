@@ -260,6 +260,8 @@ function Layout() {
           ? 'app-content app-telemetry-content flex-1 overflow-y-auto safe-bottom'
           : location.pathname === '/council'
           ? 'app-content app-council-content app-channel-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden safe-bottom'
+          : location.pathname === '/research'
+          ? 'app-content app-research-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden safe-bottom'
           : 'app-content flex-1 overflow-y-auto safe-bottom'}>
           {simple && <WorkspaceSectionTabs />}
           <Outlet />

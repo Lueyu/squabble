@@ -43,6 +43,7 @@
     "ui:probe": "node scripts/ui-probe/probe.cjs",
     "ui:probe:one": "node scripts/ui-probe/probe.cjs",
     "ui:gate": "node scripts/ui-probe/gate.cjs",
+    "ui:density": "node scripts/ui-probe/density.cjs",
     "test:ui-probe": "node --test scripts/ui-probe/*.spec.cjs"
   },
   "dependencies": {

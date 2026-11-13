@@ -39,10 +39,15 @@ export class TeamRunService {
       accountId: row.accountId, configuration: row.configuration, members: row.members, scopeRevision: row.scopeRevision,
       confirmedBy: row.confirmedBy, confirmedAt: row.confirmedAt, suspensionReason: row.suspensionReason });
   }
-  private async pauseLiveAccount(tx: TeamDatabase, owner: string, accountId: string): Promise<void> {
+  private async pauseLiveAccount(tx: TeamDatabase, owner: string, agreement: AgreementRow): Promise<void> {
+    const accountId = agreement.accountId;
+    const [binding] = await tx.select().from(teamAccountBindings).where(and(eq(teamAccountBindings.ownerId, owner),
+      eq(teamAccountBindings.accountId, accountId), eq(teamAccountBindings.state, 'active'))).for('update');
+    // A replay from a former team must never stop its successor's account.
+    if (!binding || binding.teamId !== agreement.teamId || binding.id !== agreement.configuration.bindingId) return;
     const [account] = await tx.select().from(paperAccounts).where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId))).for('update');
     const [policy] = await tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), eq(investmentPolicies.accountId, accountId)));
-    // Archive already closes the account. It must still be possible to suspend its old agreement after the binding is released.
+    // The agreement may still be paused when its account is already inactive.
     if (account?.isActive && policy?.status !== 'archived') await pauseTeamAccountInTransaction(tx, owner, accountId);
   }
   async row(tx: TeamDatabase, owner: string, teamId: string) {
@@ -115,7 +120,7 @@ export class TeamRunService {
       await this.recordRevision(tx, saved);
       if (kind === 'pause') {
         // TeamStore acquires the same memory-owner row before the team advisory lock. No gap can admit a final apply.
-        await this.pauseLiveAccount(tx, owner, row.accountId);
+        await this.pauseLiveAccount(tx, owner, row);
         await tx.update(teamRunCycles).set({ state: 'cancelled', lastError: 'Standing agreement paused', updatedAt: new Date() })
           .where(and(eq(teamRunCycles.agreementId, row.id), eq(teamRunCycles.state, 'reserved'), sql`${teamRunCycles.commissionId} IS NULL`));
       }
@@ -162,8 +167,8 @@ export class TeamRunService {
       const [saved] = await tx.update(teamRunAgreements).set({ state: 'suspended', revision: current.revision + 1,
         suspensionReason: change === 'archive_only' ? TEAM_RUN_ARCHIVE_ONLY_STOP : 'Team version, binding, source scope or friend authority changed', updatedAt: new Date() }).where(eq(teamRunAgreements.id, current.id)).returning();
       await this.recordRevision(tx, saved);
-      // The old account remains stopped even when a handover has already changed the active binding.
-      await this.pauseLiveAccount(tx, row.ownerId, current.accountId);
+      // Stop only an account whose current binding still belongs to this exact agreement; preserve a successor's authority.
+      await this.pauseLiveAccount(tx, row.ownerId, current);
       await tx.update(teamRunCycles).set({ state: 'cancelled', lastError: 'Standing agreement suspended', updatedAt: new Date() })
         .where(and(eq(teamRunCycles.agreementId, current.id), eq(teamRunCycles.state, 'reserved'), sql`${teamRunCycles.commissionId} IS NULL`));
     });
