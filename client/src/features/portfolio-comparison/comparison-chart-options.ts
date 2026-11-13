@@ -57,7 +57,7 @@ export function comparisonGapBridges(
 ): ComparisonGapBridge[] {
   if (metric !== 'equity') return [];
   const allowed = new Set(reference
-    ? ['MISSING_OBSERVATION', 'PRICE_MISSING', 'FX_MISSING', 'HISTORY_PENDING', 'PRIOR_CLOSE', 'PRIOR_FX', ...referencePriceWarnings]
+    ? ['MISSING_OBSERVATION', 'PRICE_MISSING', 'FX_MISSING', 'HISTORY_PENDING', 'PRIOR_CLOSE', 'PRIOR_FX', 'COHORT_EXCLUDED', ...referencePriceWarnings]
     : ['MISSING_OBSERVATION']);
   const bridges: ComparisonGapBridge[] = [];
   let prior = -1;
@@ -204,6 +204,10 @@ export function comparisonGapLabel(code: string, zh: boolean, reference = false)
     ? (zh ? '价格口径待核实；估值未知，仅作警示连接' : 'Price conventions unverified; valuation unknown, warning connection only')
     : (zh ? '价格跳变待核实；估值未知，仅作警示连接' : 'Price change unverified; valuation unknown, warning connection only');
   const historyLabels: Record<string, [string, string]> = {
+    COHORT_EXCLUDED: [
+      '为保持参考金额可比，此持仓不在本次共同覆盖范围内',
+      'Excluded from this lookback’s common covered holdings to keep reference amounts comparable',
+    ],
     PRIOR_CLOSE: [
       '沿用此前最近收盘价，具体日期见来源',
       'Uses the latest prior close; see source dates',

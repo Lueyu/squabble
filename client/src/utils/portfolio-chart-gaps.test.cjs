@@ -91,6 +91,19 @@ test('reference gaps can use a separately marked connection without converting m
   assert.equal(comparisonGapBridges(input, 'return', true).length, 0);
 });
 
+test('cohort exclusion is explicit and allows a visual connection only for reference equity', () => {
+  const { comparisonGapBridges, comparisonGapLabel, comparisonLineData } = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
+  const input = series([point(1, 100), point(2, null, ['PRICE_MISSING:FICT', 'COHORT_EXCLUDED:OTHER']), point(4, 120)]);
+  assert.equal(comparisonGapBridges(input, 'equity', true).length, 1);
+  assert.equal(comparisonGapBridges(input, 'equity', false).length, 0);
+  assert.equal(comparisonGapBridges(input, 'return', true).length, 0);
+  assert.equal(comparisonLineData(input, 'equity')[1][1], null);
+  assert.match(comparisonGapLabel('COHORT_EXCLUDED:OTHER', false), /common covered holdings.*comparable/i);
+  assert.match(comparisonGapLabel('COHORT_EXCLUDED:OTHER', true), /共同覆盖范围/);
+  input.points[1].gaps.push('PRICE_BASIS_CHANGED:FICT');
+  assert.equal(comparisonGapBridges(input, 'equity', true)[0].kind, 'warning');
+});
+
 test('isolated points stay visible for the selected metric even when equity has many observations', () => {
   const { comparisonSymbolIndices } = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
   assert.equal(typeof comparisonSymbolIndices, 'function');

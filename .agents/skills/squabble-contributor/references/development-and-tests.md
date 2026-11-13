@@ -37,6 +37,9 @@ Overview alignment and five-minute capture: run the `portfolio-valuation` and
 `STRATEGY_TEST_DATABASE_URL`. Verify expiry after waiting on locks, concurrent
 inventory edits, unchanged quote deduplication, unknown capture persistence,
 stable partial references, quote-time/FX lookahead and downsampling boundaries.
+The history service regression also checks wider daily/earlier-full observations
+recomputed for one fixed partial cohort, a zero-coverage tail and excluded-asset
+critical evidence; the original denominator and unknown full value must survive.
 After `build:client`, run `node scripts/ui-probe/overview-layout-browser.cjs`
 for wide/mobile, theme/language, card/footer and existing-logo acceptance. The
 chart behavior tests include real endpoint-only bridge layers, return isolated

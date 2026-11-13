@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { intradayReferencePoints } from './portfolio-intraday-reference.rules';
+import { referenceCohort } from './portfolio-history.rules';
 
 const positions = [
   { ticker: 'FICT', market: 'US', currency: 'USD', shares: '2' },
@@ -8,6 +9,19 @@ const positions = [
 ];
 const quote = (price: string, quoteAt: string, source = 'fictional:quote') => ({ ticker: 'FICT', market: 'US', currency: 'USD', price, quoteAt, source });
 const from = '2026-11-10T00:00:00Z', to = '2026-11-10T20:00:00Z';
+
+test('excluding a conflicting ticker from the cohort preserves its original critical boundary without restoring its amount', () => {
+  const other = { ticker: 'UNAVAILABLE', market: 'US', currency: 'USD', price: '20', quoteAt: '2026-11-10T15:00:00Z', source: 'fixture' };
+  const facts = [quote('10', '2026-11-10T15:00:00Z'), other,
+    quote('11', '2026-11-10T15:05:00Z'), quote('11', '2026-11-10T15:05:00Z', 'conflict')];
+  const original = intradayReferencePoints(positions, facts, [], from, to, 'observations');
+  const cohort = referenceCohort(original);
+  assert.deepEqual([...cohort!], ['UNAVAILABLE']);
+  const projected = intradayReferencePoints(positions, facts, [], from, to, 'hourly', cohort);
+  assert.ok(projected.some(point => point.timestamp === '2026-11-10T15:05:00.000Z' && point.gaps.includes('PRICE_BASIS_CHANGED:FICT')));
+  assert.ok(projected.every(point => point.knownValueUsd === 20 && point.valueUsd === null && point.totalPositions === 2));
+  assert.ok(projected.every(point => point.priceAsOf.every(row => row.ticker === 'UNAVAILABLE')));
+});
 
 test('reference keeps genuine five-minute quote times and consistent known holdings without inventing complete NAV', () => {
   const rows = [quote('10', '2026-11-10T15:00:00Z'), quote('11', '2026-11-10T15:05:00Z')];

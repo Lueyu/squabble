@@ -40,7 +40,12 @@ export function currentAccountBasis(
 /** This replaces an entire series; historical reference values never join an actual NAV line. */
 export function partialReferenceCoverage(reference?: PortfolioHistorySeries) {
   if (!reference || reference.coverage.completePoints !== 0) return null;
-  const last = reference.points.at(-1);
+  const last = [...reference.points].reverse().find(point => point.coveredPositions > 0
+    && point.coveredPositions <= point.totalPositions
+    && point.priceAsOf.length === point.coveredPositions
+    && point.priceAsOf.every(row => row.ticker.trim().length > 0)
+    && new Set(point.priceAsOf.map(row => row.ticker)).size === point.coveredPositions
+    && Number.isFinite(point.knownValueUsd) && point.knownValueUsd >= 0);
   if (
     !last ||
     !last.coveredPositions ||
@@ -57,6 +62,7 @@ export function partialReferenceCoverage(reference?: PortfolioHistorySeries) {
       .filter(
         (gap) =>
           gap.startsWith('PRICE_MISSING:') ||
+          gap.startsWith('COHORT_EXCLUDED:') ||
           gap.startsWith('POSITION_UNSUPPORTED:'),
       )
       .map((gap) => gap.slice(gap.indexOf(':') + 1)),
@@ -94,6 +100,7 @@ export function historicalReferenceSeries(
                 'PRICE_MISSING',
                 'FX_MISSING',
                 'POSITION_UNSUPPORTED',
+                'COHORT_EXCLUDED',
                 'PRIOR_CLOSE',
                 'PRIOR_FX',
               ].includes(gap.split(':')[0]),

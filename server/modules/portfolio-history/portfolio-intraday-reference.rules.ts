@@ -128,6 +128,7 @@ function reducePoints(points: PortfolioHistoryPoint[], interval: number): Portfo
 export function intradayReferencePoints(
   positions: HistoryPosition[], quotes: HistoryObservedQuote[], rates: HistoryFx[],
   from: string, to: string, granularity: 'observations' | 'hourly',
+  cohort?: ReadonlySet<string>,
 ): PortfolioHistoryPoint[] {
   const start = Date.parse(from), end = Date.parse(to);
   if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return [];
@@ -166,6 +167,10 @@ export function intradayReferencePoints(
       }
       const ownQuotes = byKey.get(key) ?? [], quote = ownQuotes[lastIndex(ownQuotes, at)];
       if (quote?.critical) gaps.add(`${quote.critical}:${position.ticker}`);
+      if (cohort && !cohort.has(position.ticker)) {
+        gaps.add(`COHORT_EXCLUDED:${position.ticker}`);
+        continue;
+      }
       const fresh = quote && quote.price !== null && quote.source !== null
         && markets.get(identity.market as Market)!(at, quote.at);
       const ownRates = rateIndex.get(identity.currency) ?? [];

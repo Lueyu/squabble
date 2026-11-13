@@ -3,7 +3,7 @@ import type { PortfolioComparisonPeriod } from '../../../shared/portfolio-compar
 import type { PortfolioHistoryView } from '../../../shared/portfolio-history.interface';
 import { PortfolioHistoryHoldings } from './portfolio-history.holdings';
 import { PortfolioHistoryCache } from './portfolio-history.cache';
-import { referencePoints, utcDay } from './portfolio-history.rules';
+import { referenceCohort, referencePoints, utcDay } from './portfolio-history.rules';
 import { PortfolioIntradayReferenceService } from './portfolio-intraday-reference.service';
 import { intradayReferencePoints } from './portfolio-intraday-reference.rules';
 import { combineReferencePoints } from './portfolio-history-merge';
@@ -34,8 +34,30 @@ export class PortfolioHistoryService {
     void this.cache.prefetch(positions, at);
     let observedCount = 0, dailyCount = 0;
     const series = portfolios.map(portfolio => {
-        const daily = referencePoints(portfolio.positions, saved.prices, saved.fx, from, to);
-        const observed = intradayReferencePoints(portfolio.positions, quoteFacts, saved.fx, from, at.toISOString(), granularity);
+        const originalObserved = intradayReferencePoints(portfolio.positions, quoteFacts, saved.fx, from, at.toISOString(), granularity);
+        const cohort = referenceCohort(originalObserved);
+        const originalDaily = referencePoints(portfolio.positions, saved.prices, saved.fx, from, to);
+        // Revalue both sources from per-ticker facts. An old full/partial sum
+        // cannot be relabelled as the latest comparable covered subset.
+        const daily = cohort ? referencePoints(portfolio.positions, saved.prices, saved.fx, from, to, cohort) : originalDaily;
+        let observed = cohort ? intradayReferencePoints(portfolio.positions, quoteFacts, saved.fx, from, at.toISOString(), granularity, cohort)
+          : originalObserved;
+        const originalBoundary = combineReferencePoints(originalDaily, originalObserved).find(point => point.timestamp);
+        const boundaryRisks = originalBoundary?.gaps.filter(gap => gap.startsWith('PRICE_BASIS_CHANGED:')
+          || gap.startsWith('PRICE_DISCONTINUITY_UNVERIFIED:')) ?? [];
+        if (cohort && originalBoundary?.timestamp && boundaryRisks.length) {
+          // Keep the original source-transition evidence even if this cohort's
+          // hourly sampling would omit its genuine observation time. Revalue
+          // that time from facts; never reuse the old full-portfolio subtotal.
+          const timestamp = originalBoundary.timestamp;
+          const projected = observed.find(point => point.timestamp === timestamp)
+            ?? intradayReferencePoints(portfolio.positions, quoteFacts, saved.fx, timestamp, timestamp, 'observations', cohort).at(-1);
+          if (projected) {
+            const retained = { ...projected, valueUsd: null, gaps: [...new Set([...projected.gaps, ...boundaryRisks])] };
+            observed = [...observed.filter(point => point.timestamp !== timestamp), retained]
+              .sort((left, right) => Date.parse(left.timestamp!) - Date.parse(right.timestamp!));
+          }
+        }
         // Daily fallback covers only earlier dates. A close and a live quote
         // never become two contradictory samples for the same calendar day.
         const points = combineReferencePoints(daily, observed), latest = points.at(-1)!;
