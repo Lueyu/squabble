@@ -26,17 +26,31 @@ export function tencentObservedUsQuote(payload: unknown, symbol: string, at: Dat
     day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(instant).map(part => [part.type, part.value]));
   const roundTrip = `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
   if (roundTrip !== wall || instant.getTime() > at.getTime() + 120_000 || minutes.date !== `${parts.year}${parts.month}${parts.day}`) return null;
-  const lastMinute = String(minutes.data.at(-1)).split(' ')[0];
+  const lastRecord = String(minutes.data.at(-1)).trim().split(/\s+/u);
+  const lastMinute = lastRecord[0];
   if (!/^\d{4}$/u.test(lastMinute) || Number(lastMinute.slice(0, 2)) > 23 || Number(lastMinute.slice(2)) > 59) return null;
   const delta = hour * 60 + minute - (Number(lastMinute.slice(0, 2)) * 60 + Number(lastMinute.slice(2)));
-  if (delta < 0 || delta > 1) return null;
   const schedule = tradingMarketSchedule('US', instant);
   if (!schedule.calendarVerified || !schedule.isTradingDay || !schedule.opensAt || !schedule.closesAt
-    || instant.getTime() < Date.parse(schedule.opensAt) || instant.getTime() > Date.parse(schedule.closesAt) + 120_000) return null;
-  const change = previousClose === null ? 0 : price - previousClose;
-  return { symbol, price: String(price), previousClose: previousClose === null ? undefined : String(previousClose),
+    || instant.getTime() < Date.parse(schedule.opensAt)) return null;
+  const closesAt = Date.parse(schedule.closesAt);
+  let observedPrice = price, observedAt = instant;
+  if (delta < 0 || delta > 1 || instant.getTime() > closesAt + 120_000) {
+    // A post-close qt price belongs to its own clock. Only a real minute row
+    // exactly at the verified exchange close can supply a regular closing fact;
+    // its price and timestamp must be used together, including early closes.
+    if (instant.getTime() <= closesAt) return null;
+    const closingPrice = positive(lastRecord[1]);
+    const closingAt = new Date(Date.UTC(year, month - 1, date,
+      Number(lastMinute.slice(0, 2)) + (season === 'EST' ? 5 : 4), Number(lastMinute.slice(2)), 0));
+    if (closingPrice === null || closingAt.getTime() !== closesAt || closingAt.getTime() > at.getTime()) return null;
+    observedPrice = closingPrice;
+    observedAt = closingAt;
+  }
+  const change = previousClose === null ? 0 : observedPrice - previousClose;
+  return { symbol, price: String(observedPrice), previousClose: previousClose === null ? undefined : String(previousClose),
     change: String(change), changePercent: String(previousClose === null ? 0 : change / previousClose * 100),
     companyName: typeof quote[1] === 'string' && quote[1] ? quote[1] : undefined,
-    currency: 'USD', market: 'US', source: 'tencent', quoteAt: instant.toISOString(),
+    currency: 'USD', market: 'US', source: 'tencent', quoteAt: observedAt.toISOString(),
     tradingDate: `${parts.year}-${parts.month}-${parts.day}`, timestamp: at.getTime(), delayed: true };
 }
