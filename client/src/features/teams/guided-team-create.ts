@@ -10,6 +10,7 @@ import type { TradingMarket } from '@shared/trading-market.interface';
 import type { ModelConnection } from '@shared/model-connections.interface';
 import type { CreatePortfolioAccountRequest } from '@shared/portfolio-workspace.interface';
 import { guidedRunBudget, rosterTeamConfig, guidedSeedBlockers } from './guided-team-state';
+import { guidedRequestKey } from './guided-request-keys';
 
 export const GUIDED_TEAM_KEY = 'squabble.team-guided-create';
 type ReviewStage = 'seed' | 'publish' | 'binding' | 'agreement' | 'changed';
@@ -40,7 +41,7 @@ export class GuidedTeamReviewRequired extends Error {
 export class GuidedTeamValidationError extends Error {
   constructor(readonly code: 'name' | 'budget' | 'members' | 'connection' | 'holdings') { super(`Guided setup needs ${code}`); }
 }
-const keyFor = (record: GuidedTeamRecord, step: string, stage?: ReviewStage) => `${record.key}:${step}${stage && record.reviewEpochs?.[stage] ? `:${record.reviewEpochs[stage]}` : ''}`;
+const keyFor = (record: GuidedTeamRecord, step: string, stage?: ReviewStage) => guidedRequestKey(record.key, step, stage && record.reviewEpochs?.[stage] ? record.reviewEpochs[stage] : '');
 const stable = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 function requireReview(record: GuidedTeamRecord, stage: ReviewStage, progress: Progress): never {
   record.reviewRequired = stage; progress(record, stage); throw new GuidedTeamReviewRequired(stage);

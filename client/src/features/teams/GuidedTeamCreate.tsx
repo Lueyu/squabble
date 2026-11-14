@@ -20,6 +20,7 @@ import { clearGuidedProgress, endGuidedProgress, guidedOwnerScope, hasLegacyGuid
 
 import { guidedSeedBlockers } from './guided-team-state';
 import { GUIDED_RECOMMENDED_PRESET, GUIDED_TEAM_PRESETS, activeGuidedPreset, resolveGuidedPresetMembers } from './guided-team-presets';
+import { guidedRequestKey } from './guided-request-keys';
 
 export default function GuidedTeamCreate() {
   const owner = guidedOwnerScope();
@@ -73,7 +74,7 @@ function GuidedTeamForm({ owner }: { owner: string | null }) {
       if (record.current) { setPreview(record.current.preview); setStep(3); return; }
       if (!chosen.length || chosen.length > 4 || selectionUnavailable) throw new Error(zh ? '请选择1至4位连接可用的股友；推荐3位。' : 'Choose one to four agents with working connections; three are recommended.');
       setSelected(chosen.map(agent => agent.id));
-      seedIntent.current ??= `${key.current}:seed:${crypto.randomUUID()}`;
+      seedIntent.current ??= guidedRequestKey(key.current, 'seed', crypto.randomUUID());
       const value = await previewAiInvestment({ origin: 'holdings', requestKey: seedIntent.current }); seedIntent.current = null; setPreview(value); const suggested = value.markets[0]; if (!marketChosen.current && (suggested === 'US' || suggested === 'HK' || suggested === 'CN')) setMarket(suggested); setStep(3); }
     catch (failure) { setError(friendlyError(failure, zh, { zh: '持仓快照尚未准备好，请核对持仓、现金和报价后继续。', en: 'The holdings snapshot is not ready. Check holdings, cash and quotes, then continue.' })); }
     finally { setBusy(false); lock.current = false; }
