@@ -141,6 +141,20 @@ test('member presets pick matching agents and manual choice stays available', as
   });
 });
 
+test('the seed preview request key satisfies the strict investment idempotency contract', async () => {
+  await scenario(async ({ f, click }) => {
+    const sent = [];
+    f.load('api/ai-investment.ts').previewAiInvestment = async payload => { sent.push(payload); return { previewId: 'fixture-seed', expiresAt: '2099-01-01', needsInput: [], markets: ['CN'], seed: { positions: [], cash: [], capturedAt: '2026-11-12' } }; };
+    await click('Next: choose agents');
+    await click('Next: review startup');
+    assert.equal(sent.length, 1);
+    // The investment schema (investment-policy.rules.ts) rejects ':' outright; the guided flow
+    // used to fail review with a 400 "Please check the supplied investment details.".
+    assert.ok(!sent[0].requestKey.includes(':'));
+    assert.match(sent[0].requestKey, /^[a-zA-Z0-9_-]{8,128}$/u);
+  });
+});
+
 test('legacy ownership failures conceal private content and retain the old receipt without new requests', async () => {
   await scenario(async ({ f, remount, click }) => {
     const raw = JSON.stringify({ version: 1, key: 'legacy', name: 'Hidden private team', agents: [{ id: 'old-person' }], preview: { previewId: 'old' }, teamId: 'old-team', accountId: 'old-account' });

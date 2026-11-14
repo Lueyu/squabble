@@ -100,7 +100,7 @@ for (const [operation, stage] of [['publish', 'publish'], ['account', 'seed'], [
     assert.equal(f.calls.filter(call => call.name === operation).length, 0, 'refresh must never confirm a mutation');
     assert.equal(await executeGuidedTeam(f.record, () => {}, f.ports), 'team');
     assert.equal(f.calls.filter(call => call.name === 'create').length, completedTeams);
-    assert.match(f.calls.find(call => call.name === operation).input.requestKey, /:1$/);
+    assert.match(f.calls.find(call => call.name === operation).input.requestKey, /--1$/);
   });
 }
 

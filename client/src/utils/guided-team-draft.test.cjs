@@ -81,7 +81,7 @@ test('an unknown legacy create retains the exact old request and source cache un
   await assert.rejects(f.load('features/teams/guided-team-create.ts').executeGuidedTeam(restored, value => state.saveGuidedProgress('owner-a', value, tab), {
     teams: { create: async input => { posts.push(JSON.parse(JSON.stringify(input))); throw new Error('Unknown response'); } },
   }));
-  assert.deepEqual(posts, [{ requestKey: 'legacy-original:team', name: 'Private old team', description: 'Guided team: persistent agents and independent paper account' }]);
+  assert.deepEqual(posts, [{ requestKey: 'legacy-original--team', name: 'Private old team', description: 'Guided team: persistent agents and independent paper account' }]);
   assert.equal(state.readGuidedProgress('owner-a', tab).pendingOperation, 'team');
   assert.ok(tab.getItem('squabble.team-guided-create'));
 });

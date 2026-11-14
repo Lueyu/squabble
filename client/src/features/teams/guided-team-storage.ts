@@ -1,6 +1,7 @@
 import { getAuthMode } from '@/api/auth-mode';
 import type { TradingMarket } from '@shared/trading-market.interface';
 import type { GuidedTeamRecord } from './guided-team-create';
+import { guidedRequestKey } from './guided-request-keys';
 
 type TabStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 const prefix = 'squabble.team-guided-create';
@@ -97,7 +98,7 @@ export async function migrateLegacyGuidedProgress(owner: string | null, ports: L
   if (results.some((result, index) => result.status !== 'fulfilled' || result.value?.id !== checks[index].id) || ports.currentOwner() !== owner || tab.getItem(prefix) !== raw) throw new Error('Legacy progress ownership is unverified');
   if (readGuidedProgress(owner, tab)) throw new Error('Current progress changed during legacy review');
   // The original release sent this exact English payload, even from the Chinese interface.
-  record.teamCreateInput ??= { requestKey: `${record.key}:team`, name: record.name, description: 'Guided team: persistent agents and independent paper account' };
+  record.teamCreateInput ??= { requestKey: guidedRequestKey(record.key, 'team'), name: record.name, description: 'Guided team: persistent agents and independent paper account' };
   record.legacyUnscoped = true;
   if (!record.pendingOperation) {
     if (!record.teamId) record.pendingOperation = 'team';
