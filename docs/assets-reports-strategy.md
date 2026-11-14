@@ -4,9 +4,9 @@ This guide covers the current web experience, enabled by default unless explicit
 
 ## 总览：比较真实资产与多个模拟仓
 
-在持仓页点击“复制到模拟盘”，当前模拟盘页面会自动打开实盘持仓与现金的复制预览，并显示正在读取、失败原因或重试入口。先核对新起点并为账户命名，确认后建立独立副本；已有账户继续保留和运行，预览或取消不会切换执行状态。复制后的真实交易不自动同步，行情或汇率缺项保持未知，不会补造估值。
+在持仓页点击“复制到模拟盘”，当前模拟盘页面会自动打开实盘持仓与现金的复制预览，并显示正在读取、失败原因或重试入口。先核对新起点并为账户命名，确认后建立独立副本；已有账户继续保留和运行，预览或取消不会切换执行状态。复制后的真实交易不自动同步。开盘价优先取实时行情，实时行情缺失时直接用持仓页记录的最新价并明确标记为延迟行情；持仓里没有可用记录价或缺汇率时保持未知，不会补造估值。
 
-Choose **Copy to simulation** from Holdings to open the starting-point preview in the current simulation page. Loading, errors and retry are visible. The confirmed action creates a named independent simulation while existing accounts keep their ledgers and execution state. Previewing or cancelling does not switch accounts; later real trades do not sync, and missing quotes or FX remain unknown.
+Choose **Copy to simulation** from Holdings to open the starting-point preview in the current simulation page. Loading, errors and retry are visible. The confirmed action creates a named independent simulation while existing accounts keep their ledgers and execution state. Previewing or cancelling does not switch accounts; later real trades do not sync. Opening prices prefer live quotes; when a live quote is unavailable, the holding's recorded price opens the baseline and is explicitly marked as a delayed quote. A holding without a usable recorded price, or missing FX, remains unknown and never fabricates a valuation.
 
 总资产由持仓市值与已确认现金组成。卖出股票会减少股数、增加对应币种现金；入金与出金单独计入外部资金流。今日盈亏按市场上一交易日收盘价以及已记录的当日买卖、费用计算，与相对历史买入成本的浮盈分开。
 

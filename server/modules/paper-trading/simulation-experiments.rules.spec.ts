@@ -28,6 +28,22 @@ test('missing cash and FX remain unknown instead of inventing USD funding', () =
   assert.ok(seed.gaps.includes('CASH_UNKNOWN'));
   assert.ok(seed.gaps.includes('FX_MISSING:HKD'));
 });
+test('a missing live quote opens from the recorded holding price instead of blocking the account', () => {
+  const seed = buildOpeningSeed(source, [], [{ currency: 'USD', rate: '1', at: '2026-11-05' }], '2026-11-05T01:00:00Z');
+  assert.equal(seed.positions[0].initialPrice, '100');
+  assert.equal(seed.positions[0].quoteAt, '2026-11-05T01:00:00.000Z');
+  assert.ok(seed.gaps.includes('QUOTE_STALE:AAPL'));
+  assert.ok(!seed.gaps.includes('QUOTE_MISSING:AAPL'));
+  assert.equal(seed.initialEquityUsd, '1500.00');
+});
+test('holdings without a usable recorded price still block the open as missing quotes', () => {
+  for (const currentPrice of [null, '0', 'not-a-price']) {
+    const seed = buildOpeningSeed({ holdings: [{ ...source.holdings[0], currentPrice }], cash: source.cash }, [], [], '2026-11-05T01:00:00Z');
+    assert.equal(seed.positions[0].initialPrice, null);
+    assert.ok(seed.gaps.includes('QUOTE_MISSING:AAPL'));
+    assert.equal(seed.initialEquityUsd, null);
+  }
+});
 test('source revision changes with quantities, cash and source update time', () => {
   assert.notEqual(seedRevision(source), seedRevision({ ...source, cash: [{ ...source.cash[0], balance: '501' }] }));
   assert.notEqual(seedRevision(source), seedRevision({ ...source, holdings: [{ ...source.holdings[0], shares: '11' }] }));

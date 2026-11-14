@@ -44,14 +44,21 @@ export function buildOpeningSeed(source: SeedSource, quotes: Array<{ ticker: str
     || source.cash.some((c) => !Number.isFinite(Number(c.balance)) || Number(c.balance) < 0)) gaps.push('NEGATIVE_OR_INVALID_SOURCE_BALANCE');
   const positions = source.holdings.filter((h) => Number(h.shares) > 0).map((h) => {
     const quote = quotes.find((q) => q.ticker === h.ticker);
-    if (!quote) gaps.push(`QUOTE_MISSING:${h.ticker}`);
+    // A live quote opens the baseline. When the live feed has no usable observation, the
+    // holding's recorded current price (maintained by the holdings-page refresh) still
+    // opens the account instead of blocking setup; QUOTE_STALE marks the price as a
+    // delayed quote carrying its own recorded timestamp. Only a holding without a usable
+    // recorded price stays a blocking QUOTE_MISSING gap. Historical cost never fills in.
+    const recorded = quote ? 0 : Number(h.currentPrice);
+    const openingPrice = quote ?? (recorded > 0 ? { price: String(h.currentPrice), at: h.updatedAt.toISOString() } : undefined);
+    if (!quote) gaps.push(openingPrice ? `QUOTE_STALE:${h.ticker}` : `QUOTE_MISSING:${h.ticker}`);
     if (!['US', 'HK', 'CN'].includes(h.market ?? '') || !['USD', 'HKD', 'CNY'].includes(h.currency ?? '')) {
       gaps.push(`INSTRUMENT_UNKNOWN:${h.ticker}`);
     }
     gaps.push(`SELLABILITY_UNKNOWN:${h.ticker}`);
     return { sourceHoldingId: h.id, ticker: h.ticker, market: h.market as 'US' | 'HK' | 'CN',
       currency: h.currency as 'USD' | 'HKD' | 'CNY', company: h.company, shares: h.shares,
-      historicalCost: h.buyPrice, initialPrice: quote?.price ?? null, quoteAt: quote?.at ?? null, sourceUpdatedAt: h.updatedAt.toISOString(),
+      historicalCost: h.buyPrice, initialPrice: openingPrice?.price ?? null, quoteAt: openingPrice?.at ?? null, sourceUpdatedAt: h.updatedAt.toISOString(),
       sellableShares: null, restriction: 'Unknown restrictions: opening shares cannot be sold until confirmed' };
   });
   const cash = source.cash.map((c) => {
