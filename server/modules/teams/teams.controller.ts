@@ -6,6 +6,7 @@ import { TeamVersionService } from './team-version.service';
 import { TeamCommissionService } from './team-commission.service';
 import { TeamDecisionService } from './team-decision.service';
 import { TeamSourceAccessService } from './team-source-access.service';
+import { TeamWorkPlanPreviewService } from './team-work-plan-preview.service';
 import { teamError } from './team-contract';
 function body(req: Request, input: unknown): unknown {
     const header = req.get('x-request-key') ?? req.get('idempotency-key');
@@ -15,7 +16,7 @@ function body(req: Request, input: unknown): unknown {
 }
 @Controller('api/teams')
 export class TeamsController {
-    constructor(private readonly teams: TeamsService, private readonly versions: TeamVersionService, private readonly commissions: TeamCommissionService, private readonly decisions: TeamDecisionService, private readonly sources: TeamSourceAccessService) { }
+    constructor(private readonly teams: TeamsService, private readonly versions: TeamVersionService, private readonly commissions: TeamCommissionService, private readonly decisions: TeamDecisionService, private readonly sources: TeamSourceAccessService, private readonly workPlans: TeamWorkPlanPreviewService) { }
     @NeedLogin()
     @Get()
     list(
@@ -162,6 +163,16 @@ export class TeamsController {
     id: string,
     @Body()
     input: unknown) { return this.commissions.preview(req.userContext.userId, id, body(req, input)); }
+    @NeedLogin()
+    @Post(':id/work-plan-preview')
+    @HttpCode(200)
+    workPlanPreview(
+    @Req()
+    req: Request,
+    @Param('id')
+    id: string,
+    @Body()
+    input: unknown) { return this.workPlans.preview(req.userContext.userId, id, body(req, input)); }
     @NeedLogin()
     @Post(':id/commissions')
     @HttpCode(202)

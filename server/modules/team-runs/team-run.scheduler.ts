@@ -111,7 +111,7 @@ export class TeamRunScheduler implements OnModuleInit, OnModuleDestroy {
       const [version] = await this.runs.store.db.select().from(teamVersions).where(and(eq(teamVersions.ownerId, claimed.ownerId), eq(teamVersions.id, agreement.configuration.teamVersionId)));
       if (!version) throw new Error('TEAM_REFERENCE_NOT_FOUND');
       const preview = await this.commissions.preview(claimed.ownerId, claimed.teamId,
-        compileRunCommission(version.config, agreement.configuration, 'run-preview:' + claimed.id, claimed.createdAt));
+        compileRunCommission(version.config, agreement.configuration, 'run-preview:' + claimed.id, claimed.createdAt), { proofMode: 'legacy_run_v1' });
       await this.commissions.create(claimed.ownerId, claimed.teamId, { requestKey: 'run-create:' + claimed.id, previewId: preview.previewId, previewHash: preview.previewHash }, authority);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'TEAM_DEPENDENCY_UNAVAILABLE';

@@ -69,6 +69,6 @@ export function compareDecimal(a: string, b: string): number {
     const av = BigInt(ai + af.padEnd(scale, '0')), bv = BigInt(bi + bf.padEnd(scale, '0'));
     return av < bv ? -1 : av > bv ? 1 : 0;
 }
-export const COMPILER_VERSION = 'team-plan-v2-member-scope';
+export const COMPILER_VERSION = 'team-plan-v3-work-blueprint';
 export const EMPTY_CONFIG = { schemaVersion: 1 as const, departments: [], roles: [], relations: [], defaults: { leadRoleId: null, parallelism: 1 as const } };
 export const EMPTY_LAYOUT = { schemaVersion: 1 as const, positions: {}, collapsedDepartmentIds: [], viewport: { x: 0, y: 0, zoom: 1 } };

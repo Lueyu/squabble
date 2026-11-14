@@ -13,11 +13,12 @@ import { sourceFingerprint } from '../../database/team-source-context';
 import { freezeTeamMemberGrants } from '../../database/team-member-sources';
 import { TeamStore, type CommissionRow, unknownCost } from './team-store';
 import { TeamRuntimeAdapter } from './team-runtime-adapter';
-import { budgetSchema, commissionFields, compileTeamPlan } from './team-graph';
-import { canonicalHash, compareDecimal, confirmSchema, parseTeam, requestKeySchema, revisionSchema, moneySchema, sourceRefSchema, teamError, uuidSchema, pageFields, decodeTeamCursor, encodeTeamCursor } from './team-contract';
+import { budgetSchema, commissionFields, compileTeamPlan, semanticHash } from './team-graph';
+import { canonicalHash, COMPILER_VERSION, compareDecimal, confirmSchema, parseTeam, requestKeySchema, revisionSchema, moneySchema, sourceRefSchema, teamError, uuidSchema, pageFields, decodeTeamCursor, encodeTeamCursor } from './team-contract';
+import { compileWorkBlueprint, TEAM_WORK_BLUEPRINT_COMPILER_VERSION } from './team-work-blueprint';
 import { requireTeamFeature } from './team-config';
 import { teamAccountPolicySnapshot } from '../paper-trading/team-account-transaction';
-import type { TeamBudget, TeamCommission, TeamCommissionPlan, TeamExecutionContext, TeamMemberSnapshot, TeamSemanticConfig, ResearchSourceRef, RecoveryInput, TeamCostSummary } from '../../../shared/team-workspace.interface';
+import type { BlueprintCommissionPreviewInput, TeamBudget, TeamCommission, TeamCommissionPlan, TeamExecutionContext, TeamMemberSnapshot, TeamSemanticConfig, ResearchSourceRef, RecoveryInput, TeamCostSummary } from '../../../shared/team-workspace.interface';
 import type { TeamRunAuthority } from '../../../shared/team-run.interface';
 import { assertTeamRunAuthority } from '../../database/team-run-authority';
 import { teamRunCycles } from '../../database/team-run.schema';
@@ -44,8 +45,13 @@ export class TeamCommissionService {
         return { ...row, state: row.state as TeamCommission['state'], cost: await this.cost(tx, row), createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
             cancelRequestedAt: row.cancelRequestedAt?.toISOString() ?? null, completedAt: row.completedAt?.toISOString() ?? null };
     }
-    async preview(owner: string, id: string, input: unknown) {
-        const request = parseTeam(z.object({ requestKey: requestKeySchema, teamVersionId: uuidSchema, bindingId: uuidSchema, expectedBindingRevision: revisionSchema, ...commissionFields, inputRefs: z.array(sourceRefSchema).max(100) }).strict(), input);
+    async preview(owner: string, id: string, input: unknown, options: { proofMode?: 'manual_custom' | 'legacy_run_v1' } = {}) {
+        const request = parseTeam(z.union([
+            z.object({ planMode: z.literal('blueprint'), requestKey: requestKeySchema, teamVersionId: uuidSchema, bindingId: uuidSchema, expectedBindingRevision: revisionSchema,
+                objective: z.string().min(1).max(4000), dataCutoffAt: z.iso.datetime().nullable(), deadlineAt: z.iso.datetime(),
+                inputRefs: z.array(sourceRefSchema).max(100), budget: budgetSchema, summaryRequirement: z.string().trim().max(2000).optional() }).strict(),
+            z.object({ requestKey: requestKeySchema, teamVersionId: uuidSchema, bindingId: uuidSchema, expectedBindingRevision: revisionSchema, ...commissionFields, inputRefs: z.array(sourceRefSchema).max(100) }).strict(),
+        ]), input);
         return this.store.mutate(owner, id, 'commission-preview', request, async (tx) => {
             requireTeamFeature(true);
             const team = await this.store.team(tx, owner, id, true);
@@ -64,9 +70,14 @@ export class TeamCommissionService {
             const [rates] = await tx.select().from(llmBudgetSettings).where(eq(llmBudgetSettings.owner, owner));
             const costRates = rates && rates.inputUsdPerMillion !== null && rates.outputUsdPerMillion !== null ? { inputUsdPerMillion: rates.inputUsdPerMillion, outputUsdPerMillion: rates.outputUsdPerMillion } : null;
             const inputSnapshot = { account: account.account, positions, policyRevision: account.revision, inputRefs: request.inputRefs, costRates, capturedAt: now.toISOString() };
-            const rawPlan: TeamCommissionPlan = { schemaVersion: 1, leadRoleId: request.leadRoleId, participantRoleIds: request.participantRoleIds, objective: request.objective, expectedOutput: request.expectedOutput,
-                dataCutoffAt, deadlineAt: request.deadlineAt, supervisorRoleIds: request.supervisorRoleIds, work: request.work as TeamCommissionPlan['work'],
-                parallelism: request.parallelism, conflictResolutions: request.conflictResolutions, budget: request.budget as TeamBudget };
+            const rawPlan: TeamCommissionPlan = 'planMode' in request
+                // zod's .nullable() output infers dataCutoffAt as optional under strict:false;
+                // the union member guarantees the key is present-or-null at runtime.
+                ? this.buildBlueprintPlan(version.config, request as BlueprintCommissionPreviewInput, dataCutoffAt)
+                : { schemaVersion: 1, leadRoleId: request.leadRoleId, participantRoleIds: request.participantRoleIds, objective: request.objective, expectedOutput: request.expectedOutput,
+                    dataCutoffAt, deadlineAt: request.deadlineAt, supervisorRoleIds: request.supervisorRoleIds, work: request.work as TeamCommissionPlan['work'],
+                    parallelism: request.parallelism, conflictResolutions: request.conflictResolutions, budget: request.budget as TeamBudget,
+                    workPlanProof: { mode: options.proofMode ?? 'manual_custom', compilerVersion: COMPILER_VERSION, semanticHash: semanticHash(version.config), blueprintHash: null } };
             const plan = compileTeamPlan(version.config, rawPlan, inputSnapshot);
             const selected = version.config.roles.filter(r => plan.participantRoleIds.includes(r.id));
             const checks = await this.runtime.check(tx, owner, selected);
@@ -128,6 +139,25 @@ export class TeamCommissionService {
                 teamError('TEAM_PLAN_INVALID', 'A shared local executor requires parallelism 1');
             return { ...await this.store.preview(tx, owner, team, 'commission', { plan, inputSnapshot, members, accountId: binding.accountId, bindingId: binding.id, teamVersionId: version.id }, guards, warnings), requestKey: request.requestKey };
         });
+    }
+    /** Compiles the published config through the shared blueprint compiler; the client never supplies work/proof. */
+    private buildBlueprintPlan(config: TeamSemanticConfig, request: BlueprintCommissionPreviewInput, dataCutoffAt: string): TeamCommissionPlan {
+        const compiled = compileWorkBlueprint(config, { objective: request.objective, expectedSummaryOutput: request.summaryRequirement ?? '' });
+        for (const roleId of compiled.participantRoleIds) {
+            const role = config.roles.find(r => r.id === roleId);
+            if (!role || role.participation !== 'enabled' || !role.executor || !role.responsibility || !role.expectedOutput)
+                teamError('TEAM_PLAN_INVALID', 'Every participating role must be enabled with a bound executor and delivery', { roleId });
+        }
+        if (request.budget.callLimit < compiled.minimumCallCount)
+            teamError('TEAM_BUDGET_BLOCKED', `This division needs at least ${compiled.minimumCallCount} reserved calls`, { required: compiled.minimumCallCount, allowed: request.budget.callLimit });
+        const summary = compiled.work.find(w => w.workKey === 'summary');
+        if (!summary)
+            teamError('TEAM_PLAN_INVALID', 'Blueprint summary is missing');
+        return { schemaVersion: 1, leadRoleId: compiled.leadRoleId, participantRoleIds: compiled.participantRoleIds, objective: request.objective,
+            expectedOutput: summary.expectedOutput, dataCutoffAt, deadlineAt: request.deadlineAt, supervisorRoleIds: [],
+            work: compiled.work as unknown as TeamCommissionPlan['work'], parallelism: config.defaults.parallelism, conflictResolutions: [],
+            budget: request.budget as TeamBudget,
+            workPlanProof: { mode: 'blueprint_v1', compilerVersion: TEAM_WORK_BLUEPRINT_COMPILER_VERSION, semanticHash: semanticHash(config), blueprintHash: compiled.blueprintHash } };
     }
     async create(owner: string, id: string, input: unknown, authority?: TeamRunAuthority) {
         const request = parseTeam(confirmSchema, input);

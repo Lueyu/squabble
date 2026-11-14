@@ -23,6 +23,8 @@ export interface TeamRelation {
 export interface TeamSemanticConfig {
   schemaVersion: 1; departments: TeamDepartment[]; roles: TeamRole[]; relations: TeamRelation[];
   defaults: { leadRoleId: string | null; parallelism: 1 | 2 };
+  /** Optional; absent keeps the pre-blueprint (legacy) division of labour. */
+  workBlueprint?: import('./team-work-blueprint.interface').TeamWorkBlueprint;
 }
 export interface TeamDisplay {
   name: string; avatar: string | null;
@@ -119,10 +121,34 @@ export interface TeamCommissionPlan {
   supervisorRoleIds: string[]; work: TeamWorkItem[]; parallelism: 1 | 2;
   conflictResolutions: { instructionIds: string[]; choice: string; reason: string }[];
   budget: TeamBudget;
+  /** Server-generated only; never accepted from a client body. */
+  workPlanProof?: import('./team-work-blueprint.interface').TeamWorkPlanProof;
 }
 export interface CommissionPreviewInput extends Omit<TeamCommissionPlan, 'schemaVersion' | 'dataCutoffAt'> {
   requestKey: string; teamVersionId: string; bindingId: string; expectedBindingRevision: number;
   dataCutoffAt: string | null; inputRefs: ResearchSourceRef[];
+}
+/** Formal blueprint branch: the client never sends work/lead/proof; the server compiles the published version. */
+export interface BlueprintCommissionPreviewInput {
+  planMode: 'blueprint'; requestKey: string; teamVersionId: string; bindingId: string; expectedBindingRevision: number;
+  objective: string; dataCutoffAt: string | null; deadlineAt: string;
+  inputRefs: ResearchSourceRef[]; budget: TeamBudget;
+  /** Run-specific requirement appended to the blueprint summary; set by trusted server callers only. */
+  summaryRequirement?: string;
+}
+/** Read-only structural preview of the current local draft; never consults a published version. */
+export interface TeamWorkPlanPreviewInput {
+  requestKey: string; expectedSemanticRevision: number; config: TeamSemanticConfig;
+}
+export interface TeamWorkPlanPreviewResult {
+  mode: 'blueprint_v1' | 'legacy_v1';
+  baseSemanticRevision: number; semanticHash: string; blueprintHash: string | null; compilerVersion: string;
+  structurallyValid: boolean; dispatchable: false; leadRoleId: string | null; participantRoleIds: string[];
+  work: import('./team-work-blueprint.interface').CompiledBlueprintWork[];
+  minimumCallCount: number | null; nonParticipatingRoleIds: string[]; unusedReviewRelationIds: string[];
+  issues: import('./team-work-blueprint.interface').BlueprintDiagnostic[];
+  warnings: import('./team-work-blueprint.interface').BlueprintDiagnostic[];
+  requestKey: string;
 }
 export interface TeamMemberSnapshot {
   /** Appearance frozen for this commission; legacy snapshots keep their role fallback. */

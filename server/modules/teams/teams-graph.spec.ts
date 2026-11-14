@@ -20,3 +20,18 @@ test('finite plan rejects missing summary and duplicate dispatch identity',()=>{
   const base={schemaVersion:1 as const,leadRoleId:a,participantRoleIds:[a,b],objective:'Analyze',expectedOutput:'Report',dataCutoffAt:'2026-11-12T00:00:00.000Z',deadlineAt:'2026-11-13T00:00:00.000Z',supervisorRoleIds:[],work:[],parallelism:1 as const,conflictResolutions:[],budget:{budgetMode:'cost_and_calls' as const,ceiling:{amount:'1',currency:'USD'},callLimit:3,paidRevisionLimit:0}};
   assert.throws(()=>compileTeamPlan(config,base,{}),errorCode('TEAM_PLAN_INVALID'));
 });
+test('identical work content with a different reviewer is never merged',()=>{
+  const plan={schemaVersion:1 as const,leadRoleId:a,participantRoleIds:[a,b],objective:'Analyze',expectedOutput:'Report',dataCutoffAt:'2026-11-12T00:00:00.000Z',deadlineAt:'2026-11-13T00:00:00.000Z',supervisorRoleIds:[],parallelism:1 as const,conflictResolutions:[],
+    budget:{budgetMode:'cost_and_calls' as const,ceiling:{amount:'1',currency:'USD'},callLimit:6,paidRevisionLimit:0},
+    work:[
+      {workKey:'summary',roleId:a,taskKind:'summary' as const,objective:'Analyze',expectedOutput:'Report',dependencyWorkKeys:[],reviewerRoleId:a,reviewMode:'self_check' as const,requestedByRoleIds:[a],inputRefs:[]},
+      {workKey:'financials-a',roleId:a,taskKind:'financials' as const,objective:'Check the cash flow',expectedOutput:'Cash-flow evidence',dependencyWorkKeys:[],reviewerRoleId:b,reviewMode:'independent' as const,requestedByRoleIds:[a],inputRefs:[]},
+      {workKey:'financials-b',roleId:b,taskKind:'financials' as const,objective:'Check the cash flow',expectedOutput:'Cash-flow evidence',dependencyWorkKeys:[],reviewerRoleId:a,reviewMode:'independent' as const,requestedByRoleIds:[a],inputRefs:[]},
+    ]};
+  const compiled=compileTeamPlan(config,plan,{});
+  assert.equal(compiled.work.length,3);
+  const financialItems=compiled.work.filter(w=>w.taskKind==='financials');
+  assert.equal(financialItems.length,2);
+  assert.notEqual(financialItems[0].workKey,financialItems[1].workKey);
+  assert.deepEqual(financialItems.map(w=>w.reviewerRoleId).sort(),[a,b].sort());
+});

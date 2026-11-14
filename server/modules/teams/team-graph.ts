@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { TeamCommissionPlan, TeamSemanticConfig, TeamWorkItem, TeamDisplay } from '../../../shared/team-workspace.interface';
+import type { TeamWorkBlueprint } from '../../../shared/team-work-blueprint.interface';
 import { canonicalHash, moneySchema, sourceRefSchema, teamError, uuidSchema } from './team-contract';
 const text = z.string().max(1000), ids = z.array(uuidSchema).max(30);
 const executor = z.discriminatedUnion('executionMode', [
@@ -7,12 +8,21 @@ const executor = z.discriminatedUnion('executionMode', [
     z.object({ executionMode: z.literal('local'), localAgentId: z.string().min(1).max(128), settings: z.record(z.string(), z.unknown()) }).strict(),
     z.object({ executionMode: z.literal('a2a'), connectionId: z.uuid() }).strict(),
 ]);
+const workIdPattern = /^[a-z][a-z0-9_-]{0,63}$/;
+export const blueprintWorkSchema = z.object({ workId: z.string().regex(workIdPattern), roleId: uuidSchema,
+    taskKind: z.enum(['financials', 'business', 'valuation', 'challenge', 'specialist']),
+    objective: z.string().trim().min(1).max(1000), expectedOutput: z.string().trim().min(1).max(1000),
+    dependencyWorkIds: z.array(z.string().regex(workIdPattern)).max(5), reviewerRoleId: uuidSchema,
+    reviewMode: z.enum(['independent', 'self_check']) }).strict();
+export const blueprintSummarySchema = z.object({ reviewerRoleId: uuidSchema, reviewMode: z.enum(['independent', 'self_check']), expectedOutput: z.string().trim().min(1).max(1000) }).strict();
+export const blueprintSchema = z.object({ schemaVersion: z.literal(1), works: z.array(blueprintWorkSchema).max(5), summary: blueprintSummarySchema }).strict() as z.ZodType<TeamWorkBlueprint>;
 export const semanticSchema = z.object({ schemaVersion: z.literal(1),
     departments: z.array(z.object({ id: uuidSchema, parentDepartmentId: uuidSchema.nullable(), purpose: text }).strict()),
     roles: z.array(z.object({ id: uuidSchema, departmentId: uuidSchema.nullable(), participation: z.enum(['placeholder', 'enabled']), responsibility: text, expectedOutput: text,
         executor: executor.nullable(), agentId: uuidSchema.optional(), agentVersionId: uuidSchema.optional(), allowedToolIds: z.array(z.string().min(1).max(128)).max(100), sourceGrantIds: ids }).strict()).max(30),
     relations: z.array(z.object({ id: uuidSchema, fromRoleId: uuidSchema, toRoleId: uuidSchema, kind: z.enum(['reports_to', 'delegates_to', 'reviews']), responsibilityScope: text }).strict()),
     defaults: z.object({ leadRoleId: uuidSchema.nullable(), parallelism: z.union([z.literal(1), z.literal(2)]) }).strict(),
+    workBlueprint: blueprintSchema.optional(),
 }).strict() as z.ZodType<TeamSemanticConfig>;
 export const displaySchema = z.object({ name: z.string().trim().min(1).max(80), avatar: z.string().max(500).nullable(),
     departmentLabels: z.record(uuidSchema, z.string().trim().min(1).max(100)), roleLabels: z.record(uuidSchema, z.string().trim().min(1).max(100)) }).strict() as z.ZodType<TeamDisplay>;
@@ -28,7 +38,8 @@ export const commissionFields = { leadRoleId: uuidSchema, participantRoleIds: id
 export function normalizeSemanticConfig(config: TeamSemanticConfig): TeamSemanticConfig {
     return { ...config, departments: [...config.departments].sort((a, b) => a.id.localeCompare(b.id)),
         roles: [...config.roles].sort((a, b) => a.id.localeCompare(b.id)).map(role => ({ ...role, allowedToolIds: [...role.allowedToolIds].sort(), sourceGrantIds: [...role.sourceGrantIds].sort() })),
-        relations: [...config.relations].sort((a, b) => a.id.localeCompare(b.id)) };
+        relations: [...config.relations].sort((a, b) => a.id.localeCompare(b.id)),
+        ...(config.workBlueprint ? { workBlueprint: { ...config.workBlueprint, works: [...config.workBlueprint.works].sort((a, b) => a.workId.localeCompare(b.workId)).map(work => ({ ...work, dependencyWorkIds: [...work.dependencyWorkIds].sort() })) } } : {}) };
 }
 export function semanticHash(config: TeamSemanticConfig): string { return canonicalHash(normalizeSemanticConfig(config)); }
 function acyclic(nodes: string[], edges: [
@@ -119,8 +130,10 @@ export function compileTeamPlan(config: TeamSemanticConfig, plan: TeamCommission
             return prior;
         const deps = [...new Set(w.dependencyWorkKeys.map(k => compile(plan.work.find(x => x.workKey === k)!)))].sort();
         const inputRefs = [...new Map(w.inputRefs.map(ref => [[ref.kind, ref.id, ref.revision].join(':'), ref])).values()].sort((a, b) => (a.kind + a.id + a.revision).localeCompare(b.kind + b.id + b.revision));
+        // The reviewer is part of the work identity: identical content must not be merged when the
+        // independent reviewer differs, otherwise a review arrangement would be silently dropped.
         const workKey = canonicalHash({ roleId: w.roleId, taskKind: w.taskKind, objective: w.objective, expectedOutput: w.expectedOutput,
-            inputRefs, inputSnapshot, dataCutoffAt: plan.dataCutoffAt, dependencies: deps });
+            reviewerRoleId: w.reviewerRoleId, reviewMode: w.reviewMode, inputRefs, inputSnapshot, dataCutoffAt: plan.dataCutoffAt, dependencies: deps });
         computed.set(w.workKey, workKey);
         const duplicate = items.find(x => x.workKey === workKey);
         if (duplicate)

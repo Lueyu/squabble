@@ -4,7 +4,13 @@ import type { ResearchSourceRef } from './team-workspace.interface';
 import type { AnimalAvatarId } from './animal-avatar';
 
 /** Stable people are independent of the reusable execution connection. */
-export type AgentTemplateId = 'financials' | 'valuation' | 'bear' | 'risk' | 'moderator';
+export const AGENT_TEMPLATE_IDS = [
+  'financials', 'valuation', 'bear', 'risk', 'moderator',
+  'business', 'industry', 'growth', 'macro', 'events', 'quantitative', 'portfolio',
+] as const;
+export type AgentTemplateId = typeof AGENT_TEMPLATE_IDS[number];
+/** Presets a legacy client receives when templateIds is omitted: exactly the original five. */
+export const LEGACY_AGENT_TEMPLATE_IDS: readonly AgentTemplateId[] = ['financials', 'valuation', 'bear', 'risk', 'moderator'];
 export type AgentExecutor =
   | { executionMode: 'model'; connectionId?: string; model: 'fast' | 'slow' }
   | { executionMode: 'local'; localAgentId: string; settings?: NativeAgentConfiguration }
@@ -27,12 +33,18 @@ export interface AgentProfile {
   revision: number; currentVersionId: string; currentVersion: AgentVersion;
   availability: 'configured' | 'unavailable'; createdAt: string; updatedAt: string;
 }
+export interface AgentTemplateGuide {
+  strengths: string[]; requiredInputs: string[]; workflow: string[]; outputSections: string[];
+  counterchecks: string[]; unknownHandling: string[]; exampleTasks: string[]; recommendedSeats: string[];
+}
 export interface AgentTemplate {
   avatar: AnimalAvatarId;
   id: AgentTemplateId; name: string; specialty: string; description: string; delivery: string;
   nameEn: string; specialtyEn: string; descriptionEn: string; deliveryEn: string; instructions: string; instructionsEn: string;
   /** Read-only declarations are ceilings; live owner grants remain separate. */
   allowedToolIds: readonly string[];
+  /** Static catalog guidance; execution always uses the saved capability version. */
+  guide: AgentTemplateGuide; guideEn: AgentTemplateGuide;
 }
 export interface AgentRosterPage { items: AgentProfile[]; nextCursor: string | null }
 export interface CreateAgentInput {

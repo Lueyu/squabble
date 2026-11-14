@@ -15,25 +15,37 @@ import { createRequestIntent } from '@/utils/simple-experience';
 import { AgentCapabilityEditor } from './AgentCapabilityEditor';
 import { AnimalAvatarPicker } from './AnimalAvatarPicker';
 
-export function AgentEditorDialog({ editing, templates, models, locals, defaultExecutor, zh, onClose, onSaved, requestIntent }: {
+function GuideSection({ title, items, numbered = false }: { title: string; items: string[]; numbered?: boolean }) {
+  return <div className="min-w-0">
+    <p className="font-medium text-foreground">{title}</p>
+    <ul className={numbered ? 'list-decimal space-y-1 ps-4' : 'list-disc space-y-1 ps-4'}>
+      {items.map((item, index) => <li key={index} className="break-words">{item}</li>)}
+    </ul>
+  </div>;
+}
+
+export function AgentEditorDialog({ editing, templates, models, locals, defaultExecutor, zh, initialTemplateId, onClose, onSaved, requestIntent }: {
   editing: AgentProfile | null;
   templates: AgentTemplate[];
   models: ModelConnection[];
   locals: LocalAgentConnection[];
   defaultExecutor: AgentExecutor | null;
   zh: boolean;
+  initialTemplateId?: AgentTemplateId;
   onClose: () => void;
   onSaved: () => Promise<unknown>;
   requestIntent?: ReturnType<typeof createRequestIntent>;
 }) {
   const initial = editing?.currentVersion.config;
-  const [templateId, setTemplateId] = useState<AgentTemplateId>(initial?.templateId ?? 'financials');
+  const [templateId, setTemplateId] = useState<AgentTemplateId>(initial?.templateId ?? initialTemplateId ?? 'financials');
   const template = templates.find(item => item.id === templateId);
   const [name, setName] = useState(editing?.name ?? '');
   const [description, setDescription] = useState(editing?.description ?? '');
   const [avatar, setAvatar] = useState<AnimalAvatarId>(editing?.avatar ?? template?.avatar ?? 'technical');
   const [avatarEdited, setAvatarEdited] = useState(false);
   const [instructions, setInstructions] = useState(initial?.instructions ?? (zh ? template?.instructions : template?.instructionsEn) ?? '');
+  const [instructionsEdited, setInstructionsEdited] = useState(false);
+  const [pendingTemplate, setPendingTemplate] = useState<AgentTemplate | null>(null);
   const [preferences, setPreferences] = useState(initial?.preferences.userPreferences ?? '');
   const [executor, setExecutor] = useState<AgentExecutor | null>(initial?.executor ?? defaultExecutor);
   const [sources, setSources] = useState<ResearchSourceRef[]>(initial?.allowedSources ?? []);
@@ -61,10 +73,24 @@ export function AgentEditorDialog({ editing, templates, models, locals, defaultE
   function changeTemplate(id: AgentTemplateId) {
     const next = templates.find(item => item.id === id);
     setTemplateId(id);
-    setInstructions((zh ? next?.instructions : next?.instructionsEn) ?? '');
-    // PATCH must save the same ceiling the new template displays, including an empty list.
-    setTools([...(next?.allowedToolIds ?? [])]);
-    if (!editing && !avatarEdited && next) setAvatar(next.avatar);
+    if (!instructionsEdited) {
+      // Untouched instructions follow the new specialty default; ceiling suggestion follows too.
+      setInstructions((zh ? next?.instructions : next?.instructionsEn) ?? '');
+      setTools([...(next?.allowedToolIds ?? [])]);
+      if (!editing && !avatarEdited && next) setAvatar(next.avatar);
+      setPendingTemplate(null);
+    } else {
+      // Customized instructions are preserved; adopting the new default is an explicit choice.
+      setPendingTemplate(next ?? null);
+    }
+  }
+  function adoptPendingTemplate() {
+    if (!pendingTemplate) return;
+    setInstructions((zh ? pendingTemplate.instructions : pendingTemplate.instructionsEn));
+    // Suggestion ceiling applies when the user has not pinned their own tools.
+    if (tools === null) setTools([...pendingTemplate.allowedToolIds]);
+    if (!editing && !avatarEdited) setAvatar(pendingTemplate.avatar);
+    setPendingTemplate(null);
   }
 
   return <Dialog open onOpenChange={value => { if (!value && !save.isPending) onClose(); }}>
@@ -84,6 +110,26 @@ export function AgentEditorDialog({ editing, templates, models, locals, defaultE
             {templates.map(item => <option key={item.id} value={item.id}>{zh ? item.name : item.nameEn}</option>)}
           </select>
         </div>
+        {template && <details className="rounded-md border p-3 text-xs text-muted-foreground">
+          <summary className="cursor-pointer py-1 text-sm font-medium text-foreground">{zh ? '这个专业会怎么做研究' : 'How this specialty researches'}</summary>
+          <div className="mt-2 space-y-2">
+            <GuideSection title={zh ? '擅长' : 'Strengths'} items={zh ? template.guide.strengths : template.guideEn.strengths} />
+            <GuideSection title={zh ? '需要先确认' : 'Required inputs'} items={zh ? template.guide.requiredInputs : template.guideEn.requiredInputs} />
+            <GuideSection title={zh ? '研究步骤' : 'Workflow'} items={zh ? template.guide.workflow : template.guideEn.workflow} numbered />
+            <GuideSection title={zh ? '标准交付' : 'Output sections'} items={zh ? template.guide.outputSections : template.guideEn.outputSections} />
+            <GuideSection title={zh ? '反证与未知' : 'Counterchecks and unknowns'} items={zh ? [...template.guide.counterchecks, ...template.guide.unknownHandling] : [...template.guideEn.counterchecks, ...template.guideEn.unknownHandling]} />
+            <GuideSection title={zh ? '示例任务' : 'Example tasks'} items={zh ? template.guide.exampleTasks : template.guideEn.exampleTasks} />
+            <GuideSection title={zh ? '通常担任' : 'Typical seats'} items={zh ? template.guide.recommendedSeats : template.guideEn.recommendedSeats} />
+            <p>{zh ? '这些是专业预设说明，不代表已获得工具、资料或交易权限。' : 'Preset guidance only; not a grant of tools, data or trading permission.'}</p>
+          </div>
+        </details>}
+        {pendingTemplate && <div role="status" className="space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+          <p>{zh ? '你的工作指令已经自定义。改用新专业时，请选择指令和工具上限的处理方式；保存前不会丢弃你的内容。' : 'Your instructions are customized. Choose how to apply the new specialty; nothing is discarded before you save.'}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={adoptPendingTemplate}>{zh ? '采用新专业默认指令' : 'Adopt new specialty defaults'}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setPendingTemplate(null)}>{zh ? '保留我的指令与工具' : 'Keep my instructions and tools'}</Button>
+          </div>
+        </div>}
         <div className="space-y-2">
           <Label htmlFor="agent-name">{zh ? '名字（可选）' : 'Name (optional)'}</Label>
           <Input id="agent-name" maxLength={80} value={name} onChange={event => setName(event.target.value)}
@@ -92,7 +138,7 @@ export function AgentEditorDialog({ editing, templates, models, locals, defaultE
         <div className="space-y-2">
           <Label htmlFor="agent-instructions">{zh ? '工作指令' : 'Working instructions'}</Label>
           <Textarea id="agent-instructions" value={instructions} maxLength={16000} rows={5}
-            onChange={event => setInstructions(event.target.value)} />
+            onChange={event => { setInstructions(event.target.value); setInstructionsEdited(true); }} />
           <p className="text-xs text-muted-foreground">{zh ? '研究时会使用这些指令；例如关注现金流、区分事实与推断。' : 'These instructions guide research, such as checking cash flow and separating facts from estimates.'}</p>
         </div>
         <div className="space-y-2">

@@ -17,7 +17,7 @@ import { readA2aConnectionFingerprint } from '../../database/a2a-agent-context';
 import { executionReadiness } from '../local-agents/execution-readiness';
 import type { AgentProfile, AgentVersion, AgentExecutor, AgentSelection, AgentResolveOptions, AgentMemoryRecallOptions, AgentCouncilMember, AgentMemory, AgentMemoryScope } from '../../../shared/agent-roster.interface';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
-import { AGENT_TEMPLATES, archiveSchema, assertCeiling, canonicalAgentToolId, parseCreate, parseRoster, prepareAgent, recommendedSchema, rosterError, rosterHash, scopeSchema, shareMemorySchema, snapshotMember, sourceKey, sourceSchema, updateSchema, uuid, writeMemorySchema } from './agent-roster.rules';
+import { AGENT_TEMPLATES, LEGACY_AGENT_TEMPLATE_IDS, archiveSchema, assertCeiling, canonicalAgentToolId, parseCreate, parseRoster, prepareAgent, recommendedSchema, rosterError, rosterHash, scopeSchema, shareMemorySchema, snapshotMember, sourceKey, sourceSchema, updateSchema, uuid, writeMemorySchema } from './agent-roster.rules';
 
 type ProfileRow = typeof profiles.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
@@ -148,7 +148,7 @@ export class AgentRosterService {
     const request = parseRoster(recommendedSchema, input);
     return this.mutate(owner, 'recommended', request, null, async tx => {
       const items: AgentProfile[] = [];
-      for (const id of request.templateIds ?? AGENT_TEMPLATES.map(t => t.id)) items.push(await this.insert(tx, owner, { templateId: id, executor: request.executor, preferences: { language: request.language ?? 'zh-CN' } }));
+      for (const id of request.templateIds ?? LEGACY_AGENT_TEMPLATE_IDS) items.push(await this.insert(tx, owner, { templateId: id, executor: request.executor, preferences: { language: request.language ?? 'zh-CN' } }));
       return { items };
     });
   }

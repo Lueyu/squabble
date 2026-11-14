@@ -14,6 +14,8 @@ export interface TeamRunAgreementInput {
 }
 export interface TeamRunConfiguration extends Omit<TeamRunAgreementInput, 'requestKey' | 'cadence'> {
   cadence: { kind: 'after_close'; delayMinutes: number };
+  /** Server-generated at preview/confirm; never accepted from a client body. */
+  workPlanProof?: import('./team-work-blueprint.interface').TeamWorkPlanProof;
 }
 export type TeamRunAgreementState = 'confirmed' | 'running' | 'paused' | 'suspended';
 export interface TeamRunAgreement {

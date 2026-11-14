@@ -15,7 +15,7 @@ import { paperAccounts } from '../../database/schema';
 import { investmentPolicies } from '../../database/investment-policy.schema';
 import { compileRunCommission, teamRunInputSchema } from './team-run.rules';
 import type { TeamRunAgreement, TeamRunConfiguration, TeamRunCycle, TeamRunStatus } from '../../../shared/team-run.interface';
-import type { TeamMemberSnapshot, TeamPreview } from '../../../shared/team-workspace.interface';
+import type { TeamMemberSnapshot, TeamPreview, TeamCommissionPlan } from '../../../shared/team-workspace.interface';
 import { isArchiveOnlyTeamRun, TEAM_RUN_ARCHIVE_ONLY_STOP } from '../../database/team-run-authority';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
 
@@ -72,13 +72,15 @@ export class TeamRunService {
     const roles = detail.publishedVersion.config.roles.filter(role => role.participation === 'enabled');
     if (roles.some(role => !role.agentId || !role.agentVersionId)) teamError('TEAM_REAPPROVAL_REQUIRED', 'Assign a persistent friend to every enabled role before automatic runs');
     // Reuse the actual bounded-commission preview for source, executor, budget and account authorization checks.
-    const commission = await this.commissions.preview(owner, teamId, compileRunCommission(detail.publishedVersion.config, configuration, 'run-probe:' + randomUUID(), new Date()));
+    const commission = await this.commissions.preview(owner, teamId, compileRunCommission(detail.publishedVersion.config, configuration, 'run-probe:' + randomUUID(), new Date()), { proofMode: 'legacy_run_v1' });
+    const proof = (commission.result as { plan: TeamCommissionPlan }).plan.workPlanProof;
+    const runConfiguration: TeamRunConfiguration = { ...configuration, ...(proof ? { workPlanProof: proof } : {}) };
     return this.store.mutate(owner, teamId, 'run-preview', request, async tx => {
       const team = await this.store.team(tx, owner, teamId, true);
       const guards = await this.store.guards(tx, team);
       for (const field of ['currentVersionId', 'bindingRevision', 'bindingId', 'scopeRevision'] as const)
         if (guards[field] !== commission.guards[field]) teamError('TEAM_PREVIEW_STALE');
-      return this.store.preview(tx, owner, team, 'run-agreement', { configuration, accountId: commission.result.accountId, members: commission.result.members }, commission.guards,
+      return this.store.preview(tx, owner, team, 'run-agreement', { configuration: runConfiguration, accountId: commission.result.accountId, members: commission.result.members }, commission.guards,
         [...commission.warnings, { code: 'TEAM_RUN_REPLACES_COMBINATION', message: 'Every executable cycle replaces this paper account combination at the authorized allocation; user drafts are preserved.' },
           ...(request.budget.perRun.budgetMode === 'calls_only' ? [{ code: 'TEAM_EXTERNAL_COST_UNKNOWN', message: 'External charges are unknown. Finite call limits and conservative monetary reservations apply; actual external fees cannot be guaranteed.' }] : [])]);
     });

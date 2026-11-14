@@ -9,8 +9,9 @@ import { TeamCommissionService } from './team-commission.service';
 import { TeamCommissionWorker } from './team-commission.worker';
 import { TeamDecisionService } from './team-decision.service';
 import { TeamSourceAccessService } from './team-source-access.service';
+import { TeamWorkPlanPreviewService } from './team-work-plan-preview.service';
 import { TeamsController } from './teams.controller';
 @Module({ imports: [CouncilModule, LocalAgentsModule], controllers: [TeamsController], providers: [TeamStore, TeamsService, TeamVersionService, TeamRuntimeAdapter,
-        TeamCommissionService, TeamCommissionWorker, TeamDecisionService, TeamSourceAccessService], exports: [TeamsService, TeamStore, TeamCommissionService, TeamDecisionService] })
+        TeamCommissionService, TeamCommissionWorker, TeamDecisionService, TeamSourceAccessService, TeamWorkPlanPreviewService], exports: [TeamsService, TeamStore, TeamCommissionService, TeamDecisionService] })
 export class TeamsModule {
 }
