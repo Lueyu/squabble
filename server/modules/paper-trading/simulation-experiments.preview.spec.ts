@@ -10,7 +10,7 @@ import { simulationMarketFixture } from './simulation-market.fixture';
 
 const NOW = new Date('2026-11-03T16:00:00Z');
 
-test('real-holdings preview bounds parallel quotes, starts FX alongside them, and preserves missing observations', async (t) => {
+test('real-holdings preview bounds parallel quotes, starts FX alongside them, and opens missing observations from recorded prices', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const source: SeedSource = {
     holdings: Array.from({ length: 13 }, (_, i) => ({ id: `holding-${i}`, ticker: `ASSET${i}`,
@@ -96,10 +96,12 @@ test('real-holdings preview bounds parallel quotes, starts FX alongside them, an
   assert.deepEqual(preview.seed.positions.map((position) => position.shares), source.holdings.map((holding) => holding.shares));
   for (let i = 0; i < source.holdings.length; i += 1) {
     const missing = i >= 1 && i <= 5;
-    assert.equal(preview.seed.positions[i].initialPrice, missing ? null : String(100 + i));
-    assert.equal(preview.seed.gaps.includes(`QUOTE_MISSING:ASSET${i}`), missing);
+    assert.equal(preview.seed.positions[i].initialPrice, missing ? '9999' : String(100 + i));
+    assert.equal(preview.seed.positions[i].quoteAt, missing ? NOW.toISOString() : new Date(NOW.getTime() - 60_000).toISOString());
+    assert.equal(preview.seed.gaps.includes(`QUOTE_STALE:ASSET${i}`), missing);
+    assert.equal(preview.seed.gaps.includes(`QUOTE_MISSING:ASSET${i}`), false);
   }
-  assert.equal(preview.seed.initialEquityUsd, null, 'missing observations must not use recorded current prices');
+  assert.equal(preview.seed.initialEquityUsd, null, 'missing CNY FX keeps the opening equity unknown even with recorded price fallback');
   assert.ok(preview.seed.gaps.includes('FX_MISSING:CNY'));
   assert.deepEqual(preview.seed.fx, [
     { currency: 'USD', rate: '1', at: NOW.toISOString() },
