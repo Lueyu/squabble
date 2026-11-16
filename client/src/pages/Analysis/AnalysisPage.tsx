@@ -1,16 +1,23 @@
 /**
- * @file pages/Analysis/AnalysisPage.tsx
- * @description Route `/analysis`: daily research/review page.
+ * AnalysisPage.tsx — 路由 `/analysis`：每日研究 / 复盘页。
  *
- * Two view modes:
- *  - Traditional: per-date analysis cards, with a special portfolio-level card
- *    (ticker === 'PORTFOLIO'), rating filter pills, and a date sidebar.
- *  - Multi-Agent: list of versioned deep-research reports fetched from the
- *    authenticated server API. Clicking
- *    a card navigates to DeepReportPage.
- *
- * Refetches on window focus/visibility change; prev/next date buttons step
- * through the available analysis dates (newest first).
+ * 职责边界：
+ *  - 两种视图模式：
+ *    · Traditional（传统视图）：按日期展示每日分析卡，含组合级特殊卡
+ *      （ticker === 'PORTFOLIO'）、评级筛选药丸与日期侧边栏；
+ *    · Multi-Agent（多智能体视图）：从需鉴权的服务端 API 拉取分版本的
+ *      深度研究报告列表，点击卡片跳转 DeepReportPage。
+ *  - 窗口重新聚焦 / 页面变为可见时自动刷新全部数据；
+ *  - 前一天 / 后一天按钮按可用分析日期（新→旧）步进。
+ * 上下游：
+ *  - 上游：路由 `/analysis`（App 路由表）；
+ *  - 下游：fetchAnalysis / fetchAnalysisDates / getAgentRuns（@/api）、
+ *    AnalysisCard（每日分析卡）、AnalysisRunner（发起分析的操作卡）、
+ *    react-router（deep-report 跳转）。
+ * 关键约定：
+ *  - 默认视图为 Multi-Agent（viewMode 初始值）；
+ *  - 日期列表按字符串降序（新日期在前）；切换日期会重置评级筛选；
+ *  - loadDeepReports 只保留 hasReport 且 completed / awaiting_human 的运行。
  */
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -46,12 +53,13 @@ import { displayCompanyName } from '@/utils/company-name';
 import AnalysisCard from './AnalysisCard';
 import AnalysisRunner from './AnalysisRunner';
 
-/** Ticker sentinel for the portfolio-level analysis card. */
+/** 组合级分析卡的 ticker 哨兵值。 */
 const PORTFOLIO_TICKER = 'PORTFOLIO';
 
-/** Rating order used for the filter pills. */
+/** 评级筛选药丸的排序（强买 → 强卖）。 */
 const RATING_ORDER = ['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell'];
 
+/** 评级英文原词 → i18n 本地化文案；无匹配时原样返回。 */
 function localizedRating(value: string | null | undefined, t: (key: string) => string): string {
   const keys: Record<string, string> = {
     'Strong Buy': 'analysis.strongBuy',
@@ -64,14 +72,16 @@ function localizedRating(value: string | null | undefined, t: (key: string) => s
   return value && keys[value] ? t(keys[value]) : (value ?? '');
 }
 
-/** View mode toggle: traditional daily cards vs. multi-agent deep reports. */
+/** 视图模式切换：传统每日卡片 vs 多智能体深度报告列表。 */
 type ViewMode = 'traditional' | 'multiagent';
 
 /**
- * Analysis page component.
+ * 分析页组件。
  */
 function AnalysisPage() {
   const { t } = useTranslation();
+  // ===== 状态声明区 =====
+  // 传统视图：当日分析卡列表 / 日期列表 / 两类 loading / 错误 / 当前选中日期。
   const [analyses, setAnalyses] = useState<AnalysisType[]>([]);
   const [dates, setDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,27 +89,31 @@ function AnalysisPage() {
   const [error, setError] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState<string>('');
 
-  // Multi-Agent view state (deep reports list)
+  // 多智能体视图状态（深度报告列表）；默认进入 multiagent 视图。
   const [viewMode, setViewMode] = useState<ViewMode>('multiagent');
   const [ratingFilter, setRatingFilter] = useState<string | null>(null);
   const [deepReports, setDeepReports] = useState<AgentRunWithRating[]>([]);
   const [deepReportsLoading, setDeepReportsLoading] = useState(false);
 
+  // ===== 数据获取区 =====
+  // 首次加载：拉取有分析数据的日期列表。
   useEffect(() => {
     void loadDates();
   }, []);
 
+  // 切换日期后加载该日的分析卡。
   useEffect(() => {
     if (currentDate) {
       void loadAnalysis(currentDate);
     }
   }, [currentDate]);
 
+  // 切换日期时重置评级筛选。
   useEffect(() => {
     setRatingFilter(null);
   }, [currentDate]);
 
-  /** Load the list of dates that have analyses (newest first). */
+  /** 拉取有分析数据的日期列表（新→旧）。 */
   const loadDates = async () => {
     setDatesLoading(true);
     try {
@@ -119,7 +133,7 @@ function AnalysisPage() {
     }
   };
 
-  /** Load all analysis cards for the given date. */
+  /** 加载指定日期的全部分析卡。 */
   const loadAnalysis = async (date: string) => {
     setLoading(true);
     setError(null);
@@ -134,7 +148,7 @@ function AnalysisPage() {
     }
   };
 
-  /** Read saved server reports, including basic and AI runs. */
+  /** 拉取服务端已保存的报告（含 basic 与 AI 运行）。 */
   const loadDeepReports = useCallback(async () => {
     setDeepReportsLoading(true);
     try {
@@ -155,13 +169,15 @@ function AnalysisPage() {
   useEffect(() => {
     void loadDeepReports();
   }, [loadDeepReports]);
+  // AnalysisRunner 每次运行结束后回调：刷新报告列表。
   const handleRunFinished = useCallback(() => {
     void loadDeepReports();
   }, [loadDeepReports]);
 
-  // Auto-refresh when page becomes visible or regains focus
+  // 页面重新可见 / 重新聚焦时自动刷新（日期 + 当日分析 + 报告列表）。
   useEffect(() => {
     const handleVisibility = () => {
+      // 仅在页面可见时刷新，隐藏态触发不处理。
       if (document.visibilityState !== 'visible') return;
       void refreshAll();
     };
@@ -187,32 +203,35 @@ function AnalysisPage() {
 
   const navigate = useNavigate();
 
-  /** Navigate to the deep-report detail page for the given run id. */
+  /** 跳转到深度报告详情页。 */
   const handleDeepReportClick = (runId: string) => {
     navigate(`/analysis/deep-report/${runId}`);
   };
 
+  // ===== 派生计算区 =====
+  // 当前日期在列表中的下标（列表新→旧）。
   const currentIndex = useMemo(() => dates.indexOf(currentDate), [dates, currentDate]);
 
+  // 前一天按钮：已到最旧（或无日期）时禁用；后一天按钮：已到最新时禁用。
   const prevDisabled = currentIndex >= dates.length - 1 || dates.length === 0;
   const nextDisabled = currentIndex <= 0 || dates.length === 0;
 
-  /** Step back to the next-newer analysis date. */
+  /** 步进到更新的分析日期。 */
   const goPrev = () => {
     if (currentIndex < dates.length - 1) {
       setCurrentDate(dates[currentIndex + 1]);
     }
   };
 
-  /** Step forward to the next-older analysis date. */
+  /** 步进到更旧的分析日期。 */
   const goNext = () => {
     if (currentIndex > 0) {
       setCurrentDate(dates[currentIndex - 1]);
     }
   };
 
-  // ticker -> deep report runId map for traditional view badges.
-  // Suffixes like .HK / .US are stripped so display tickers match.
+  // 传统视图徽标用：ticker -> 深度报告 runId 映射。
+  // 去掉 .HK / .US 之类的后缀，使展示代码与报告代码对得上。
   const deepReportByTicker = useMemo(() => {
     const map = new Map<string, string>();
     const normalizeTicker = (t: string): string => t.replace(/\.(HK|US)$/i, '');
@@ -224,7 +243,7 @@ function AnalysisPage() {
     return map;
   }, [deepReports]);
 
-  /** Split analyses into stock-level cards and the special portfolio card. */
+  /** 把分析拆成个股卡列表与组合级特殊卡。 */
   const { stockAnalyses, portfolioAnalysis } = useMemo(() => {
     const stocks = analyses.filter((a: AnalysisType) => a.ticker !== PORTFOLIO_TICKER);
     stocks.sort((a, b) => a.ticker.localeCompare(b.ticker));
@@ -232,7 +251,7 @@ function AnalysisPage() {
     return { stockAnalyses: stocks, portfolioAnalysis: portfolio ?? null };
   }, [analyses]);
 
-  /** Build rating filter options with counts, in RATING_ORDER. */
+  /** 按 RATING_ORDER 构建带数量的评级筛选选项。 */
   const ratingOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const a of stockAnalyses) {
@@ -246,7 +265,7 @@ function AnalysisPage() {
     }));
   }, [stockAnalyses]);
 
-  /** Apply the active rating filter to the stock analyses. */
+  /** 对个股卡应用当前评级筛选。 */
   const filteredStockAnalyses = useMemo(
     () =>
       ratingFilter
@@ -255,19 +274,22 @@ function AnalysisPage() {
     [stockAnalyses, ratingFilter],
   );
 
+  // 什么时候走到这里：日期列表首次加载中——整页骨架。
   if (datesLoading && !currentDate) {
     return <AnalysisSkeleton />;
   }
 
   return (
+    // ===== 渲染区 =====
     <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
-      {/* Sidebar: date list */}
+      {/* 侧边栏：历史日期列表（点某天即切换日期并进入传统视图） */}
       <aside className="w-full shrink-0 md:w-48">
         <Card className="md:sticky md:top-4">
           <CardHeader className="p-4 pb-2">
             <CardTitle className="font-serif text-base">{t('ui.analysis.history')}</CardTitle>
           </CardHeader>
           <CardContent className="p-2">
+            {/* 日期列表三态：加载骨架 / 无历史提示 / 日期按钮列表 */}
             {datesLoading ? (
               <div className="space-y-2 p-2">
                 {Array.from({ length: 5 }).map((_, i) => (
@@ -304,9 +326,9 @@ function AnalysisPage() {
         </Card>
       </aside>
 
-      {/* Main content */}
+      {/* 主内容区 */}
       <div className="min-w-0 flex-1 space-y-4 md:space-y-6">
-        {/* Date navigator */}
+        {/* 日期导航条：前一天 / 标题 / 后一天（多智能体视图下禁用步进） */}
         <Card>
           <CardContent className="flex items-center justify-between p-4">
             <Tooltip>
@@ -370,6 +392,7 @@ function AnalysisPage() {
           </CardContent>
         </Card>
 
+        {/* 运行入口卡 + 数据视图切换卡 */}
         <AnalysisRunner onFinished={handleRunFinished} />
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
@@ -387,6 +410,7 @@ function AnalysisPage() {
             </Button>
           </CardContent>
         </Card>
+        {/* 视图模式切换卡：左侧提示文案，右侧 传统 / 多智能体 两个 tab */}
         <Card>
           <CardContent className="flex flex-wrap items-center justify-between gap-3 p-3">
             <p className="max-w-lg text-xs leading-relaxed text-muted-foreground">
@@ -428,9 +452,10 @@ function AnalysisPage() {
           </CardContent>
         </Card>
 
+        {/* ===== 传统视图：日期内的分析卡 ===== */}
         {viewMode === 'traditional' && (
           <div className="space-y-4 md:space-y-6">
-            {/* Traditional view error */}
+            {/* 传统视图：加载失败提示（可重试） */}
             {error && (
               <Card className="border-destructive/40">
                 <CardContent className="flex items-center justify-between p-4">
@@ -449,7 +474,7 @@ function AnalysisPage() {
               </Card>
             )}
 
-            {/* Portfolio strategy review (special card) */}
+            {/* 组合级策略复盘（特殊卡，恒展开） */}
             {!loading && portfolioAnalysis && (
               <AnalysisCard
                 analysis={portfolioAnalysis}
@@ -457,7 +482,7 @@ function AnalysisPage() {
               />
             )}
 
-            {/* No portfolio placeholder */}
+            {/* 什么时候走到这里：该日有股票分析但没有组合复盘——展示占位提示 */}
             {!loading && !error && !portfolioAnalysis && stockAnalyses.length > 0 && (
               <Card className="border-dashed border-primary/30 bg-primary/[0.02]">
                 <CardContent className="flex items-center gap-3 p-4">
@@ -474,10 +499,10 @@ function AnalysisPage() {
               </Card>
             )}
 
-            {/* Loading skeleton */}
+            {/* 内容加载骨架 */}
             {loading && <AnalysisContentSkeleton />}
 
-            {/* Stock analysis cards */}
+            {/* 个股分析卡：标题 + 评级筛选药丸 + 卡片网格 */}
             {!loading && !error && stockAnalyses.length > 0 && (
               <div className="space-y-4">
                 <h2 className="font-serif text-lg font-semibold">
@@ -486,6 +511,7 @@ function AnalysisPage() {
                     {t('ui.analysis.stockUnit', { count: stockAnalyses.length })}
                   </span>
                 </h2>
+                {/* 评级筛选药丸：全部 / 各评级（带数量，再点一次取消筛选） */}
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -515,6 +541,7 @@ function AnalysisPage() {
                     </button>
                   ))}
                 </div>
+                {/* 有筛选结果 → 两列网格；同一评级下无卡 → 提示换个评级看看 */}
                 {filteredStockAnalyses.length > 0 ? (
                   <div className="grid gap-4 xl:grid-cols-2">
                     {filteredStockAnalyses.map((a: AnalysisType) => (
@@ -545,7 +572,7 @@ function AnalysisPage() {
               </div>
             )}
 
-            {/* Empty state */}
+            {/* 空状态：该日没有个股分析（还有别的日期 → 提示选择日期；否则提示系统暂无分析） */}
             {!loading && !error && stockAnalyses.length === 0 && (
               <Card>
                 <CardContent className="p-8">
@@ -570,6 +597,7 @@ function AnalysisPage() {
           </div>
         )}
 
+        {/* ===== 多智能体视图：深度报告列表 ===== */}
         {viewMode === 'multiagent' && (
           <div className="space-y-3">
             <DeepReportListContent
@@ -585,7 +613,7 @@ function AnalysisPage() {
   );
 }
 
-/** Full-page skeleton shown while the first date list loads. */
+/** 日期列表首次加载前的整页骨架。 */
 function AnalysisSkeleton() {
   return (
     <div className="flex flex-col gap-4 md:flex-row md:gap-6">
@@ -605,7 +633,7 @@ function AnalysisSkeleton() {
   );
 }
 
-/** Props for {@link DeepReportListContent}. */
+/** {@link DeepReportListContent} 的入参。 */
 interface DeepReportListContentProps {
   loading: boolean;
   reports: AgentRunWithRating[];
@@ -613,7 +641,7 @@ interface DeepReportListContentProps {
   onRefresh: () => void;
 }
 
-/** Render the deep-report list (loading, empty, or grid of cards). */
+/** 渲染深度报告列表（加载骨架 / 空态 / 卡片网格三态）。 */
 function DeepReportListContent({
   loading,
   reports,
@@ -621,6 +649,7 @@ function DeepReportListContent({
   onRefresh,
 }: DeepReportListContentProps) {
   const { t } = useTranslation();
+  // 加载中：渲染 4 张骨架卡。
   if (loading) {
     return (
       <div className="grid gap-4 xl:grid-cols-2">
@@ -646,6 +675,7 @@ function DeepReportListContent({
     );
   }
 
+  // 什么时候走到这里：还没有任何可展示的报告——空态 + 刷新按钮。
   if (reports.length === 0) {
     return (
       <Card>
@@ -691,14 +721,16 @@ function DeepReportListContent({
 }
 
 /**
- * Render a single deep-report card: ticker, name, rating/confidence badges,
- * bear/base/bull target prices, and completion timestamp.
+ * 渲染单张深度报告卡：代码、公司名、评级 / 置信度徽标、
+ * 悲观 / 中性 / 乐观三档目标价、完成时间。
  */
 function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: () => void }) {
   const { t, i18n } = useTranslation();
   const companyName = displayCompanyName(run.tickerName, run.ticker, i18n.language);
+  // 有任一档目标价即展示三档网格。
   const hasThreeTargets =
     run.targetBear != null || run.targetBase != null || run.targetBull != null;
+  // 评级可能是字符串，也可能是 { rating: string } 对象（历史数据兼容）——统一取出字符串。
   const ratingValue: string | null =
     run.rating == null
       ? null
@@ -708,6 +740,7 @@ function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: ()
           ? String((run.rating as unknown as Record<string, unknown>).rating)
           : null;
 
+  /** 置信度 → 本地化文案。 */
   const confidenceLabel = (c: string | null | undefined): string => {
     switch (c) {
       case 'high':
@@ -721,6 +754,7 @@ function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: ()
     }
   };
 
+  /** 置信度 → 徽标配色。 */
   const confidenceColor = (c: string | null | undefined): string => {
     switch (c) {
       case 'high':
@@ -734,6 +768,7 @@ function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: ()
     }
   };
 
+  /** 评级 → 徽标配色。 */
   const ratingBadgeColor = (r: string | null | undefined): string => {
     switch (r) {
       case 'Strong Buy':
@@ -757,7 +792,7 @@ function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: ()
       className="cursor-pointer border-amber-500/40 bg-amber-500/[0.02] transition-all hover:border-amber-500/60 hover:bg-amber-500/[0.05] hover:shadow-md hover:-translate-y-0.5"
     >
       <CardContent className="space-y-3 p-4">
-        {/* Header: ticker + name + rating */}
+        {/* 头部：代码 + 公司名 + 评级徽标 */}
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
@@ -785,7 +820,7 @@ function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: ()
           )}
         </div>
 
-        {/* Confidence badge */}
+        {/* 置信度徽标 */}
         {run.confidence && (
           <Badge
             variant="outline"
@@ -795,7 +830,7 @@ function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: ()
           </Badge>
         )}
 
-        {/* Target prices: three-scenario or single */}
+        {/* 目标价：有任一三档值时展示三档网格，否则整块不渲染（目标价固定 $ 前缀） */}
         {hasThreeTargets ? (
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-md bg-muted/30 px-2 py-2">
@@ -825,7 +860,7 @@ function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: ()
           </div>
         ) : null}
 
-        {/* Footer: generated time + CTA */}
+        {/* 底部：完成时间 + 打开报告入口 */}
         <div className="flex items-center justify-between pt-1 border-t border-border/50">
           <span className="text-xs text-muted-foreground font-mono-nums">
             {formatDateTime(run.completedAt)}
@@ -840,7 +875,7 @@ function DeepReportCard({ run, onClick }: { run: AgentRunWithRating; onClick: ()
   );
 }
 
-/** Skeleton shown while the traditional analysis cards load. */
+/** 传统视图分析卡加载中的骨架。 */
 function AnalysisContentSkeleton() {
   return (
     <div className="grid gap-4 xl:grid-cols-2">

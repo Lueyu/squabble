@@ -1,25 +1,32 @@
 /**
- * @file pages/Dashboard/DailyPlChart.tsx
- * @description ECharts dual-axis chart: account equity line + daily P/L bars.
+ * DailyPlChart.tsx — 账户净值曲线 + 每日盈亏柱状的 ECharts 双轴图。
  *
- * Left Y-axis = account net value (line, area gradient); right Y-axis = daily
- * P/L (green/red bars). Bars are colored by sign (green = gain, red = loss).
- * Tooltip shows both series with adaptive currency symbol.
+ * 职责边界：
+ *  - 纯展示组件：左轴画账户净值（平滑曲线 + 渐变面积），右轴画每日盈亏；
+ *  - 柱子按正负着色（绿 = 盈利，红 = 亏损）；tooltip 同时展示两条序列，
+ *    货币符号随 baseCurrency 自适应；
+ *  - 不发请求、不管理业务状态，数据全部由父组件传入。
+ * 上下游：
+ *  - 上游：DashboardPage 的"每日盈亏"卡片（<DailyPlChart data={dailyPl} .../>）；
+ *  - 下游：echarts-for-react（ReactECharts）、useChartTheme（图表主题色）、react-i18next（文案）。
+ * 关键约定：
+ *  - data 为空时渲染同高占位文案，不渲染图表；
+ *  - option 用 useMemo 缓存，依赖 [data, symbol, t, colors] 变化才重建。
  */
 import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { useTranslation } from 'react-i18next';
 import { useChartTheme } from '@/hooks/use-chart-theme';
 
-/** Props for {@link DailyPlChart}. */
+/** {@link DailyPlChart} 的入参。 */
 interface DailyPlChartProps {
-  /** Daily series: date, account value, daily P/L, daily P/L percent. */
+  /** 日线序列：日期、账户净值、每日盈亏、每日盈亏百分比。 */
   data: Array<{ date: string; accountValue: string; dailyPl: string; dailyPct: string }>;
-  /** Base currency code for axis labels / tooltip; defaults to USD. */
+  /** 坐标轴 / tooltip 使用的基准货币代码；缺省 USD。 */
   baseCurrency?: string;
 }
 
-/** Currency symbol lookup used by axis/tooltip formatting. */
+/** 货币代码 → 符号的查找表，供坐标轴 / tooltip 格式化使用。 */
 const CURRENCY_SYMBOL: Record<string, string> = {
   USD: '$',
   HKD: 'HK$',
@@ -27,17 +34,20 @@ const CURRENCY_SYMBOL: Record<string, string> = {
 };
 
 /**
- * Render the dual-axis daily P/L chart.
- * @param props - See {@link DailyPlChartProps}.
+ * 渲染每日盈亏双轴图。
+ * @param props - 见 {@link DailyPlChartProps}。
  */
 export default function DailyPlChart({ data, baseCurrency = 'USD' }: DailyPlChartProps) {
   const { t } = useTranslation();
+  // 图表主题色（随亮 / 暗主题切换）。
   const colors = useChartTheme();
+  // 未收录的货币代码回退为 $。
   const symbol = CURRENCY_SYMBOL[baseCurrency.toUpperCase()] || '$';
 
+  // 图表配置构建：仅在 data / 货币符号 / 文案 / 主题变化时重建。
   const option = useMemo(() => {
     if (data.length === 0) return {};
-    // X-axis labels show MM-DD (year dropped) to save horizontal space.
+    // X 轴标签只显示 MM-DD（去掉年份）以节省横向空间。
     const dates = data.map((d) => d.date.slice(5));
     const accountValues = data.map((d) => Number(d.accountValue) || 0);
     const dailyPls = data.map((d) => Number(d.dailyPl) || 0);
@@ -56,6 +66,7 @@ export default function DailyPlChart({ data, baseCurrency = 'USD' }: DailyPlChar
           crossStyle: { color: colors.muted },
           label: { backgroundColor: colors.foreground, color: colors.surface },
         },
+        // tooltip 自定义格式：第一行日期，随后账户净值一行 + 每日盈亏一行（按正负着色）。
         formatter: (params: { name: string; seriesName: string; value: number }[]) => {
           if (!params || params.length === 0) return '';
           const parts = [`<strong>${params[0].name}</strong>`];
@@ -118,6 +129,7 @@ export default function DailyPlChart({ data, baseCurrency = 'USD' }: DailyPlChar
           splitLine: { show: false },
         },
       ],
+      // 序列 1：净值曲线（左轴，平滑 + 渐变面积）；序列 2：每日盈亏柱（右轴）。
       series: [
         {
           name: t('dash.accountNav'),
@@ -146,6 +158,7 @@ export default function DailyPlChart({ data, baseCurrency = 'USD' }: DailyPlChar
           name: t('dash.dailyPlLabel'),
           type: 'bar',
           yAxisIndex: 1,
+          // 每根柱子按盈亏正负单独着色：正 = 绿、负 = 红。
           data: dailyPls.map((v) => ({
             value: v,
             itemStyle: {
@@ -159,6 +172,7 @@ export default function DailyPlChart({ data, baseCurrency = 'USD' }: DailyPlChar
     };
   }, [data, symbol, t, colors]);
 
+  // 没有数据时渲染占位提示（与图表同高，避免布局跳动）。
   if (data.length === 0) {
     return (
       <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
@@ -167,6 +181,7 @@ export default function DailyPlChart({ data, baseCurrency = 'USD' }: DailyPlChar
     );
   }
 
+  // 正常渲染图表；notMerge 保证 data 变化时整体替换配置。
   return (
     <ReactECharts option={option} style={{ height: 280, width: '100%' }} notMerge lazyUpdate />
   );

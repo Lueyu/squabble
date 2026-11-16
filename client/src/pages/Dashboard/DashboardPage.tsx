@@ -1,18 +1,20 @@
 /**
- * @file pages/Dashboard/DashboardPage.tsx
- * @description Route `/`: portfolio overview landing page.
+ * DashboardPage.tsx — 路由 `/`：投资组合总览首页。
  *
- * Sections:
- *  - Top metric cards (account value, market value, cost, cash, cumulative P/L, return %)
- *  - AI analysis status card (running / awaiting-human / completed counts,
- *    latest rating, hard-rule risk-gate failures)
- *  - Daily P/L chart + per-holding P/L breakdown (DailyPlChart / DailyPnLBreakdown)
- *  - Holdings grouped by market (table on desktop, cards on mobile)
- *  - Cash balances by currency
- *
- * Data: parallel-fetches overview, holdings and daily P/L; subscribes to live
- * quotes via `useMarketQuotes`; reloads on the global `portfolio-updated` event
- * so any mutating page can trigger a refresh.
+ * 职责边界：
+ *  - 顶部指标卡（账户净值、市值、成本、现金、累计盈亏、收益率）；
+ *  - AI 分析状态卡（运行中 / 待人工决策 / 已完成数量、最近评级、硬规则风闸不通过数）；
+ *  - 每日盈亏图表 + 个股盈亏明细（DailyPlChart / DailyPnLBreakdown）；
+ *  - 按市场分组的持仓（桌面端表格，移动端卡片）；
+ *  - 分币种现金余额。
+ * 上下游：
+ *  - 上游：路由 `/`（App 路由表）；
+ *  - 下游：fetchDashboard / fetchHoldings / fetchDailyPl / getAgentRuns（@/api）、
+ *    useMarketQuotes（实时行情订阅）、DailyPlChart / DailyPnLBreakdown / MarketOverview（本目录子组件）。
+ * 关键约定：
+ *  - overview / holdings / daily PL 三请求并行，出错弹 toast，finally 清 loading；
+ *  - 监听全局 `portfolio-updated` 事件重新加载——任何改动持仓的页面都能触发刷新；
+ *  - 汇总币种（baseCurrency）与盈亏时间窗口（plRange）变化也触发重载。
  */
 import { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
@@ -81,13 +83,14 @@ import { Badge } from '@/components/ui/badge';
 import { useTranslation } from 'react-i18next';
 import './dashboard-design.css';
 
+/** 市场分组 → 展示文案 i18n key 的映射（已知市场用词条，未知分组回退原名）。 */
 const MARKET_LABEL_KEYS: Record<string, string> = {
   US: 'common.usMarket',
   HK: 'common.hkMarket',
   CN: 'common.cnMarket',
 };
 
-/** Shape of a dashboard metric card config. */
+/** 顶部指标卡的配置形状：标签、图标、取 overview 的哪个字段、格式化方式等。 */
 interface MetricCard {
   label: string;
   icon: typeof Wallet;
@@ -101,8 +104,8 @@ interface MetricCard {
   percent?: boolean;
 }
 
-/** Selectable base (reporting) currencies for converted amounts. */
-/** Currency selector options (built inside the component for i18n). */
+/** 折算金额可选的基准（报告）币种。 */
+/** 币种选择器选项（在组件外定义为纯函数，以便接入 i18n）。 */
 function currencyOptions(t: (k: string) => string): { value: Currency; label: string }[] {
   return [
     { value: 'USD', label: t('common.usd') },
@@ -111,15 +114,15 @@ function currencyOptions(t: (k: string) => string): { value: Currency; label: st
   ];
 }
 
-/** Props for {@link RealtimeBadge}. */
+/** {@link RealtimeBadge} 的入参。 */
 interface RealtimeBadgeProps {
   marketStatus: Record<string, string>;
   holdings: Holding[];
 }
 
 /**
- * Show t('dash.realtime') (live, pulsing green) when any held market is in pre/regular/post
- * trading, otherwise "已收盘" (closed).
+ * 实时行情徽标：只要任一持仓市场处于盘前 / 盘中 / 盘后交易，
+ * 就显示绿色脉冲的 t('dash.realtime')，否则显示"已收盘"。
  */
 function RealtimeBadge({ marketStatus, holdings }: RealtimeBadgeProps) {
   const { t } = useTranslation();
@@ -150,19 +153,20 @@ function RealtimeBadge({ marketStatus, holdings }: RealtimeBadgeProps) {
 }
 
 /**
- * Dashboard landing component.
+ * 仪表盘首页组件。
  *
- * State: overview payload, holdings list, daily P/L series, selected base
- * currency, P/L window length, today's agent runs, and hard-rule failure count.
+ * 状态：overview 数据、持仓列表、每日盈亏序列、所选基准币种、
+ * 盈亏时间窗口、今日 agent 运行列表、硬规则风闸失败数。
  */
 export default function DashboardPage() {
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage || i18n.language;
-  // The API supplies legacy Chinese group names; known markets use locale keys.
+  // API 可能返回历史遗留的中文分组名；已知市场改用本地化词条，未知分组回退原名。
   const marketName = (group: GroupSummary): string => {
     const key = MARKET_LABEL_KEYS[group.groupId ?? ''];
     return key ? t(key) : group.groupName || t('holdings.noGroup');
   };
+  // ===== 状态声明区 =====
   const [dashboard, setDashboard] = useState<DashboardOverview | null>(null);
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [dailyPl, setDailyPl] = useState<
@@ -176,13 +180,14 @@ export default function DashboardPage() {
   const [hardRuleFailures, setHardRuleFailures] = useState<number>(0);
   const [riskGateLoading, setRiskGateLoading] = useState(true);
 
+  // ===== 数据获取区 =====
   const tickers = useMemo(() => holdings.map((h) => h.ticker), [holdings]);
 
   const { quotes, marketStatus, marketErrors, lastUpdated } = useMarketQuotes(tickers);
 
   /**
-   * Parallel-fetch overview, holdings and daily P/L for the given currency and
-   * window. Errors surface a toast; `loading` is cleared in `finally`.
+   * 按给定币种与时间窗口并行拉取 overview、持仓、每日盈亏。
+   * 出错弹 toast；`loading` 在 finally 里统一清除。
    */
   const loadData = async (currency: Currency, range: number) => {
     try {
@@ -202,6 +207,8 @@ export default function DashboardPage() {
     }
   };
 
+  // 币种 / 时间窗口变化时重载数据；同时订阅全局 `portfolio-updated` 事件
+  // （其他页面改动持仓后触发），保持首页数据最新。mounted 防止卸载后 setState。
   useEffect(() => {
     let mounted = true;
     setLoading(true);
@@ -223,6 +230,8 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseCurrency, plRange]);
 
+  // ===== 派生计算区 =====
+  // 六张顶部指标卡的配置（标签 / 图标 / 取值字段 / 格式化方式）。
   const metricCards: MetricCard[] = useMemo(
     () => [
       {
@@ -269,20 +278,20 @@ export default function DashboardPage() {
     [t],
   );
 
-  /** Group-level summaries sorted by market value (desc) for the market table. */
+  /** 市场分组汇总，按市值降序，供"按市场"表格展示。 */
   const sortedMarkets = useMemo<GroupSummary[]>(() => {
     if (!dashboard?.groups) return [];
     return [...dashboard.groups].sort((a, b) => Number(b.marketValue) - Number(a.marketValue));
   }, [dashboard]);
 
-  /** Most recent day's P/L and percent from the daily series. */
+  /** 从每日盈亏序列取最近一天的盈亏额与百分比。 */
   const dailyPlTotal = useMemo(() => {
     if (!dailyPl || dailyPl.length === 0) return { pl: '0', pct: '0' };
     const latest = dailyPl[dailyPl.length - 1];
     return { pl: latest.dailyPl, pct: latest.dailyPct };
   }, [dailyPl]);
 
-  /** Bucket holdings by their market, used to render per-market mobile cards. */
+  /** 按市场把持仓分桶，供移动端"每个市场一组持仓卡"渲染。 */
   const holdingsByMarket = useMemo(() => {
     const map = new Map<string, Holding[]>();
     for (const h of holdings) {
@@ -294,7 +303,7 @@ export default function DashboardPage() {
     return map;
   }, [holdings]);
 
-  /** Tally today's agent runs into running / awaiting-human / completed buckets. */
+  /** 把今日 agent 运行归类统计：运行中 / 待人工决策 / 已完成 三个桶。 */
   const runStats = useMemo(() => {
     const stats = {
       running: 0,
@@ -319,7 +328,7 @@ export default function DashboardPage() {
     return stats;
   }, [agentRuns]);
 
-  /** Pick the first completed run that has a rating, for the "latest" card. */
+  /** 取第一个带评级的已完成运行，作为"最近完成"卡片的展示对象。 */
   const latestCompletedRun = useMemo(() => {
     const completed = agentRuns.filter(
       (r: AgentRunWithRating) => r.status === 'completed' && r.rating,
@@ -327,7 +336,9 @@ export default function DashboardPage() {
     return completed.length > 0 ? completed[0] : null;
   }, [agentRuns]);
 
-  // Load today's agent runs and tally hard-rule risk-gate failures.
+  // ===== 数据获取区（补充）：今日 AI 运行 + 硬规则风闸统计 =====
+  // 加载今日 agent 运行；对每个已完成运行再查风闸结果，
+  // 统计"硬规则不通过"的条数（软规则不计数；单次风闸查询失败按 0 条处理）。
   useEffect(() => {
     let mounted = true;
     const now = new Date();
@@ -400,6 +411,8 @@ export default function DashboardPage() {
 
   return (
     <div className="dashboard-page space-y-5">
+      {/* ===== 渲染区 ===== */}
+      {/* 欢迎横幅：吉祥物 + 市场开闭市状态 + 基准币种选择 */}
       <section className="dashboard-hero" aria-labelledby="dashboard-title">
         <div className="dashboard-hero-main">
           <div className="dashboard-mascot-frame" aria-hidden="true">
@@ -442,6 +455,7 @@ export default function DashboardPage() {
         </div>
       </section>
 
+      {/* 顶部指标卡：加载中渲染 6 张骨架卡，完成后渲染真实指标 */}
       <div className="dashboard-metrics" data-ai-section-type="card-stat">
         {loading
           ? Array.from({ length: 6 }).map((_, i) => (
@@ -500,6 +514,7 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent className="dashboard-ai-content space-y-4">
+              {/* AI 分析状态卡：加载中先出骨架，完成后为三段——运行统计 / 最近完成 / 风闸 */}
               {agentRunsLoading ? (
                 <div className="space-y-3">
                   <div className="flex gap-3">
@@ -552,6 +567,7 @@ export default function DashboardPage() {
                     <div className="mb-1.5 text-xs text-muted-foreground">
                       {t('dash.recentCompleted')}
                     </div>
+                    {/* 什么时候走到这里：今日已有带评级的完成运行——展示最近一次的评级 + 置信度 */}
                     {latestCompletedRun?.rating ? (
                       <div className="dashboard-latest-result">
                         <div className="dashboard-latest-company font-medium text-foreground">
@@ -585,6 +601,7 @@ export default function DashboardPage() {
                     <div className="mb-1.5 text-xs text-muted-foreground">
                       {t('dash.riskAlerts')}
                     </div>
+                    {/* 风闸区：加载中骨架 → 有硬规则不通过时告警 → 否则显示全部通过 */}
                     {riskGateLoading ? (
                       <div className="flex items-center gap-2">
                         <Skeleton className="h-4 w-32" />
@@ -639,6 +656,7 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent>
+            {/* 每日盈亏卡：加载中骨架；完成后展示汇总数字 + 图表 + 个股明细 */}
             {loading ? (
               <div className="space-y-4">
                 <Skeleton className="h-16 w-full" />
@@ -682,6 +700,7 @@ export default function DashboardPage() {
                       {t('dash.accountValue')}
                     </div>
                   </div>
+                  {/* 第三格（日收益率）只在 md 及以上显示，小屏由第一格的百分比代替 */}
                   <div className="hidden md:block">
                     <div className="text-xs text-muted-foreground">{t('dash.dailyReturn')}</div>
                     <div
@@ -705,6 +724,7 @@ export default function DashboardPage() {
                       {t('dash.sortedByPl', { count: holdings.length })}
                     </span>
                   </div>
+                  {/* 行情还没到手时让明细表先显示占位（有持仓但 quotes 为空也算 loading） */}
                   <DailyPnLBreakdown
                     holdings={holdings}
                     quotes={quotes}
@@ -726,6 +746,7 @@ export default function DashboardPage() {
           </span>
         </CardHeader>
         <CardContent>
+          {/* 按市场卡：加载骨架 → 无数据空态 → 正常展示（桌面表格 + 移动卡片） */}
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -741,6 +762,7 @@ export default function DashboardPage() {
             </Empty>
           ) : (
             <div className="space-y-6">
+              {/* 桌面端：完整市场表格（md 以下隐藏） */}
               <div className="hidden md:block">
                 <Table>
                   <TableHeader>
@@ -788,6 +810,7 @@ export default function DashboardPage() {
                 </Table>
               </div>
 
+              {/* 移动端：每个市场一组标题行；组内持仓卡片仅小屏显示（md:hidden） */}
               {sortedMarkets.map((g) => {
                 const mkt = g.groupId || 'US';
                 const mktHoldings = holdingsByMarket.get(mkt) ?? [];
@@ -815,6 +838,7 @@ export default function DashboardPage() {
                         {mktHoldings.map((h) => {
                           const current = Number(h.currentPrice) || 0;
                           const buy = Number(h.buyPrice) || 0;
+                          // 移动端卡片里现算涨跌幅（无买入价时按 0 处理）。
                           const pct = buy > 0 ? ((current - buy) / buy) * 100 : 0;
                           const company = displayCompanyName(h.company, h.ticker, language);
                           return (
@@ -866,6 +890,7 @@ export default function DashboardPage() {
           </span>
         </CardHeader>
         <CardContent>
+          {/* 现金明细卡：加载骨架 → 有数据按币种铺开 → 无数据空态 */}
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (

@@ -1,12 +1,21 @@
 /**
- * @file pages/Analysis/AnalysisCard.tsx
- * @description One daily analysis card (stock or portfolio-level).
+ * AnalysisCard.tsx — 单张每日分析卡（个股级或组合级）。
  *
- * Stock cards show target price, action recommendation, conclusion, catalysts
- * and risks; collapsed by default with an expand toggle. When a deep report
- * exists, catalysts/risks are truncated to 3 and a "view deep report" link
- * navigates to DeepReportPage. The portfolio card (ticker === 'PORTFOLIO')
- * is always expanded and styled as a special strategy-review banner.
+ * 职责边界：
+ *  - 个股卡展示目标价、操作建议、结论、催化剂与风险；默认折叠，底部有展开/收起按钮；
+ *  - 存在关联深度报告时，催化剂/风险截断到 3 条，并显示"查看深度报告"入口
+ *    （跳转 DeepReportPage）；
+ *  - 组合卡（ticker === 'PORTFOLIO'）恒展开，渲染成特殊的"策略复盘"横幅样式；
+ *  - 纯展示组件：不发请求，数据由父组件传入。
+ * 上下游：
+ *  - 上游：AnalysisPage（传统视图的卡片网格与组合卡）；
+ *  - 下游：parseNumberedList / ratingTextColor / actionShortLabel / actionTextColor /
+ *    localizedActionLabel / localizedRating（本文件内辅助）、
+ *    @/utils/format（formatPriceWithCurrency、ratingColor、actionColor、cn）、
+ *    inferMarket（@/hooks/use-market-quotes）、react-router（deep-report 跳转）。
+ * 关键约定：
+ *  - 目标价货币按市场推断：HK→HKD、CN→CNY、其余→USD；
+ *  - 操作建议短标签的规则匹配均为正则白名单，勿改动字面量。
  */
 import { useState } from 'react';
 import {
@@ -29,8 +38,8 @@ import { inferMarket } from '@/hooks/use-market-quotes';
 import { useTranslation } from 'react-i18next';
 
 /**
- * Split a semicolon/newline-delimited string into a clean list, stripping
- * leading "1." / "1)" / "1、" numbering. Returns null when empty.
+ * 把分号 / 换行分隔的文本拆成干净的条目列表，去掉开头的 "1." / "1)" / "1、"
+ * 编号前缀。空文本返回 null。
  */
 export function parseNumberedList(text: string | null): string[] | null {
   if (!text || !text.trim()) return null;
@@ -43,10 +52,10 @@ export function parseNumberedList(text: string | null): string[] | null {
   return parts.length > 0 ? parts : null;
 }
 
-/** Sentinel ticker for the portfolio-level analysis card. */
+/** 组合级分析卡的特殊 ticker 哨兵值。 */
 const PORTFOLIO_TICKER = 'PORTFOLIO';
 
-/** Tailwind text color for a rating string (green/yellow/red). */
+/** 评级字符串对应的文字颜色（绿/黄/红）。 */
 function ratingTextColor(rating: string | null | undefined): string {
   if (!rating) return 'text-muted-foreground';
   switch (rating) {
@@ -64,9 +73,9 @@ function ratingTextColor(rating: string | null | undefined): string {
 }
 
 /**
- * Reduce a free-text action recommendation to a short label (买入/减仓/持有/
- * 观望/卖出). Handles negations ("不买入") and maps longer phrases to the
- * nearest bucket. Falls back to the first 5 chars.
+ * 把自由文本的操作建议压缩成短标签（买入/减仓/持有/观望/卖出）。
+ * 处理否定前缀（如"不买入"），把较长短语归入最近的类别；
+ * 都匹配不上时截取前 5 个字符。
  */
 function actionShortLabel(action: string | null | undefined): string {
   if (!action) return '—';
@@ -84,7 +93,7 @@ function actionShortLabel(action: string | null | undefined): string {
   return text.length > 5 ? text.slice(0, 5) + '…' : text;
 }
 
-/** Tailwind text color for a short action label. */
+/** 短操作标签对应的文字颜色。 */
 function actionTextColor(action: string | null | undefined): string {
   if (!action) return 'text-muted-foreground';
   const label = actionShortLabel(action);
@@ -104,6 +113,7 @@ function actionTextColor(action: string | null | undefined): string {
   }
 }
 
+/** 把中文动作短标签映射到 i18n key 输出本地化文案；未收录的标签原样返回。 */
 function localizedActionLabel(
   action: string | null | undefined,
   t: (key: string) => string,
@@ -120,6 +130,7 @@ function localizedActionLabel(
   return keys[label] ? t(keys[label]) : label;
 }
 
+/** 评级英文原词 → i18n 本地化文案；无匹配时原样返回（空值返回空串）。 */
 function localizedRating(value: string | null, t: (key: string) => string): string {
   const keys: Record<string, string> = {
     'Strong Buy': 'analysis.strongBuy',
@@ -131,35 +142,44 @@ function localizedRating(value: string | null, t: (key: string) => string): stri
   return value && keys[value] ? t(keys[value]) : (value ?? '');
 }
 
-/** Props for {@link AnalysisCard}. */
+/** {@link AnalysisCard} 的入参。 */
 interface AnalysisCardProps {
+  /** 该卡的每日分析数据。 */
   analysis: AnalysisType;
+  /** 公司名（可选，头部展示用）。 */
   companyName?: string | null;
-  /** Run id of a related deep report; when present, a "view deep report" link is shown. */
+  /** 关联深度报告的 run id；存在时显示"查看深度报告"入口。 */
   deepReportRunId?: string | null;
 }
 
 /**
- * Render an analysis card. Stock cards are collapsed by default; the
- * portfolio card is always expanded.
+ * 渲染一张分析卡。个股卡默认折叠；组合卡恒展开。
  */
 function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardProps) {
+  // ===== 状态声明区 =====
   const { t } = useTranslation();
   const navigate = useNavigate();
+  // 个股卡的展开态；组合卡不依赖它（isCollapsed 恒 false）。
   const [expanded, setExpanded] = useState(false);
+
+  // ===== 派生计算区 =====
+  // 催化剂 / 风险：按分号或换行拆成编号列表。
   const catalysts = parseNumberedList(analysis.catalysts);
   const risks = parseNumberedList(analysis.risks);
   const isPortfolio = analysis.ticker === PORTFOLIO_TICKER;
   const hasDeepReport = Boolean(deepReportRunId);
+  // 目标价货币按市场推断：HK→HKD、CN→CNY、其余→USD。
   const market = isPortfolio ? 'US' : inferMarket(analysis.ticker);
   const targetCurrency = market === 'HK' ? 'HKD' : market === 'CN' ? 'CNY' : 'USD';
 
+  // 有深度报告时把催化剂 / 风险截断到 3 条（完整版在 DeepReportPage 中查看）。
   const displayCatalysts = catalysts && hasDeepReport ? catalysts.slice(0, 3) : catalysts;
   const displayRisks = risks && hasDeepReport ? risks.slice(0, 3) : risks;
 
+  // 折叠态：组合卡永不折叠。
   const isCollapsed = !isPortfolio && !expanded;
 
-  /** Navigate to the deep-report detail page. */
+  /** 跳转到深度报告详情页。 */
   const handleDeepReportClick = () => {
     if (deepReportRunId) {
       navigate(`/analysis/deep-report/${deepReportRunId}`);
@@ -167,6 +187,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
   };
 
   return (
+    // 卡片样式：组合卡加主色渐变底；关联深度报告时琥珀色描边。
     <Card
       className={cn(
         'flex flex-col relative overflow-hidden',
@@ -174,6 +195,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
         deepReportRunId && 'border-amber-500/40',
       )}
     >
+      {/* ===== 卡头：组合卡走策略复盘横幅，个股卡走 ticker + 评级徽标 ===== */}
       <CardHeader className="pb-3">
         {isPortfolio ? (
           <div className="space-y-1">
@@ -235,10 +257,10 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
 
       <Separator />
 
-      {/* Core numbers row */}
+      {/* 核心数字行：目标价 + 操作建议短标签（仅个股卡显示） */}
       {!isPortfolio && (
         <div className="grid grid-cols-1 gap-2 px-5 py-4 sm:grid-cols-2">
-          {/* Target price */}
+          {/* 目标价 */}
           <div className="flex flex-col items-center justify-center rounded-md bg-muted/30 px-2 py-3">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
               {t('ui.analysis.targetPrice')}
@@ -249,7 +271,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
                 : '—'}
             </span>
           </div>
-          {/* Action - short label */}
+          {/* 操作建议（短标签，按语义着色） */}
           <div className="flex flex-col items-center justify-center rounded-md bg-muted/30 px-2 py-3">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
               {t('ui.analysis.actionAdvice')}
@@ -266,6 +288,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
         </div>
       )}
 
+      {/* 组合卡的目标价一行式展示 */}
       {isPortfolio && analysis.targetPrice && (
         <div className="px-5 pt-4">
           <div className="flex items-center gap-2">
@@ -279,7 +302,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
       )}
 
       <CardContent className={cn('flex-1 space-y-4 pt-4', isPortfolio && 'pt-4')}>
-        {/* Action suggestion - full-width on all screens */}
+        {/* 操作建议全文（所有屏宽通栏显示，仅个股卡） */}
         {!isPortfolio && analysis.action && (
           <div className="space-y-2">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
@@ -297,7 +320,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
           </div>
         )}
 
-        {/* Analysis conclusion section */}
+        {/* 分析结论区（组合卡标题为"策略观点"）；折叠时截成两行 */}
         {analysis.analysis && (
           <div className="space-y-2">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
@@ -315,12 +338,13 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
           </div>
         )}
 
-        {/* Catalysts + Risks section */}
+        {/* 催化剂 + 风险区（什么时候走到这里：展开状态或组合卡，且至少有一项内容） */}
         {!isCollapsed &&
           (catalysts || risks || analysis.catalysts?.trim() || analysis.risks?.trim()) && (
             <>
               <Separator className="my-1" />
               <div className="grid gap-4 md:grid-cols-2">
+                {/* 催化剂：有编号列表时按列表渲染；有深度报告且超过 3 条时提示剩余条数 */}
                 {displayCatalysts ? (
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
@@ -344,6 +368,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
                     </ul>
                   </div>
                 ) : analysis.catalysts?.trim() ? (
+                  /* 什么时候走到这里：催化剂没有编号列表但原文非空——直接展示文本（有深度报告且超 150 字时截断） */
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                       <TrendingUp className="h-3.5 w-3.5 text-success" />
@@ -357,6 +382,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
                   </div>
                 ) : null}
 
+                {/* 风险：同样先按编号列表，再回退原文展示 */}
                 {displayRisks ? (
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
@@ -380,6 +406,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
                     </ul>
                   </div>
                 ) : analysis.risks?.trim() ? (
+                  /* 什么时候走到这里：风险没有编号列表但原文非空——直接展示文本（有深度报告且超 150 字时截断） */
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                       <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
@@ -397,6 +424,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
           )}
       </CardContent>
 
+      {/* 个股卡底部的展开 / 收起按钮（组合卡恒展开，无此按钮） */}
       {!isPortfolio && (
         <div className="px-3 pb-2">
           <Button
@@ -415,7 +443,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
         </div>
       )}
 
-      {/* Deep report footer link */}
+      {/* 深度报告底部链接（什么时候走到这里：传入了 deepReportRunId） */}
       {deepReportRunId && (
         <>
           <Separator />

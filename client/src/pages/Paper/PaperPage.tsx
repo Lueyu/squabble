@@ -1,19 +1,25 @@
 /**
- * @file pages/Paper/PaperPage.tsx
- * @description Route `/paper`: the AI paper-trading terminal.
+ * PaperPage.tsx — 路由 `/paper`：AI 模拟盘（paper trading）终端。
  *
- * Sections:
- *  - KPI cards (equity, cash, today's P&L, total P&L, today's orders)
- *  - Watchbot card: on/off toggle, scan-now button, circuit-breaker status,
- *    guardrail settings dialog, account reset
- *  - Equity curve (ECharts)
- *  - Paper positions with live-ish market values and unrealized P&L
- *  - Order feed with status badges (filled / rejected by risk gate) and
- *    per-order bot reasons
- *  - Activity timeline (bot scans, fills, guardrail triggers)
- *  - Notification channel manager (webhook / bark / serverchan / smtp /
- *    telegram) with test-send
- *  - Manual order dialog (market orders, same solvency checks as the bot)
+ * 职责边界（页面各区块）：
+ *  - KPI 指标卡（净值、现金、今日盈亏、累计盈亏、今日下单数）；
+ *  - Watchbot 卡：开关、立即扫描、熔断状态、风控参数对话框、账户重置；
+ *  - 净值曲线（ECharts）；
+ *  - 模拟盘持仓（近实时市值与浮动盈亏）；
+ *  - 订单流水（状态徽标：已成交 / 风控拒绝；含 bot 下单理由）；
+ *  - 活动时间线（bot 扫描、成交、风控触发）；
+ *  - 通知渠道管理（webhook / bark / serverchan / smtp / telegram，含测试发送）；
+ *  - AI 代理会话管理（MCP 连接）；
+ *  - 手动下单对话框（市价单，与 bot 相同的偿付能力校验）。
+ * 上下游：
+ *  - 上游：路由 `/paper`；支持 ?orderId= 深链定位订单流水中的某笔订单；
+ *  - 下游：@/api（fetchPaperOverview、placePaperOrder、bot 开关 / 扫描 /
+ *    updatePaperGuardrails / resetPaperAccount、通知渠道 CRUD 与测试发送、
+ *    agent 会话 CRUD、approvePaperOrder / rejectPaperOrder）、
+ *    useChartTheme、echarts-for-react、ui 组件（Card / Dialog / Switch / Select 等）。
+ * 关键约定：
+ *  - overview 每 60s 轮询刷新；所有变更操作成功后 invalidate(['paper']) 全量失效；
+ *  - ?orderId= 高亮对应订单行并滚动到订单流水，离开深链后清除高亮。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -90,17 +96,17 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-/** Money formatter for USD figures. */
+/** 美元金额格式化（千分位 + 两位小数，空值显示 —）。 */
 const usd = (v: string | null | undefined) =>
   v == null
     ? '—'
     : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/** Signed percent formatter. */
+/** 带符号的百分比格式化（正数加 +，空值显示 —）。 */
 const pct = (v: string | null | undefined) =>
   v == null ? '—' : `${Number(v) >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`;
 
-/** Badge styles per order status. */
+/** 订单状态 → 徽标配色。 */
 const orderStatusStyles: Record<string, string> = {
   filled: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
   rejected_risk: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
@@ -108,6 +114,7 @@ const orderStatusStyles: Record<string, string> = {
   pending: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
   failed: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
 };
+/** 订单状态 → i18n key。 */
 const orderStatusLabel: Record<string, string> = {
   filled: 'paper.filled',
   rejected_risk: 'paper.rejectedByRisk',
@@ -115,6 +122,7 @@ const orderStatusLabel: Record<string, string> = {
   pending: 'paper.pendingApproval',
   failed: 'paper.failed',
 };
+/** 事件类型 → i18n key（时间线徽标文案）。 */
 const eventLabel: Record<string, string> = {
   bot_started: 'ui.paper.watchingOn',
   bot_stopped: 'ui.paper.watchingOff',
@@ -129,20 +137,27 @@ const eventLabel: Record<string, string> = {
 
 function PaperPage() {
   const { t } = useTranslation();
+  // ===== 状态声明区 =====
+  // ?orderId= 深链：从通知等入口跳转过来定位某笔订单。
   const [params] = useSearchParams();
   const linkedOrderId = params.get('orderId');
+  // 滚动去重：同一 orderId 只自动滚动一次。
   const scrolledOrderId = useRef<string | null>(null);
   const queryClient = useQueryClient();
+  // 三个对话框开关：手动下单 / 风控参数 / 账户重置。
   const [orderOpen, setOrderOpen] = useState(false);
   const [guardrailsOpen, setGuardrailsOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
 
+  // ===== 数据获取区 =====
+  // 全页面数据（账户 / 持仓 / 订单 / 事件 / 净值曲线），每 60s 轮询。
   const overviewQuery = useQuery<PaperOverview>({
     queryKey: ['paper', 'overview'],
     queryFn: fetchPaperOverview,
     refetchInterval: 60_000,
   });
   const overview = overviewQuery.data;
+  // ?orderId= 变化且 overview 就绪时，滚动到订单流水一次；离开深链则清除记录。
   useEffect(() => {
     if (!linkedOrderId) scrolledOrderId.current = null;
     if (linkedOrderId && overview && scrolledOrderId.current !== linkedOrderId) {
@@ -151,8 +166,11 @@ function PaperPage() {
     }
   }, [linkedOrderId, overview]);
 
+  // 变更成功后统一失效 ['paper'] 前缀的所有查询。
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['paper'] });
 
+  // ===== 事件处理区 =====
+  // 开关 bot：成功后按新状态提示已开启 / 已关闭。
   const toggleMutation = useMutation({
     mutationFn: (enabled: boolean) => togglePaperBot(enabled),
     onSuccess: (account) => {
@@ -166,6 +184,7 @@ function PaperPage() {
       ),
   });
 
+  // 立即扫描：扫到信号提示下单 / 拒绝数，无信号提示扫描数。
   const scanMutation = useMutation({
     mutationFn: runPaperBot,
     onSuccess: (result) => {
@@ -185,6 +204,7 @@ function PaperPage() {
       ),
   });
 
+  // 账户重置：成功后关闭弹窗并刷新。
   const resetMutation = useMutation({
     mutationFn: (initialCash?: number) => resetPaperAccount(initialCash),
     onSuccess: () => {
@@ -194,12 +214,15 @@ function PaperPage() {
     },
   });
 
+  // ===== 派生计算区 =====
   const busy = overviewQuery.isLoading;
+  // bot 当前开关状态（overview 未就绪时按关闭处理）。
   const botOn = overview?.account.botEnabled ?? false;
 
   return (
+    // ===== 渲染区 =====
     <div className="min-w-0 space-y-4">
-      {/* Header */}
+      {/* 头部：标题 + 手动下单 / 启停 bot 按钮 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 font-serif text-2xl font-semibold">
@@ -223,7 +246,7 @@ function PaperPage() {
         </div>
       </div>
 
-      {/* KPI cards */}
+      {/* KPI 指标卡：净值 / 现金 / 今日盈亏 / 累计盈亏 / 今日下单数 */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Card>
           <CardContent className="min-w-0 p-3 sm:p-4">
@@ -245,6 +268,7 @@ function PaperPage() {
         </Card>
         <Card>
           <CardContent className="min-w-0 p-3 sm:p-4">
+            {/* 今日盈亏：图标与配色随正负切换 */}
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               {Number(overview?.todayPl ?? 0) >= 0 ? (
                 <TrendingUp size={12} className="text-success" />
@@ -289,7 +313,7 @@ function PaperPage() {
         </Card>
       </div>
 
-      {/* Bot control bar */}
+      {/* bot 控制条：运行徽标 / 熔断徽标 / 风控参数摘要 / 扫描 / 设置 / 重置 */}
       <Card>
         <CardContent className="flex flex-wrap items-center gap-3 p-4">
           <Badge
@@ -304,6 +328,7 @@ function PaperPage() {
             {botOn ? <Bot size={12} /> : <BotOff size={12} />}
             {botOn ? t('ui.paper.watchingOn') : t('ui.paper.watchingOff')}
           </Badge>
+          {/* 什么时候走到这里：当日亏损触发熔断——醒目警示徽标 */}
           {overview?.circuitBreakerActive && (
             <Badge
               variant="outline"
@@ -343,7 +368,7 @@ function PaperPage() {
         </CardContent>
       </Card>
 
-      {/* Equity curve */}
+      {/* 净值曲线 */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">{t('paper.equityCurve')}</CardTitle>
@@ -354,7 +379,7 @@ function PaperPage() {
       </Card>
 
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Positions */}
+        {/* 持仓表：代码 / 股数 / 成本现价 / 浮动盈亏 */}
         <Card className="min-w-0">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">
@@ -403,6 +428,7 @@ function PaperPage() {
                       </tr>
                     );
                   })}
+                  {/* 什么时候走到这里：当前没有持仓——占位行 */}
                   {(overview?.positions.length ?? 0) === 0 && (
                     <tr>
                       <td
@@ -419,7 +445,7 @@ function PaperPage() {
           </CardContent>
         </Card>
 
-        {/* Events */}
+        {/* 活动时间线：bot 扫描 / 成交 / 风控触发 */}
         <Card className="min-w-0">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-1.5 text-sm">
@@ -462,12 +488,13 @@ function PaperPage() {
         </Card>
       </div>
 
-      {/* Orders feed */}
+      {/* 订单流水（深链锚点 id="paper-order-feed" 所在卡片） */}
       <Card id="paper-order-feed" className="scroll-mt-5">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">{t('paper.orderFlow')}</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
+          {/* 深链提示条：说明目标订单在最近列表内还是已超出范围 */}
           {linkedOrderId && overview && (
             <p className="break-all border-b border-border bg-primary/5 px-4 py-3 text-xs leading-6">
               {t(
@@ -552,13 +579,13 @@ function PaperPage() {
         </CardContent>
       </Card>
 
-      {/* Notification channels */}
+      {/* 通知渠道管理 */}
       <NotificationChannelsCard />
 
-      {/* AI agent sessions (MCP) */}
+      {/* AI 代理会话（MCP 连接） */}
       <AgentSessionsCard />
 
-      {/* Pending approvals */}
+      {/* 什么时候走到这里：存在 pending_approval 订单——展示人工审批区 */}
       {(overview?.recentOrders ?? []).some((o) => o.status === 'pending_approval') && (
         <Card>
           <CardHeader className="pb-2">
@@ -576,6 +603,7 @@ function PaperPage() {
                 >
                   <div className="min-w-0 flex-1">
                     <div className="font-medium">
+                      {/* 从 reason 提取代理名（如 "AI 代理 Alpha"），取不到按 AI 展示 */}
                       {t('ui.paper.agentRequest', {
                         agent: o.reason?.match(/(?:AI 代理|Agent)\s+([^\s]+)/i)?.[1] ?? 'AI',
                         side: t(o.side === 'buy' ? 'paper.buy' : 'paper.sell'),
@@ -630,7 +658,7 @@ function PaperPage() {
         </Card>
       )}
 
-      {/* Dialogs */}
+      {/* 三个对话框：手动下单 / 风控参数 / 账户重置 */}
       <ManualOrderDialog open={orderOpen} onOpenChange={setOrderOpen} onDone={invalidate} />
       <GuardrailsDialog
         open={guardrailsOpen}
@@ -662,7 +690,7 @@ function PaperPage() {
   );
 }
 
-/** Equity line chart for the paper account. */
+/** 模拟盘账户净值折线图。 */
 function PaperEquityChart({
   data,
 }: {
@@ -670,6 +698,7 @@ function PaperEquityChart({
 }) {
   const { t } = useTranslation();
   const colors = useChartTheme();
+  // 图表配置依赖 [data, t, colors]，变化才重建；空数据给空配置。
   const option = useMemo(() => {
     if (data.length === 0) return {};
     return {
@@ -728,6 +757,7 @@ function PaperEquityChart({
       ],
     };
   }, [data, t, colors]);
+  // 什么时候走到这里：还没有净值数据——同高占位提示。
   if (data.length === 0) {
     return (
       <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
@@ -735,16 +765,18 @@ function PaperEquityChart({
       </div>
     );
   }
+  // notMerge：数据变化时整体替换配置，避免残留旧序列。
   return <ReactECharts option={option} style={{ height: 260 }} notMerge />;
 }
 
-/** One-line Chinese summary for a timeline event. */
+/** 时间线事件的一行中文摘要（未知类型原样序列化 detail）。 */
 function summarizeEvent(
   type: string,
   detail: Record<string, unknown> | null,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
   const d = detail ?? {};
+  // 成交事件：方向、数量、价格，带实现盈亏（若有）。
   if (type === 'order_filled') {
     const side = t(d.side === 'buy' ? 'paper.buy' : 'paper.sell');
     const pl =
@@ -783,7 +815,7 @@ function summarizeEvent(
   return JSON.stringify(d);
 }
 
-/** Manual market-order dialog. */
+/** 手动市价单对话框（偿付能力 / 风控校验由服务端把关）。 */
 function ManualOrderDialog({
   open,
   onOpenChange,
@@ -799,6 +831,7 @@ function ManualOrderDialog({
   const [quantity, setQuantity] = useState('10');
   const [submitting, setSubmitting] = useState(false);
 
+  // 组装市价单并提交：已成交提示成交价；被风控拒绝则提示原因。
   const submit = async () => {
     const dto: CreatePaperOrderDto = {
       ticker: ticker.trim(),
@@ -886,7 +919,7 @@ function ManualOrderDialog({
   );
 }
 
-/** Guardrail thresholds dialog. */
+/** 风控参数（熔断线）设置对话框。 */
 function GuardrailsDialog({
   open,
   onOpenChange,
@@ -899,6 +932,7 @@ function GuardrailsDialog({
   onDone: () => void;
 }) {
   const { t } = useTranslation();
+  // 三个参数的初始值在首次渲染时取当前 guardrails，缺省 3% / 5% / 10 笔。
   const g = overview?.account.guardrails;
   const [loss, setLoss] = useState(String(g?.dailyLossLimitPct ?? 3));
   const [orderPct, setOrderPct] = useState(String(g?.maxOrderPct ?? 5));
@@ -970,7 +1004,10 @@ function GuardrailsDialog({
   );
 }
 
-/** Channel type metadata for the manager UI. */
+/**
+ * 通知渠道类型的元数据：名称 / 提示 / 动态表单字段。
+ * 字段 label / placeholder 以 'ui.' 开头的字符串视为 i18n key，渲染时翻译。
+ */
 const CHANNEL_META: Record<
   NotificationChannelType,
   { name: string; hint: string; fields: Array<{ key: string; label: string; placeholder: string }> }
@@ -1022,10 +1059,11 @@ const CHANNEL_META: Record<
   },
 };
 
-/** Notification channel manager card. */
+/** 通知渠道管理卡片。 */
 function NotificationChannelsCard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  // 新增渠道弹窗状态：渠道类型 / 备注名 / 动态字段值。
   const [addOpen, setAddOpen] = useState(false);
   const [channelType, setChannelType] = useState<NotificationChannelType>('webhook');
   const [label, setLabel] = useState('');
@@ -1038,6 +1076,7 @@ function NotificationChannelsCard() {
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['notifications'] });
 
+  // 新增渠道：只收集非空字段；一个字段都没有则提示必填。
   const addChannel = async () => {
     const config: Record<string, string> = {};
     for (const f of CHANNEL_META[channelType].fields) {
@@ -1086,6 +1125,7 @@ function NotificationChannelsCard() {
             <span className="truncate text-foreground/90">
               {ch.label ?? Object.values(ch.config)[0] ?? ''}
             </span>
+            {/* 每行右侧操作：启用开关 / 测试发送 / 删除 */}
             <div className="ml-auto flex items-center gap-2">
               <Switch
                 checked={ch.enabled}
@@ -1164,6 +1204,7 @@ function NotificationChannelsCard() {
                 onChange={(e) => setLabel(e.target.value)}
               />
             </div>
+            {/* 动态字段表单：label / placeholder 以 'ui.' 开头时做 i18n 翻译 */}
             {CHANNEL_META[channelType].fields.map((f) => (
               <div key={f.key} className="space-y-2">
                 <Label>{f.label.startsWith('ui.') ? t(f.label) : f.label}</Label>
@@ -1189,10 +1230,11 @@ function NotificationChannelsCard() {
   );
 }
 
-/** AI agent sessions management card (MCP connections). */
+/** AI 代理会话管理卡片（MCP 连接）。 */
 function AgentSessionsCard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  // 新建会话弹窗状态；newToken 为创建成功后一次性展示的令牌。
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState('');
   const [dailyLimit, setDailyLimit] = useState('500');
@@ -1207,6 +1249,7 @@ function AgentSessionsCard() {
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['mcp'] });
 
+  // 创建会话：成功后记录一次性 token 供展示。
   const add = async () => {
     if (!name.trim()) {
       toast.warning(t('ui.paper.agentNameRequired'));
@@ -1232,6 +1275,7 @@ function AgentSessionsCard() {
   };
 
   const sessions = sessionsQuery.data ?? [];
+  // 当前站点根地址，用于拼出 MCP 接入地址 {baseUrl}/mcp。
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
 
   return (
@@ -1246,6 +1290,7 @@ function AgentSessionsCard() {
       </CardHeader>
       <CardContent className="space-y-2 p-4">
         <p className="text-xs text-muted-foreground">{t('ui.paper.agentIntro')}</p>
+        {/* 什么时候走到这里：刚创建会话——展示 MCP 地址与一次性 token */}
         {newToken && (
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
             <div className="font-medium text-emerald-600 dark:text-emerald-400">
@@ -1267,6 +1312,7 @@ function AgentSessionsCard() {
             </Button>
           </div>
         )}
+        {/* 会话行：权限徽标 + 名称 / 限额 / 审批模式；active 可改审批模式、可撤销；revoked 只读展示 */}
         {sessions.map((s) => (
           <div
             key={s.id}
