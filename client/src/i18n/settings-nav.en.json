@@ -1,0 +1,22 @@
+{
+  "navigation": "Settings categories",
+  "intro": "Make Squabble work your way.",
+  "sidebarNote": "Ready for your next research session.",
+  "help": "Setup guide",
+  "language": "Interface language",
+  "languageHint": "Choose the language for menus and the interface.",
+  "updateUnavailable": "Updates are not available here for this installation. In the desktop app, use the update option in the application menu. For self-hosted installations, update using your original deployment method.",
+  "updateLoadFailed": "Unable to load update status. Please try again.",
+  "groups": { "research": "Research", "personal": "Personal & system", "help": "Help" },
+  "sections": {
+    "models": { "title": "Models & API", "description": "Connect your AI models and choose the right tools for quick analysis and deeper reasoning." },
+    "agents": { "title": "Local agents", "description": "Connect agents on this device and manage their sign-in and execution status." },
+    "data": { "title": "Market data", "description": "Manage data sources for market quotes, news and fundamental research." },
+    "budget": { "title": "Usage & budget", "description": "Track model calls and token usage, and set a budget for your research." },
+    "rules": { "title": "Strategy rules", "description": "Set position limits, trading conditions and risk boundaries for disciplined decisions." },
+    "appearance": { "title": "Appearance & language", "description": "Choose a theme, display mode and language for your research workspace." },
+    "security": { "title": "Account & security", "description": "Manage account recovery and learn how your data and API keys are protected." },
+    "updates": { "title": "System updates", "description": "Check your current version and update status to keep Squabble up to date." },
+    "guide": { "title": "Setup guide", "description": "From your first session to connecting your own models, configure your research environment step by step." }
+  }
+}

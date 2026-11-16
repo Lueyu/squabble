@@ -166,7 +166,7 @@ function formatThreshold(
  * optimistic updates where cheap (toggle, reorder, threshold) and roll back on
  * failure; create/delete/reset refetch the whole list.
  */
-function StrategyRulesPage() {
+function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boolean; active?: boolean } = {}) {
   const { t } = useTranslation();
   const [rules, setRules] = useState<StrategyRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -565,16 +565,16 @@ function StrategyRulesPage() {
   return (
     <div className="space-y-6">
       {/* 顶部操作栏 */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
+      <div className={`flex flex-col gap-4 sm:flex-row sm:items-start ${embedded ? 'sm:justify-end' : 'sm:justify-between'}`}>
+        {!embedded && <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
             {t('rules.title')}
           </h1>
           <p className="text-sm text-muted-foreground">
             {t('ui.rules.pageDescription')}
           </p>
-        </div>
-        <div className="flex items-center gap-2">
+        </div>}
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             onClick={() => setResetOpen(true)}
@@ -736,7 +736,7 @@ function StrategyRulesPage() {
       )}
 
       {/* 新增 / 编辑弹窗 */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={active && dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90dvh] max-w-xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
@@ -901,7 +901,7 @@ function StrategyRulesPage() {
 
       {/* 删除确认弹窗 */}
       <AlertDialog
-        open={deleteTarget !== null}
+        open={active && deleteTarget !== null}
         onOpenChange={(open) => {
           if (!open && !deleting) setDeleteTarget(null);
         }}
@@ -935,7 +935,7 @@ function StrategyRulesPage() {
       </AlertDialog>
 
       {/* 恢复默认确认弹窗 */}
-      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+      <AlertDialog open={active && resetOpen} onOpenChange={setResetOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">

@@ -21,7 +21,6 @@ import AnalysisPage from './pages/Analysis/AnalysisPage';
 import DeepReportPage from './pages/Analysis/DeepReportPage';
 import JournalPage from './pages/Journal/JournalPage';
 import TransactionsPage from './pages/Transactions/TransactionsPage';
-import StrategyRulesPage from './pages/StrategyRules/StrategyRulesPage';
 import SettingsPage from './pages/Settings/SettingsPage';
 import PaperPage from './pages/Paper/PaperPage';
 import AgentBuilderPage from './pages/AgentBuilder/AgentBuilderPage';
@@ -67,8 +66,7 @@ const RoutesComponent = () => {
         <Route path="analysis/deep-report/:runId" element={<DeepReportPage />} />
         <Route path="journal" element={<JournalPage />} />
         <Route path="transactions" element={<TransactionsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="settings/rules" element={<StrategyRulesPage />} />
+        <Route path="settings/*" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

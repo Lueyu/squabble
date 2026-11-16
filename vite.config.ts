@@ -9,28 +9,34 @@
  */
 import path from 'path';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
-export default defineConfig({
-  root: 'client',
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, 'client/src'),
-      '@shared': path.resolve(__dirname, 'shared'),
-    },
-  },
-  build: {
-    outDir: '../dist/client',
-    emptyOutDir: true,
-  },
-  server: {
-    port: 8080,
-    proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:3000',
-        changeOrigin: false,
+export default defineConfig(({ mode }) => {
+  const env = { ...loadEnv(mode, __dirname, ''), ...process.env };
+  return {
+    root: 'client',
+    envDir: __dirname,
+    plugins: [react()],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, 'client/src'),
+        '@shared': path.resolve(__dirname, 'shared'),
       },
     },
-  },
+    build: {
+      outDir: '../dist/client',
+      emptyOutDir: true,
+    },
+    server: {
+      host: '127.0.0.1',
+      port: Number(env.CLIENT_DEV_PORT || 8080),
+      strictPort: true,
+      proxy: {
+        '/api': {
+          target: `http://127.0.0.1:${env.SERVER_PORT || 3000}`,
+          changeOrigin: false,
+        },
+      },
+    },
+  };
 });

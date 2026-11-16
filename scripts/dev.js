@@ -1,322 +1,249 @@
 #!/usr/bin/env node
-/**
- * dev.js — production-style local dev supervisor for the monorepo.
- *
- * Boots both the NestJS server and the Vite client as detached child processes,
- * pipes their stdout/stderr through readline for timestamped logging to
- * logs/dev.std.log (everything) and logs/dev.log (structured events), and
- * auto-restarts crashed children with exponential backoff (capped at 8s).
- *
- * Key behaviors:
- *  - Loads .env into process.env on startup (simple parser, no dotenv dep).
- *  - Uses process groups (detached:true + negative-pid kill) so killing the
- *    supervisor also kills grandchildren (nest watcher, vite dev server).
- *  - Kills orphaned processes still bound to SERVER_PORT / CLIENT_DEV_PORT
- *    before starting and on shutdown.
- *  - Wipes dist/ on startup because a stale dist can make nest --watch skip
- *    files and fail to self-heal.
- *  - Log stdout mirroring is backpressure-limited (max 1000 in-flight writes)
- *    so a stalled terminal consumer cannot grow memory unbounded; the log
- *    FILE writes are always synchronous and never dropped.
- *
- * Env vars: LOG_DIR, MAX_RESTART_COUNT, RESTART_DELAY, SERVER_PORT,
- * CLIENT_DEV_PORT.
- */
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const { spawn, execSync } = require('child_process');
-const readline = require('readline');
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const readline = require('node:readline');
+const { randomUUID } = require('node:crypto');
+const { setTimeout: delay } = require('node:timers/promises');
+const { parse } = require('dotenv');
+const { processSnapshot, sameProcess, terminateTree, stopOwnedChild, reclaimPorts } = require('./dev-processes.cjs');
 
-// ── Project root ──────────────────────────────────────────────────────────────
-const PROJECT_ROOT = path.resolve(__dirname, '..');
-process.chdir(PROJECT_ROOT);
-
-// ── Load .env ─────────────────────────────────────────────────────────────────
-function loadEnv() {
-  const envPath = path.join(PROJECT_ROOT, '.env');
-  if (!fs.existsSync(envPath)) return;
-  const lines = fs.readFileSync(envPath, 'utf8').split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    const value = trimmed.slice(eqIdx + 1).trim();
-    if (!(key in process.env)) {
-      process.env[key] = value;
+function loadDevelopmentEnv(projectRoot, parentEnv = process.env) {
+  const env = { ...parentEnv };
+  for (const filename of ['.env.local', '.env']) {
+    const file = path.join(projectRoot, filename);
+    if (!fs.existsSync(file)) continue;
+    for (const [key, value] of Object.entries(parse(fs.readFileSync(file)))) {
+      if (env[key] === undefined) env[key] = value;
     }
   }
-}
-loadEnv();
-
-// ── Configuration ─────────────────────────────────────────────────────────────
-const LOG_DIR = process.env.LOG_DIR || 'logs';
-const MAX_RESTART_COUNT = process.env.MAX_RESTART_COUNT != null && process.env.MAX_RESTART_COUNT !== ''
-  ? parseInt(process.env.MAX_RESTART_COUNT, 10)
-  : Infinity;
-const RESTART_DELAY = parseInt(process.env.RESTART_DELAY, 10) || 2;
-const MAX_DELAY = 8;
-const SERVER_PORT = process.env.SERVER_PORT || '3000';
-const CLIENT_DEV_PORT = process.env.CLIENT_DEV_PORT || '8080';
-
-fs.mkdirSync(LOG_DIR, { recursive: true });
-
-// ── Logging infrastructure ────────────────────────────────────────────────────
-const devStdLogPath = path.join(LOG_DIR, 'dev.std.log');
-const devLogPath = path.join(LOG_DIR, 'dev.log');
-const devStdLogFd = fs.openSync(devStdLogPath, 'a');
-const devLogFd = fs.openSync(devLogPath, 'a');
-
-function timestamp() {
-  const now = new Date();
-  return (
-    now.getFullYear() + '-' +
-    String(now.getMonth() + 1).padStart(2, '0') + '-' +
-    String(now.getDate()).padStart(2, '0') + ' ' +
-    String(now.getHours()).padStart(2, '0') + ':' +
-    String(now.getMinutes()).padStart(2, '0') + ':' +
-    String(now.getSeconds()).padStart(2, '0')
-  );
+  return env;
 }
 
-// Cap pending async stdout writes so a stalled pty consumer can't grow memory unbounded.
-// Each pending fs.write retains ~1.5 KB (msg + libuv/V8 wrappers); 1000 ≈ ~1.5 MB ceiling.
-let _stdoutInFlight = 0;
-const STDOUT_MAX_INFLIGHT = 1000;
-
-/** Write to dev.std.log (sync, guaranteed) + mirror to terminal (async, non-blocking) */
-function writeOutput(msg) {
-  // File first and synchronously — read-logs reads this file; it must never be gated
-  // by the terminal consumer.
-  try { fs.writeSync(devStdLogFd, msg); } catch {}
-  // stdout mirror via async fs.write: if process.stdout is a pty/pipe whose consumer
-  // stalls, the block happens on the libuv threadpool, NOT the event loop — so the
-  // synchronous log-FILE writes above (and subsequent readline callbacks) keep running.
-  // Drop overflow when too many writes are already pending (best-effort mirror).
-  if (_stdoutInFlight >= STDOUT_MAX_INFLIGHT) { return; }
-  _stdoutInFlight++;
-  try { fs.write(1, msg, () => { _stdoutInFlight--; }); } catch { _stdoutInFlight--; }
+function cleanServerBuild(projectRoot) {
+  const root = fs.realpathSync(projectRoot);
+  for (const name of ['server', 'shared', 'tsconfig.node.tsbuildinfo']) {
+    const target = path.join(root, 'dist', name);
+    if (!fs.existsSync(target)) continue;
+    const relative = path.relative(root, fs.realpathSync(target));
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(`Build path escapes project: ${target}`);
+    fs.rmSync(target, { recursive: true, force: true });
+  }
 }
 
-/** Structured event log → terminal + dev.std.log + dev.log */
-function logEvent(level, name, message) {
-  const msg = `[${timestamp()}] [${level}] [${name}] ${message}\n`;
-  writeOutput(msg);
-  try { fs.writeSync(devLogFd, msg); } catch {}
+function port(value, fallback, name) {
+  const text = String(value || fallback);
+  const number = Number(text);
+  if (!/^\d+$/.test(text) || !Number.isInteger(number) || number < 1 || number > 65535) throw new Error(`Invalid ${name} port: ${text}`);
+  return number;
 }
 
-// ── Process group management ──────────────────────────────────────────────────
-function killProcessGroup(pid, signal) {
-  try {
-    process.kill(-pid, signal);
-  } catch {}
-}
+function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env: parentEnv = process.env } = {}) {
+  const root = path.resolve(projectRoot);
+  const env = loadDevelopmentEnv(root, parentEnv);
+  const serverPort = port(env.SERVER_PORT, 3000, 'SERVER_PORT');
+  const clientPort = port(env.CLIENT_DEV_PORT, 8080, 'CLIENT_DEV_PORT');
+  if (serverPort === clientPort) throw new Error('SERVER_PORT and CLIENT_DEV_PORT must be different.');
+  Object.assign(env, { NODE_ENV: 'development', SERVER_PORT: String(serverPort), CLIENT_DEV_PORT: String(clientPort) });
+  const readyTimeout = Number(env.DEV_READY_TIMEOUT || 120000);
+  const restartLimit = Number(env.MAX_RESTART_COUNT || 5);
+  const restartDelay = Number(env.RESTART_DELAY || 2) * 1000;
+  if (![readyTimeout, restartLimit, restartDelay].every(value => Number.isFinite(value) && value > 0)) {
+    throw new Error('DEV_READY_TIMEOUT, MAX_RESTART_COUNT and RESTART_DELAY must be positive numbers.');
+  }
+  const sessionPath = path.join(root, 'node_modules', '.cache', 'squabble-dev.json');
+  const lockPath = `${sessionPath}.lock`;
+  const token = randomUUID();
+  const abort = new AbortController();
+  const children = new Map();
+  const logs = new Map();
+  let session;
+  let stopping = false;
+  let stopPromise;
+  let pendingWrites = 0;
+  let releaseLock;
 
-function killOrphansByPort(port) {
-  try {
-    const pids = execSync(`lsof -ti :${port}`, { encoding: 'utf8', timeout: 5000 }).trim();
-    if (pids) {
-      const pidList = pids.split('\n').filter(Boolean);
-      for (const p of pidList) {
-        try { process.kill(parseInt(p, 10), 'SIGKILL'); } catch {}
-      }
-      return pidList;
+  function log(message, name = 'main') {
+    const line = `[${new Date().toISOString()}] [${name}] ${message}\n`;
+    for (const key of ['dev.std', name === 'main' ? 'dev' : `${name}.std`]) {
+      const fd = logs.get(key);
+      if (fd !== undefined) fs.writeSync(fd, line);
     }
-  } catch {}
-  return [];
-}
+    if (pendingWrites < 1000) {
+      pendingWrites++;
+      try { fs.write(1, line, () => pendingWrites--); } catch { pendingWrites--; }
+    }
+  }
 
-// ── Process supervision ───────────────────────────────────────────────────────
-let stopping = false;
-const managedProcesses = []; // { name, pid, child }
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Start and supervise a process with auto-restart and log piping.
- * Returns a promise that resolves when the process loop ends.
- */
-function startProcess({ name, command, args, cleanupPort }) {
-  const logFilePath = path.join(LOG_DIR, `${name}.std.log`);
-  const logFd = fs.openSync(logFilePath, 'a');
-
-  const entry = { name, pid: null, child: null };
-  managedProcesses.push(entry);
-
-  const run = async () => {
-    let restartCount = 0;
-
-    while (!stopping) {
-      const child = spawn(command, args, {
-        detached: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: true,
-        cwd: PROJECT_ROOT,
-        env: { ...process.env },
-      });
-
-      entry.pid = child.pid;
-      entry.child = child;
-
-      const startTime = Date.now();
-      logEvent('INFO', name, `Process started (PGID: ${child.pid}): ${command} ${args.join(' ')}`);
-
-      // Pipe stdout and stderr through readline for timestamped logging
-      const pipeLines = (stream) => {
-        const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-        rl.on('line', (line) => {
-          const msg = `[${timestamp()}] [${name}] ${line}\n`;
-          try { fs.writeSync(logFd, msg); } catch {}
-          writeOutput(msg);
-        });
-      };
-      if (child.stdout) pipeLines(child.stdout);
-      if (child.stderr) pipeLines(child.stderr);
-
-      // Wait for the direct child to exit.
-      // NOTE: must use 'exit', not 'close'. With shell:true, grandchild processes
-      // (e.g. nest's server) inherit stdout pipes. 'close' won't fire until ALL
-      // pipe holders exit, causing dev.js to hang when npm/nest dies but server survives.
-      const exitCode = await new Promise((resolve) => {
-        child.on('exit', (code) => resolve(code ?? 1));
-        child.on('error', () => resolve(1));
-      });
-
-      // Kill the entire process group
-      if (entry.pid) {
-        killProcessGroup(entry.pid, 'SIGTERM');
-        await sleep(2000);
-        killProcessGroup(entry.pid, 'SIGKILL');
+  function readSession(file = sessionPath) {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return null; throw error; }
+  }
+  async function lockStartup(identity) {
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    // Link a complete record atomically: readers can never observe an empty lock.
+    const candidate = `${lockPath}.${token}`;
+    fs.writeFileSync(candidate, JSON.stringify({ ...identity, token }), { flag: 'wx' });
+    try {
+      const deadline = Date.now() + 60000;
+      while (!stopping) {
+        try {
+          fs.linkSync(candidate, lockPath);
+          return () => { if (readSession(lockPath)?.token === token) fs.unlinkSync(lockPath); };
+        } catch (error) { if (error.code !== 'EEXIST') throw error; }
+        const owner = readSession(lockPath);
+        if (owner && !sameProcess(owner, await processSnapshot()) && readSession(lockPath)?.token === owner.token) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+        if (Date.now() > deadline) throw new Error('Another development startup is still running. Retry when it finishes.');
+        await delay(200, undefined, { signal: abort.signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
       }
-      entry.pid = null;
-      entry.child = null;
+    } finally { fs.unlinkSync(candidate); }
+  }
+  function saveSession() {
+    if (readSession()?.token !== token) throw new Error('This development session was replaced by another startup.');
+    writeSession();
+  }
+  function writeSession() {
+    const pending = `${sessionPath}.${token}.tmp`;
+    fs.writeFileSync(pending, JSON.stringify(session));
+    fs.renameSync(pending, sessionPath);
+  }
+  async function recordChildren() {
+    const rows = await processSnapshot();
+    for (const child of children.values()) {
+      const record = rows.find(row => row.pid === child.pid);
+      if (record && !child.identity) child.identity = { pid: record.pid, startedAt: record.startedAt };
+    }
+    session.children = [...children.values()].map(child => child.identity).filter(Boolean);
+    if (!stopping) saveSession();
+  }
 
-      // Port cleanup fallback
-      if (cleanupPort) {
-        const orphans = killOrphansByPort(cleanupPort);
-        if (orphans.length > 0) {
-          logEvent('WARN', name, `Killed orphan processes on port ${cleanupPort}: ${orphans.join(' ')}`);
-          await sleep(500);
+  async function stop() {
+    if (stopPromise) return stopPromise;
+    stopping = true;
+    abort.abort();
+    stopPromise = (async () => {
+      log('Stopping this development session...');
+      const rows = await processSnapshot();
+      for (const child of children.values()) {
+        await stopOwnedChild(child, rows);
+      }
+      if (readSession()?.token === token) fs.unlinkSync(sessionPath);
+      releaseLock?.();
+      log('All development processes stopped.');
+      for (const fd of logs.values()) fs.closeSync(fd);
+      logs.clear();
+    })();
+    return stopPromise;
+  }
+
+  async function supervise(name, args) {
+    let failures = 0;
+    while (!stopping) {
+      const started = Date.now();
+      const child = spawn(process.execPath, args, { cwd: root, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      children.set(name, child);
+      const exited = new Promise(resolve => {
+        child.once('exit', code => resolve(code ?? 1));
+        child.once('error', error => { log(error.message, name); resolve(1); });
+      });
+      for (const stream of [child.stdout, child.stderr]) {
+        readline.createInterface({ input: stream, crlfDelay: Infinity }).on('line', line => log(line, name));
+      }
+      log(`Started PID ${child.pid}`, name);
+      await recordChildren();
+      const code = await exited;
+      if (stopping) return;
+      // A dead watcher can leave descendants behind. Only clean its own tree.
+      await stopOwnedChild(child);
+      children.delete(name);
+      failures = Date.now() - started > 60000 ? 1 : failures + 1;
+      if (failures >= restartLimit) throw new Error(`${name} exited with code ${code}; restart limit reached. See logs/${name}.std.log.`);
+      const wait = Math.min(restartDelay * 2 ** (failures - 1), 8000);
+      log(`Exited (${code}); restarting in ${wait / 1000}s`, name);
+      await delay(wait, undefined, { signal: abort.signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+    }
+  }
+
+  async function waitUntilReady() {
+    const deadline = Date.now() + readyTimeout;
+    while (!stopping && Date.now() < deadline) {
+      try {
+        const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(1500)]);
+        const backend = await fetch(`http://127.0.0.1:${serverPort}/api/health`, { signal });
+        const health = backend.ok ? await backend.json() : null;
+        const frontend = await fetch(`http://127.0.0.1:${clientPort}/`, { signal });
+        await frontend.arrayBuffer();
+        if (health?.status === 'ok' && frontend.ok) return;
+      } catch { if (stopping) return; }
+      await delay(300, undefined, { signal: abort.signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+    }
+    if (!stopping) throw new Error('Development startup timed out. Check server/client logs and DATABASE_URL before retrying.');
+  }
+
+  async function start() {
+    try {
+      const logDir = path.resolve(root, env.LOG_DIR || 'logs');
+      fs.mkdirSync(logDir, { recursive: true });
+      for (const name of ['dev.std', 'dev', 'server.std', 'client.std']) logs.set(name, fs.openSync(path.join(logDir, `${name}.log`), 'a'));
+      log(`Starting Squabble from ${root}`);
+      const rows = await processSnapshot();
+      const identity = rows.find(row => row.pid === process.pid);
+      if (!identity?.startedAt) throw new Error('Cannot identify the development supervisor process.');
+      releaseLock = await lockStartup({ pid: identity.pid, startedAt: identity.startedAt });
+      if (stopping) { releaseLock?.(); return; }
+      const previous = readSession();
+      if (previous?.root === root) {
+        for (const record of [previous, ...(previous.children || [])]) {
+          const current = await processSnapshot();
+          if (sameProcess(record, current)) {
+            log(`Stopping previous development session PID ${record.pid}`);
+            await terminateTree(record, current);
+          }
         }
       }
-
-      if (stopping) break;
-
-      const runDuration = (Date.now() - startTime) / 1000;
-      if (runDuration >= 60) {
-        restartCount = 0;
-        logEvent('INFO', name, `Ran for ${Math.round(runDuration)}s, resetting restart counter`);
-      } else {
-        restartCount++;
+      if (stopping) return;
+      session = { root, token, pid: process.pid, startedAt: identity.startedAt, children: [] };
+      // Claim before reclaiming ports so even a startup still compiling can be replaced.
+      writeSession();
+      await reclaimPorts([serverPort, clientPort], log);
+      if (stopping) return;
+      saveSession();
+      cleanServerBuild(root);
+      log('Cleared server build output; Vite will refresh its dependency cache.');
+      const jobs = Promise.all([
+        supervise('server', [path.join(root, 'node_modules/@nestjs/cli/bin/nest.js'), 'start', '--watch']),
+        supervise('client', [path.join(root, 'node_modules/vite/bin/vite.js'), '--config', path.join(root, 'vite.config.ts'), '--force']),
+      ]);
+      // Finish recording spawned children while holding the startup lock. A
+      // second launch can now replace this whole session, even before readiness.
+      const recorded = recordChildren();
+      await Promise.race([recorded, jobs]);
+      releaseLock();
+      await Promise.race([waitUntilReady(), jobs]);
+      if (!stopping) {
+        log(`Ready: http://127.0.0.1:${clientPort} (development UI; API: http://127.0.0.1:${serverPort}/api)`);
+        log(`Press Ctrl+C to stop. Logs: ${path.join(logDir, 'dev.std.log')}`);
       }
-      if (restartCount >= MAX_RESTART_COUNT) {
-        logEvent('ERROR', name, `Max restart count (${MAX_RESTART_COUNT}) reached, giving up`);
-        break;
-      }
-
-      const delay = Math.min(RESTART_DELAY * (1 << Math.max(0, restartCount - 1)), MAX_DELAY);
-      logEvent('WARN', name, `Process exited with code ${exitCode}, restarting (${restartCount}/${MAX_RESTART_COUNT}) in ${delay}s...`);
-      await sleep(delay * 1000);
-    }
-
-    try { fs.closeSync(logFd); } catch {}
-  };
-
-  return run();
-}
-
-// ── Cleanup ───────────────────────────────────────────────────────────────────
-let cleanupDone = false;
-
-async function cleanup() {
-  if (cleanupDone) return;
-  cleanupDone = true;
-  stopping = true;
-
-  logEvent('INFO', 'main', 'Shutting down all processes...');
-
-  // Kill all managed process groups
-  for (const entry of managedProcesses) {
-    if (entry.pid) {
-      logEvent('INFO', 'main', `Stopping process group (PGID: ${entry.pid})`);
-      killProcessGroup(entry.pid, 'SIGTERM');
+      await jobs;
+    } catch (error) {
+      await stop();
+      throw error;
     }
   }
-
-  // Wait for graceful shutdown
-  await sleep(2000);
-
-  // Force kill any remaining
-  for (const entry of managedProcesses) {
-    if (entry.pid) {
-      logEvent('WARN', 'main', `Force killing process group (PGID: ${entry.pid})`);
-      killProcessGroup(entry.pid, 'SIGKILL');
-    }
-  }
-
-  // Port cleanup fallback
-  killOrphansByPort(SERVER_PORT);
-  killOrphansByPort(CLIENT_DEV_PORT);
-
-  logEvent('INFO', 'main', 'All processes stopped');
-
-  try { fs.closeSync(devStdLogFd); } catch {}
-  try { fs.closeSync(devLogFd); } catch {}
-
-  process.exit(0);
+  return { start, stop };
 }
 
-process.on('SIGTERM', cleanup);
-process.on('SIGINT', cleanup);
-process.on('SIGHUP', cleanup);
-
-// Stale dist makes nest --watch skip missing files; watcher won't self-heal.
-function cleanStaleDist() {
-  const distPath = path.join(PROJECT_ROOT, 'dist');
-  if (fs.existsSync(distPath)) {
-    fs.rmSync(distPath, { recursive: true, force: true });
-    logEvent('INFO', 'main', 'Cleaned dist/ to force full rebuild');
+if (require.main === module) {
+  const supervisor = createDevSupervisor();
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => supervisor.stop().catch(error => { console.error(error); process.exitCode = 1; }));
   }
+  supervisor.start().catch(error => { console.error(error.message); process.exitCode = 1; });
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-async function main() {
-  logEvent('INFO', 'main', '========== Dev session started ==========');
-
-  cleanStaleDist();
-
-  // Start server and client
-  const serverPromise = startProcess({
-    name: 'server',
-    command: 'npm',
-    args: ['run', 'dev:server'],
-    cleanupPort: SERVER_PORT,
-  });
-
-  const clientPromise = startProcess({
-    name: 'client',
-    command: 'npm',
-    args: ['run', 'dev:client'],
-    cleanupPort: CLIENT_DEV_PORT,
-  });
-
-  writeOutput(`📋 Dev processes running. Press Ctrl+C to stop.\n`);
-  writeOutput(`📄 Logs: ${devStdLogPath}\n\n`);
-
-  // Wait for both (they loop until stopping or max restarts)
-  await Promise.all([serverPromise, clientPromise]);
-
-  if (!cleanupDone) {
-    await cleanup();
-  }
-}
-
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+module.exports = { createDevSupervisor, loadDevelopmentEnv, cleanServerBuild };

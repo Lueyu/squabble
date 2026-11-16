@@ -100,7 +100,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
           <p className="whitespace-pre-wrap break-words text-destructive">{session.error}</p>
           <div className="mt-1 flex flex-wrap gap-x-4 text-muted-foreground">
             <Link to="/settings" className="hover:underline">{t('council.apiSettings')}</Link>
-            <Link to="/settings#research-budget" className="hover:underline">{t('council.budget.open')}</Link>
+            <Link to="/settings/budget" className="hover:underline">{t('council.budget.open')}</Link>
           </div>
         </div>}
       </div>

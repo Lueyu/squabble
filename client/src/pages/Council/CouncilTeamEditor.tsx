@@ -104,7 +104,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
     {value.members.some(member => member.executionMode === 'local') && <div className="rounded-xl bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
       <p>{t('council.localAgents.toolsHint')}</p>
       <p className="mt-2">{t('council.localAgents.budgetHint')}{' '}
-        <Link to="/settings#research-budget" className="text-primary hover:underline">{t('council.budget.open')}</Link></p>
+        <Link to="/settings/budget" className="text-primary hover:underline">{t('council.budget.open')}</Link></p>
     </div>}
     {value.members.some(member => member.executionMode !== 'local') && <div className="rounded-xl bg-muted/40 p-3">
       <div className="flex items-center justify-between gap-3"><Label htmlFor={webId} className="text-sm">{t('council.members.webResearch')}</Label>

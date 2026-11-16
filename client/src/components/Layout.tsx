@@ -30,7 +30,6 @@ import {
   BookOpen,
   Receipt,
   Settings,
-  ShieldCheck,
   Sun,
   Moon,
   RefreshCw,
@@ -61,8 +60,7 @@ const navItems = [
   { path: '/council', label: 'council.nav', icon: Users },
   { path: '/journal', label: 'nav.journal', icon: BookOpen },
   { path: '/transactions', label: 'nav.transactions', icon: Receipt },
-  { path: '/settings', label: 'ui.settings.nav', icon: Settings, end: true },
-  { path: '/settings/rules', label: 'nav.rules', icon: ShieldCheck },
+  { path: '/settings', label: 'ui.settings.nav', icon: Settings },
 ];
 
 /** Profile shape used by the sidebar user block. */
@@ -82,6 +80,7 @@ function Layout() {
   const { t, i18n } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
+  const inSettings = location.pathname === '/settings' || location.pathname.startsWith('/settings/');
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
   const navGroups = [
@@ -105,7 +104,7 @@ function Layout() {
   }
 
   return (
-    <div className={`app-shell flex w-screen overflow-hidden bg-background text-foreground ${location.pathname === '/council' ? 'h-dvh' : 'h-screen'}`}>
+    <div className={`app-shell flex w-screen overflow-hidden bg-background text-foreground ${inSettings ? 'app-shell-settings' : ''} ${location.pathname === '/council' ? 'h-dvh' : 'h-screen'}`}>
       {/* Sidebar */}
       <aside
         aria-label={zh ? '主导航' : 'Main navigation'}
@@ -117,7 +116,7 @@ function Layout() {
           <div className="app-brand flex items-center justify-between">
             <NavLink to="/" className="flex items-center gap-2.5" aria-label={t('layout.appName')}>
               <Mascot className="app-brand-mark" />
-              <div>
+              <div className="app-brand-copy">
                 <div className="app-wordmark">Squabble<span className="text-[var(--brand)]">.</span></div>
                 <div className="app-brand-caption">BULLS. BEARS. YOU.</div>
               </div>
@@ -140,6 +139,8 @@ function Layout() {
                 key={item.path}
                 to={item.path}
                 end={item.end}
+                aria-label={t(item.label)}
+                title={t(item.label)}
                 className={({ isActive }) =>
                   `app-nav-link flex items-center px-3 py-2 text-sm transition-colors ${
                     isActive
@@ -161,6 +162,8 @@ function Layout() {
             <div className="app-footer-actions">
             <button
               onClick={toggleTheme}
+              aria-label={zh ? (theme === 'dark' ? '浅色' : '深色') : (theme === 'dark' ? 'Light' : 'Dark')}
+              title={zh ? (theme === 'dark' ? '浅色' : '深色') : (theme === 'dark' ? 'Light' : 'Dark')}
               className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
             >
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
@@ -168,6 +171,8 @@ function Layout() {
             </button>
             <button
               onClick={toggleLang}
+              aria-label={i18n.language === 'zh-CN' ? 'English' : '中文'}
+              title={i18n.language === 'zh-CN' ? 'English' : '中文'}
               className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
             >
               <Languages size={18} />
@@ -217,7 +222,9 @@ function Layout() {
         </header>
 
         {/* Page content */}
-        <main ref={pageScrollRef} className={location.pathname === '/council'
+        <main ref={pageScrollRef} className={inSettings
+          ? 'app-content app-settings-content flex min-h-0 flex-1 flex-col overflow-hidden'
+          : location.pathname === '/council'
           ? 'app-content flex min-h-0 flex-1 flex-col overflow-hidden safe-bottom'
           : 'app-content flex-1 overflow-y-auto safe-bottom'}>
           <Outlet />
@@ -294,11 +301,11 @@ function SidebarUserBlock() {
   const initial = name ? name.charAt(0).toUpperCase() : '?';
 
   return (
-    <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+    <div className="app-user-block flex items-center gap-2.5 rounded-md px-2 py-1.5" title={name}>
       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sidebar-accent text-sm font-semibold text-sidebar-accent-foreground">
         {isLoading ? <Skeleton className="h-8 w-8 rounded-full" /> : initial}
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="app-user-copy min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-sidebar-foreground">
           {isLoading ? <Skeleton className="h-4 w-16" /> : name || t('layout.unknownUser')}
         </div>
