@@ -1,3 +1,17 @@
+/**
+ * research-journal.ts — 研究事件日志与文本脱敏工具。
+ *
+ * 职责边界：
+ *  - publicText：对进入用户可见内容的文本做脱敏（思考块、Bearer/密钥模式、控制字符）与长度截断。
+ *  - appendResearchEvents：把 agent/companion 上报的活动写入任务的持久化事件列表（校验+去重+截断）。
+ *  - recordTaskLifecycle：以服务端权威口径记录任务生命周期事件；provider 输出不能宣布任务完成。
+ * 上下游：
+ *  - 上游：LocalAgentStore（任务变更时调用）、LocalAgentsService（工具事件）。
+ *  - 下游：无（仅类型依赖 shared/research-events.interface 与 AgentTask）。
+ * 关键约定：
+ *  - 每任务事件上限 256 条、事件 ID 上限 2048 条；外部（非 internal）事件不允许 kind='task'。
+ *  - 事件时间被夹取在 [task.createdAt, now]；sources 最多 8 条，URL 必须为公网 http(s) 且无敏感参数。
+ */
 import type {
   ResearchActivity,
   ResearchEvent,
@@ -5,6 +19,7 @@ import type {
 } from '../../../shared/research-events.interface';
 import type { AgentTask } from './local-agents.store';
 
+// 容量上限：每任务事件条数与事件 ID 数（超出即截断并标记 truncated）。
 const MAX_EVENTS = 256;
 const MAX_EVENT_IDS = 2048;
 const statuses: ResearchEventStatus[] = [
@@ -17,6 +32,10 @@ const statuses: ResearchEventStatus[] = [
   'unavailable',
 ];
 
+/**
+ * 用户可见文本脱敏：剥离思考/推理块、Bearer 凭据、常见 API key 模式与“键: 值”型敏感赋值，
+ * 再移除控制字符并按 max 截断。
+ */
 export function publicText(value: string, max = 600): string {
   return value
     .replace(
@@ -36,7 +55,7 @@ export function publicText(value: string, max = 600): string {
     .slice(0, max);
 }
 
-/** A second trust boundary after provider parsing / companion input validation. */
+/** 在 provider 解析与 companion 输入校验之后的第二道信任边界：逐条校验/脱敏后写入任务事件。 */
 export function appendResearchEvents(
   task: AgentTask,
   entries: ResearchActivity[],
@@ -128,7 +147,7 @@ export function appendResearchEvents(
     const events = (task.events ??= []);
     events.push(event);
     if (events.length > MAX_EVENTS) {
-      // Retain the initial task marker to keep role identity/start time after a long stream.
+      // 保留最初的任务标记，长流式输出后仍能追溯角色身份与开始时间。
       const initial = events[0].kind === 'task' ? events[0] : undefined;
       task.events = initial
         ? [initial, ...events.slice(-(MAX_EVENTS - 1))]
@@ -138,7 +157,7 @@ export function appendResearchEvents(
   }
 }
 
-/** Server-owned task lifecycle: provider output cannot declare a task completed. */
+/** 服务端权威的任务生命周期记录：provider 输出不能自行宣布任务完成。 */
 export function recordTaskLifecycle(task: AgentTask, previousState?: AgentTask['state']): void {
   if (!task.researchScope || task.state === previousState) return;
   const map: Partial<Record<AgentTask['state'], ResearchEventStatus>> = {

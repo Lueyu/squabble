@@ -1,3 +1,15 @@
+/**
+ * companion.controller.ts — 桌面 companion 端点的 REST 控制器。
+ *
+ * 职责边界：
+ *  - 配对（pair）、心跳轮询（poll）、研究工具调用与取消四个路由（/api/local-agent-companion）。
+ *  - 鉴权走设备凭据（Bearer + 64 位十六进制 token），与浏览器会话完全隔离。
+ * 上下游：
+ *  - 上游：桌面 companion 进程。
+ *  - 下游：LocalAgentsService、LocalAgentStore、local-agents.requests（载荷校验）。
+ * 关键约定：
+ *  - 非 companion 模式下一律拒绝；LocalAgentError 一律映射为 401（不向设备泄露服务端细节）。
+ */
 import {
   BadRequestException,
   Body,
@@ -15,10 +27,11 @@ import {
 } from './local-agents.requests';
 import { LocalAgentError } from './local-agents.types';
 
-/** Companion requests use a revocable device credential, never a user's browser session. */
+/** Companion 请求使用可撤销的设备凭据，绝不使用用户的浏览器会话。 */
 @Controller('api/local-agent-companion')
 export class CompanionController {
   constructor(private readonly agents: LocalAgentsService) {}
+  /** POST /api/local-agent-companion/research-tools/cancel — 取消一个在途研究工具调用（设备凭据鉴权）。 */
   @Post('research-tools/cancel') async cancelResearchTool(
     @Headers('authorization') authorization: string | undefined,
     @Body() body: unknown,
@@ -45,6 +58,7 @@ export class CompanionController {
       throw error;
     }
   }
+  /** POST /api/local-agent-companion/research-tools — 执行一次研究工具调用（设备凭据鉴权，结果落任务日志）。 */
   @Post('research-tools') async researchTools(
     @Headers('authorization') authorization: string | undefined,
     @Body() body: unknown,
@@ -73,6 +87,7 @@ export class CompanionController {
       throw error;
     }
   }
+  /** POST /api/local-agent-companion/pair — 消费配对码并返回一次性设备 token（无需登录）。 */
   @Post('pair') async pair(@Body() body: unknown) {
     if (this.agents.mode !== 'companion') throw new BadRequestException('LOCAL_PAIRING_NOT_NEEDED');
     const parsed = pairRequest.safeParse(body);
@@ -83,6 +98,7 @@ export class CompanionController {
       throw new BadRequestException('LOCAL_PAIRING_EXPIRED');
     }
   }
+  /** POST /api/local-agent-companion/poll — 心跳轮询：上报智能体状态与任务更新，领取命令与取消列表（设备凭据鉴权）。 */
   @Post('poll') async poll(
     @Headers('authorization') authorization: string | undefined,
     @Body() body: unknown,

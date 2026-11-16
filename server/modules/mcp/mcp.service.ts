@@ -1,20 +1,21 @@
 /**
- * @file server/modules/mcp/mcp.service.ts
- * @description MCP (Model Context Protocol) server implementation.
+ * mcp.service.ts — MCP (Model Context Protocol) 服务实现。
  *
- * Speaks the MCP Streamable HTTP transport: a single POST endpoint
- * accepting JSON-RPC 2.0 messages. Implements the minimum surface an MCP
- * client needs: initialize → tools/list → tools/call. Each call is
- * authenticated against an agent session (Bearer token) and scoped by that
- * session's permission, daily spending limit and approval mode.
- *
- * Tools exposed:
- *  - get_portfolio      : paper account overview (positions, equity, cash)
- *  - get_quotes         : live quotes for a list of tickers
- *  - get_research_report: the latest multi-agent deep report for a ticker
- *  - place_paper_order  : buy/sell on the paper account (guarded)
- *  - list_orders        : recent paper orders for this session's owner
- *  - import_holdings    : create holdings from extracted rows
+ * 职责边界：
+ *  - MCP Streamable HTTP 传输：单一 POST 端点接收 JSON-RPC 2.0 消息，实现客户端所需的最小面：
+ *    initialize → tools/list → tools/call。
+ *  - 每次 tools/call 都针对一个智能体会话（Bearer token）鉴权，并受该会话的
+ *    permission（只读/交易）、dailyLimitUsd（日限额）与 approvalMode（审批模式）约束。
+ *  - 暴露 6 个工具：get_portfolio（模拟盘概览）、get_quotes（实时行情）、get_research_report（最新深度报告）、
+ *    place_paper_order（受控下单）、list_orders（最近订单）、import_holdings（导入持仓）。
+ *  - 会话 CRUD 属于面向用户的 API，不属于 MCP 协议本体。
+ * 上下游：
+ *  - 上游：McpController（POST /mcp 与会话管理路由）、外部 MCP 客户端。
+ *  - 下游：PaperTradingService（下单/概览）、QuoteService（行情）、ImportService（导入持仓）、agentSessions/paperOrders/deepReport 表。
+ * 关键约定：
+ *  - token 形态 sq-<24 字节 hex>，仅在创建响应中出现一次；撤回会话即失效。
+ *  - 下单权限 permission==='trade'；买入金额粗校验为 日限额×10 的上限护栏，真实限额检查在 placeOrder 风控内。
+ *  - 行情最多 20 只；订单列表 1–50 条（默认 10）。
  */
 import {
   BadRequestException,
@@ -39,7 +40,7 @@ import type {
   AgentApprovalMode,
 } from '@shared/api.interface';
 
-/** A validated agent session context attached to an MCP request. */
+/** 附加在 MCP 请求上的已验证智能体会话上下文。 */
 export interface McpSessionContext {
   sessionId: string;
   userId: string;
@@ -49,14 +50,14 @@ export interface McpSessionContext {
   approvalMode: AgentApprovalMode;
 }
 
-/** JSON-RPC tool descriptor. */
+/** JSON-RPC 工具描述符。 */
 interface ToolDescriptor {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
 }
 
-/** Generate a random session token. */
+/** 生成随机会话 token（sq- + 24 字节 hex）。 */
 function generateToken(): string {
   return `sq-${randomBytes(24).toString('hex')}`;
 }
@@ -73,10 +74,10 @@ export class McpService {
   ) {}
 
   // ------------------------------------------------------------------
-  // Agent session CRUD (user-facing API, not MCP)
+  // Agent 会话 CRUD（面向用户的 API，不属于 MCP 协议）
   // ------------------------------------------------------------------
 
-  /** List the caller's agent sessions (tokens are never returned). */
+  /** 列出调用者的智能体会话（token 永不返回）。 */
   async listSessions(userId: string): Promise<AgentSession[]> {
     const rows = await this.db
       .select()
@@ -86,7 +87,7 @@ export class McpService {
     return rows.map((r) => this.mapSession(r));
   }
 
-  /** Create a new agent session and return it with the token (shown once). */
+  /** 创建智能体会话并返回（含仅出现一次的 token）。 */
   async createSession(userId: string, dto: CreateAgentSessionDto): Promise<AgentSession> {
     const name = (dto.name ?? '').trim();
     if (!name) throw new BadRequestException('Please provide an agent name');
@@ -105,7 +106,7 @@ export class McpService {
     return this.mapSession(row, token);
   }
 
-  /** Update a session's limits/mode (owner-scoped). */
+  /** 更新会话的限额/模式（属主范围内）。 */
   async updateSession(
     userId: string,
     id: string,
@@ -130,7 +131,7 @@ export class McpService {
     return this.mapSession(row);
   }
 
-  /** Revoke a session (owner-scoped). */
+  /** 撤销会话（属主范围内）。 */
   async revokeSession(userId: string, id: string): Promise<void> {
     await this.db
       .update(agentSessions)
@@ -139,17 +140,17 @@ export class McpService {
   }
 
   // ------------------------------------------------------------------
-  // MCP protocol: authentication + tool dispatch
+  // MCP 协议：鉴权 + 工具分发
   // ------------------------------------------------------------------
 
-  /** Validate the Bearer token against an active agent session. */
+  /** 用 Bearer token 对照活动智能体会话验证身份。 */
   async authenticate(token: string): Promise<McpSessionContext> {
     if (!token) throw new UnauthorizedException('Missing MCP token');
     const [row] = await this.db.select().from(agentSessions).where(eq(agentSessions.token, token));
     if (!row) throw new UnauthorizedException('Invalid MCP token');
     if (row.status !== 'active')
       throw new ForbiddenException('This agent session has been revoked');
-    // Track usage.
+    // 记录使用痕迹（lastUsedAt）。
     await this.db
       .update(agentSessions)
       .set({ lastUsedAt: new Date() })
@@ -164,7 +165,7 @@ export class McpService {
     };
   }
 
-  /** List all tool descriptors. */
+  /** 返回全部工具描述符（get_portfolio/get_quotes/get_research_report/place_paper_order/list_orders/import_holdings）。 */
   getTools(): ToolDescriptor[] {
     return [
       {
@@ -262,7 +263,7 @@ export class McpService {
     ];
   }
 
-  /** Dispatch a tools/call request. */
+  /** 分发一次 tools/call 请求；未知工具抛 BadRequest。 */
   async callTool(
     ctx: McpSessionContext,
     name: string,
@@ -288,9 +289,10 @@ export class McpService {
   }
 
   // ------------------------------------------------------------------
-  // Tool implementations
+  // 工具实现
   // ------------------------------------------------------------------
 
+  /** get_portfolio：模拟盘账户概览（现金、净值、持仓现价与浮盈亏、熔断与盯盘状态）。 */
   private async toolGetPortfolio(ctx: McpSessionContext) {
     const overview = await this.paperTrading.getOverview(ctx.userId);
     return {
@@ -314,6 +316,7 @@ export class McpService {
     };
   }
 
+  /** get_quotes：批量实时行情（最多 20 只）。 */
   private async toolGetQuotes(_ctx: McpSessionContext, args: Record<string, unknown>) {
     const tickers = Array.isArray(args.tickers) ? args.tickers.map(String) : [];
     if (tickers.length === 0) throw new BadRequestException('tickers cannot be empty');
@@ -329,6 +332,7 @@ export class McpService {
     }));
   }
 
+  /** get_research_report：返回指定代码最新深度报告的摘要字段（无报告时 found:false）。 */
   private async toolGetResearchReport(ctx: McpSessionContext, args: Record<string, unknown>) {
     const ticker = String(args.ticker ?? '')
       .trim()
@@ -364,6 +368,7 @@ export class McpService {
     };
   }
 
+  /** place_paper_order：受控下单（只读会话拒绝、粗额度校验、经 paper-trading 风控与审批链）。 */
   private async toolPlaceOrder(ctx: McpSessionContext, args: Record<string, unknown>) {
     if (ctx.permission !== 'trade') {
       throw new ForbiddenException('This agent session is read-only and cannot place orders');
@@ -377,12 +382,11 @@ export class McpService {
     if (!Number.isFinite(quantity) || quantity <= 0)
       throw new BadRequestException('quantity must be a positive integer');
 
-    // Check the session's daily spending limit for today.
+    // 检查会话今日已用额度（买入方向）。
     const todaySpend = await this.todaySessionSpend(ctx.sessionId);
-    const notionalEstimate = quantity * 100; // Conservative lower bound; real check in placeOrder.
+    const notionalEstimate = quantity * 100; // 保守下界：真实检查在 placeOrder 内。
     if (side === 'buy' && todaySpend + notionalEstimate > ctx.dailyLimitUsd * 10) {
-      // The real notional check happens after we know the price; here we do
-      // an aggressive early sanity check against 10x the limit.
+      // 真实名义价值检查要等到拿到价格后（placeOrder 内）；这里先按日限额 10 倍做激进的提前护栏。
       throw new ForbiddenException(
         `今日该代理已使用的额度加上这笔预估已远超日限额 ${ctx.dailyLimitUsd} USD`,
       );
@@ -401,7 +405,7 @@ export class McpService {
       { sessionId: ctx.sessionId, agentName: ctx.name, approvalMode: ctx.approvalMode },
     );
 
-    // The placeOrder method returns the raw DB row; normalize for MCP.
+    // placeOrder 返回的是原始数据库行；此处归一化为 MCP 输出。
     return {
       orderId: order.id,
       ticker: order.ticker,
@@ -419,6 +423,7 @@ export class McpService {
     };
   }
 
+  /** list_orders：返回本会话属主最近的模拟盘订单（1–50 条，默认 10）。 */
   private async toolListOrders(ctx: McpSessionContext, args: Record<string, unknown>) {
     const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 50);
     const rows = await this.db
@@ -440,6 +445,7 @@ export class McpService {
     }));
   }
 
+  /** import_holdings：把提取的持仓行写入真实持仓记录（委托 ImportService.commit）。 */
   private async toolImportHoldings(ctx: McpSessionContext, args: Record<string, unknown>) {
     const rows = Array.isArray(args.rows) ? args.rows : [];
     if (rows.length === 0) throw new BadRequestException('rows cannot be empty');
@@ -458,10 +464,10 @@ export class McpService {
   }
 
   // ------------------------------------------------------------------
-  // Internals
+  // 内部工具
   // ------------------------------------------------------------------
 
-  /** Sum today's filled buy-order notional for a session (USD). */
+  /** 汇总某会话今日已成交买单的名义价值（美元，UTC 日界）。 */
   private async todaySessionSpend(sessionId: string): Promise<number> {
     const dayStart = new Date();
     dayStart.setUTCHours(0, 0, 0, 0);
@@ -477,6 +483,7 @@ export class McpService {
       }, 0);
   }
 
+  /** agentSessions 行 → API AgentSession DTO（token 仅在创建响应中透出）。 */
   private mapSession(row: typeof agentSessions.$inferSelect, token?: string): AgentSession {
     return {
       id: row.id,

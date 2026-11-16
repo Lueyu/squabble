@@ -1,10 +1,14 @@
 /**
- * Agent controller.
+ * agent.controller.ts — LLM 分析智能体的 REST 控制器。
  *
- * Exposes endpoints consumed by the LLM-driven analysis agent under `/api/agent`:
- * fetching the full portfolio state / history, saving daily analysis and holding
- * ratings, mutating the watchlist, saving journal entries and snapshots, and
- * reading/writing deep research reports and strategy rules. Requires login.
+ * 职责边界：
+ *  - 暴露 /api/agent 路由：读取完整持仓状态/历史、保存每日分析与持仓评级、自选增删、
+ *    保存交易日志与快照、读写深度研究报告与策略规则。全部委托给 AgentService。
+ * 上下游：
+ *  - 上游：LLM 分析智能体（Python 侧经工具调用访问）与前端页面。
+ *  - 下游：AgentService。
+ * 关键约定：
+ *  - 类级 @NeedLogin()：全部路由按 request.userContext.userId 做属主隔离。
  */
 import { Controller, Get, Post, Body, Req, Query } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
@@ -22,7 +26,7 @@ import type {
   Holding,
 } from '@shared/api.interface';
 
-/** Payload for saving a day's worth of analysis notes. */
+/** 保存某日分析笔记的载荷。 */
 interface DailyAnalysisDto {
   date: string;
   items: Array<{
@@ -36,7 +40,7 @@ interface DailyAnalysisDto {
   }>;
 }
 
-/** Payload for applying ratings/actions to existing holdings. */
+/** 批量应用持仓评级的载荷。 */
 interface HoldingRatingsDto {
   items: Array<{
     ticker: string;
@@ -47,18 +51,18 @@ interface HoldingRatingsDto {
   }>;
 }
 
-/** Payload for adding/upserting watchlist items. */
+/** 新增/更新自选条目的载荷。 */
 interface WatchItemsAddDto {
   items: Array<Omit<WatchItem, 'id' | 'dateAdded' | 'updatedAt'> & { dateAdded?: string }>;
 }
 
-/** Payload for removing watchlist items by ticker. */
+/** 按代码移除自选条目的载荷。 */
 interface WatchItemsRemoveDto {
   tickers: string[];
 }
 
 /**
- * REST controller for the agent. Delegates all work to `AgentService`.
+ * 智能体 REST 控制器，全部工作委托给 AgentService。
  */
 @NeedLogin()
 @Controller('api/agent')
@@ -66,11 +70,9 @@ export class AgentController {
   constructor(private readonly agentService: AgentService) {}
 
   /**
-   * Returns the full portfolio state (holdings, watchlist, groups, analysis,
-   * transactions, closed positions, journal, snapshots, alpha picks, cash) for the
-   * agent to reason over.
+   * GET /api/agent/state — 返回完整持仓状态（持仓、自选、分组、分析、交易、平仓、日志、快照、alpha picks、现金）（登录）。
    *
-   * @param req Authenticated request carrying `req.userContext.userId`.
+   * @param req 携带 req.userContext.userId 的已认证请求。
    */
   @Get('state')
   async getState(@Req() req: Request): Promise<AgentStateResponse> {
@@ -79,10 +81,9 @@ export class AgentController {
   }
 
   /**
-   * Returns recent history (analysis, transactions, snapshots, holdings) scoped to
-   * the last ~180 days where applicable.
+   * GET /api/agent/history — 返回近期历史（分析、交易、快照、持仓）， applicable 字段限最近约 180 天（登录）。
    *
-   * @param req Authenticated request.
+   * @param req 已认证请求。
    */
   @Get('history')
   async getHistory(@Req() req: Request): Promise<{
@@ -96,10 +97,10 @@ export class AgentController {
   }
 
   /**
-   * Saves a batch of analysis notes for a date (upserted per ticker).
+   * POST /api/agent/daily-analysis — 保存某日的分析笔记（逐代码 upsert）（登录）。
    *
-   * @param req  Authenticated request.
-   * @param dto  Day's analysis payload.
+   * @param req  已认证请求。
+   * @param dto  当日分析载荷。
    */
   @Post('daily-analysis')
   async saveDailyAnalysis(
@@ -111,10 +112,10 @@ export class AgentController {
   }
 
   /**
-   * Applies ratings/actions/targets to the user's existing holdings.
+   * POST /api/agent/holding-ratings — 把评级/操作/目标价应用到既有持仓（登录）。
    *
-   * @param req Authenticated request.
-   * @param dto Holdings ratings payload.
+   * @param req 已认证请求。
+   * @param dto 持仓评级载荷。
    */
   @Post('holding-ratings')
   async applyHoldingRatings(
@@ -126,10 +127,10 @@ export class AgentController {
   }
 
   /**
-   * Adds or updates watchlist items.
+   * POST /api/agent/watch-items/add — 新增或更新自选条目（登录）。
    *
-   * @param req Authenticated request.
-   * @param dto Watchlist items payload.
+   * @param req 已认证请求。
+   * @param dto 自选条目载荷。
    */
   @Post('watch-items/add')
   async addWatchItems(
@@ -141,10 +142,10 @@ export class AgentController {
   }
 
   /**
-   * Removes watchlist items by ticker.
+   * POST /api/agent/watch-items/remove — 按代码移除自选条目（登录）。
    *
-   * @param req Authenticated request.
-   * @param dto Tickers to remove.
+   * @param req 已认证请求。
+   * @param dto 待移除代码列表。
    */
   @Post('watch-items/remove')
   async removeWatchItems(
@@ -156,10 +157,10 @@ export class AgentController {
   }
 
   /**
-   * Creates or updates the journal entry for a date.
+   * POST /api/agent/journal — 创建或更新某日交易日志（登录）。
    *
-   * @param req Authenticated request.
-   * @param dto Journal payload.
+   * @param req 已认证请求。
+   * @param dto 日志载荷。
    */
   @Post('journal')
   async saveJournal(@Req() req: Request, @Body() dto: CreateJournalDto): Promise<JournalEntry> {
@@ -168,9 +169,9 @@ export class AgentController {
   }
 
   /**
-   * Returns all journal entries, newest first.
+   * GET /api/agent/journal — 返回全部交易日志，最新在前（登录）。
    *
-   * @param req Authenticated request.
+   * @param req 已认证请求。
    */
   @Get('journal')
   async getJournal(@Req() req: Request): Promise<JournalEntry[]> {
@@ -179,10 +180,10 @@ export class AgentController {
   }
 
   /**
-   * Creates or updates the snapshot for a date (delegated to SnapshotsService).
+   * POST /api/agent/snapshot — 创建或更新某日快照（委托 SnapshotsService）（登录）。
    *
-   * @param req Authenticated request.
-   * @param dto Snapshot payload.
+   * @param req 已认证请求。
+   * @param dto 快照载荷。
    */
   @Post('snapshot')
   async saveSnapshot(@Req() req: Request, @Body() dto: CreateSnapshotDto): Promise<Snapshot> {
@@ -191,9 +192,9 @@ export class AgentController {
   }
 
   /**
-   * Returns up to 365 snapshots, newest first.
+   * GET /api/agent/snapshots — 返回最多 365 条快照，最新在前（登录）。
    *
-   * @param req Authenticated request.
+   * @param req 已认证请求。
    */
   @Get('snapshots')
   async getSnapshots(@Req() req: Request): Promise<Snapshot[]> {
@@ -202,10 +203,10 @@ export class AgentController {
   }
 
   /**
-   * Saves a deep research report (creates a new agent run to preserve history).
+   * POST /api/agent/deep-report — 保存深度研究报告（新建 agent run 保留历史）（登录）。
    *
-   * @param req  Authenticated request.
-   * @param body Deep report fields.
+   * @param req  已认证请求。
+   * @param body 深度报告字段。
    */
   @Post('deep-report')
   async saveDeepReport(
@@ -220,9 +221,9 @@ export class AgentController {
   }
 
   /**
-   * Returns the user's strategy rules.
+   * GET /api/agent/strategy-rules — 返回用户的策略规则（登录）。
    *
-   * @param req Authenticated request.
+   * @param req 已认证请求。
    */
   @Get('strategy-rules')
   async getStrategyRules(@Req() req: Request) {
@@ -231,10 +232,10 @@ export class AgentController {
   }
 
   /**
-   * Returns the latest completed deep report for a ticker.
+   * GET /api/agent/deep-report/latest?ticker= — 返回某代码最近一次完成的深度报告（登录）。
    *
-   * @param req    Authenticated request.
-   * @param ticker Target ticker.
+   * @param req    已认证请求。
+   * @param ticker 目标代码。
    */
   @Get('deep-report/latest')
   async getLatestDeepReport(@Req() req: Request, @Query('ticker') ticker: string) {
@@ -243,9 +244,9 @@ export class AgentController {
   }
 
   /**
-   * Lists the user's completed deep reports, newest first.
+   * GET /api/agent/deep-reports — 列出用户已完成的深度报告，最新在前（登录）。
    *
-   * @param req Authenticated request.
+   * @param req 已认证请求。
    */
   @Get('deep-reports')
   async listDeepReports(@Req() req: Request) {

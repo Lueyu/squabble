@@ -1,3 +1,15 @@
+/**
+ * council.context.ts — 委员会成员单轮调用的上下文打包。
+ *
+ * 职责边界：
+ *  - 把 candidate、成员个性化、投资者指令、历史讨论与证据摘录打包成 JSON，按 token 预算分档降级。
+ *  - 不做模型调用；打包结果交给 LlmService 发送。
+ * 上下游：
+ *  - 上游：council.service（runMember）。
+ *  - 下游：council.rules（evidenceExcerpts/criticalEvidenceGaps）、council.dialogue（conversationExcerpt）、llm-budget.rules（estimateInputTokens）。
+ * 关键约定：
+ *  - 预算档位共 5 档（profiles），从高到低降级，直到估算输入 ≤4900 token；留出 LlmService 严格 JSON 指令的余量。
+ */
 import type { BuilderConfig } from '@shared/api.interface';
 import type { CouncilCandidate, CouncilMember, CouncilMessage } from '@shared/council.interface';
 import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
@@ -31,7 +43,7 @@ interface ContextInput {
   systemPrompt: string;
 }
 
-/** Latest user text is never silently truncated; older context is explicitly excerpted. */
+/** 最新一条用户发言绝不静默截断；更早的上下文按档位显式摘录。 */
 export function packDiscussionContext(input: ContextInput) {
   const profiles = [
     { evidence: 2100, dialogue: 1100, history: 3, custom: 360, personality: 120, gaps: 160 },
@@ -90,7 +102,7 @@ export function packDiscussionContext(input: ContextInput) {
   let data = make(profiles[0]);
   for (const profile of profiles) {
     data = make(profile);
-    // Leave space for LlmService's strict-JSON instruction and provider framing.
+    // 为 LlmService 的严格 JSON 指令与 provider 包装预留 token 空间。
     if (
       estimateInputTokens([
         { role: 'system', content: input.systemPrompt },
@@ -99,6 +111,6 @@ export function packDiscussionContext(input: ContextInput) {
     )
       break;
   }
-  // Truly oversized latest user text still fails at the central, configurable budget gate.
+  // 真正超长的最新用户发言仍会在中央可配置的预算闸门处失败。
   return data;
 }

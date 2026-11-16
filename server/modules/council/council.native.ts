@@ -1,9 +1,28 @@
+/**
+ * council.native.ts — 本地智能体成员的任务书生成与结果归一化。
+ *
+ * 职责边界：
+ *  - agentAssignment：生成本地智能体的任务书（prompt 模板 + 输入 JSON）。
+ *  - agentContribution：解析本地智能体返回，校验来源 URL，产出可入库的发言与“未核验”来源证据。
+ *  - agentErrorMessage：LOCAL_* 错误码 → 双语用户文案。
+ * 上下游：
+ *  - 上游：council.service（runAgentMember）。
+ *  - 下游：council.dialogue（parseContribution）。
+ * 关键约定：
+ *  - 来源 URL 仅允许 http(s)、不得携带凭据、长度 ≤2048；来源标题标注“未独立核验”。
+ *  - 输入截断：最近 18 条消息、每条 4000 字符；证据 20 条、每条 1500 字符；来源 ≤12 条、每条 2000 字符。
+ */
 import { randomUUID } from 'node:crypto';
 import type { CouncilCandidate, CouncilMember } from '@shared/council.interface';
 import { parseContribution } from './council.dialogue';
 import type { CouncilEvidence } from './council.rules';
 import type { DialogueTurn } from './council.types';
 
+/**
+ * 本地智能体的任务书模板（prompt，内容不得改动）。
+ * 插值点：input JSON（ticker/language/member/turn/candidate/messages/evidence）；
+ * 截断规则：messages 取最近 18 条（每条 4000 字符），evidence 取前 20 条（每条 1500 字符）。
+ */
 export function agentAssignment(input: {
   ticker: string;
   language: string;
@@ -34,6 +53,7 @@ export function agentAssignment(input: {
   ].join('\n');
 }
 
+/** 归一化本地智能体返回：解析 JSON（可容忍代码围栏/纯文本），校验来源 URL 后产出发言与来源证据。 */
 export function agentContribution(
   result: { data?: unknown; text: string },
   evidence: CouncilEvidence[],
@@ -46,7 +66,7 @@ export function agentContribution(
     try {
       value = JSON.parse(result.text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, ''));
     } catch {
-      /* Plain-text agents can still contribute. */
+      /* 纯文本输出的智能体也能贡献内容。 */
     }
   const data =
     value && typeof value === 'object' && !Array.isArray(value)
@@ -84,7 +104,7 @@ export function agentContribution(
           fetchedAt: new Date().toISOString(),
         });
       } catch {
-        /* Invalid source URLs are not published. */
+        /* 无效来源 URL 一律不发布。 */
       }
     }
   const known = new Set(evidence.map((item) => item.id));
@@ -112,6 +132,7 @@ export function agentContribution(
   return { contribution, sources };
 }
 
+/** LOCAL_* 错误码 → 双语用户文案表（未匹配时回退为通用的“本地 Agent 暂时不可用”）。 */
 export function agentErrorMessage(code: string, language: string): string {
   const messages: Record<string, [string, string]> = {
     LOCAL_TOOL_ISOLATION_FAILED: [

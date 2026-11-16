@@ -1,3 +1,16 @@
+/**
+ * council.dialogue.ts — 委员会多轮讨论的提示词模板与发言解析。
+ *
+ * 职责边界：
+ *  - 生成讨论轮次计划（newCheckpoint）与每轮系统提示词（discussionPrompt）。
+ *  - 解析成员发言（parseContribution）与对话摘录（conversationExcerpt）。
+ *  - 不做模型调用与数据库访问（由 council.service 编排）。
+ * 上下游：
+ *  - 上游：council.service、council.native（agentContribution 复用 parseContribution）。
+ *  - 下游：council.rules（parseOpinion/byteExcerpt）、council.types。
+ * 关键约定：
+ *  - 发言正文上限 6000 字符（入库时截断到 3000）；引用证据必须来自快照；研究请求每轮 ≤2 条。
+ */
 import { randomUUID } from 'node:crypto';
 import type {
   CouncilCandidate,
@@ -14,6 +27,7 @@ import {
 } from './council.rules';
 import type { CouncilCheckpoint, DialogueTurn, ResearchRequest } from './council.types';
 
+/** 单位成员发言的解析结果：正文、引用证据、公开理由、问题、资料请求与（总结阶段的）结论。 */
 export interface DiscussionContribution {
   content: string;
   evidenceIds: string[];
@@ -24,6 +38,7 @@ export interface DiscussionContribution {
   researchStance: CouncilReport['researchStance'];
 }
 
+/** 生成讨论轮次计划：开场→质疑→回应→总结；两人团队时主持人（manager）兼独立质疑角色。 */
 export function newCheckpoint(members: CouncilMember[]): CouncilCheckpoint {
   const reviewers = members.filter((member) => member.role !== 'manager');
   const manager = members.find((member) => member.role === 'manager');
@@ -33,7 +48,7 @@ export function newCheckpoint(members: CouncilMember[]): CouncilCheckpoint {
     memberId: member.id,
     phase: index === 0 ? 'opening' : 'challenge',
   }));
-  // With only two people the moderator also asks the independent challenge.
+  // 只有两人时，主持人（manager）同时承担独立质疑角色。
   if (reviewers.length === 1) turns.push({ memberId: manager.id, phase: 'challenge' });
   turns.push(
     { memberId: reviewers[0].id, phase: 'response' },
@@ -42,6 +57,10 @@ export function newCheckpoint(members: CouncilMember[]): CouncilCheckpoint {
   return { cycleId: randomUUID(), turns, nextTurn: 0, toolKindsUsed: [], pendingResearch: [] };
 }
 
+/**
+ * 讨论轮次的系统提示词模板（LLM prompt，内容不得改动）。
+ * 插值点：turn.phase（开场/质疑/回应/总结）、language（输出语言）、hasCandidate（是否有 candidate）。
+ */
 export function discussionPrompt(
   turn: DialogueTurn,
   language: 'zh-CN' | 'en',
@@ -75,6 +94,7 @@ export function discussionPrompt(
   ].join('\n');
 }
 
+/** 解析并校验成员发言 JSON：禁止改 candidate、正文 1–6000 字符、引用证据必须来自快照、研究请求 ≤2 条。 */
 export function parseContribution(
   value: unknown,
   validIds: Set<string>,
@@ -86,6 +106,7 @@ export function parseContribution(
   const data = value as Record<string, unknown>;
   if (['quantity', 'side', 'candidate', 'price', 'ticker'].some((key) => key in data))
     throw new Error('Council members cannot change a candidate');
+  // 正文兼容 content/summary 两个返回字段。
   const content =
     typeof data.content === 'string'
       ? data.content.trim()
@@ -100,6 +121,7 @@ export function parseContribution(
     data.evidenceIds.some((id) => typeof id !== 'string' || !validIds.has(id))
   )
     throw new Error('Discussion cites evidence outside the snapshot');
+  // 字符串数组字段的通用清洗：去非字符串、限量、截断到 500 字符。
   const strings = (raw: unknown, count: number): string[] =>
     Array.isArray(raw)
       ? raw
@@ -108,6 +130,7 @@ export function parseContribution(
           .map((item) => item.trim().slice(0, 500))
           .filter(Boolean)
       : [];
+  // 研究请求：每轮最多 2 条，类别必须在允许清单内。
   const kinds: CouncilResearchKind[] = ['financials', 'valuation', 'news', 'price', 'web'];
   const researchRequests: ResearchRequest[] = [];
   if (Array.isArray(data.researchRequests))
@@ -122,6 +145,7 @@ export function parseContribution(
   const stance = ['positive', 'balanced', 'cautious'].includes(String(data.researchStance))
     ? (data.researchStance as NonNullable<CouncilReport['researchStance']>)
     : 'balanced';
+  // 总结阶段产出结论：有 candidate 时按正式结论解析，否则记录研究立场。
   const opinion =
     turn.phase === 'summary'
       ? candidate
@@ -148,6 +172,7 @@ export function parseContribution(
   };
 }
 
+/** 依据来源与研究线索推断证据的研究类别（financials/valuation/news/price）。 */
 export function evidenceKind(item: CouncilEvidence): CouncilResearchKind | undefined {
   if (item.researchKind) return item.researchKind;
   if (item.role === 'news') return 'news';
@@ -157,7 +182,7 @@ export function evidenceKind(item: CouncilEvidence): CouncilResearchKind | undef
   return undefined;
 }
 
-/** Keep a recent direct response intact enough to argue with, plus bounded older context. */
+/** 保留最近一条直接回复使其足够完整可被反驳，其余旧上下文按字节预算截断。 */
 export function conversationExcerpt(
   messages: Array<{
     id: string;

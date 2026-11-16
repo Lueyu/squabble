@@ -9,6 +9,20 @@
  * (each tied to an `agentRuns` row to preserve historical versions). All reads
  * and writes are owner-scoped.
  */
+/**
+ * agent.service.ts — LLM 分析智能体的后端数据服务。
+ *
+ * 职责边界：
+ *  - 聚合用户全部持仓状态（holdings、自选、分组、分析、交易、平仓、日志、快照、alpha picks、现金）为单一 payload。
+ *  - 持久化智能体驱动的写入：每日分析、持仓评级、自选增删、交易日志、快照、深度研究报告（每次落一条 agentRuns 保留历史版本）。
+ *  - 全部读写按属主（owner）隔离；不做鉴权（由控制器层完成）。
+ * 上下游：
+ *  - 上游：AgentController（/api/agent 路由）。
+ *  - 下游：Drizzle 数据库（@server/database/schema）、SnapshotsService（快照 upsert/list）。
+ * 关键约定：
+ *  - deepReport 以 runId 冲突目标 upsert；报告代码校验正则 ^[A-Z0-9.]{1,20}$ 且拒绝含 TESTDEEP 的代码。
+ *  - 报告日期默认取上海时区（UTC+8）的当天。
+ */
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and, desc, gte, inArray, ne, notIlike } from 'drizzle-orm';
@@ -46,7 +60,7 @@ import type {
 } from '@shared/api.interface';
 import { SnapshotsService } from '../snapshots/snapshots.service';
 
-/** A single analysis item within a daily-analysis payload. */
+/** 单条每日分析条目。 */
 interface AnalysisItemDto {
   ticker: string;
   rating?: string;
@@ -57,13 +71,13 @@ interface AnalysisItemDto {
   risks?: string;
 }
 
-/** Payload for saving a day's analysis notes. */
+/** 保存某日分析笔记的载荷。 */
 interface DailyAnalysisDto {
   date: string;
   items: AnalysisItemDto[];
 }
 
-/** A single holding-rating update item. */
+/** 单条持仓评级更新项。 */
 interface HoldingRatingItem {
   ticker: string;
   rating?: string;
@@ -72,24 +86,23 @@ interface HoldingRatingItem {
   targetPrice?: number;
 }
 
-/** Payload for applying ratings to holdings. */
+/** 批量应用持仓评级的载荷。 */
 interface HoldingRatingsDto {
   items: HoldingRatingItem[];
 }
 
-/** Payload for adding/upserting watchlist items. */
+/** 新增/更新自选条目的载荷。 */
 interface WatchItemAddDto {
   items: Array<Omit<WatchItem, 'id' | 'dateAdded' | 'updatedAt'> & { dateAdded?: string }>;
 }
 
-/** Payload for removing watchlist items by ticker. */
+/** 按代码移除自选条目的载荷。 */
 interface WatchItemRemoveDto {
   tickers: string[];
 }
 
 /**
- * Provides portfolio aggregation and agent-driven writes. Depends on the Drizzle
- * database and `SnapshotsService` (for snapshot upsert/list).
+ * 提供投资组合聚合与智能体驱动的写入。依赖 Drizzle 数据库与 SnapshotsService（快照 upsert/list）。
  */
 @Injectable()
 export class AgentService {
@@ -101,12 +114,12 @@ export class AgentService {
   ) {}
 
   /**
-   * Builds the full portfolio state for the agent: loads all owner-scoped tables
-   * in parallel and maps them to API DTOs.
+   * 组装智能体所需的完整持仓状态：并行读取全部属主数据表并映射为 API DTO。
    *
-   * @param userId Owner id.
+   * @param userId 属主 id。
    */
   async getState(userId: string): Promise<AgentStateResponse> {
+    // 并行读取全部属主数据表。
     const [
       holdingRows,
       watchRows,
@@ -160,6 +173,7 @@ export class AgentService {
 
     const usdCash = cashAccountsList.find((c) => c.currency === 'USD')?.balance ?? '0';
 
+    // 逐表映射为 API DTO；USD 现金余额单列。
     return {
       holdings: holdingRows.map((row) => this.mapHolding(row)),
       watchlist: watchRows.map((row) => this.mapWatchItem(row)),
@@ -176,10 +190,9 @@ export class AgentService {
   }
 
   /**
-   * Returns recent history for the agent: analysis and snapshots from the last 180
-   * days, all transactions, and all holdings.
+   * 返回智能体可用的近期历史：近 180 天的分析与快照、全部交易、全部持仓。
    *
-   * @param userId Owner id.
+   * @param userId 属主 id。
    */
   async getHistory(userId: string): Promise<{
     analysis: Analysis[];
@@ -219,11 +232,10 @@ export class AgentService {
   }
 
   /**
-   * Saves a batch of analysis notes for a date, upserting each ticker on
-   * (owner, date, ticker).
+   * 保存某日的分析笔记：按（owner, date, ticker）逐条 upsert。
    *
-   * @param userId Owner id.
-   * @param dto    Day's analysis payload.
+   * @param userId 属主 id。
+   * @param dto    当日分析载荷。
    */
   async saveDailyAnalysis(userId: string, dto: DailyAnalysisDto): Promise<{ saved: number }> {
     let saved = 0;
@@ -262,11 +274,10 @@ export class AgentService {
   }
 
   /**
-   * Applies ratings/actions/targets to the user's existing holdings. Items with
-   * no updatable fields, or matching no holding, are skipped.
+   * 把评级/操作/目标价应用到既有持仓。无可更新字段或未匹配到持仓的条目计为 skipped。
    *
-   * @param userId Owner id.
-   * @param dto    Holdings ratings payload.
+   * @param userId 属主 id。
+   * @param dto    持仓评级载荷。
    */
   async applyHoldingRatings(
     userId: string,
@@ -307,11 +318,10 @@ export class AgentService {
   }
 
   /**
-   * Adds or updates watchlist items. Existing tickers are patched; new ones are
-   * inserted (dateAdded defaults to today).
+   * 新增或更新自选条目：已有代码做 patch 更新，新代码插入（dateAdded 默认当天）。
    *
-   * @param userId Owner id.
-   * @param dto    Watchlist items payload.
+   * @param userId 属主 id。
+   * @param dto    自选条目载荷。
    */
   async addWatchItems(
     userId: string,
@@ -368,10 +378,10 @@ export class AgentService {
   }
 
   /**
-   * Removes owned watchlist items by ticker.
+   * 按代码移除属主的自选条目。
    *
-   * @param userId Owner id.
-   * @param dto    Tickers to remove.
+   * @param userId 属主 id。
+   * @param dto    待移除代码列表。
    */
   async removeWatchItems(userId: string, dto: WatchItemRemoveDto): Promise<{ removed: number }> {
     if (dto.tickers.length === 0) return { removed: 0 };
@@ -385,11 +395,10 @@ export class AgentService {
   }
 
   /**
-   * Creates or updates (upserts) the journal entry for a date on
-   * (owner, journalDate).
+   * 创建或更新（upsert）某日的交易日志，冲突目标为（owner, journalDate）。
    *
-   * @param userId Owner id.
-   * @param dto    Journal payload.
+   * @param userId 属主 id。
+   * @param dto    日志载荷。
    */
   async saveJournal(userId: string, dto: CreateJournalDto): Promise<JournalEntry> {
     const rows = await this.db
@@ -421,9 +430,9 @@ export class AgentService {
   }
 
   /**
-   * Returns all journal entries for the user, newest first.
+   * 返回全部交易日志，最新在前。
    *
-   * @param userId Owner id.
+   * @param userId 属主 id。
    */
   async getJournal(userId: string): Promise<JournalEntry[]> {
     const rows = await this.db
@@ -436,20 +445,19 @@ export class AgentService {
   }
 
   /**
-   * Creates or updates the snapshot for a date (delegated to SnapshotsService,
-   * which also recomputes net deposits and daily P&L).
+   * 创建或更新某日快照（委托 SnapshotsService，同时重算净入金与当日盈亏）。
    *
-   * @param userId Owner id.
-   * @param dto    Snapshot payload.
+   * @param userId 属主 id。
+   * @param dto    快照载荷。
    */
   async saveSnapshot(userId: string, dto: CreateSnapshotDto): Promise<Snapshot> {
     return this.snapshotsService.upsert(userId, dto);
   }
 
   /**
-   * Returns up to 365 snapshots, newest first.
+   * 返回最多 365 条快照，最新在前。
    *
-   * @param userId Owner id.
+   * @param userId 属主 id。
    */
   async getSnapshots(userId: string): Promise<Snapshot[]> {
     const result = await this.snapshotsService.list(userId, 365);
@@ -457,13 +465,12 @@ export class AgentService {
   }
 
   /**
-   * Saves a deep research report. Validates the ticker (rejects malformed or
-   * TESTDEEP tickers), always creates a new `agentRuns` row to preserve historical
-   * versions, then upserts the `deepReport` row keyed by runId.
+   * 保存深度研究报告：校验代码（拒绝非法或 TESTDEEP 代码），每次新建 agentRuns 行保留历史版本，
+   * 再按 runId upsert deepReport 行。
    *
-   * @param userId Owner id.
-   * @param input  Deep report fields (without id/runId timestamps).
-   * @throws BadRequestException if the ticker is invalid.
+   * @param userId 属主 id。
+   * @param input  深度报告字段（不含 id/runId/时间戳）。
+   * @throws BadRequestException 代码非法时抛出。
    */
   async saveDeepReport(
     userId: string,
@@ -482,7 +489,7 @@ export class AgentService {
     const inputExtra = input as unknown as { tickerName?: string; companyName?: string };
     const tickerName = inputExtra.tickerName ?? inputExtra.companyName ?? null;
 
-    // Always create a new agent run to preserve historical versions
+    // 每次保存都新建 agent run，保留历史版本
     const [inserted] = await this.db
       .insert(agentRuns)
       .values({
@@ -498,7 +505,7 @@ export class AgentService {
       .returning({ id: agentRuns.id });
     const runId = inserted.id;
 
-    // Upsert deep report by run_id
+    // 按 run_id upsert 深度报告
     const deepValues = {
       runId,
       ticker,
@@ -626,9 +633,9 @@ export class AgentService {
   }
 
   /**
-   * Returns the user's strategy rules, ordered by sort then rule key.
+   * 返回用户的策略规则，按 sort 与 ruleKey 排序。
    *
-   * @param userId Owner id.
+   * @param userId 属主 id。
    */
   async getStrategyRules(userId: string): Promise<StrategyRule[]> {
     const rows = await this.db
@@ -655,11 +662,10 @@ export class AgentService {
   }
 
   /**
-   * Returns the latest completed full deep report for a ticker (excluding test
-   * runs), joined from agentRuns + deepReport.
+   * 返回某代码最近一次完成的 full 深度报告（排除测试运行），agentRuns + deepReport 联表查询。
    *
-   * @param userId Owner id.
-   * @param ticker Target ticker.
+   * @param userId 属主 id。
+   * @param ticker 目标代码。
    */
   async getLatestDeepReport(
     userId: string,
@@ -717,10 +723,9 @@ export class AgentService {
   }
 
   /**
-   * Lists the user's completed full deep reports, newest first (excluding test
-   * runs).
+   * 列出用户已完成的 full 深度报告，最新在前（排除测试运行）。
    *
-   * @param userId Owner id.
+   * @param userId 属主 id。
    */
   async listDeepReports(userId: string): Promise<
     Array<{
@@ -778,8 +783,7 @@ export class AgentService {
   }
 
   /**
-   * Returns today's date (YYYY-MM-DD) in the Shanghai (UTC+8) timezone, used as
-   * the default report date.
+   * 返回上海时区（UTC+8）的当天日期（YYYY-MM-DD），作为默认报告日期。
    */
   private getTodayInShanghai(): string {
     const now = new Date();
@@ -787,7 +791,7 @@ export class AgentService {
     return shanghaiTime.toISOString().slice(0, 10);
   }
 
-  /** Maps a raw holdings row to the API `Holding` DTO. */
+  /** 数据库 holdings 行 → API Holding DTO。 */
   private mapHolding(row: typeof holdings.$inferSelect): Holding {
     return {
       id: row.id,
@@ -811,7 +815,7 @@ export class AgentService {
     };
   }
 
-  /** Maps a raw watchlist row to the API `WatchItem` DTO. */
+  /** 数据库 watchlist 行 → API WatchItem DTO。 */
   private mapWatchItem(row: typeof watchlist.$inferSelect): WatchItem {
     return {
       id: row.id,
@@ -831,7 +835,7 @@ export class AgentService {
     };
   }
 
-  /** Maps a raw groups row to the API `Group` DTO. */
+  /** 数据库 groups 行 → API Group DTO。 */
   private mapGroup(row: typeof groups.$inferSelect): Group {
     return {
       id: row.id,
@@ -841,7 +845,7 @@ export class AgentService {
     };
   }
 
-  /** Maps a raw analysis row to the API `Analysis` DTO. */
+  /** 数据库 analysis 行 → API Analysis DTO。 */
   private mapAnalysis(row: typeof analysis.$inferSelect): Analysis {
     return {
       id: row.id,
@@ -857,7 +861,7 @@ export class AgentService {
     };
   }
 
-  /** Maps a raw transactions row to the API `Transaction` DTO. */
+  /** 数据库 transactions 行 → API Transaction DTO。 */
   private mapTransaction(row: typeof transactions.$inferSelect): Transaction {
     return {
       id: row.id,
@@ -872,7 +876,7 @@ export class AgentService {
     };
   }
 
-  /** Maps a raw closed-positions row to the API `ClosedPosition` DTO. */
+  /** 数据库 closed 行 → API ClosedPosition DTO。 */
   private mapClosed(row: typeof closed.$inferSelect): ClosedPosition {
     return {
       id: row.id,
@@ -889,7 +893,7 @@ export class AgentService {
     };
   }
 
-  /** Maps a raw journal row to the API `JournalEntry` DTO. */
+  /** 数据库 journal 行 → API JournalEntry DTO。 */
   private mapJournal(row: typeof journal.$inferSelect): JournalEntry {
     return {
       id: row.id,
@@ -903,7 +907,7 @@ export class AgentService {
     };
   }
 
-  /** Maps a raw snapshots row to the API `Snapshot` DTO. */
+  /** 数据库 snapshots 行 → API Snapshot DTO。 */
   private mapSnapshot(row: typeof snapshots.$inferSelect): Snapshot {
     const dateStr =
       typeof row.snapshotDate === 'string'
@@ -925,7 +929,7 @@ export class AgentService {
     };
   }
 
-  /** Maps a raw alpha-picks row to the API `AlphaPick` DTO. */
+  /** 数据库 alphaPicks 行 → API AlphaPick DTO。 */
   private mapAlphaPick(row: typeof alphaPicks.$inferSelect): AlphaPick {
     return {
       id: row.id,

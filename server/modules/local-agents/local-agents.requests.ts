@@ -1,3 +1,17 @@
+/**
+ * local-agents.requests.ts — 本地智能体对外输入的 zod 校验与解析。
+ *
+ * 职责边界：
+ *  - 原生智能体配置（model/reasoningEffort）的解析与运行时校验。
+ *  - companion 协议载荷：配对请求、研究工具调用/取消、心跳轮询（poll）。
+ *  - 从 `${mode}-${provider}` 形态的 id 解析 provider。
+ * 上下游：
+ *  - 上游：LocalAgentsService、CompanionController、LocalAgentStore。
+ *  - 下游：local-agents.types（LocalAgentError）、shared/local-agent-catalog。
+ * 关键约定：
+ *  - 研究工具 arguments 序列化后 ≤4096 字节；callId 匹配 [A-Za-z0-9_.:-]{1,128}；工具名匹配 [a-z_]{1,80}。
+ *  - 配对码为 48 位十六进制；心跳中任务更新 ≤16 条、活动事件 ≤64 条、结果文本 ≤512KB。
+ */
 import { z } from 'zod';
 import {
   LOCAL_AGENT_PROVIDERS,
@@ -28,6 +42,7 @@ const configuration = z
     reasoningEffort: configurationText(32).optional(),
   })
   .strict();
+/** 解析原生智能体配置；字段超长/含控制字符/空值时抛 LOCAL_INVALID_CONFIGURATION。 */
 export function parseNativeAgentConfiguration(
   input: unknown,
 ): NativeAgentConfiguration | undefined {
@@ -36,14 +51,15 @@ export function parseNativeAgentConfiguration(
   if (!result.success) throw new LocalAgentError('LOCAL_INVALID_CONFIGURATION');
   return result.data.model || result.data.reasoningEffort ? result.data : undefined;
 }
+/** 校验配置与智能体实际能力匹配：模型必须在 models 列表中、reasoningEffort 必须被支持。 */
 export function validateNativeAgentConfiguration(
   input: unknown,
   status?: NativeAgentStatus,
 ): NativeAgentConfiguration | undefined {
   const settings = parseNativeAgentConfiguration(input);
   if (!settings) return undefined;
-  // Presence of the model list advertises manual model overrides; an empty list
-  // means discovery found no suggestions, not that all model identifiers are invalid.
+  // models 列表存在即表示支持手动覆盖模型；空列表表示探测未发现任何建议，
+  // 并不代表所有模型标识都无效。
   const efforts =
     status?.models?.find((model) => model.id === settings.model)?.reasoningEfforts ??
     status?.reasoningEfforts;
@@ -55,9 +71,11 @@ export function validateNativeAgentConfiguration(
   }
   return settings;
 }
+/** companion 配对请求：48 位十六进制配对码 + 设备名（1–80 字符）。 */
 export const pairRequest = z
   .object({ code: z.string().regex(/^[a-f0-9]{48}$/u), name: z.string().trim().min(1).max(80) })
   .strict();
+/** companion 研究工具调用请求：taskId/callId/name/arguments（序列化后 ≤4096 字节）。 */
 export const researchToolRequest = z
   .object({
     taskId: z.string().uuid(),
@@ -68,6 +86,7 @@ export const researchToolRequest = z
       .refine((value) => Buffer.byteLength(JSON.stringify(value)) <= 4096),
   })
   .strict();
+/** companion 研究工具取消请求（taskId + callId）。 */
 export const researchToolCancelRequest = researchToolRequest.pick({ taskId: true, callId: true });
 const activity = z
   .object({
@@ -167,6 +186,7 @@ const pollRequest = z
       .max(16),
   })
   .strict();
+/** companion 心跳轮询载荷：智能体状态上报（≤provider 数）+ 任务更新（≤16 条），provider 不得重复。 */
 export function parseCompanionPoll(input: unknown): CompanionPoll {
   const value = pollRequest.parse(input);
   if (new Set(value.agents.map((agent) => agent.provider)).size !== value.agents.length)
@@ -176,6 +196,7 @@ export function parseCompanionPoll(input: unknown): CompanionPoll {
     agents: value.agents.map((agent) => ({ ...providerCatalog[agent.provider], ...agent })),
   };
 }
+/** 从 `${mode}-${provider}` 形态的 id 解析 provider；格式不符抛 LOCAL_AGENT_NOT_FOUND。 */
 export function providerFromId(id: string, mode: 'native' | 'companion'): LocalAgentProvider {
   const parsed = provider.safeParse(
     id.startsWith(`${mode}-`) ? id.slice(mode.length + 1) : undefined,

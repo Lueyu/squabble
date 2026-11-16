@@ -1,3 +1,20 @@
+/**
+ * council.service.ts — 研究委员会（Council）会话编排服务。
+ *
+ * 职责边界：
+ *  - 管理 council 会话生命周期：创建/查询/发言/运行/暂停，落库于 councilSessions、councilMessages、councilReports。
+ *  - 驱动固定轮次的讨论循环：外部模型成员走 LlmService，本地助手成员走 LocalAgentsService，资料检索走 EvidenceService。
+ *  - 负责 candidate 复核（reviewCandidate）与审批判定；不管订单执行本身（由 paper-trading 侧处理）。
+ * 上下游：
+ *  - 上游：CouncilController 路由；paper-trading 编排通过 reviewCandidate 发起 candidate 复核。
+ *  - 下游：council.rules（成员/证据规则）、council.dialogue（提示词与贡献解析）、council.context（上下文打包）、
+ *    council.native（本地智能体任务书）、LlmService、EvidenceService、MultiAgentService、LocalAgentsService、LlmBudgetService。
+ * 关键约定：
+ *  - 单轮模型调用：maxOutputTokens=900、timeoutMs=120_000、retryPolicy='none'（见 runMember 的 options）。
+ *  - 会话内任务预算跨恢复与用户修订保留；恢复不重放已完成轮次。
+ *  - 每轮资料检索最多 2 类、每类只查一次；web 类需 profile 开启 webResearch。
+ *  - 主循环最多 12 次 attempt；证据快照采集上限 40 条，成员自带来源追加后保留最近 60 条。
+ */
 import {
   BadRequestException,
   Inject,
@@ -89,7 +106,7 @@ export class CouncilService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // Recovery changes lifecycle only. It never resumes model calls or touches order execution.
+    // 恢复流程只改变会话生命周期：既不恢复模型调用，也不触碰订单执行。
     await this.db
       .update(councilSessions)
       .set({
@@ -102,6 +119,7 @@ export class CouncilService implements OnModuleInit {
       .where(eq(councilSessions.status, 'running'));
   }
 
+  /** 列出当前用户最近 50 个委员会会话，按更新时间倒序。 */
   async listSessions(userId: string): Promise<CouncilSession[]> {
     const rows = await this.db
       .select()
@@ -112,6 +130,10 @@ export class CouncilService implements OnModuleInit {
     return Promise.all(rows.map((row) => this.hydrate(userId, row)));
   }
 
+  /**
+   * 创建委员会会话：校验代码/语言/成员配置，套用或新建 agent 档案，随后落库。
+   * @throws BadRequestException 输入非法、研究团队配置无效或成员校验失败。
+   */
   async createSession(userId: string, input: CreateCouncilSession): Promise<CouncilSession> {
     if (!input || typeof input !== 'object')
       throw new BadRequestException('Council input is required');
@@ -155,10 +177,15 @@ export class CouncilService implements OnModuleInit {
     return this.hydrate(userId, row);
   }
 
+  /** 读取单个委员会会话（含消息、报告与进度）。 */
   async getSession(userId: string, id: string): Promise<CouncilSession> {
     return this.hydrate(userId, await this.requireSession(userId, id));
   }
 
+  /**
+   * 追加一条用户发言：事务内锁定会话、校验 30 条用户消息上限并推进 revision。
+   * 失败/暂停会话保留原状态与错误信息，其余会话回到 idle。
+   */
   async addMessage(userId: string, id: string, content: unknown): Promise<CouncilSession> {
     this.assertId(id);
     if (typeof content !== 'string' || !content.trim() || content.trim().length > 2000) {
@@ -184,17 +211,15 @@ export class CouncilService implements OnModuleInit {
       if (Number(counts?.count) >= 30)
         throw new BadRequestException('This discussion has reached 30 user messages');
       const revision = current.revision + 1;
-      await tx
-        .insert(councilMessages)
-        .values({
-          owner: userId,
-          sessionId: id,
-          role: 'user',
-          memberName: 'You',
-          content: content.trim(),
-          revision,
-          tokensUsed: 0,
-        });
+      await tx.insert(councilMessages).values({
+        owner: userId,
+        sessionId: id,
+        role: 'user',
+        memberName: 'You',
+        content: content.trim(),
+        revision,
+        tokensUsed: 0,
+      });
       const held = current.status === 'failed' || current.status === 'paused';
       await tx
         .update(councilSessions)
@@ -209,6 +234,7 @@ export class CouncilService implements OnModuleInit {
     return this.getSession(userId, id);
   }
 
+  /** 暂停会话：状态置为 paused 并推进 revision（用于打断仍在排队的轮次）。 */
   async pauseSession(userId: string, id: string): Promise<CouncilSession> {
     this.assertId(id);
     const [row] = await this.db
@@ -224,6 +250,10 @@ export class CouncilService implements OnModuleInit {
     return this.hydrate(userId, row);
   }
 
+  /**
+   * 运行（或恢复）一次委员会讨论：校验成员连接，事务内锁定并标记 running，再异步启动执行循环。
+   * @returns 更新后的会话视图；后台循环通过 this.jobs 跟踪。
+   */
   async runSession(userId: string, id: string): Promise<CouncilSession> {
     this.assertId(id);
     const previous = await this.requireSession(userId, id);
@@ -253,7 +283,7 @@ export class CouncilService implements OnModuleInit {
       if (current.status === 'running') return { row: current, started: false };
       const resume =
         current.checkpoint && current.checkpoint.nextTurn < current.checkpoint.turns.length;
-      // The task budget is deliberately retained across resumes and user revisions.
+      // 任务预算在多次恢复与用户修订之间被有意保留。
       const [started] = await tx
         .update(councilSessions)
         .set({
@@ -264,7 +294,7 @@ export class CouncilService implements OnModuleInit {
           checkpoint: resume
             ? current.checkpoint
             : newCheckpoint(this.members(current.profileSnapshot)),
-          // Explicit follow-ups use current credentials/data, without erasing old reports or budget usage.
+          // 显式追问使用当前凭证与数据，但不清除既有报告与预算用量。
           ...(!resume && (!current.candidate || current.revision > 1)
             ? { evidenceSnapshot: [], sourceRunId: null, cacheKey: null }
             : {}),
@@ -276,8 +306,8 @@ export class CouncilService implements OnModuleInit {
     if (!started) return this.hydrate(userId, row);
     const active = this.jobs.get(`${userId}:${id}`);
     if (active) {
-      // A resume can arrive while a paused provider request is still draining.
-      // Enqueue exactly that explicit resume after the old job releases its slot.
+      // 暂停中的上游请求可能尚未收尾，此时又收到了恢复请求：
+      // 等旧任务释放执行槽后，精确地补排这一次显式恢复。
       void active
         .then(async () => {
           const current = await this.requireSession(userId, id);
@@ -288,6 +318,10 @@ export class CouncilService implements OnModuleInit {
     return this.hydrate(userId, row);
   }
 
+  /**
+   * 发起 candidate 复核（由 paper-trading 扫描调用）：同一 `${userId}:${profileId}:${version}:${ticker}:${side}`
+   * 键的在跑任务会被复用，避免并发扫描重复评审同一 candidate。
+   */
   async reviewCandidate(
     userId: string,
     profile: BuilderProfile,
@@ -306,7 +340,7 @@ export class CouncilService implements OnModuleInit {
     const active = this.candidateJobs.get(key);
     if (active) {
       await active;
-      // A concurrent scan must revalidate its own exact candidate against the persisted result.
+      // 并发扫描必须拿持久化结果重新校验自己那份完全一致的 candidate。
     }
     const work = this.reviewCandidateOnce(userId, current, candidate);
     this.candidateJobs.set(key, work);
@@ -317,6 +351,10 @@ export class CouncilService implements OnModuleInit {
     }
   }
 
+  /**
+   * 将报告与模拟盘订单绑定：校验报告仍是当前有效的 approve 结论，且订单与被审 candidate 完全一致。
+   * 绑定操作幂等（同一订单可重复绑定），但一个审批只能被使用一次。
+   */
   async attachPaperOrder(userId: string, reportId: string, orderId: string): Promise<void> {
     this.assertId(reportId);
     this.assertId(orderId);
@@ -325,6 +363,7 @@ export class CouncilService implements OnModuleInit {
       .from(councilReports)
       .where(and(eq(councilReports.owner, userId), eq(councilReports.id, reportId)));
     if (!report) throw new NotFoundException('Council report not found');
+    // 事务内锁定会话与订单，校验报告仍是当前有效审批且与订单匹配。
     await this.db.transaction(async (tx) => {
       const [session] = await tx
         .select()
@@ -348,6 +387,7 @@ export class CouncilService implements OnModuleInit {
       ) {
         throw new BadRequestException('Paper order does not match a current council approval');
       }
+      // 条件更新绑定订单（仍未绑定时才生效），重复使用会被拒绝。
       const [linked] = await tx
         .update(councilReports)
         .set({ paperOrderId: orderId })
@@ -363,6 +403,7 @@ export class CouncilService implements OnModuleInit {
     });
   }
 
+  /** 复核单次执行体：收集证据 → 查 24h 内同键缓存 → 未命中则新建会话同步跑完并返回结论。 */
   private async reviewCandidateOnce(
     userId: string,
     profile: BuilderProfile,
@@ -383,6 +424,7 @@ export class CouncilService implements OnModuleInit {
       snapshot.evidence,
       snapshot.sourceRunId,
     );
+    // 24h 内同键会话若已有可用结论则直接复用。
     const rows = await this.db
       .select()
       .from(councilSessions)
@@ -413,7 +455,7 @@ export class CouncilService implements OnModuleInit {
         !['completed', 'failed'].includes(session.status)
       )
         continue;
-      // Configuring a previously absent model is actionable new information.
+      // 此前未配置模型、现在配置好了，属于可行动的新信息（basic 结果不再直接复用）。
       if (report.engine === 'basic' && modelConfigured) continue;
       if (report.decision !== 'approve') return this.reviewResult(row, report, candidate);
       if (
@@ -438,6 +480,7 @@ export class CouncilService implements OnModuleInit {
     return this.reviewResult(latest, session.reports.at(-1) ?? null, candidate);
   }
 
+  /** 依据规则判定报告是否构成一次可执行的批准。 */
   private reviewResult(
     row: SessionRow,
     report: CouncilReport | null,
@@ -465,6 +508,7 @@ export class CouncilService implements OnModuleInit {
     };
   }
 
+  /** 启动后台执行任务：失败时把会话落为 failed 终态，结束后释放任务槽。 */
   private launch(userId: string, id: string): void {
     const key = `${userId}:${id}`;
     if (this.jobs.has(key)) return;
@@ -490,16 +534,22 @@ export class CouncilService implements OnModuleInit {
         this.jobs.delete(key);
       });
     this.jobs.set(key, job);
-    // The catch above persists a safe terminal status. Avoid an unhandled rejection if storage is down too.
+    // 上面的 catch 已持久化安全的终止状态；若连存储也不可用，这里兜底处理避免未处理的 rejection。
     void job.catch(() => this.logger.error(`Council session ${id} storage unavailable`));
   }
 
+  /**
+   * 执行循环（后台任务主体）：按 checkpoint 里的固定轮次计划推进讨论。
+   * 每轮先认领（claimTurn）再执行；出错释放认领并按错误类型降级处理。
+   */
   private async execute(userId: string, id: string): Promise<void> {
-    // A fixed turn plan, plus bounded retries of a superseded summary. No whole-round replay.
+    // 固定轮次计划 + 对被取代 summary 的有界重试；绝不整轮重放。
     for (let attempt = 0; attempt < 12; attempt++) {
+      // 读取会话最新状态：非 running、无 checkpoint 或他人正在收尾时直接结束。
       let row = await this.requireSession(userId, id);
       if (row.status !== 'running' || !row.checkpoint) return;
-      if (row.checkpoint.inflight) return; // Another draining process owns this paid turn.
+      if (row.checkpoint.inflight) return; // 另一个正在收尾的进程持有这一已付费轮次。
+      // 证据快照缺失时先补采一轮资料并写回（仅非本地团队需要）。
       if (
         !row.evidenceSnapshot.length &&
         this.members(row.profileSnapshot).some((member) => member.executionMode !== 'local')
@@ -528,16 +578,19 @@ export class CouncilService implements OnModuleInit {
         row = await this.requireSession(userId, id);
         if (row.status !== 'running' || !row.checkpoint) return;
       }
+      // 执行待处理的研究请求（每轮最多两类，每类一次）。
       if (row.checkpoint.pendingResearch.length) {
         await this.runResearch(userId, row);
         row = await this.requireSession(userId, id);
         if (row.status !== 'running' || !row.checkpoint) return;
       }
+      // 取当前轮次；计划走完即正常结束。
       const checkpoint = row.checkpoint;
       const turn = checkpoint.turns[checkpoint.nextTurn];
       if (!turn) return;
       let claimId: string | null = null;
       try {
+        // 基础模式（无任何可用模型连接）：直接发布 wait 结论，不产生 AI 讨论。
         const members = this.members(row.profileSnapshot);
         if (
           !members.some((member) => member.connectionId || member.executionMode === 'local') &&
@@ -562,6 +615,7 @@ export class CouncilService implements OnModuleInit {
           );
           return;
         }
+        // 找到当前轮次的成员并认领轮次；抢不到就让位重试。
         const member = members.find((item) => item.id === turn.memberId);
         if (!member) throw new Error('Research team member is unavailable');
         claimId = await this.claimTurn(userId, row);
@@ -570,6 +624,7 @@ export class CouncilService implements OnModuleInit {
           if (latest.status !== 'running' || latest.checkpoint?.inflight) return;
           continue;
         }
+        // 执行成员发言并把结果写回；结果被取代时直接让位重试。
         const output = await this.runMember(userId, row, member, turn);
         const recorded = await this.recordTurn(userId, row, turn, claimId, output);
         claimId = null;
@@ -579,6 +634,7 @@ export class CouncilService implements OnModuleInit {
             ...row,
             evidenceSnapshot: [...row.evidenceSnapshot, ...output.sources].slice(-60),
           };
+        // summary 阶段：关键证据缺失时把批准降级为暂缓，随后发布报告。
         if (turn.phase === 'summary' && output.contribution.opinion) {
           const opinion = output.contribution.opinion;
           if (
@@ -607,6 +663,7 @@ export class CouncilService implements OnModuleInit {
           );
         }
       } catch (error) {
+        // 出错：先释放认领，再按错误类型处置（本地智能体错误 → 暂停；其余 → 发布 wait 报告）。
         if (claimId) await this.releaseTurn(userId, id, claimId);
         const current = await this.requireSession(userId, id);
         const code = error instanceof Error ? error.message : '';
@@ -664,6 +721,7 @@ export class CouncilService implements OnModuleInit {
         );
       }
     }
+    // 循环预算耗尽：会话仍在 running 则暂停，等待用户显式恢复（已完成发言与任务预算保留）。
     const row = await this.requireSession(userId, id);
     if (row.status === 'running') {
       await this.db
@@ -686,6 +744,7 @@ export class CouncilService implements OnModuleInit {
     }
   }
 
+  /** 在事务内认领当前轮次：校验状态/revision/轮次一致后写入 inflight 标记，返回认领 id。 */
   private async claimTurn(userId: string, row: SessionRow): Promise<string | null> {
     return this.db.transaction(async (tx) => {
       const [current] = await tx
@@ -717,6 +776,7 @@ export class CouncilService implements OnModuleInit {
     });
   }
 
+  /** 按 claimId 条件清除 inflight 认领（仅当仍由本次认领持有时生效）。 */
   private async releaseTurn(userId: string, id: string, claimId: string): Promise<void> {
     await this.db
       .update(councilSessions)
@@ -730,6 +790,7 @@ export class CouncilService implements OnModuleInit {
       );
   }
 
+  /** 事务内把成员发言写回：校验认领归属、插入消息、推进 checkpoint；返回是否成功记录。 */
   private async recordTurn(
     userId: string,
     row: SessionRow,
@@ -744,12 +805,14 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)))
         .for('update');
       const checkpoint = current?.checkpoint;
+      // 认领已不归属本次执行（被他人接管或周期已变）时放弃写回。
       if (
         !checkpoint ||
         checkpoint.inflight?.id !== claimId ||
         checkpoint.cycleId !== row.checkpoint?.cycleId
       )
         return false;
+      // 本地成员：会话已暂停或修订后，丢弃结果并清理认领/远端引用。
       if (
         output.member.executionMode === 'local' &&
         (current.status !== 'running' || current.revision !== row.revision)
@@ -761,28 +824,26 @@ export class CouncilService implements OnModuleInit {
         return false;
       }
       const contribution = output.contribution;
-      await tx
-        .insert(councilMessages)
-        .values({
-          owner: userId,
-          sessionId: row.id,
-          role: output.member.role,
-          memberName: output.member.name,
-          revision: row.revision,
-          tokensUsed: output.tokens,
-          content: contribution.content,
-          metadata: {
-            cycleId: checkpoint.cycleId,
-            turn: checkpoint.nextTurn,
-            phase: turn.phase,
-            memberId: output.member.id,
-            taskId: output.taskId,
-            replyToMessageId: output.replyToMessageId,
-            evidenceIds: contribution.evidenceIds,
-            reasoningSummary: contribution.reasoningSummary,
-            questions: contribution.questions,
-          },
-        });
+      await tx.insert(councilMessages).values({
+        owner: userId,
+        sessionId: row.id,
+        role: output.member.role,
+        memberName: output.member.name,
+        revision: row.revision,
+        tokensUsed: output.tokens,
+        content: contribution.content,
+        metadata: {
+          cycleId: checkpoint.cycleId,
+          turn: checkpoint.nextTurn,
+          phase: turn.phase,
+          memberId: output.member.id,
+          taskId: output.taskId,
+          replyToMessageId: output.replyToMessageId,
+          evidenceIds: contribution.evidenceIds,
+          reasoningSummary: contribution.reasoningSummary,
+          questions: contribution.questions,
+        },
+      });
       if (output.member.executionMode === 'local')
         await tx
           .update(councilMessages)
@@ -829,13 +890,16 @@ export class CouncilService implements OnModuleInit {
     });
   }
 
+  /** 执行单个成员的发言：本地成员走 runAgentMember，模型成员组装上下文后调用 LLM。 */
   private async runMember(
     userId: string,
     row: SessionRow,
     member: CouncilMember,
     turn: DialogueTurn,
   ): Promise<MemberOutput> {
+    // 本地成员走独立执行路径。
     if (member.executionMode === 'local') return this.runAgentMember(userId, row, member, turn);
+    // 读取全部消息，筛出本轮可引用的讨论上下文。
     const messages = await this.db
       .select()
       .from(councilMessages)
@@ -846,6 +910,7 @@ export class CouncilService implements OnModuleInit {
         ['researcher', 'challenger', 'manager'].includes(item.role) &&
         !(item.metadata?.cycleId === row.checkpoint?.cycleId && item.metadata?.phase === 'summary'),
     );
+    // 组装系统提示词与按预算打包的讨论上下文。
     const systemPrompt = discussionPrompt(turn, row.language, !!row.candidate);
     const data = packDiscussionContext({
       ticker: row.ticker,
@@ -867,6 +932,7 @@ export class CouncilService implements OnModuleInit {
       { role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: JSON.stringify(data) },
     ];
+    // 单轮调用预算：最多 900 输出 token、120s 超时、失败不重试。
     const options = {
       taskId: row.taskId,
       purpose: `council:${turn.phase}:${member.id}`,
@@ -879,6 +945,7 @@ export class CouncilService implements OnModuleInit {
         return latest.status === 'running' && latest.revision === row.revision;
       },
     };
+    // 活动事件（queued→running→succeeded/failed）写入会话消息流，供前端展示进度。
     const taskId = `model:${row.checkpoint!.cycleId}:${row.checkpoint!.nextTurn}:${row.revision}`;
     const started = Date.now();
     const activity = (status: ResearchEvent['status'], summary: string) =>
@@ -907,6 +974,7 @@ export class CouncilService implements OnModuleInit {
         ? 'Waiting for the model’s research response'
         : '正在等待模型的研究回复',
     );
+    // 按成员模型档位调用 LLM 并解析其贡献。
     try {
       const result =
         member.model === 'slow'
@@ -938,6 +1006,7 @@ export class CouncilService implements OnModuleInit {
     }
   }
 
+  /** 把研究活动事件作为 system 消息写入会话（含 256 条限流与 publicText 脱敏）。 */
   private async recordActivity(
     userId: string,
     row: SessionRow,
@@ -958,6 +1027,7 @@ export class CouncilService implements OnModuleInit {
         current.checkpoint?.cycleId !== row.checkpoint!.cycleId
       )
         return;
+      // 每个任务的进度事件上限 256 条。
       const [count] = await tx
         .select({ count: sql<number>`count(*)`.mapWith(Number) })
         .from(councilMessages)
@@ -974,26 +1044,25 @@ export class CouncilService implements OnModuleInit {
         summary: publicText(event.summary),
         sequence: count.count + 1,
       };
-      await tx
-        .insert(councilMessages)
-        .values({
-          owner: userId,
-          sessionId: row.id,
-          role: 'system',
-          memberName: safe.memberName,
-          revision: row.revision,
-          content: safe.summary,
-          tokensUsed: 0,
-          metadata: {
-            phase: 'progress',
-            cycleId: row.checkpoint!.cycleId,
-            researchEvent: safe,
-            ...(acquisition ? { acquisition } : {}),
-          },
-        });
+      await tx.insert(councilMessages).values({
+        owner: userId,
+        sessionId: row.id,
+        role: 'system',
+        memberName: safe.memberName,
+        revision: row.revision,
+        content: safe.summary,
+        tokensUsed: 0,
+        metadata: {
+          phase: 'progress',
+          cycleId: row.checkpoint!.cycleId,
+          researchEvent: safe,
+          ...(acquisition ? { acquisition } : {}),
+        },
+      });
     });
   }
 
+  /** 记录一次资料获取事件（工具调用动态），供前端展示研究进度。 */
   private async recordAcquisition(
     userId: string,
     row: SessionRow,
@@ -1035,6 +1104,7 @@ export class CouncilService implements OnModuleInit {
     );
   }
 
+  /** 校验成员配置：远端成员的连接 id 必须有效，本地成员的智能体配置必须可用。 */
   private async validateMembers(userId: string, members: CouncilMember[]): Promise<void> {
     await this.llm.validateConnectionIds(
       userId,
@@ -1042,6 +1112,7 @@ export class CouncilService implements OnModuleInit {
         member.executionMode !== 'local' && member.connectionId ? [member.connectionId] : [],
       ),
     );
+    // 本地成员逐个校验智能体及其设置。
     for (const member of members.filter((item) => item.executionMode === 'local')) {
       if (!this.localAgents || !member.agentId)
         throw new BadRequestException('Local agent service unavailable');
@@ -1054,11 +1125,13 @@ export class CouncilService implements OnModuleInit {
     }
   }
 
+  /** 依据本地成员占比返回报告引擎标记：local / mixed / llm。 */
   private executionEngine(members: CouncilMember[]): CouncilReport['engine'] {
     const count = members.filter((member) => member.executionMode === 'local').length;
     return count === members.length ? 'local' : count ? 'mixed' : 'llm';
   }
 
+  /** 本地智能体成员的执行路径：管理远端任务引用、派发与结果归一化。 */
   private async runAgentMember(
     userId: string,
     row: SessionRow,
@@ -1067,6 +1140,7 @@ export class CouncilService implements OnModuleInit {
   ): Promise<MemberOutput> {
     if (!this.localAgents || !member.agentId || !row.checkpoint)
       throw new Error('LOCAL_UNAVAILABLE');
+    // 读取已保存的远端任务引用，判断是续传（awaitingInput）还是新派发。
     const current = await this.requireSession(userId, row.id);
     const saved = current.checkpoint?.remote;
     const messages = await this.db
@@ -1077,6 +1151,7 @@ export class CouncilService implements OnModuleInit {
     const lastUserMessageId = messages.filter((message) => message.role === 'user').at(-1)?.id;
     const resumeInput =
       saved?.awaitingInput === true && lastUserMessageId !== saved.lastUserMessageId;
+    // 已派发但 taskId 缺失、轮次或成员不匹配：派发结果不确定，必须停止而非重发。
     if (
       saved &&
       ((!saved.taskId && saved.dispatchStarted) ||
@@ -1084,6 +1159,7 @@ export class CouncilService implements OnModuleInit {
         saved.agentId !== member.agentId)
     )
       throw new Error('LOCAL_DISPATCH_UNCERTAIN');
+    // 组装远端任务引用（续传时刷新 messageId），并落库供崩溃后恢复。
     const remote = resumeInput
       ? { ...saved!, messageId: randomUUID(), revision: row.revision, dispatchStarted: false }
       : (saved ?? {
@@ -1099,6 +1175,7 @@ export class CouncilService implements OnModuleInit {
         .update(councilSessions)
         .set({ checkpoint: { ...current.checkpoint!, remote } })
         .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
+    // 下发任务给本地智能体；onDispatch/onTask 回调持久化派发状态，shouldContinue 感知暂停/修订。
     const result = await this.localAgents.execute(userId, {
       agentId: member.agentId,
       messageId: remote.messageId,
@@ -1176,7 +1253,7 @@ export class CouncilService implements OnModuleInit {
             .where(and(eq(councilSessions.owner, userId), eq(councilSessions.id, row.id)));
         });
       },
-      // Structured task activity is read from the durable journal; no duplicate generic chat rows.
+      // 结构化任务动态改从持久化日志读取；这里不再重复写入通用聊天行。
       onProgress: async () => undefined,
       shouldContinue: async () => {
         const latest = await this.requireSession(userId, row.id);
@@ -1197,8 +1274,10 @@ export class CouncilService implements OnModuleInit {
     }
   }
 
+  /** 执行待处理的研究请求：每轮最多两类，事务内出队并登记类别后调用证据服务。 */
   private async runResearch(userId: string, row: SessionRow): Promise<void> {
     for (let count = 0; count < 2; count++) {
+      // 事务内取出队头请求并登记类别（超限或重复类别则标记为不允许）。
       const request = await this.db.transaction(async (tx) => {
         const [current] = await tx
           .select()
@@ -1232,6 +1311,7 @@ export class CouncilService implements OnModuleInit {
         return { ...next, allowed };
       });
       if (!request) return;
+      // 类别不允许（已查过/未启用/超限）时记录跳过事件。
       if (!request.allowed) {
         await this.recordAcquisition(userId, row, {
           source: 'Research tools',
@@ -1244,6 +1324,7 @@ export class CouncilService implements OnModuleInit {
         });
         continue;
       }
+      // 调用证据服务收集资料；随后合并进证据快照（同类旧资料移入归档）。
       try {
         const collected = await this.evidence.collectResearch(
           row.ticker,
@@ -1338,6 +1419,7 @@ export class CouncilService implements OnModuleInit {
     }
   }
 
+  /** 发布委员会报告：汇总预算用量与历史证据，写入报告并把会话置为 completed/failed。 */
   private async publish(
     userId: string,
     row: SessionRow,
@@ -1360,6 +1442,7 @@ export class CouncilService implements OnModuleInit {
         .where(and(eq(councilReports.owner, userId), eq(councilReports.sessionId, row.id)))
         .orderBy(desc(councilReports.version))
         .limit(1);
+      // 汇总本次任务预算用量与外部智能体消息 token（写入报告 tokensUsed）。
       const [usage] = await tx
         .select({ total: sql<number>`coalesce(sum(${llmBudgetUsage.chargedTokens}), 0)` })
         .from(llmBudgetUsage)
@@ -1380,35 +1463,35 @@ export class CouncilService implements OnModuleInit {
           ...item,
           title: (row.language === 'en' ? 'Earlier source: ' : '本轮较早资料：') + item.title,
         }));
-      await tx
-        .insert(councilReports)
-        .values({
-          owner: userId,
-          sessionId: row.id,
-          version: (latest?.version ?? 0) + 1,
-          revision: row.revision,
-          decision: opinion.decision,
-          summary: opinion.summary,
-          dissent: opinion.dissent,
-          nextReviewCondition: opinion.nextReviewCondition,
-          sourceRunId: row.sourceRunId,
-          candidate: row.candidate,
-          engine,
-          researchStance,
-          tokensUsed: Math.min(
-            2_147_483_647,
-            Number(usage?.total ?? 0) + Number(external?.total ?? 0),
-          ),
-          evidence: [...row.evidenceSnapshot, ...historical].map(
-            ({ id, title, content, sourceUrl, fetchedAt }) => ({
-              id,
-              title,
-              content,
-              sourceUrl,
-              fetchedAt,
-            }),
-          ),
-        });
+      // 写入新版报告（版本号在上一份基础上递增）。
+      await tx.insert(councilReports).values({
+        owner: userId,
+        sessionId: row.id,
+        version: (latest?.version ?? 0) + 1,
+        revision: row.revision,
+        decision: opinion.decision,
+        summary: opinion.summary,
+        dissent: opinion.dissent,
+        nextReviewCondition: opinion.nextReviewCondition,
+        sourceRunId: row.sourceRunId,
+        candidate: row.candidate,
+        engine,
+        researchStance,
+        tokensUsed: Math.min(
+          2_147_483_647,
+          Number(usage?.total ?? 0) + Number(external?.total ?? 0),
+        ),
+        evidence: [...row.evidenceSnapshot, ...historical].map(
+          ({ id, title, content, sourceUrl, fetchedAt }) => ({
+            id,
+            title,
+            content,
+            sourceUrl,
+            fetchedAt,
+          }),
+        ),
+      });
+      // 关闭会话：正常完成把 checkpoint 推进到末尾；失败保留现场等待恢复。
       await tx
         .update(councilSessions)
         .set({
@@ -1431,6 +1514,7 @@ export class CouncilService implements OnModuleInit {
     });
   }
 
+  /** 组装讨论所需的证据快照：优先复用近期研究报告，否则现场采集，并附组合与规则证据。 */
   private async collectSnapshot(
     userId: string,
     ticker: string,
@@ -1443,9 +1527,10 @@ export class CouncilService implements OnModuleInit {
     const evidence: CouncilEvidence[] = [];
     let sourceRunId: string | null = null;
     const now = new Date().toISOString();
-    // Delegated teams gather their own research. Do not run the legacy collector before dispatch.
+    // 委派型团队自行收集资料：下发任务前不运行旧版采集器。
     if (this.members(config).every((member) => member.executionMode === 'local'))
       return { evidence, sourceRunId };
+    // 非强制刷新时优先复用 48h 内已完成的现有研究报告。
     if (!fresh)
       try {
         const runs = await this.research.listRuns(userId, {
@@ -1470,9 +1555,10 @@ export class CouncilService implements OnModuleInit {
           }
         }
       } catch {
-        // A missing saved report must not prevent direct provider collection.
+        // 保存的报告缺失时不得阻断直接采集；记录告警后继续。
         this.logger.warn('Council saved research unavailable; collecting fresh evidence');
       }
+    // 组合上下文；获取失败时写入“数据不可用”证据但不中断研究。
     let portfolio: Awaited<ReturnType<PortfolioContextService['getPortfolioContext']>> | null =
       null;
     try {
@@ -1493,6 +1579,7 @@ export class CouncilService implements OnModuleInit {
         relevanceScore: 0,
       });
     }
+    // 没有可复用的报告时，直接向数据源采集个股证据。
     if (!sourceRunId) {
       try {
         const collected = await this.evidence.collectEvidence(
@@ -1541,6 +1628,7 @@ export class CouncilService implements OnModuleInit {
         });
       }
     }
+    // 附上组合快照证据（仅含当前标的持仓）。
     if (portfolio) {
       evidence.push({
         id: randomUUID(),
@@ -1558,6 +1646,7 @@ export class CouncilService implements OnModuleInit {
         relevanceScore: 1,
       });
     }
+    // 规则型 candidate 附上投资者价格规则与扫描报价证据。
     if (isRuleCandidate(config, candidate)) {
       const rule = config.priceRules.find((item) => item.ticker.toUpperCase() === ticker);
       evidence.push({
@@ -1594,6 +1683,7 @@ export class CouncilService implements OnModuleInit {
     return { evidence: evidence.slice(0, 40), sourceRunId };
   }
 
+  /** 新建会话行：档案快照与证据快照在创建时固化。 */
   private async insertSession(
     userId: string,
     profile: { id: string | null; version: number; config: BuilderConfig },
@@ -1621,6 +1711,7 @@ export class CouncilService implements OnModuleInit {
     return row;
   }
 
+  /** 读取并规范化 agent 档案；不存在时抛 404。 */
   private async getProfile(userId: string, id: string): Promise<BuilderProfile> {
     this.assertId(id);
     const [row] = await this.db
@@ -1638,10 +1729,12 @@ export class CouncilService implements OnModuleInit {
     };
   }
 
+  /** 从档案配置解析研究团队成员列表。 */
   private members(config: BuilderConfig): CouncilMember[] {
     return normalizeCouncil(config.council).members;
   }
 
+  /** 读取属主匹配的会话行；不存在时抛 404。 */
   private async requireSession(userId: string, id: string): Promise<SessionRow> {
     this.assertId(id);
     const [row] = await this.db
@@ -1652,6 +1745,7 @@ export class CouncilService implements OnModuleInit {
     return row;
   }
 
+  /** 组装对外会话视图：消息、报告、合并后的研究事件流与进度。 */
   private async hydrate(userId: string, row: SessionRow): Promise<CouncilSession> {
     const [messages, reports] = await Promise.all([
       this.db
@@ -1734,6 +1828,7 @@ export class CouncilService implements OnModuleInit {
     };
   }
 
+  /** 数据库报告行 → API 报告 DTO。 */
   private mapReport(row: ReportRow): CouncilReport {
     return {
       id: row.id,
@@ -1754,6 +1849,7 @@ export class CouncilService implements OnModuleInit {
     };
   }
 
+  /** 校验 UUID 形态的标识符，防止任意字符串被拼进路由/查询。 */
   private assertId(value: unknown): asserts value is string {
     if (
       typeof value !== 'string' ||
@@ -1763,6 +1859,7 @@ export class CouncilService implements OnModuleInit {
     }
   }
 
+  /** 规范化股票代码，失败时转换为 BadRequest。 */
   private validateTicker(value: unknown): string {
     try {
       return normalizeTicker(value);
