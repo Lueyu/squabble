@@ -1,37 +1,41 @@
 /**
- * PipelineService — orchestrates the async multi-agent analysis pipeline for a
- * single stock run.
+ * PipelineService — 编排单次股票运行（agent run）的异步多智能体分析流水线。
  *
- * Stage ordering (see runPipeline):
- *   0. setStatus('fetching') — mark run as in-progress, record startedAt.
- *   1. Evidence collection: pull live quote + portfolio/watchlist rows via
- *      EvidenceService.collectEvidence. Persist rows to agent_evidence.
- *   2. Bull/Bear debate: two parallel LLM calls (bull + bear) generate opening
- *      arguments; then two more parallel calls generate rebuttals. Each side's
- *      output is parsed as JSON and persisted to bull_bear_arguments and
- *      debate_records. Round-2 failures are non-fatal (logged as warning).
- *   3. Critique: a single LLM call (chatSlow, free text) that criticizes both
- *      sides' weakest points. Stored as a round-3 debate record by the `critic`.
- *   4. Risk gate: evaluate the user's hard/soft strategy rules against the
- *      current portfolio (no LLM). `hard` rule failures cap the final rating.
- *   5. Rating aggregation: one final LLM call that consumes evidence summary +
- *      bull/bear/critic + risk summary and emits a JSON rating object. The
- *      result is post-processed with two hard overrides (see runRatingPhase)
- *      before being saved.
+ * 职责边界：
+ *  - 只负责阶段推进、取消检查、状态写入与完成通知；证据采集、LLM 调用、
+ *    持久化分别委托 EvidenceService / LlmService / MultiAgentService。
  *
- * After stage 5 the run transitions to `awaiting_human` and the HTTP client
- * polls until a human approves/modifies/rejects.
+ * 阶段顺序（见 runPipeline）：
+ *   0. setStatus('fetching') — 标记运行进行中，记录 startedAt。
+ *   1. 证据采集：经 EvidenceService.collectEvidence 拉取实时行情 +
+ *      组合/关注列表行，写入 agent_evidence。
+ *   2. 多空辩论：两次并行 LLM 调用（bull + bear）生成开局论点；再两次并行
+ *      调用生成反驳。每侧输出按 JSON 解析并持久化到 bull_bear_arguments 与
+ *      debate_records。第二轮失败不致命（仅记 warning）。
+ *   3. 评论：单次 LLM 调用（chatSlow，自由文本），批评双方最薄弱的论点，
+ *      由 `critic` 以第三轮辩论记录形式保存。
+ *   4. 风控闸：用用户的硬/软策略规则对照当前组合评估（无 LLM）。
+ *      `hard` 规则不过会封顶最终评级。
+ *   5. 评级聚合：最后一次 LLM 调用，输入为证据摘要 + 多/空/评论 + 风控摘要，
+ *      输出 JSON 评级对象。保存前经两道硬性覆写（见 runRatingPhase）。
  *
- * Cancellation: between every stage the pipeline calls `isCancelled` which
- * re-reads the run row; if the user hit cancel, the pipeline bails out without
- * advancing state.
+ * 第 5 阶段后运行进入 `awaiting_human`，HTTP 客户端轮询直至人工
+ * 批准/修改/驳回。
  *
- * Completion notification: on both success and failure, `notifyComplete`
- * invokes callbacks (registered by BatchService) so the queue can release a
- * concurrency slot and dequeue the next item.
+ * 取消：每个阶段之间调用 `isCancelled` 重读运行行；用户一旦取消，
+ * 流水线直接退出，不推进状态。
  *
- * Token accounting: tokensUsed is accumulated across LLM calls and persisted
- * on the run row for cost tracking.
+ * 完成通知：成功与失败都会经 `notifyComplete` 触发回调（BatchService 注册），
+ * 让队列释放并发槽位并取出下一项。
+ *
+ * Token 计量：tokensUsed 跨 LLM 调用累计，最终写回运行行用于成本核算。
+ *
+ * 上下游：
+ *  - 上游：MultiAgentController.startRun、BatchService.processQueue。
+ *  - 下游：LlmService、EvidenceService、PortfolioContextService、
+ *    MultiAgentService（状态/证据/论点/辩论/风控/评级/报告/审计）。
+ *  - 复用 analysis-report 的 languageInstruction/englishRuleName/
+ *    safeAnalysisError/analysisErrorCode。
  */
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -61,8 +65,8 @@ import {
 @Injectable()
 export class PipelineService {
   private readonly logger = new Logger(PipelineService.name);
-  /** Callbacks fired when any run finishes (success, failure, or cancel).
-   *  BatchService registers one to free a concurrency slot. */
+  /** 任一运行结束（成功、失败或取消）时触发的回调集合。
+   *  BatchService 注册一个用于释放并发槽位。 */
   private completeCallbacks: Array<(runId: string, userId: string, mode: AgentRunMode) => void> =
     [];
 
@@ -75,17 +79,17 @@ export class PipelineService {
   ) {}
 
   /**
-   * Register a callback invoked when a run completes (for any terminal state).
-   * Used by BatchService to release a concurrency slot and process the queue.
-   * @param cb callback receiving runId, userId, and the run's mode.
+   * 注册运行完成（任意终态）时调用的回调。BatchService 用它释放并发槽位
+   * 并处理队列。
+   * @param cb 回调，接收 runId、userId 与该运行的 mode。
    */
   onRunComplete(cb: (runId: string, userId: string, mode: AgentRunMode) => void): void {
     this.completeCallbacks.push(cb);
   }
 
   /**
-   * Fire all registered completion callbacks. Each callback is wrapped in
-   * try/catch so one bad listener cannot break the others or the pipeline.
+   * 触发全部已注册的完成回调。每个回调都包在 try/catch 里，
+   * 单个坏监听者不会影响其他监听者或流水线本身。
    */
   private notifyComplete(runId: string, userId: string, mode: AgentRunMode): void {
     for (const cb of this.completeCallbacks) {
@@ -98,11 +102,10 @@ export class PipelineService {
   }
 
   /**
-   * Fire-and-forget entry point that starts the pipeline. The returned promise
-   * is intentionally not awaited by the caller (controller returns immediately);
-   * all errors are logged here.
-   * @param runId the agent_runs.id to run.
-   * @param userId owner, used for owner-scoped DB writes and cancellation check.
+   * fire-and-forget 的流水线入口。返回的 promise 故意不被调用方 await
+   * （controller 立即返回）；所有错误都在此处记录。
+   * @param runId 要运行的 agent_runs.id。
+   * @param userId 所有者，用于按所有者隔离的数据库写入与取消检查。
    */
   startPipeline(runId: string, userId: string, queuedMode?: AgentRunMode): void {
     void this.runPipeline(runId, userId, queuedMode).catch((err) => {
@@ -111,16 +114,16 @@ export class PipelineService {
   }
 
   /**
-   * Internal driver for the full pipeline. Runs all five stages in order,
-   * checking cancellation between each. On error, transitions the run to
-   * `failed` and writes an audit log, then still fires notifyComplete so the
-   * batch queue can make progress.
+   * 流水线内部驱动：按顺序跑全部五个阶段，阶段之间检查取消。
+   * 出错时把运行转为 `failed` 并写审计日志，随后仍触发 notifyComplete，
+   * 让批量队列可以继续推进。
    */
   private async runPipeline(
     runId: string,
     userId: string,
     queuedMode?: AgentRunMode,
   ): Promise<void> {
+    // 阶段间共享的累计 token 与运行元信息
     let tokensUsed = 0;
     let mode: AgentRunMode | null = null;
     let language: AnalysisLanguage = 'zh-CN';
@@ -129,6 +132,7 @@ export class PipelineService {
     };
 
     try {
+      // 第 0 步：读取运行行，确定模式/语言；失败过的运行先清理残留产物
       const runDetail = await this.multiAgentService.getRun(userId, runId);
       mode = runDetail.runMode;
       language = runDetail.language ?? 'zh-CN';
@@ -145,7 +149,7 @@ export class PipelineService {
 
       if (await this.isCancelled(runId, userId)) return;
 
-      // Phase 1: Evidence collection
+      // 第 1 阶段：证据采集（组合快照 + 三路证据，写入 agent_evidence）
       this.logger.log(`Phase 1: Fetching evidence for ${ticker}`);
       const portfolio = await this.portfolioContextService.getPortfolioContext(userId);
       const evidence = await this.evidenceService.collectEvidence(
@@ -155,7 +159,7 @@ export class PipelineService {
         language,
       );
 
-      // Persist facts and explicit gaps. Debate citations use only returned IDs.
+      // 持久化事实与显式缺口；辩论引用只允许使用这里返回的 ID
       const savedEvidence = await this.multiAgentService.addEvidence(
         userId,
         runId,
@@ -173,7 +177,7 @@ export class PipelineService {
 
       if (await this.isCancelled(runId, userId)) return;
 
-      // Phase 2: Bull/Bear debate
+      // 第 2 阶段：多空辩论（未配置 LLM 时直接跳过，token 计 0）
       this.logger.log(`Phase 2: Bull/Bear debate for ${ticker}`);
       if (useLlm) await this.setStatus(runId, userId, 'debating');
       const debateTokens = useLlm
@@ -183,7 +187,7 @@ export class PipelineService {
 
       if (await this.isCancelled(runId, userId)) return;
 
-      // Phase 3: Critique
+      // 第 3 阶段：评论（critic）
       this.logger.log(`Phase 3: Critique for ${ticker}`);
       if (useLlm) await this.setStatus(runId, userId, 'critiquing');
       const critiqueTokens = useLlm ? await this.runCritiquePhase(runId, userId, language) : 0;
@@ -191,7 +195,7 @@ export class PipelineService {
 
       if (await this.isCancelled(runId, userId)) return;
 
-      // Phase 4: Risk gate
+      // 第 4 阶段：风控闸（无 LLM，纯规则对照组合快照）
       this.logger.log(`Phase 4: Risk gate for ${ticker}`);
       await this.setStatus(runId, userId, 'risk_check');
       const rules = await this.multiAgentService.getStrategyRules(userId);
@@ -220,13 +224,13 @@ export class PipelineService {
         })),
       );
 
-      // A hard-rule failure does NOT abort the pipeline, but it caps the
-      // final rating (no Buy/Strong Buy allowed).
+      // 硬规则失败不会中止流水线，但会封顶最终评级
+      // （不允许 Buy / Strong Buy）。
       const hasHardFailure = riskResults.some((r) => r.ruleType === 'hard' && !r.passed);
 
       if (await this.isCancelled(runId, userId)) return;
 
-      // Phase 5: Rating aggregation
+      // 第 5 阶段：评级聚合（LLM 模式 / basic 兜底模式二选一），随后保存报告
       this.logger.log(`Phase 5: Rating aggregation for ${ticker}`);
       const ratingTokens = useLlm
         ? await this.runRatingPhase(runId, userId, ticker, hasHardFailure, rules, language)
@@ -240,7 +244,7 @@ export class PipelineService {
         execution,
       );
 
-      // Final: awaiting human decision
+      // 终态：等待人工决策；记录完成时间与 token 总量，写审计日志
       await this.setStatus(runId, userId, 'awaiting_human', {
         completedAt: new Date(),
         tokensUsed,
@@ -256,6 +260,8 @@ export class PipelineService {
 
       this.logger.log(`Pipeline completed for run ${runId} (${ticker}), tokens: ${tokensUsed}`);
     } catch (error) {
+      // 失败收尾：经 safeAnalysisError 得到用户可见错误文案，
+      // 状态转 failed 并写 run_failed 审计日志；状态更新自身失败只记日志
       const errorMsg = safeAnalysisError(error, language);
       this.logger.error(`Pipeline error for run ${runId}: ${analysisErrorCode(error)}`);
       try {
@@ -272,16 +278,16 @@ export class PipelineService {
         this.logger.error(`Failed to update run status to failed: ${analysisErrorCode(updateErr)}`);
       }
     } finally {
-      // The queue already reserved a mode-specific slot. Release it even when
-      // the first database read fails before the run's mode can be loaded.
+      // 队列已按模式预留槽位。即使首次数据库读取失败、读不到运行模式，
+      // 也要用 queuedMode 兜底释放槽位，否则队列会卡死。
       const completedMode = queuedMode ?? mode;
       if (completedMode) this.notifyComplete(runId, userId, completedMode);
     }
   }
 
   /**
-   * Owner-scoped cancellation check. Re-reads the run row; returns true iff the
-   * row exists and its status is 'cancelled'.
+   * 按所有者隔离的取消检查。重读运行行；当且仅当行存在且状态为
+   * 'cancelled' 时返回 true。
    */
   private async isCancelled(runId: string, userId: string): Promise<boolean> {
     const [row] = await this.db
@@ -292,8 +298,8 @@ export class PipelineService {
   }
 
   /**
-   * Update the run row's status and optional metadata (startedAt, completedAt,
-   * errorMessage, tokensUsed). Always owner-scoped.
+   * 更新运行行的状态与可选元数据（startedAt、completedAt、errorMessage、
+   * tokensUsed）。始终按所有者隔离。
    */
   private async setStatus(
     runId: string,
@@ -319,10 +325,9 @@ export class PipelineService {
   }
 
   /**
-   * Run the bull/bear debate: two opening arguments (parallel LLM calls) then
-   * two rebuttal rounds (parallel LLM calls). Rebuttal failures are logged but
-   * do NOT fail the whole run — the opening round is enough.
-   * @returns total tokens consumed across all debate LLM calls.
+   * 跑多空辩论：两份开局论点（并行 LLM 调用），随后两份反驳（并行 LLM 调用）。
+   * 反驳失败只记日志，不会让整个运行失败 —— 开局轮已足够。
+   * @returns 全部辩论 LLM 调用消耗的 token 总数。
    */
   private async runDebatePhase(
     runId: string,
@@ -331,6 +336,7 @@ export class PipelineService {
     evidence: AgentEvidence[],
     language: AnalysisLanguage = 'zh-CN',
   ): Promise<number> {
+    // 拆分证据：事实 vs 显式缺口；缺口单独列出且不可被 LLM 引用
     const facts = evidence.filter((item) => !this.isDataGap(item));
     const missing = evidence.filter((item) => this.isDataGap(item));
     const evidenceText = this.formatEvidence(facts);
@@ -338,7 +344,8 @@ export class PipelineService {
     const validIds = new Set(facts.map((item) => item.id));
     let totalTokens = 0;
 
-    // Output language is captured on the run; JSON keys and citation IDs stay stable.
+    // 输出语言由运行行决定；JSON 键与引用 ID 保持稳定。
+    // 下方 prompt 模板为冻结字符串（用户可见/模型行为相关），一字不改。
     const bullPrompt = `你是一位看多的股票研究员（Bull Analyst）。请仔细阅读以下关于 ${ticker} 的已保存证据。
 仅在证据足够时提出看多理由，每条理由都要引用证据 ID 和具体数据。
 缺失数据不能作为事实引用，也不能自行补造数字；如果没有可引用的理由，返回空 arguments。
@@ -375,7 +382,7 @@ ${missingText || '（无）'}
   ]
 }`;
 
-    // Opening round: run bull and bear in parallel via the "slow" (pro) model.
+    // 开局轮：bull 与 bear 用 "slow"（pro）模型并行执行。
     const [bullResult, bearResult] = await Promise.all([
       this.llmService.chatSlowJSON(
         [
@@ -397,10 +404,11 @@ ${missingText || '（无）'}
 
     totalTokens += bullResult.tokens + bearResult.tokens;
 
+    // 校验双方论点：只保留引用了有效证据 ID 的条目
     const bullArgs = this.validateArguments(bullResult.data, validIds);
     const bearArgs = this.validateArguments(bearResult.data, validIds);
 
-    // Persist arguments and debate records in parallel.
+    // 并行持久化论点与辩论记录。
     await Promise.all([
       ...bullArgs.map((arg) =>
         this.multiAgentService.addArgument(userId, runId, {
@@ -432,7 +440,7 @@ ${missingText || '（无）'}
       }),
     ]);
 
-    // Rebuttal round: each side attacks the other's opening points.
+    // 反驳轮：双方互相攻击对方的开局论点（prompt 模板冻结）。
     const bullRebuttalPrompt = `你是多头研究员。审查空头论点，仅在可引用证据支持时回应。每条回应必须引用下列证据 ID，不可把缺失数据当作事实。没有依据时返回空 arguments。
 
 【可引用证据】
@@ -534,7 +542,7 @@ ${bearArgs.map((a, i) => `${i + 1}. ${a.point}`).join('\n')}
       ]);
     } catch (rebuttalErr) {
       if (analysisErrorCode(rebuttalErr) === 'LLM_BUDGET_EXCEEDED') throw rebuttalErr;
-      // Rebuttal is best-effort; opening round is the required minimum.
+      // 反驳轮是尽力而为；开局轮是必需的最低要求。
       this.logger.warn(`Debate round 2 failed: ${analysisErrorCode(rebuttalErr)}`);
     }
 
@@ -542,15 +550,16 @@ ${bearArgs.map((a, i) => `${i + 1}. ${a.point}`).join('\n')}
   }
 
   /**
-   * Run the critic stage: a free-text LLM call that critiques both sides'
-   * weakest points. Output is stored verbatim as a round-3 debate record.
-   * @returns tokens consumed.
+   * 评论阶段：一次自由文本 LLM 调用，批评双方最薄弱的论点。
+   * 输出原样保存为第 3 轮辩论记录。
+   * @returns 消耗的 token 数。
    */
   private async runCritiquePhase(
     runId: string,
     userId: string,
     language: AnalysisLanguage = 'zh-CN',
   ): Promise<number> {
+    // 重建证据/论点上下文：事实与缺口分开，论点只保留有证据支持的
     const detail = await this.multiAgentService.getRun(userId, runId);
     const facts = detail.evidence.filter((item) => !this.isDataGap(item));
     const missing = detail.evidence.filter((item) => this.isDataGap(item));
@@ -568,6 +577,7 @@ ${bearArgs.map((a, i) => `${i + 1}. ${a.point}`).join('\n')}
       .map((a) => `[第${a.round}轮，证据ID: ${a.evidenceIds.join('、') || '无'}] ${a.argument}`)
       .join('\n');
 
+    // 评论 prompt 模板为冻结字符串，一字不改
     const critiquePrompt = `你是一位资深投资评论家（Critic）。请阅读以下多空双方的辩论，尖锐地指出：
 
 1. 多头论点中最薄弱的环节是什么？为什么？
@@ -598,6 +608,7 @@ ${bearArgs || '（无）'}`;
       { taskId: `analysis:${runId}`, purpose: 'analysis-critique', maxOutputTokens: 1000 },
     );
 
+    // 评论输出原样作为第 3 轮 critic 辩论记录保存
     await this.multiAgentService.addDebateRecord(userId, runId, {
       round: 3,
       speaker: 'critic',
@@ -609,15 +620,14 @@ ${bearArgs || '（无）'}`;
   }
 
   /**
-   * Run the final rating aggregation: build a prompt from evidence summary,
-   * bull/bear arguments, critic output, and risk-gate results, then parse the
-   * LLM's JSON response. Two post-hoc overrides are applied (defensive guards
-   * that enforce business rules even if the LLM disobeys the prompt):
-   *   - If any hard risk rule failed, the rating cannot exceed Hold.
-   *   - If confidence is low, directional ratings (Buy/Sell/Strong Buy/Strong
-   *     Sell) are downgraded to Watch.
-   * Unknown ratings are clamped to Watch.
-   * @returns tokens consumed by this LLM call.
+   * 最终评级聚合：用证据摘要、多空论点、评论输出与风控结果拼 prompt，
+   * 解析 LLM 的 JSON 响应。之后套用两道事后覆写（防御性闸门，即使 LLM
+   * 不遵守 prompt 也强制业务规则）：
+   *   - 任一硬风控规则失败时，评级不得高于 Hold。
+   *   - 置信度为 low 时，方向性评级（Buy/Sell/Strong Buy/Strong Sell）
+   *     降级为 Watch。
+   * 未知评级一律收敛为 Watch。
+   * @returns 本次 LLM 调用消耗的 token 数。
    */
   private async runRatingPhase(
     runId: string,
@@ -629,6 +639,7 @@ ${bearArgs || '（无）'}`;
   ): Promise<number> {
     const detail = await this.multiAgentService.getRun(userId, runId);
 
+    // 缺口盘点：显式缺口 + "隐式缺口"（既没有证据、也没有显式缺口记录时补记）
     const facts = detail.evidence.filter((item) => !this.isDataGap(item));
     const missing = detail.evidence.filter((item) => this.isDataGap(item));
     const criticalGaps = missing.filter(
@@ -656,7 +667,7 @@ ${bearArgs || '（无）'}`;
       ...implicitGaps.map((title) => `- ${title}: 本次没有可核实的证据记录。`),
     ].join('\n');
     const hasCriticalGap = criticalGapTitles.length > 0;
-    // Cap factual evidence to fit the model context. Gaps remain separate.
+    // 事实证据截断到 8 条以适配模型上下文；缺口单独列出。
     const evidenceSummary = facts
       .slice(0, 8)
       .map((e) => `- [${e.id}, ${e.role}] ${e.title}: ${e.content.slice(0, 150)}`)
@@ -740,12 +751,13 @@ ${riskSummary}
 
     const data = result.data as Record<string, unknown>;
 
+    // 解析评级与置信度，非法值收敛到安全默认（Watch/low）
     let rating = String(data.rating ?? 'Watch').trim() as AgentRating;
     let confidence = String(data.confidence ?? 'low')
       .trim()
       .toLowerCase() as AgentConfidence;
 
-    // Clamp unknown ratings to Watch as a safe default.
+    // 未知评级收敛为 Watch（安全默认）。
     const validRatings: AgentRating[] = [
       'Strong Buy',
       'Buy',
@@ -761,11 +773,11 @@ ${riskSummary}
       confidence = 'low';
     }
 
-    // Hard override #1: hard risk-gate failure caps rating at Hold.
+    // 硬性覆写 1：硬风控规则失败时评级封顶 Hold。
     if (hasHardFailure && (rating === 'Buy' || rating === 'Strong Buy')) {
       rating = 'Hold';
     }
-    // Hard override #2: low confidence forbids directional calls.
+    // 硬性覆写 2：低置信度禁止方向性结论。
     if (
       confidence === 'low' &&
       (rating === 'Buy' || rating === 'Sell' || rating === 'Strong Buy' || rating === 'Strong Sell')
@@ -773,10 +785,13 @@ ${riskSummary}
       rating = 'Watch';
     }
     if (hasCriticalGap) {
+      // 存在关键缺口：强制 Watch/low，目标价与方向性建议一并不予产出
       rating = 'Watch';
       confidence = 'low';
     }
 
+    // 关键缺口存在时，把缺口清单写进 keyUncertainty / aggregationLogic /
+    // action，保证用户能看到"为什么只有观望"
     const gapSummary = [...new Set([...missing.map((item) => item.title), ...implicitGaps])].join(
       language === 'en' ? '; ' : '、',
     );
@@ -821,7 +836,10 @@ ${riskSummary}
     return result.tokens;
   }
 
-  /** Free, deterministic summary. This is a data/rule review, never a simulated AI opinion. */
+  /**
+   * 免费确定性的摘要评级。这是数据/规则复核，绝不是模拟的 AI 观点。
+   * 不调用 LLM：固定 Watch/low，文案中说明覆盖范围有限、非行情预测。
+   */
   private async runBasicRatingPhase(
     runId: string,
     userId: string,
@@ -857,7 +875,7 @@ ${riskSummary}
     return 0;
   }
 
-  /** Format saved facts with their citation IDs for debate and critique. */
+  /** 为辩论与评论格式化已保存事实，附上引用 ID。 */
   private formatEvidence(evidence: AgentEvidence[]): string {
     return evidence
       .map((item, index) =>
@@ -870,11 +888,12 @@ ${riskSummary}
       .join('\n\n');
   }
 
+  /** 缺口判定：sourceName 为 'Data Unavailable' 的条目即显式数据缺口。 */
   private isDataGap(item: AgentEvidence): boolean {
     return item.sourceName === 'Data Unavailable';
   }
 
-  /** Ignore injected or stale arguments whose IDs are absent from this run. */
+  /** 忽略引用了本运行不存在证据 ID 的（注入或过期）论点。 */
   private supportedArguments(
     argumentsForRun: BullBearArgument[],
     facts: AgentEvidence[],
@@ -890,7 +909,7 @@ ${riskSummary}
     });
   }
 
-  /** Remove nonexistent citations and discard claims with no saved fact. */
+  /** 剔除不存在的引用，丢弃没有任何已保存事实支撑的论点。 */
   private validateArguments(
     data: unknown,
     validIds: Set<string>,
@@ -911,10 +930,9 @@ ${riskSummary}
   }
 
   /**
-   * Defensive parser for the bull/bear JSON output. The LLM is asked for
-   * `{ arguments: [{ point, evidence_refs }] }` but may return malformed JSON
-   * or missing fields; this helper returns an empty array on any shape mismatch
-   * rather than throwing.
+   * 对多空 JSON 输出的防御性解析。LLM 被要求返回
+   * `{ arguments: [{ point, evidence_refs }] }`，但可能返回畸形 JSON 或缺字段；
+   * 形状不符时返回空数组而不是抛错。
    */
   private extractArguments(data: unknown): Array<{ point: string; evidence_refs: string[] }> {
     if (!data || typeof data !== 'object') return [];

@@ -1,27 +1,23 @@
 /**
- * MultiAgentController — HTTP entry points for the LLM-driven multi-agent
- * stock-analysis pipeline.
+ * multi-agent.controller.ts — MultiAgentController — LLM 驱动的多智能体股票
+ * 分析流水线的 HTTP 入口。
  *
- * All routes are mounted under `/api/multi-agent` and require authentication
- * via `@NeedLogin()`. Every handler extracts `userId` from `req.userContext`
- * and passes it down to the service layer so that all DB reads/writes are
- * owner-scoped (a user can only see/modify their own runs and rules).
+ * 全部路由挂在 `/api/multi-agent` 下，并经 `@NeedLogin()` 要求登录。每个
+ * handler 从 `req.userContext` 取 `userId` 并逐层下传，保证所有数据库
+ * 读写都按所有者隔离（用户只能看到/修改自己的运行与规则）。
  *
- * Route groups:
- *  - Runs: list/get/create/update/cancel/start/status, batch creation,
- *    daily batch, latest ratings.
- *  - Run sub-resources: evidence, bull/bear arguments, debate records, rating,
- *    risk-gate results (GET + POST for each).
- *  - Human-in-the-loop: `/runs/:id/human-decision` approves/modifies/rejects
- *    an LLM-produced rating and optionally syncs it to the daily analysis table
- *    and/or to the holdings row.
- *  - Strategy rules: CRUD + reorder + reset-to-default.
- *  - Deep report: fetch by runId, or generate a sample (Xiaomi) report.
- *  - Audit logs + portfolio-context snapshot.
+ * 路由分组：
+ *  - 运行：列表/详情/创建/更新/取消/启动/状态、批量创建、每日批次、最新评级。
+ *  - 运行子资源：证据、多空论点、辩论记录、评级、风控闸结果（各含 GET + POST）。
+ *  - 人机协同：`/runs/:id/human-decision` 批准/修改/驳回 LLM 产出的评级，
+ *    并可选同步到每日分析表和/或持仓行。
+ *  - 策略规则：增删改查 + 排序 + 重置默认。
+ *  - 深度报告：按 runId 查询，或生成样例（小米）报告。
+ *  - 审计日志 + 组合上下文快照。
  *
- * Side note: `startRun` triggers `PipelineService.startPipeline` fire-and-forget
- * (void promise) — the HTTP response returns immediately with status
- * `fetching`; the client polls `/runs/:id/status` for progress.
+ * 附注：`startRun` 以 fire-and-forget（void promise）触发
+ * `PipelineService.startPipeline` — HTTP 响应立即返回 `fetching` 状态；
+ * 客户端轮询 `/runs/:id/status` 获取进度。
  */
 import {
   Controller,
@@ -76,8 +72,8 @@ import type {
   AnalysisLanguage,
 } from '@shared/api.interface';
 
-/** Query-string shape for GET /runs. All values arrive as strings from HTTP;
- *  numeric fields are parsed to int in the handler. */
+/** GET /runs 的查询串形态。HTTP 传来的值全是字符串；
+ *  数值字段在 handler 里解析为 int。 */
 interface ListRunsQuery {
   activeOnly?: string;
   ticker?: string;
@@ -89,22 +85,22 @@ interface ListRunsQuery {
   offset?: string;
 }
 
-/** Wraps a list of evidence rows so the client can POST them in one request. */
+/** 包装证据行列表，让客户端可以一次 POST 提交多条。 */
 interface EvidenceBatchDto {
   items: CreateEvidenceDto[];
 }
 
-/** Wraps a list of risk-gate results for bulk insertion. */
+/** 包装风控闸结果列表，用于批量插入。 */
 interface RiskGateBatchDto {
   items: CreateRiskGateDto[];
 }
 
 /**
- * NestJS controller exposing all multi-agent-analysis HTTP endpoints.
- * Delegates business logic to the service/pipeline/batch layer; the controller
- * itself is thin and only does auth extraction, param parsing, and a small
- * number of request-validity checks (e.g. only `pending`/`failed` runs can be
- * started; only `awaiting_human`/`completed` runs accept a human decision).
+ * 暴露全部多智能体分析 HTTP 端点的 NestJS 控制器。
+ * 业务逻辑委托给 service/pipeline/batch 层；控制器本身保持薄，
+ * 只做鉴权提取、参数解析和少量请求有效性检查
+ * （如只有 `pending`/`failed` 的运行能启动；只有 `awaiting_human`/
+ * `completed` 的运行接受人工决策）。
  */
 @NeedLogin()
 @Controller('api/multi-agent')
@@ -117,9 +113,8 @@ export class MultiAgentController {
   ) {}
 
   /**
-   * GET /runs — paginated list of the caller's agent runs, each joined with
-   * its rating (if any) and deep-report target prices.
-   * Supports filtering by ticker, status, runMode, and date range.
+   * GET /runs — 调用方运行列表的分页查询，每条与其评级（如有）和深度报告
+   * 目标价联查。支持按代码、状态、运行模式与日期范围过滤。
    */
   @Get('runs')
   async listRuns(
@@ -140,8 +135,8 @@ export class MultiAgentController {
   }
 
   /**
-   * POST /runs/batch — create one or more runs for the caller and enqueue them
-   * through BatchService (which applies per-mode concurrency caps).
+   * POST /runs/batch — 为调用方创建一个或多个运行，并经 BatchService 入队
+   * （后者按模式应用并发上限）。
    */
   @Post('runs/batch')
   @NeedLogin()
@@ -151,9 +146,8 @@ export class MultiAgentController {
   }
 
   /**
-   * POST /daily-batch — convenience endpoint that kicks off the daily routine:
-   * a tiered run over all holdings plus a full run for watchlist items that
-   * carry a buy/strong-buy signal.
+   * POST /daily-batch — 便捷端点，一键启动每日例行：对全部持仓做分级
+   * （tiered）运行，并对带买入/强烈买入信号的观察列表代码做完整运行。
    */
   @Post('daily-batch')
   @NeedLogin()
@@ -166,9 +160,8 @@ export class MultiAgentController {
   }
 
   /**
-   * GET /latest-ratings — return the most recent completed rating per ticker
-   * (optionally filtered by a comma-separated ticker list). Used by the
-   * dashboard to show current recommendations without opening each run.
+   * GET /latest-ratings — 返回每个代码最近一次完成的评级（可用逗号分隔的
+   * 代码列表过滤）。仪表盘用它直接展示当前建议，无需打开每次运行。
    */
   @Get('latest-ratings')
   @NeedLogin()
@@ -186,7 +179,7 @@ export class MultiAgentController {
     return this.multiAgentService.getLatestRatings(userId, tickerList);
   }
 
-  /** GET /runs/:id — full detail of a single run including all sub-resources. */
+  /** GET /runs/:id — 单次运行的完整详情，含全部子资源。 */
   @Get('runs/:id')
   async getRun(
     @Req() req: Request,
@@ -196,14 +189,14 @@ export class MultiAgentController {
     return this.multiAgentService.getRun(userId, id);
   }
 
-  /** POST /runs — create a new run row in `pending` status. Does not start it. */
+  /** POST /runs — 新建一条 `pending` 状态的运行行，不会启动它。 */
   @Post('runs')
   async createRun(@Req() req: Request, @Body() dto: CreateAgentRunDto): Promise<AgentRun> {
     const { userId } = req.userContext;
     return this.multiAgentService.createRun(userId, dto);
   }
 
-  /** PATCH /runs/:id — update run status / human decision / human note. */
+  /** PATCH /runs/:id — 更新运行状态 / 人工决策 / 人工备注。 */
   @Patch('runs/:id')
   async updateRun(
     @Req() req: Request,
@@ -214,8 +207,8 @@ export class MultiAgentController {
     return this.multiAgentService.updateRunStatus(userId, id, dto.status, dto);
   }
 
-  /** POST /runs/:id/cancel — mark a run as cancelled. The pipeline checks
-   *  cancellation between phases and stops early. */
+  /** POST /runs/:id/cancel — 把运行标记为已取消。流水线在各阶段之间
+   *  检查取消标志并提前终止。 */
   @Post('runs/:id/cancel')
   async cancelRun(@Req() req: Request, @Param('id', ParseUUIDPipe) id: string): Promise<AgentRun> {
     const { userId } = req.userContext;
@@ -224,7 +217,7 @@ export class MultiAgentController {
     return cancelled;
   }
 
-  /** GET /runs/:id/evidence — list evidence rows collected for a run. */
+  /** GET /runs/:id/evidence — 列出该运行收集到的证据行。 */
   @Get('runs/:id/evidence')
   async getEvidence(
     @Req() req: Request,
@@ -234,7 +227,7 @@ export class MultiAgentController {
     return this.multiAgentService.getEvidence(userId, id);
   }
 
-  /** POST /runs/:id/evidence — bulk-insert evidence rows for a run. */
+  /** POST /runs/:id/evidence — 为运行批量插入证据行。 */
   @Post('runs/:id/evidence')
   async addEvidence(
     @Req() req: Request,
@@ -245,7 +238,7 @@ export class MultiAgentController {
     return this.multiAgentService.addEvidence(userId, id, dto.items);
   }
 
-  /** GET /runs/:id/arguments — list bull/bear debate arguments. */
+  /** GET /runs/:id/arguments — 列出多空辩论论点。 */
   @Get('runs/:id/arguments')
   async getArguments(
     @Req() req: Request,
@@ -255,7 +248,7 @@ export class MultiAgentController {
     return this.multiAgentService.getArguments(userId, id);
   }
 
-  /** POST /runs/:id/arguments — record a single bull/bear argument. */
+  /** POST /runs/:id/arguments — 记录一条多空论点。 */
   @Post('runs/:id/arguments')
   async addArgument(
     @Req() req: Request,
@@ -266,7 +259,7 @@ export class MultiAgentController {
     return this.multiAgentService.addArgument(userId, id, dto);
   }
 
-  /** GET /runs/:id/debate — list debate turns (bull/bear/critic). */
+  /** GET /runs/:id/debate — 列出辩论轮次（多/空/评论员）。 */
   @Get('runs/:id/debate')
   async getDebate(
     @Req() req: Request,
@@ -276,7 +269,7 @@ export class MultiAgentController {
     return this.multiAgentService.getDebate(userId, id);
   }
 
-  /** POST /runs/:id/debate — append a debate turn. */
+  /** POST /runs/:id/debate — 追加一条辩论轮次。 */
   @Post('runs/:id/debate')
   async addDebateRecord(
     @Req() req: Request,
@@ -287,7 +280,7 @@ export class MultiAgentController {
     return this.multiAgentService.addDebateRecord(userId, id, dto);
   }
 
-  /** GET /runs/:id/rating — the aggregated final rating (null if not yet produced). */
+  /** GET /runs/:id/rating — 聚合后的最终评级（尚未产出时为 null）。 */
   @Get('runs/:id/rating')
   async getRating(
     @Req() req: Request,
@@ -309,7 +302,7 @@ export class MultiAgentController {
     return this.multiAgentService.saveRating(userId, id, dto);
   }
 
-  /** GET /runs/:id/risk-gate — list evaluated hard/soft risk-rule results. */
+  /** GET /runs/:id/risk-gate — 列出已评估的硬/软风控规则结果。 */
   @Get('runs/:id/risk-gate')
   async getRiskGate(
     @Req() req: Request,
@@ -319,7 +312,7 @@ export class MultiAgentController {
     return this.multiAgentService.getRiskGate(userId, id);
   }
 
-  /** POST /runs/:id/risk-gate — bulk-insert risk-gate evaluation results. */
+  /** POST /runs/:id/risk-gate — 批量插入风控闸评估结果。 */
   @Post('runs/:id/risk-gate')
   async saveRiskGate(
     @Req() req: Request,
@@ -331,9 +324,9 @@ export class MultiAgentController {
   }
 
   /**
-   * POST /runs/:id/start — kick off the async pipeline for a pending/failed run.
-   * Validates that the run is in a startable state, then fires
-   * `pipelineService.startPipeline` (fire-and-forget) and immediately returns.
+   * POST /runs/:id/start — 为 pending/failed 状态的运行启动异步流水线。
+   * 校验运行处于可启动状态后，以 fire-and-forget 方式触发
+   * `pipelineService.startPipeline` 并立即返回。
    */
   @Post('runs/:id/start')
   @NeedLogin()
@@ -343,7 +336,7 @@ export class MultiAgentController {
   ): Promise<{ runId: string; status: string }> {
     const { userId } = req.userContext;
     const run = await this.multiAgentService.getRun(userId, id);
-    // Only freshly-created or previously-failed runs can be started.
+    // 只有刚创建或此前失败的运行可以启动。
     if (run.status !== 'pending' && run.status !== 'failed') {
       throw new BadRequestException(`Run status ${run.status} cannot be started`);
     }
@@ -351,7 +344,7 @@ export class MultiAgentController {
     return { runId: id, status: 'fetching' };
   }
 
-  /** GET /runs/:id/status — poll the current state of a run. */
+  /** GET /runs/:id/status — 轮询运行当前状态。 */
   @Get('runs/:id/status')
   @NeedLogin()
   async getRunStatus(
@@ -363,15 +356,15 @@ export class MultiAgentController {
   }
 
   /**
-   * POST /runs/:id/human-decision — human-in-the-loop approval step.
+   * POST /runs/:id/human-decision — 人机协同审批环节。
    *
-   * The pipeline ends at `awaiting_human`; the user then chooses:
-   *  - rejected: run is marked cancelled, audit log written.
-   *  - modified: an optional human-edited rating is saved over the LLM rating,
-   *    then the run completes.
-   *  - approved: run completes; optionally syncs the rating into the daily
-   *    analysis table (`syncToAnalysis`, default true) and/or writes the rating
-   *    back onto the holdings row (`applyToHoldings`, default false).
+   * 流水线止步于 `awaiting_human`，用户随后选择：
+   *  - rejected（驳回）：运行标记为 cancelled，写入审计日志。
+   *  - modified（修改）：可选地把人工改过的评级覆盖 LLM 评级并保存，
+   *    然后运行完成。
+   *  - approved（批准）：运行完成；可选地把评级同步进每日分析表
+   *    （`syncToAnalysis`，默认 true）和/或把评级回写到持仓行
+   *    （`applyToHoldings`，默认 false）。
    */
   @Post('runs/:id/human-decision')
   @NeedLogin()
@@ -413,7 +406,7 @@ export class MultiAgentController {
         bearSummary: mr.bearSummary,
         catalysts: mr.catalysts,
         risks: mr.risks,
-        // Record the original LLM rating for traceability.
+        // 记录原始 LLM 评级以便追溯。
         aggregationLogic: `人工修改评级，原始评级: ${run.rating?.rating ?? 'N/A'}`,
         keyUncertainty: run.rating?.keyUncertainty ?? undefined,
       });
@@ -443,14 +436,14 @@ export class MultiAgentController {
     });
   }
 
-  /** GET /strategy-rules — list the caller's personalized risk rules. */
+  /** GET /strategy-rules — 列出调用方的个性化风控规则。 */
   @Get('strategy-rules')
   async getStrategyRules(@Req() req: Request): Promise<StrategyRule[]> {
     const { userId } = req.userContext;
     return this.multiAgentService.getStrategyRules(userId);
   }
 
-  /** POST /strategy-rules — create a new risk rule. */
+  /** POST /strategy-rules — 新建一条风控规则。 */
   @Post('strategy-rules')
   @NeedLogin()
   async createStrategyRule(
@@ -461,7 +454,7 @@ export class MultiAgentController {
     return this.multiAgentService.createStrategyRule(userId, dto);
   }
 
-  /** PATCH /strategy-rules/:id — update a risk rule. */
+  /** PATCH /strategy-rules/:id — 更新一条风控规则。 */
   @Patch('strategy-rules/:id')
   @NeedLogin()
   async updateStrategyRule(
@@ -473,7 +466,7 @@ export class MultiAgentController {
     return this.multiAgentService.updateStrategyRule(userId, id, dto);
   }
 
-  /** DELETE /strategy-rules/:id — remove a risk rule. */
+  /** DELETE /strategy-rules/:id — 删除一条风控规则。 */
   @Delete('strategy-rules/:id')
   @NeedLogin()
   async deleteStrategyRule(
@@ -485,7 +478,7 @@ export class MultiAgentController {
     return { deleted: true };
   }
 
-  /** POST /strategy-rules/reorder — bulk-update sort order for the rules list. */
+  /** POST /strategy-rules/reorder — 批量更新规则列表的排序。 */
   @Post('strategy-rules/reorder')
   @NeedLogin()
   async reorderStrategyRules(
@@ -500,7 +493,7 @@ export class MultiAgentController {
     return { updated: count };
   }
 
-  /** POST /strategy-rules/reset-default — wipe caller's rules and reseed defaults. */
+  /** POST /strategy-rules/reset-default — 清空调用方规则并重新播种默认集。 */
   @Post('strategy-rules/reset-default')
   @NeedLogin()
   async resetStrategyRules(@Req() req: Request): Promise<StrategyRule[]> {
@@ -508,7 +501,7 @@ export class MultiAgentController {
     return this.multiAgentService.resetDefaultStrategyRules(userId);
   }
 
-  /** GET /deep-report/:runId — fetch the full structured deep-dive report. */
+  /** GET /deep-report/:runId — 获取完整的结构化深度报告。 */
   @Get('deep-report/:runId')
   @NeedLogin()
   async getDeepReport(
@@ -520,9 +513,9 @@ export class MultiAgentController {
   }
 
   /**
-   * POST /runs/:id/generate-sample-deep-report — developer/demo endpoint that
-   * writes a hard-coded Xiaomi (1810.HK) sample deep report into the DB so the
-   * UI can be tested end-to-end without running the full LLM pipeline.
+   * POST /runs/:id/generate-sample-deep-report — 开发/演示端点：向数据库写入
+   * 一份硬编码的小米（1810.HK）样例深度报告，便于不跑完整 LLM 流水线
+   * 就能端到端测试 UI。
    */
   @Post('runs/:id/generate-sample-deep-report')
   @NeedLogin()
@@ -534,7 +527,7 @@ export class MultiAgentController {
     return this.multiAgentService.generateSampleDeepReport(userId, id);
   }
 
-  /** GET /audit-logs — recent audit events for the caller (default 20, max 100). */
+  /** GET /audit-logs — 调用方最近的审计事件（默认 20 条，上限 100）。 */
   @Get('audit-logs')
   async getAuditLogs(
     @Req() req: Request,
@@ -544,8 +537,7 @@ export class MultiAgentController {
     return this.multiAgentService.getAuditLogs(userId, limit ? parseInt(limit, 10) : 20);
   }
 
-  /** GET /portfolio-context — current holdings/cash/weights/company-group
-   *  exposures snapshot for the caller. */
+  /** GET /portfolio-context — 调用方当前的持仓/现金/权重/公司组敞口快照。 */
   @Get('portfolio-context')
   @NeedLogin()
   async getPortfolioContext(@Req() req: Request): Promise<PortfolioContext> {

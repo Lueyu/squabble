@@ -1,16 +1,24 @@
 /**
- * PortfolioContextService — assembles the per-user portfolio snapshot used by
- * the pipeline, and evaluates hard/soft strategy rules against it.
+ * portfolio-context.service.ts — PortfolioContextService — 组装流水线使用的
+ * 单用户组合快照，并据此评估硬性/软性策略规则。
  *
- * Responsibilities:
- *  1. getPortfolioContext: read holdings + cash accounts, compute market
- *     values, weights, PnL, and aggregate "company group" exposure (e.g.
- *     Xiaomi's dual-listed 1810.HK / XIACF / XIACY count as one entity).
- *  2. checkRiskRules: given a ticker + portfolio + the user's enabled rules,
- *     evaluate each known ruleKey and return pass/fail + suggested action.
- *     Hard-rule failures cap the final rating (see PipelineService.runRatingPhase).
- *  3. applyRatingToHoldings: when a human approves a run, optionally write the
- *     resulting rating/action/targetPrice back onto the holdings row.
+ * 职责边界：
+ *  1. getPortfolioContext：读持仓 + 现金账户，计算市值、权重、盈亏，以及
+ *  按"公司组"聚合的敞口（如小米双重上市的 1810.HK / XIACF / XIACY 记为同一主体）。
+ *  2. checkRiskRules：给定代码 + 组合快照 + 用户启用的规则，逐条评估已知
+ *  ruleKey，返回通过/不通过 + 建议动作。硬规则不过会封顶最终评级
+ *  （见 PipelineService.runRatingPhase）。
+ *  3. applyRatingToHoldings：人工批准某次运行后，可把评级/动作/目标价
+ *  回写到对应持仓行。
+ *  - 不负责：行情获取与汇率数据本身（依赖 FxService 提供汇率）。
+ * 上下游：
+ *  - 上游（谁调用这里）：PipelineService（组合上下文与风控规则评估）、
+ *    MultiAgentService（人工批准后回写评级）、BatchService（分层模式取权重）。
+ *  - 下游（本文件调用谁）：FxService.convert（币种→USD 汇率）、
+ *    database/schema 的 holdings / cashAccounts / agentRuns / agentRatings 表。
+ * 关键约定：
+ *  - 快照统一折算成 USD；持仓价格保留原币种。
+ *  - 无法核实的规则一律按"未通过"返回，绝不静默视为通过。
  */
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -20,8 +28,8 @@ import type { PortfolioContext, StrategyRule } from '@shared/api.interface';
 import { FxService } from '@server/modules/fx/fx.service';
 
 /**
- * Tickers of well-known leveraged/inverse ETFs that get a stricter exposure
- * cap. Hard-coded list; extend as needed.
+ * 公认的杠杆/反向 ETF 代码清单，适用更严格的敞口上限。
+ * 硬编码列表；按需扩充。
  */
 const LEVERAGE_ETF_TICKERS = new Set([
   'TQQQ',
@@ -49,13 +57,12 @@ const LEVERAGE_ETF_TICKERS = new Set([
   'SSO',
 ]);
 
-/** Company-group key for Xiaomi (covers all dual-listed tickers). */
+/** 小米的"公司组"键（覆盖全部双重上市代码）。 */
 const XIAOMI_GROUP = 'Xiaomi';
 
 /**
- * Map a ticker to its canonical "company group" so that dual-listed shares
- * count as one exposure. Strips the .HK suffix and leading zeros (e.g.
- * 01810.HK → 1810). Special-cases Xiaomi's tickers to a single group.
+ * 把代码映射到规范的"公司组"，使双重上市股份计为同一敞口。
+ * 剥掉 .HK 后缀与前导零（如 01810.HK → 1810）；小米的各代码特判归入同一组。
  */
 function getCompanyGroup(ticker: string): string {
   const upper = ticker.toUpperCase().replace(/\.HK$/, '').replace(/^0+/, '');
@@ -75,16 +82,18 @@ export class PortfolioContextService {
   ) {}
 
   /**
-   * Build the per-user portfolio snapshot in USD: total value, cash, weights,
-   * per-holding market value, and per-company-group exposure. Holding prices
-   * remain in their native currencies.
+   * 构建以 USD 计价的单用户组合快照：总值、现金、权重、各持仓市值，
+   * 以及各公司组的敞口。持仓价格保留原币种。
    */
   async getPortfolioContext(userId: string): Promise<PortfolioContext> {
+    // 并行读取持仓与现金账户行
     const [holdingRows, cashRows] = await Promise.all([
       this.db.select().from(holdings).where(eq(holdings.owner, userId)),
       this.db.select().from(cashAccounts).where(eq(cashAccounts.owner, userId)),
     ]);
 
+    // 汇率缓存：USD 恒为 1；其余币种经 FxService 换算后缓存，
+    // 缺汇率或汇率无效都直接抛中文错误（用户可见文案，冻结）
     const rateCache = new Map<string, number>([['USD', 1]]);
     const getUsdRate = async (currency: string): Promise<number> => {
       const source = currency.toUpperCase();
@@ -106,6 +115,7 @@ export class PortfolioContextService {
       return rate;
     };
 
+    // 现金折算：逐账户取 USD 汇率累加；非法余额直接抛错
     let cash = 0;
     for (const row of cashRows) {
       const balance = Number(row.balance ?? 0);
@@ -117,6 +127,8 @@ export class PortfolioContextService {
       }
     }
 
+    // 持仓折算：逐行做数量/现价/成本价校验（错误文案为用户可见中文，冻结），
+    // 计算原币市值、USD 市值与盈亏百分比
     let totalMv = 0;
     const holdingDetails: PortfolioContext['holdings'] = [];
     for (const h of holdingRows) {
@@ -158,7 +170,7 @@ export class PortfolioContextService {
         currentPrice,
         costPrice: buyPrice,
         marketValue,
-        weightPct: 0, // filled in after totalValue is known
+        weightPct: 0, // 总值已知后回填
         pnlPct,
         companyGroup: getCompanyGroup(h.ticker),
       });
@@ -166,12 +178,12 @@ export class PortfolioContextService {
 
     const totalValue = totalMv + cash;
 
-    // Second pass: compute weightPct against total portfolio value.
+    // 第二遍：按组合总值计算每个持仓的权重百分比。
     for (const h of holdingDetails) {
       h.weightPct = totalValue > 0 ? (h.marketValue / totalValue) * 100 : 0;
     }
 
-    // Aggregate weight by company group so dual-listed shares count once.
+    // 按公司组聚合权重，使双重上市股份只计一次。
     const companyExposures: Record<string, number> = {};
     for (const h of holdingDetails) {
       companyExposures[h.companyGroup] = (companyExposures[h.companyGroup] ?? 0) + h.weightPct;
@@ -188,18 +200,16 @@ export class PortfolioContextService {
   }
 
   /**
-   * Evaluate the user's enabled strategy rules for a given ticker against the
-   * current portfolio. Rules that cannot be verified are returned as failures
-   * rather than silently treated as passes.
+   * 针对给定代码，按当前组合评估用户启用的策略规则。无法核实的规则
+   * 按"未通过"返回，绝不静默当作通过。
    *
-   * Hard rules (ruleType='hard') that fail cap the final rating at Hold.
-   * Soft rules are advisory and surfaced to the LLM / user but do not cap the
-   * rating.
+   * 硬规则（ruleType='hard'）不过会把最终评级封顶在 Hold。
+   * 软规则仅供参考，会呈现给 LLM/用户但不封顶评级。
    *
-   * @param ticker the ticker being analyzed.
-   * @param portfolio the snapshot from getPortfolioContext.
-   * @param rules the user's strategy rules (already filtered to owner).
-   * @returns one entry per enabled rule.
+   * @param ticker 正在分析的代码。
+   * @param portfolio getPortfolioContext 生成的快照。
+   * @param rules 用户的策略规则（已按所有者过滤）。
+   * @returns 每条启用规则一条结果。
    */
   checkRiskRules(
     ticker: string,
@@ -226,8 +236,10 @@ export class PortfolioContextService {
       suggestedAction: string;
     }> = [];
 
+    // 公司组键与目标持仓行（供各规则共享）
     const companyGroup = getCompanyGroup(ticker);
     const holding = portfolio.holdings.find((h) => h.ticker.toUpperCase() === ticker.toUpperCase());
+    // addUnverified：无法核实的规则统一产出"未通过"结果，附中文原因与建议动作
     const addUnverified = (
       rule: StrategyRule,
       thresholdValue: number | null,
@@ -245,6 +257,7 @@ export class PortfolioContextService {
       });
     };
 
+    // 逐条评估启用规则；阈值必须为非负有限数，否则按"无法核实"处理
     for (const rule of rules) {
       if (!rule.enabled) continue;
       const threshold = rule.threshold?.trim() ? Number(rule.threshold) : null;
@@ -254,8 +267,7 @@ export class PortfolioContextService {
       }
 
       switch (rule.ruleKey) {
-        // Combined exposure across all tickers belonging to the same company
-        // group (e.g. 1810.HK + XIACF).
+        // 同一公司组下所有代码的合并敞口（如 1810.HK + XIACF）。
         case 'single_company_exposure': {
           const exposure = portfolio.companyExposures[companyGroup] ?? 0;
           const passed = threshold === null ? true : exposure <= threshold;
@@ -340,7 +352,7 @@ export class PortfolioContextService {
           break;
         }
 
-        // Drawdown check: only fires when the position is at a loss.
+        // 回撤检查：仅当持仓处于浮亏时触发。
         case 'drawdown_check': {
           const pnlPct = holding?.pnlPct;
           if (holding && pnlPct === null) {
@@ -480,12 +492,12 @@ export class PortfolioContextService {
   }
 
   /**
-   * After a human approves/modifies a run, optionally write the resulting
-   * rating/action/targetPrice back onto the caller's holdings row for that
-   * ticker. No-op if the ticker is not currently held.
-   * @returns true if a holdings row was updated.
+   * 人工批准/修改某次运行后，可选地把评级/动作/目标价回写到调用方
+   * 对应代码的持仓行。代码当前未持仓时不做任何事。
+   * @returns 是否更新了持仓行。
    */
   async applyRatingToHoldings(userId: string, runId: string): Promise<boolean> {
+    // 并行取运行行与评级行，二者都归属当前用户
     const [runRow, ratingRow] = await Promise.all([
       this.db
         .select()

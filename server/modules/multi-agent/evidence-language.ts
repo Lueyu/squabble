@@ -1,5 +1,22 @@
-/** Translate application-generated evidence labels, preserving original provider/user text. */
+/**
+ * evidence-language.ts — 把应用内生成的中文证据/风险标签翻译为英文。
+ *
+ * 职责边界：
+ *  - 只翻译"本应用生成的固定文案"（下方常量表内的查找串）；
+ *    未命中常量表的文本一律原样返回。
+ *  - 绝不改动原始 provider 文本或用户输入的语义内容：这里只是字符串替换，
+ *    不做分词、不做语言检测。
+ * 上下游：
+ *  - 上游（谁调用这里）：EvidenceService 在组装面向英文读者的证据标题/正文/理由时调用。
+ *  - 下游（本文件调用谁）：无外部依赖（纯函数）。
+ * 关键约定：
+ *  - 替换按表顺序串行执行：前一条目的输出会作为后一条目的输入，因此条目顺序
+ *    参与决定最终结果，不可随意重排。
+ */
+
+/** 将应用生成的证据文案中的中文固定短语替换为英文；原始 provider/用户文本保持原样。 */
 export function englishEvidenceText(text: string): string {
+  // 查找串 → 替换串 的有序对照表；新增条目请加在表尾并确认不会破坏既有替换链
   const translations: Array<[string, string]> = [
     [
       '数据获取缺口不代表公司存在财务风险。',
@@ -155,6 +172,7 @@ export function englishEvidenceText(text: string): string {
     ['（延时）', ' (delayed)'],
     ['。', '. '],
   ];
+  // 依次对全文执行 replaceAll，前一条目的替换结果会进入下一条目的处理
   return translations.reduce(
     (value, [original, translated]) => value.replaceAll(original, translated),
     text,

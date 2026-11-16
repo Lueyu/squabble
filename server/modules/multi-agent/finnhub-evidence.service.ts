@@ -1,3 +1,22 @@
+/**
+ * finnhub-evidence.service.ts — 通过 Finnhub API 获取估值指标、财报与公司新闻三类证据。
+ *
+ * 职责边界：
+ *  - 负责：Finnhub 密钥/市场支持校验、API 请求与错误码归一化、
+ *    估值指标（getMetrics）、财报（getFinancials，quarterly→annual 回退）、
+ *    公司新闻（getNews）的抓取与清洗。
+ *  - 不负责：财报解析细节（parseFinnhubFinancials 在 finnhub-financials.ts）、
+ *    证据源的最终取舍（由 EvidenceService 决定）。
+ * 上下游：
+ *  - 上游（谁调用这里）：EvidenceService 调用 getMetrics / getFinancials / getNews，
+ *    并用 finnhubGapReason 把失败码翻译为用户可读的缺口说明。
+ *  - 下游（本文件调用谁）：SettingsService（读取用户 Finnhub 密钥）、
+ *    finnhub-financials.ts（finiteFinnhubNumber / parseFinnhubFinancials）、Finnhub REST API。
+ * 关键约定：
+ *  - 只查询美股代码：公司新闻覆盖范围仅北美（HK/SH/SS/SZ/BJ 后缀被排除）。
+ *  - 对外错误只暴露安全的语义化 code（如 unauthorized/rate_limited），
+ *    绝不透传原始 provider 错误文本或 URL。
+ */
 import { Injectable } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
 import type { EvidenceInput } from './evidence.service';
@@ -7,6 +26,7 @@ import {
   type FinnhubFinancialsResult,
 } from './finnhub-financials';
 
+/** Finnhub 证据获取的失败原因码。 */
 type FinnhubFailureCode =
   | 'missing_key'
   | 'unsupported_market'
@@ -21,7 +41,7 @@ type FinnhubFailureCode =
   | 'stale_data'
   | 'incomplete_data';
 
-/** Safe, actionable categories only: never preserve a raw provider error or URL. */
+/** 只暴露安全、可操作的分类 code：绝不保留原始 provider 错误文本或 URL。 */
 export class FinnhubEvidenceError extends Error {
   constructor(readonly code: FinnhubFailureCode) {
     super(`Finnhub ${code}`);
@@ -29,6 +49,7 @@ export class FinnhubEvidenceError extends Error {
   }
 }
 
+// 把 Finnhub 失败码翻译为面向用户的中文缺口说明（未识别异常一律归为 provider_error）。
 export function finnhubGapReason(error: unknown): string {
   const code: FinnhubFailureCode =
     error instanceof FinnhubEvidenceError ? error.code : 'provider_error';
@@ -49,11 +70,13 @@ export function finnhubGapReason(error: unknown): string {
   return `[Finnhub:${code}] ${reasons[code]}`;
 }
 
+/** Finnhub 基础指标（metric）证据的结构：证据条目 + 是否拿到估值数据。 */
 interface FinnhubMetricsResult {
   items: EvidenceInput[];
   hasValuation: boolean;
 }
 
+/** Finnhub 公司新闻条目的宽松形状（字段类型未验证，使用前必须清洗）。 */
 interface FinnhubArticle {
   headline?: unknown;
   summary?: unknown;
@@ -62,15 +85,17 @@ interface FinnhubArticle {
   datetime?: unknown;
 }
 
+// Finnhub API 基址与新闻条数上限。
 const FINNHUB_API = 'https://api.finnhub.io/api/v1';
 const MAX_NEWS_ITEMS = 5;
 
-/** Only U.S. symbols are queried: Finnhub's company news covers North America. */
+/** 只查询美股代码：Finnhub 的公司新闻覆盖范围仅限北美。 */
 function isSupportedSymbol(ticker: string): boolean {
   const upper = ticker.toUpperCase().trim();
   return /^[A-Z][A-Z0-9.-]{0,19}$/.test(upper) && !/\.(HK|SH|SS|SZ|BJ)$/.test(upper);
 }
 
+// 文本清洗：剥 HTML 标签、折叠空白、截断；非字符串一律空串。
 function cleanText(value: unknown, maxLength: number): string {
   if (typeof value !== 'string') return '';
   return value
@@ -80,6 +105,7 @@ function cleanText(value: unknown, maxLength: number): string {
     .slice(0, maxLength);
 }
 
+// 新闻来源 URL 只接受合法的 https 链接，其余一律丢弃。
 function safeArticleUrl(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   try {
@@ -94,6 +120,7 @@ function safeArticleUrl(value: unknown): string | undefined {
 export class FinnhubEvidenceService {
   constructor(private readonly settings: SettingsService) {}
 
+  // 校验市场支持与用户密钥，返回可用的 trimmed token；二者缺一即抛对应错误
   private async callerToken(userId: string, ticker: string): Promise<string> {
     if (!isSupportedSymbol(ticker)) throw new FinnhubEvidenceError('unsupported_market');
     const token: string | null = await this.settings.getFinnhubKey(userId);
@@ -101,6 +128,7 @@ export class FinnhubEvidenceService {
     return token.trim();
   }
 
+  // 统一的 Finnhub GET 请求：拼 URL 与参数、10s 超时、状态码/JSON/错误体三种校验
   private async request(
     path: string,
     token: string,
@@ -115,6 +143,7 @@ export class FinnhubEvidenceService {
         redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
+      // HTTP 状态码映射：401/403/429 有专属码，其余归 provider_error
       if (!response.ok) {
         const code: FinnhubFailureCode =
           response.status === 401
@@ -126,6 +155,7 @@ export class FinnhubEvidenceService {
                 : 'provider_error';
         throw new FinnhubEvidenceError(code);
       }
+      // JSON 解析失败或响应体携带 error 字段都视为不可信
       let payload: unknown;
       try {
         payload = await response.json();
@@ -137,6 +167,7 @@ export class FinnhubEvidenceService {
       }
       return payload;
     } catch (error) {
+      // 语义化错误原样抛出；超时/中止归为 timeout，其余网络层异常归为 network_error
       if (error instanceof FinnhubEvidenceError) throw error;
       const timeout: boolean =
         error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name);
@@ -147,6 +178,7 @@ export class FinnhubEvidenceService {
   async getMetrics(userId: string, ticker: string): Promise<FinnhubMetricsResult | null> {
     const token = await this.callerToken(userId, ticker);
 
+    // 请求公司基础指标（metric=all）
     const raw = await this.request('/stock/metric', token, {
       symbol: ticker.toUpperCase(),
       metric: 'all',
@@ -156,6 +188,7 @@ export class FinnhubEvidenceService {
       throw new FinnhubEvidenceError('invalid_response');
     }
 
+    // 只提取白名单估值字段（PE/PB/PS），且必须是正的有限数值
     const fields: Array<[string, string]> = [
       ['peBasicExclExtraTTM', 'P/E (TTM, excluding extraordinary items)'],
       ['pbAnnual', 'P/B (annual)'],
@@ -169,6 +202,7 @@ export class FinnhubEvidenceService {
         values.push(`${label}: ${numeric.toFixed(2)}`);
       }
     }
+    // 一个估值字段都没拿到 → 明确上报"无估值数据"
     if (values.length === 0) return { items: [], hasValuation: false };
     return {
       hasValuation: true,
@@ -188,8 +222,10 @@ export class FinnhubEvidenceService {
 
   async getFinancials(userId: string, ticker: string): Promise<FinnhubFinancialsResult> {
     const token: string = await this.callerToken(userId, ticker);
+    // 查询窗口固定 550 天（对应年报的最大时效），from/to 都按 UTC 日期
     const now: Date = new Date();
     const from: string = new Date(now.getTime() - 550 * 86_400_000).toISOString().slice(0, 10);
+    // 先试季报；仅当季报明确 no_data 时才回退年报，其余 issue 直接抛出
     for (const frequency of ['quarterly', 'annual'] as const) {
       const raw: unknown = await this.request('/stock/financials-reported', token, {
         symbol: ticker.toUpperCase().trim(),
@@ -202,12 +238,14 @@ export class FinnhubEvidenceService {
       if (result.issue) throw new FinnhubEvidenceError(result.issue);
       return result;
     }
+    // 季报与年报都没有可用数据
     throw new FinnhubEvidenceError('no_data');
   }
 
   async getNews(userId: string, ticker: string): Promise<EvidenceInput[] | null> {
     const token = await this.callerToken(userId, ticker);
 
+    // 抓取最近 7 天的公司新闻（from/to 按 UTC 日期）
     const to = new Date();
     const from = new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
     const raw = await this.request('/company-news', token, {
@@ -217,6 +255,7 @@ export class FinnhubEvidenceService {
     });
     if (!Array.isArray(raw)) throw new FinnhubEvidenceError('invalid_response');
 
+    // 过滤：标题非空且 datetime 为有效秒级时间戳、落在抓取窗口内；最多取 5 条
     return (raw as FinnhubArticle[])
       .filter(
         (article) =>

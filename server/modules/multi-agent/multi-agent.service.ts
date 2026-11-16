@@ -1,26 +1,35 @@
 /**
- * MultiAgentService — data-access facade for all multi-agent tables.
+ * MultiAgentService — 多智能体各张表的数据访问门面。
  *
- * This is the single place where the multi-agent subsystem talks to PostgreSQL.
- * The controller and pipeline call into these methods; business logic lives in
- * PipelineService / PortfolioContextService / BatchService.
+ * 这是多智能体子系统与 PostgreSQL 交互的唯一入口。controller 与 pipeline
+ * 调用这些方法；业务逻辑位于 PipelineService / PortfolioContextService /
+ * BatchService。
  *
- * Tables touched:
- *  - agent_runs: one row per analysis run (lifecycle, timing, tokens).
- *  - agent_evidence: evidence rows collected in Phase 1.
- *  - bull_bear_arguments: individual bull/bear debate points.
- *  - debate_records: one row per debate turn (bull/bear/critic).
- *  - agent_ratings: the final aggregated rating (upserted once per run).
- *  - risk_gate_results: evaluated hard/soft rule results.
- *  - strategy_rules: user-customizable risk rules (seeded with defaults).
- *  - agent_audit_log: append-only audit trail of run lifecycle events.
- *  - deep_report: structured deep-dive report (SOTP valuation, financials…).
- *  - analysis: the daily-analysis table that human-approved ratings can sync
- *    into (shared with the rest of the app).
+ * 职责边界：
+ *  - CRUD/映射/归属校验；不做编排、不做 LLM 调用、不做规则评估。
  *
- * Every query is owner-scoped (WHERE owner = userId) so users can never read
- * or mutate each other's data. Sub-resource writes (evidence/arguments/etc.)
- * first call ensureRunOwner to verify the run belongs to the caller.
+ * 涉及的表：
+ *  - agent_runs：每次分析运行一行（生命周期、时间、token）。
+ *  - agent_evidence：第 1 阶段收集的证据行。
+ *  - bull_bear_arguments：单条多空辩论论点。
+ *  - debate_records：每轮辩论一行（多/空/评论员）。
+ *  - agent_ratings：最终聚合评级（每次运行 upsert 一条）。
+ *  - risk_gate_results：硬/软规则评估结果。
+ *  - strategy_rules：用户可自定义的风控规则（预置默认集）。
+ *  - agent_audit_log：只追加的运行生命周期审计轨迹。
+ *  - deep_report：结构化深度报告（SOTP 估值、财务……）。
+ *  - analysis：每日分析表，人工批准的评级可同步进来（与应用其余部分共享）。
+ *
+ * 关键约定：
+ *  - 每条查询都按所有者隔离（WHERE owner = userId），用户永远无法读写
+ *    彼此的数据。子资源写入（证据/论点等）先经 ensureRunOwner 校验
+ *    该运行确实属于调用方。
+ *
+ * 上下游：
+ *  - 上游：MultiAgentController（全部路由）、PipelineService（子资源写入/读取）、
+ *    BatchService（运行行状态）。
+ *  - 下游：Drizzle schema 十张表；analysis-report 的
+ *    buildPipelineReport/normalizeAnalysisLanguage/safeAnalysisError。
  */
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -70,7 +79,7 @@ import {
   type AnalysisExecutionInfo,
 } from './analysis-report';
 
-/** Internal row shape for bulk evidence inserts (snake_case DB columns). */
+/** 批量插入证据的内部行形态（数据库列为 snake_case）。 */
 interface EvidenceInsert {
   runId: string;
   owner: string;
@@ -91,8 +100,9 @@ export class MultiAgentService {
 
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
-  /** Create a new run row in `pending` status. Does not start the pipeline. */
+  /** 新建一条 `pending` 状态的运行行，不启动流水线。 */
   async createRun(userId: string, dto: CreateAgentRunDto): Promise<AgentRun> {
+    // 语言非法时把 analysis-report 的错误文案包成 400 返回
     let language;
     try {
       language = normalizeAnalysisLanguage(dto.language);
@@ -119,7 +129,7 @@ export class MultiAgentService {
     return this.mapRun(row);
   }
 
-  /** Update run status and/or human-decision metadata. Owner-scoped. */
+  /** 更新运行状态和/或人工决策元数据。按所有者隔离。 */
   async updateRunStatus(
     userId: string,
     runId: string,
@@ -147,11 +157,11 @@ export class MultiAgentService {
   }
 
   /**
-   * Load a run plus all its sub-resources (evidence, arguments, debate,
-   * rating, risk-gate results) in parallel. Throws NotFound if the run does
-   * not exist or belongs to another user.
+   * 读取一次运行及其全部子资源（证据、论点、辩论、评级、风控结果），
+   * 并行查询。运行不存在或属于其他用户时抛 NotFound。
    */
   async getRun(userId: string, runId: string): Promise<AgentRunDetail> {
+    // 主行缺失即 NotFound（防越权：条件里带 owner）
     const [runRow] = await this.db
       .select()
       .from(agentRuns)
@@ -159,6 +169,7 @@ export class MultiAgentService {
 
     if (!runRow) throw new NotFoundException('运行记录不存在');
 
+    // 五个子资源并行读取，映射进返回值
     const [evidenceRows, argumentRows, debateRows, ratingRows, riskRows] = await Promise.all([
       this.db
         .select()
@@ -197,17 +208,19 @@ export class MultiAgentService {
   }
 
   /**
-   * Paginated list of runs, left-joined with the deep-report row for target
-   * prices. Prefer listRunsWithRating (which also joins ratings).
+   * 分页列出运行，左联 deep_report 行取目标价。
+   * 需要评级时请改用 listRunsWithRating（它还会联 agent_ratings）。
    */
   async listRuns(
     userId: string,
     query: AgentRunListQuery,
   ): Promise<{ items: AgentRun[]; total: number }> {
+    // 组装过滤条件（owner 恒在，防越权）
     const conditions = [eq(agentRuns.owner, userId)];
     if (query.ticker) conditions.push(eq(agentRuns.ticker, query.ticker));
     if (query.status) conditions.push(eq(agentRuns.status, query.status));
 
+    // limit 上限 100；页数据与总数并行查询
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = query.offset ?? 0;
 
@@ -244,7 +257,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Bulk-insert evidence rows for a run (owner-checked). */
+  /** 为运行批量插入证据行（已校验归属）。 */
   async addEvidence(
     userId: string,
     runId: string,
@@ -271,7 +284,7 @@ export class MultiAgentService {
     return inserted.map((r) => this.mapEvidence(r));
   }
 
-  /** Insert one bull/bear argument row (owner-checked). */
+  /** 插入一条多空论点行（已校验归属）。 */
   async addArgument(
     userId: string,
     runId: string,
@@ -279,6 +292,7 @@ export class MultiAgentService {
   ): Promise<BullBearArgument> {
     await this.ensureRunOwner(userId, runId);
 
+    // 引用完整性闸门 1：evidenceIds 必须是非空、全为字符串、去重后的列表
     const evidenceIds = dto.evidenceIds;
     if (
       !Array.isArray(evidenceIds) ||
@@ -288,6 +302,8 @@ export class MultiAgentService {
     ) {
       throw new BadRequestException('Argument requires distinct evidence IDs from this run');
     }
+    // 引用完整性闸门 2：所有引用的 ID 必须真实存在、归属本运行，
+    // 且不是数据缺口、相关性大于 0；否则拒绝写入论点
     const validEvidence = await this.db
       .select({
         id: agentEvidence.id,
@@ -328,7 +344,7 @@ export class MultiAgentService {
     return this.mapArgument(row);
   }
 
-  /** Insert one debate turn row (owner-checked). */
+  /** 插入一条辩论轮次行（已校验归属）。 */
   async addDebateRecord(
     userId: string,
     runId: string,
@@ -353,9 +369,8 @@ export class MultiAgentService {
   }
 
   /**
-   * Upsert the rating for a run. If a rating row already exists for this
-   * (runId, owner), it is updated in place; otherwise a new row is inserted.
-   * Called by the pipeline (Phase 5) and by the human-modified path.
+   * 为运行 upsert 评级。该 (runId, owner) 已有评级行时原地更新；
+   * 否则插入新行。流水线（第 5 阶段）与人工修改路径都会调用。
    */
   async saveRating(
     userId: string,
@@ -364,6 +379,7 @@ export class MultiAgentService {
   ): Promise<AgentRatingRecord> {
     await this.ensureRunOwner(userId, runId);
 
+    // 已有评级 → 原地更新
     const existing = await this.db
       .select()
       .from(agentRatings)
@@ -415,7 +431,7 @@ export class MultiAgentService {
     return this.mapRating(row);
   }
 
-  /** Bulk-insert evaluated risk-gate results for a run (owner-checked). */
+  /** 为运行批量插入风控闸评估结果（已校验归属）。 */
   async saveRiskGateResults(
     userId: string,
     runId: string,
@@ -442,10 +458,11 @@ export class MultiAgentService {
   }
 
   /**
-   * List the caller's strategy rules. If the user has no rules yet, seedDefault
-   * is called automatically so the pipeline always has rules to evaluate.
+   * 列出调用方的策略规则。用户还没有规则时自动调用 seedDefault，
+   * 保证流水线始终有规则可评。
    */
   async getStrategyRules(userId: string): Promise<StrategyRule[]> {
+    // 空规则集 → 播种默认规则后再返回
     const rows = await this.db
       .select()
       .from(strategyRules)
@@ -459,7 +476,7 @@ export class MultiAgentService {
     return rows.map((r) => this.mapStrategyRule(r));
   }
 
-  /** Create a new strategy rule; rejects duplicate ruleKey per user. */
+  /** 新建策略规则；同一用户 ruleKey 重复时拒绝。 */
   async createStrategyRule(userId: string, dto: CreateStrategyRuleDto): Promise<StrategyRule> {
     const [existing] = await this.db
       .select({ id: strategyRules.id })
@@ -491,7 +508,7 @@ export class MultiAgentService {
     return this.mapStrategyRule(inserted);
   }
 
-  /** Partially update a strategy rule. */
+  /** 部分更新一条策略规则。 */
   async updateStrategyRule(
     userId: string,
     ruleId: string,
@@ -522,7 +539,7 @@ export class MultiAgentService {
     return this.mapStrategyRule(updated);
   }
 
-  /** Delete a strategy rule (owner-scoped). */
+  /** 删除一条策略规则（按所有者隔离）。 */
   async deleteStrategyRule(userId: string, ruleId: string): Promise<void> {
     const deleted = await this.db
       .delete(strategyRules)
@@ -532,8 +549,8 @@ export class MultiAgentService {
   }
 
   /**
-   * Bulk-update sort order for rules. Done one UPDATE per item (not a single
-   * transaction) — acceptable because reorder is a low-frequency admin action.
+   * 批量更新规则排序。逐条 UPDATE（不用单事务）——排序是低频管理操作，
+   * 可以接受。
    */
   async reorderStrategyRules(userId: string, items: ReorderStrategyRuleDto[]): Promise<number> {
     let count = 0;
@@ -548,13 +565,13 @@ export class MultiAgentService {
     return count;
   }
 
-  /** Delete all caller's rules and reseed with the default set. */
+  /** 删除调用方全部规则并重新播种默认集。 */
   async resetDefaultStrategyRules(userId: string): Promise<StrategyRule[]> {
     await this.db.delete(strategyRules).where(eq(strategyRules.owner, userId));
     return this.seedDefaultRules(userId);
   }
 
-  /** Fetch the deep-dive report for a run (owner-checked), or null if none. */
+  /** 读取一次运行的深度报告（已校验归属）；没有则返回 null。 */
   async getDeepReport(userId: string, runId: string): Promise<DeepReport | null> {
     await this.ensureRunOwner(userId, runId);
     const rows = await this.db.select().from(deepReport).where(eq(deepReport.runId, runId));
@@ -562,7 +579,7 @@ export class MultiAgentService {
     return this.mapDeepReport(rows[0]);
   }
 
-  /** Persist only the actual evidence, published analysis and risk results of this run. */
+  /** 只把本次运行的证据、已发布分析与风控结果持久化成报告。 */
   async savePipelineReport(
     userId: string,
     runId: string,
@@ -580,8 +597,9 @@ export class MultiAgentService {
       });
   }
 
-  /** Retry only failed, report-less work; published reports and user notes are never removed. */
+  /** 只重试失败且无报告的工作；已发布的报告与用户笔记绝不删除。 */
   async resetFailedRunArtifacts(userId: string, runId: string): Promise<void> {
+    // 只有 failed 状态、且尚无报告的运行允许重置
     const run = await this.getRun(userId, runId);
     if (run.status !== 'failed')
       throw new BadRequestException('Only failed analysis can be retried');
@@ -605,11 +623,11 @@ export class MultiAgentService {
   }
 
   /**
-   * Developer/demo endpoint: write a hard-coded Xiaomi (1810.HK) sample deep
-   * report into the DB (upsert on runId). Lets the UI render the full
-   * deep-report view without running the LLM pipeline.
+   * 开发/演示端点：把硬编码的小米（1810.HK）示例深度报告写入数据库
+   * （按 runId upsert）。让 UI 无需跑 LLM 流水线即可渲染完整深度报告视图。
    */
   async generateSampleDeepReport(userId: string, runId: string): Promise<DeepReport> {
+    // 读运行的 ticker/tickerName，缺省回退小米示例值
     const [runRow] = await this.db
       .select({ ticker: agentRuns.ticker, tickerName: agentRuns.tickerName })
       .from(agentRuns)
@@ -620,6 +638,8 @@ export class MultiAgentService {
     const ticker = runRow.ticker || '01810.HK';
     const tickerName = runRow.tickerName || '小米集团';
 
+    // 以下全部为硬编码演示数据（多空论点/评论员/催化剂/财务与估值段），
+    // 仅用于 UI 展示，与真实流水线输出无关
     const bullPoints = [
       {
         title: '人车家全生态闭环持续强化',
@@ -1072,6 +1092,7 @@ export class MultiAgentService {
       },
     ];
 
+    // 组装完整报告行并按 runId upsert（冲突时更新全部演示字段）
     const [upserted] = await this.db
       .insert(deepReport)
       .values({
@@ -1198,7 +1219,7 @@ export class MultiAgentService {
     return this.mapDeepReport(upserted);
   }
 
-  /** Append an audit-log row (runId may be null for user-level events). */
+  /** 追加一条审计日志行（用户级事件 runId 可为 null）。 */
   async addAuditLog(
     userId: string,
     runId: string | null,
@@ -1219,7 +1240,7 @@ export class MultiAgentService {
     return this.mapAuditLog(row);
   }
 
-  /** Recent audit logs for the caller (newest first, capped at 100). */
+  /** 调用方最近的审计日志（新在前，上限 100 条）。 */
   async getAuditLogs(userId: string, limit: number): Promise<AgentAuditLog[]> {
     const rows = await this.db
       .select()
@@ -1230,7 +1251,7 @@ export class MultiAgentService {
     return rows.map((r) => this.mapAuditLog(r));
   }
 
-  /** Mark a run as cancelled. The pipeline polls for this between phases. */
+  /** 把运行标记为 cancelled。流水线在各阶段之间轮询此标记。 */
   async cancelRun(userId: string, runId: string): Promise<AgentRun> {
     const [updated] = await this.db
       .update(agentRuns)
@@ -1242,7 +1263,7 @@ export class MultiAgentService {
     return this.mapRun(updated);
   }
 
-  /** List evidence rows for a run (owner-checked). */
+  /** 列出一次运行的证据行（已校验归属）。 */
   async getEvidence(userId: string, runId: string): Promise<AgentEvidence[]> {
     await this.ensureRunOwner(userId, runId);
     const rows = await this.db
@@ -1253,7 +1274,7 @@ export class MultiAgentService {
     return rows.map((r) => this.mapEvidence(r));
   }
 
-  /** List bull/bear arguments for a run (owner-checked). */
+  /** 列出一次运行的多空论点（已校验归属）。 */
   async getArguments(userId: string, runId: string): Promise<BullBearArgument[]> {
     await this.ensureRunOwner(userId, runId);
     const rows = await this.db
@@ -1264,7 +1285,7 @@ export class MultiAgentService {
     return rows.map((r) => this.mapArgument(r));
   }
 
-  /** List debate turns for a run (owner-checked). */
+  /** 列出一次运行的辩论轮次（已校验归属）。 */
   async getDebate(userId: string, runId: string): Promise<DebateRecord[]> {
     await this.ensureRunOwner(userId, runId);
     const rows = await this.db
@@ -1275,7 +1296,7 @@ export class MultiAgentService {
     return rows.map((r) => this.mapDebate(r));
   }
 
-  /** Fetch the rating for a run, or null if not yet produced (owner-checked). */
+  /** 读取一次运行的评级；尚未产出时返回 null（已校验归属）。 */
   async getRating(userId: string, runId: string): Promise<AgentRatingRecord | null> {
     await this.ensureRunOwner(userId, runId);
     const rows = await this.db
@@ -1285,7 +1306,7 @@ export class MultiAgentService {
     return rows.length > 0 ? this.mapRating(rows[0]) : null;
   }
 
-  /** List risk-gate results for a run (owner-checked). */
+  /** 列出一次运行的风控闸结果（已校验归属）。 */
   async getRiskGate(userId: string, runId: string): Promise<RiskGateResult[]> {
     await this.ensureRunOwner(userId, runId);
     const rows = await this.db
@@ -1297,10 +1318,9 @@ export class MultiAgentService {
   }
 
   /**
-   * Sync a completed run's rating into the daily `analysis` table (one row per
-   * user/ticker/date). Updates the existing row for today if present, otherwise
-   * inserts a new one. Called from the human-decision endpoint when
-   * syncToAnalysis is true (the default).
+   * 把已完成运行的评级同步进每日 analysis 表（每 用户/标的/日期 一行）。
+   * 当天已有行则更新，否则插入新行。人工决策端点在 syncToAnalysis 为 true
+   * （默认）时调用。
    */
   async syncRatingToAnalysis(userId: string, runId: string): Promise<boolean> {
     const [runRow, ratingRow] = await Promise.all([
@@ -1321,6 +1341,7 @@ export class MultiAgentService {
     const today = new Date().toISOString().split('T')[0];
     const en = run.language === 'en';
 
+    // 拼接分析正文：按语言给各段加前缀，空段过滤，双换行分隔
     const analysisText = [
       rating.aggregationLogic
         ? `${en ? 'Rationale: ' : '【综合逻辑】'}${rating.aggregationLogic}`
@@ -1334,6 +1355,7 @@ export class MultiAgentService {
       .filter(Boolean)
       .join('\n\n');
 
+    // 当天已有该标的的分析行 → 更新；否则插入新行
     const existing = await this.db
       .select({ id: analysis.id })
       .from(analysis)
@@ -1378,12 +1400,12 @@ export class MultiAgentService {
   }
 
   /**
-   * Return the latest completed rating per ticker for the caller. Joins
-   * agentRatings → agentRuns, filters to runs with status='completed', then
-   * picks the most recent row per ticker (case-insensitive).
-   * @param tickers optional whitelist; if omitted, returns all tickers.
+   * 返回调用方每个标的最新一条已完成评级。联表 agentRatings → agentRuns，
+   * 过滤 status='completed' 的运行，再按标的（大小写不敏感）取最近一行。
+   * @param tickers 可选白名单；缺省返回全部标的。
    */
   async getLatestRatings(userId: string, tickers?: string[]): Promise<LatestRating[]> {
+    // 全量拉取该用户的已完成评级，新在前
     const ratingRows = await this.db
       .select({
         id: agentRatings.id,
@@ -1402,11 +1424,13 @@ export class MultiAgentService {
       .where(and(eq(agentRatings.owner, userId), eq(agentRuns.status, 'completed')))
       .orderBy(desc(agentRatings.createdAt));
 
+    // 白名单过滤（大小写不敏感）
     const filtered =
       tickers && tickers.length > 0
         ? ratingRows.filter((r) => tickers.some((t) => t.toUpperCase() === r.ticker.toUpperCase()))
         : ratingRows;
 
+    // 按 ticker 去重取最新一行（列表已按时间倒序）
     const seen = new Set<string>();
     const result: LatestRating[] = [];
     for (const r of filtered) {
@@ -1430,14 +1454,15 @@ export class MultiAgentService {
   }
 
   /**
-   * Paginated list of runs joined with both the deep-report row and the
-   * rating row. This is the variant the controller's GET /runs uses.
-   * Date filtering: `to` is inclusive (we add a day and use lt).
+   * 运行分页列表，同时联 deep_report 行与评级行。控制器的 GET /runs
+   * 用的就是这个变体。
+   * 日期过滤：`to` 含当日（加一天后用 lt）。
    */
   async listRunsWithRating(
     userId: string,
     query: AgentRunListQuery,
   ): Promise<{ items: AgentRunWithRating[]; total: number }> {
+    // 组装过滤条件（owner 恒在）；activeOnly 匹配全部"进行中"状态
     const conditions = [eq(agentRuns.owner, userId)];
     if (query.activeOnly) {
       conditions.push(
@@ -1449,21 +1474,22 @@ export class MultiAgentService {
     if (query.runMode) conditions.push(eq(agentRuns.runMode, query.runMode));
     if (query.from) conditions.push(gte(agentRuns.createdAt, new Date(query.from)));
     if (query.to) {
-      // `to` is treated as an exclusive upper bound. Callers that send a
-      // plain date (yyyy-MM-dd) still work: Date() parses it as midnight.
-      // Callers that send a full ISO timestamp (the dashboard sends the
-      // start of the next local day) get exact behavior with no timezone skew.
+      // `to` 作为排他上界。调用方传纯日期（yyyy-MM-dd）也能工作：
+      // Date() 会解析成当天零点。调用方传完整 ISO 时间戳（仪表盘传的是
+      // 下一本地日的开始）则得到精确行为，无时区偏差。
       const toDate = new Date(query.to);
-      // Only add a day when the caller passed a bare date (no time part).
+      // 仅当调用方传的是不带时间的纯日期（长度 10）时才加一天。
       if (query.to.length === 10) {
         toDate.setDate(toDate.getDate() + 1);
       }
       conditions.push(lt(agentRuns.createdAt, toDate));
     }
 
+    // limit：activeOnly 放宽到 1000，普通列表上限 100
     const limit = Math.max(1, Math.min(query.limit ?? 20, query.activeOnly ? 1000 : 100));
     const offset = query.offset ?? 0;
 
+    // 页数据（联 deep_report 取目标价/置信度/报告 ID）与总数并行
     const [rows, countRows] = await Promise.all([
       this.db
         .select({
@@ -1486,6 +1512,7 @@ export class MultiAgentService {
         .where(and(...conditions)),
     ]);
 
+    // 第二趟查询：按 runIds 取评级，建 runId → 评级映射
     const runIds = rows.map((r) => r.run.id);
     const ratingRows =
       runIds.length > 0
@@ -1508,7 +1535,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Verify that a run exists and belongs to the caller; throw otherwise. */
+  /** 校验运行存在且属于调用方，否则抛 NotFound。 */
   private async ensureRunOwner(userId: string, runId: string): Promise<void> {
     const [row] = await this.db
       .select({ id: agentRuns.id })
@@ -1518,9 +1545,8 @@ export class MultiAgentService {
   }
 
   /**
-   * Insert the built-in default risk rules for a new user. These cover
-   * position concentration, cash management, stop-loss/take-profit, and
-   * buy-checklist categories. Users can later edit/delete/reorder them.
+   * 为新用户插入内置默认风控规则。覆盖仓位集中度、现金管理、
+   * 止损止盈与买入清单等类别。用户之后可编辑/删除/重排。
    */
   private async seedDefaultRules(userId: string): Promise<StrategyRule[]> {
     const defaults = [
@@ -1661,6 +1687,7 @@ export class MultiAgentService {
       },
     ];
 
+    // 展开默认规则为插入行（enabled 缺省 true）
     const values = defaults.map((d) => ({
       ruleKey: d.ruleKey,
       ruleName: d.ruleName,
@@ -1681,7 +1708,7 @@ export class MultiAgentService {
     return inserted.map((r) => this.mapStrategyRule(r));
   }
 
-  /** Map a raw agent_runs row to the AgentRun API shape (dates → ISO strings). */
+  /** 把 agent_runs 原始行映射成 AgentRun API 形态（日期 → ISO 字符串）。 */
   private mapRun(row: typeof agentRuns.$inferSelect): AgentRun {
     return {
       id: row.id,
@@ -1712,7 +1739,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Map a raw agent_evidence row to AgentEvidence. */
+  /** 把 agent_evidence 原始行映射成 AgentEvidence。 */
   private mapEvidence(row: typeof agentEvidence.$inferSelect): AgentEvidence {
     return {
       id: row.id,
@@ -1729,7 +1756,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Map a raw bull_bear_arguments row to BullBearArgument. */
+  /** 把 bull_bear_arguments 原始行映射成 BullBearArgument。 */
   private mapArgument(row: typeof bullBearArguments.$inferSelect): BullBearArgument {
     return {
       id: row.id,
@@ -1743,7 +1770,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Map a raw debate_records row to DebateRecord. */
+  /** 把 debate_records 原始行映射成 DebateRecord。 */
   private mapDebate(row: typeof debateRecords.$inferSelect): DebateRecord {
     return {
       id: row.id,
@@ -1756,7 +1783,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Map a raw agent_ratings row to AgentRatingRecord. */
+  /** 把 agent_ratings 原始行映射成 AgentRatingRecord。 */
   private mapRating(row: typeof agentRatings.$inferSelect): AgentRatingRecord {
     return {
       id: row.id,
@@ -1777,7 +1804,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Map a raw risk_gate_results row to RiskGateResult. */
+  /** 把 risk_gate_results 原始行映射成 RiskGateResult。 */
   private mapRiskGate(row: typeof riskGateResults.$inferSelect): RiskGateResult {
     return {
       id: row.id,
@@ -1793,7 +1820,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Map a raw strategy_rules row to StrategyRule. */
+  /** 把 strategy_rules 原始行映射成 StrategyRule。 */
   private mapStrategyRule(row: typeof strategyRules.$inferSelect): StrategyRule {
     return {
       id: row.id,
@@ -1812,7 +1839,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Map a raw deep_report row to DeepReport (JSONB columns cast to typed arrays). */
+  /** 把 deep_report 原始行映射成 DeepReport（JSONB 列转型为带类型数组）。 */
   private mapDeepReport(row: typeof deepReport.$inferSelect): DeepReport {
     return {
       id: row.id,
@@ -1867,7 +1894,7 @@ export class MultiAgentService {
     };
   }
 
-  /** Map a raw agent_audit_log row to AgentAuditLog. */
+  /** 把 agent_audit_log 原始行映射成 AgentAuditLog。 */
   private mapAuditLog(row: typeof agentAuditLog.$inferSelect): AgentAuditLog {
     return {
       id: row.id,

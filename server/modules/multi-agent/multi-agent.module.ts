@@ -1,29 +1,27 @@
 /**
- * Multi-Agent Module — NestJS dependency-injection wiring for the daily
- * LLM-driven portfolio-analysis pipeline.
+ * multi-agent.module.ts — Multi-Agent 模块：为每日 LLM 驱动的组合分析流水线
+ * 完成 NestJS 依赖注入装配。
  *
- * This module ties together the full multi-agent analysis subsystem:
- *  - MultiAgentController: HTTP routes (run lifecycle, evidence, debate, rating,
- *    risk gates, strategy rules, deep report, human decision, portfolio context).
- *  - MultiAgentService: data-access facade over all agent-related DB tables
- *    (agent_runs, agent_evidence, bull_bear_arguments, debate_records,
+ * 本模块把多智能体分析子系统完整地组合起来：
+ *  - MultiAgentController：HTTP 路由（运行生命周期、证据、辩论、评级、
+ *    风险闸门、策略规则、深度报告、人工决策、组合上下文）。
+ *  - MultiAgentService：覆盖全部 agent 相关数据库表的统一数据访问门面
+ *    （agent_runs, agent_evidence, bull_bear_arguments, debate_records,
  *    agent_ratings, risk_gate_results, strategy_rules, agent_audit_log,
- *    deep_report).
- *  - PipelineService: orchestrates the 5-stage async pipeline
- *    (evidence → debate → critique → risk gate → rating aggregation) and
- *    notifies BatchService when a run finishes.
- *  - LlmService: thin wrapper around the Doubao/Ark chat-completions API with
- *    retries, backoff, and JSON repair/parsing.
- *  - EvidenceService: collects fundamental/news/technical evidence for a ticker
- *    via allSettled so partial failures degrade gracefully.
- *  - PortfolioContextService: assembles the per-user portfolio snapshot
- *    (holdings, weights, company-group exposures, cash ratio) and evaluates
- *    hard/soft risk rules.
- *  - BatchService: concurrency-limited queue that creates and schedules runs
- *    for the user's full watchlist/holdings (tiered full vs. summary mode).
+ *    deep_report）。
+ *  - PipelineService：编排 5 阶段异步流水线
+ *    （证据 → 辩论 → 批评 → 风险闸门 → 评级聚合），并在一次运行结束时
+ *    通知 BatchService。
+ *  - LlmService：对 Doubao/Ark chat-completions API 的轻量封装，带重试、
+ *    退避以及 JSON 修复/解析。
+ *  - EvidenceService：通过 allSettled 为一个 ticker 并行收集基本面/新闻/技术面
+ *    证据，部分失败时可优雅降级。
+ *  - PortfolioContextService：汇总每个用户的组合快照
+ *    （持仓、权重、同集团敞口、现金比例）并执行硬性/软性风险规则。
+ *  - BatchService：并发受限队列，为用户的完整自选/持仓清单创建并调度运行
+ *    （分层：full 完整模式 vs summary 摘要模式）。
  *
- * QuoteModule is imported because EvidenceService depends on QuoteService for
- * live price data.
+ * 导入 QuoteModule 是因为 EvidenceService 依赖 QuoteService 获取实时行情。
  */
 import { Module } from '@nestjs/common';
 import { MultiAgentController } from './multi-agent.controller';
@@ -40,6 +38,8 @@ import { BatchService } from './batch.service';
 import { QuoteModule } from '@server/modules/quote/quote.module';
 import { FxModule } from '@server/modules/fx/fx.module';
 
+// 模块装配：导入行情（Quote）与汇率（Fx）模块，注册唯一的控制器与全部服务，
+// 并对外导出四个服务供其他模块复用。
 @Module({
   imports: [QuoteModule, FxModule],
   controllers: [MultiAgentController],

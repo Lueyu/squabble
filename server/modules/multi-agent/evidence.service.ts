@@ -1,8 +1,25 @@
 /**
- * EvidenceService — collects the evidence that feeds the multi-agent debate.
+ * EvidenceService — 收集供多智能体辩论使用的证据。
  *
- * Evidence is split into fundamental, news, and technical streams. Unavailable
- * inputs are stored as explicit data gaps, never as positive/negative facts.
+ * 证据分为基本面、新闻、技术面三路。取不到的输入一律记录为显式数据缺口，
+ * 绝不充当正/负面事实。
+ *
+ * 职责边界：
+ *  - 编排三路采集器并做语言本地化（zh-CN 原生 / en 经 englishEvidenceText 映射）。
+ *  - 不直接调用外部供应商：行情走 QuoteService，估值/财报/新闻走
+ *    FinnhubEvidenceService，财报缺项回查 SEC 走 SecEvidenceService，
+ *    联网检索走 ResearchWebService。
+ *
+ * 上下游：
+ *  - 上游（谁调用）：PipelineService / MultiAgentService（主分析流）。
+ *  - 下游（本文件调用）：QuoteService、FinnhubEvidenceService、
+ *    SecEvidenceService、ResearchWebService、evidence-language 的
+ *    englishEvidenceText、analysis-report 的 analysisErrorCode。
+ *
+ * 关键约定：
+ *  - 三路采集用 Promise.allSettled 并行，任何一路失败都降级为 dataGap
+ *    （sourceName='Data Unavailable'、relevanceScore=0），不抛出。
+ *  - 缺口文案（dataGap 的 title/content）为用户可见中文，冻结。
  */
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { englishEvidenceText } from './evidence-language';
@@ -28,17 +45,22 @@ import type { CouncilResearchKind, ResearchAcquisition } from '@shared/council.i
 import { ResearchWebService } from './research-web.service';
 
 export interface EvidenceCollectionOptions {
+  /** 每次采集开始/结束时上报的事件回调（用于 council 实时进度展示）。 */
   onAcquisition?: (event: ResearchAcquisition) => Promise<void> | void;
+  /** 协作式取消探针；返回 false 时各采集点抛 'Research stopped'。 */
   shouldContinue?: () => Promise<boolean>;
+  /** 研究工具预算的任务 id（透传给 ResearchToolsBudgetService.reserve）。 */
   taskId?: string;
+  /** 自定义检索词（仅 web 采集使用）。 */
   query?: string;
+  /** 是否允许联网搜索。 */
   webResearch?: boolean;
 }
 
-/** High-level category of evidence; used to label evidence rows in the UI. */
+/** 证据的高层类别；UI 用它标注证据行。 */
 export type EvidenceRole = 'fundamental' | 'news' | 'technical';
 
-/** A single evidence item ready to be fed into an LLM prompt or persisted. */
+/** 单条可直接喂给 LLM 提示词或持久化的证据。 */
 export interface EvidenceInput {
   role: EvidenceRole;
   evidenceType: EvidenceType;
@@ -62,11 +84,11 @@ export class EvidenceService {
   ) {}
 
   /**
-   * Collect all evidence for a ticker. Runs the three collectors in parallel;
-   * partial failures are recorded as data gaps rather than research facts.
-   * @param ticker the stock ticker to analyze.
-   * @param userId owner, used to fetch the caller's holdings/watchlist.
-   * @param portfolioContext USD-normalized portfolio snapshot for weights.
+   * 收集一个代码的全部证据。三路采集器并行执行；部分失败记为数据缺口，
+   * 而不是研究事实。
+   * @param ticker 待分析的股票代码。
+   * @param userId 所有者，用于读取调用方的持仓/关注列表。
+   * @param portfolioContext 以 USD 归一的组合快照，用于权重。
    */
   async collectEvidence(
     ticker: string,
@@ -75,6 +97,7 @@ export class EvidenceService {
     language: AnalysisLanguage = 'zh-CN',
     options: EvidenceCollectionOptions = {},
   ): Promise<EvidenceInput[]> {
+    // 三路采集并行；allSettled 保证单路失败不影响其余两路
     const [fundamental, news, technical] = await Promise.allSettled([
       this.collectFundamental(ticker, userId, portfolioContext, language, options),
       this.collectResearch(ticker, userId, 'news', language, options),
@@ -83,6 +106,7 @@ export class EvidenceService {
 
     const allEvidence: EvidenceInput[] = [];
 
+    // 基本面：失败时降级为显式缺口（缺口文案为用户可见中文，冻结）
     if (fundamental.status === 'fulfilled') {
       allEvidence.push(...fundamental.value);
     } else {
@@ -98,6 +122,7 @@ export class EvidenceService {
       );
     }
 
+    // 新闻：失败时降级为缺口
     if (news.status === 'fulfilled') {
       allEvidence.push(...news.value);
     } else {
@@ -107,6 +132,7 @@ export class EvidenceService {
       );
     }
 
+    // 技术面：失败时降级为缺口；最后统一做语言本地化
     if (technical.status === 'fulfilled') {
       allEvidence.push(...technical.value);
     } else {
@@ -125,6 +151,10 @@ export class EvidenceService {
     return this.localize(allEvidence, language);
   }
 
+  /**
+   * 语言本地化：仅 en 需要转换。来自 Finnhub API / SEC EDGAR 的条目
+   * 本身已是英文，原样返回；其余条目的 title/content 经固定短语表映射。
+   */
   private localize(items: EvidenceInput[], language: AnalysisLanguage): EvidenceInput[] {
     if (language !== 'en') return items;
     return items.map((item) =>
@@ -138,7 +168,11 @@ export class EvidenceService {
     );
   }
 
-  /** Fixed read-only tool kinds; ticker/user are server-bound, never an arbitrary URL. */
+  /**
+   * 固定的只读工具类型集合；代码/用户在服务端绑定，绝不会拼成任意 URL。
+   * 按类型分发：financials→collectFinancials，web→ResearchWebService，
+   * news/valuation/price 走下方各采集器；每次开始/结束都上报 acquisition 事件。
+   */
   async collectResearch(
     ticker: string,
     userId: string,
@@ -166,6 +200,7 @@ export class EvidenceService {
           ? `Fetching ${kind} for ${ticker}.`
           : `正在获取 ${ticker} 的${kind}数据。`,
     });
+    // price 采集：行情无效时退化为一条"行情缺失"缺口（文案冻结）
     let items: EvidenceInput[];
     if (kind === 'news') items = await this.collectNews(ticker, userId);
     else if (kind === 'valuation') items = await this.collectValuation(ticker, userId);
@@ -188,6 +223,7 @@ export class EvidenceService {
           ),
         ];
     } else throw new Error('Unsupported research kind');
+    // 本地化后按"是否出现 Data Unavailable 缺口"上报最终采集状态
     items = this.localize(items, language);
     const unavailable: EvidenceInput | undefined = items.find(
       (item: EvidenceInput) => item.sourceName === 'Data Unavailable',
@@ -205,6 +241,7 @@ export class EvidenceService {
     return items;
   }
 
+  /** 上报 acquisition 事件前的统一取消探针。 */
   private async acquisition(
     options: EvidenceCollectionOptions,
     event: ResearchAcquisition,
@@ -214,6 +251,7 @@ export class EvidenceService {
     await options.onAcquisition?.(event);
   }
 
+  /** 构造显式数据缺口条目（sourceName='Data Unavailable'、相关性 0）。 */
   private dataGap(role: EvidenceRole, title: string, content: string): EvidenceInput {
     return {
       role,
@@ -226,8 +264,8 @@ export class EvidenceService {
   }
 
   /**
-   * Fundamental evidence: quote, portfolio, and any configured provider
-   * metrics and reported statements. Failed or incomplete sources remain gaps.
+   * 基本面证据：行情、组合持仓/关注列表状态，以及配置的供应商估值
+   * 指标与已申报财报。失败或不完整的来源保留为缺口。
    */
   private async collectFundamental(
     ticker: string,
@@ -237,6 +275,8 @@ export class EvidenceService {
     options: EvidenceCollectionOptions,
   ): Promise<EvidenceInput[]> {
     const evidence: EvidenceInput[] = [];
+
+    // 第一块：行情。失败不抛出，只记日志并降级为缺口
     let quote: QuoteResponse | null = null;
     try {
       quote = await this.quoteService.getQuote(ticker);
@@ -244,6 +284,7 @@ export class EvidenceService {
       this.logger.warn(`Quote lookup failed for ${ticker}: ${analysisErrorCode(error)}`);
     }
 
+    // 行情有效则入证据；否则清空并写入"行情缺失"缺口（文案冻结）
     if (quote && Number.isFinite(Number(quote.price)) && Number(quote.price) > 0) {
       evidence.push(this.buildQuoteEvidence(quote));
     } else {
@@ -257,6 +298,7 @@ export class EvidenceService {
       );
     }
 
+    // 第二块：读取该用户此代码的持仓行与关注行（各取第一条，忽略其余）
     const [holdingRows, watchRows] = await Promise.all([
       this.db
         .select()
@@ -270,6 +312,9 @@ export class EvidenceService {
         .then((rows) => rows.filter((r) => r.ticker.toUpperCase() === ticker.toUpperCase())),
     ]);
 
+    // 第三块：持仓 → 关注 → 都没有，三种分支各产出一条证据。
+    // 持仓分支：数量/成本/行业 + 行情币种一致时补市值与浮盈亏，
+    // 币种不一致则注明无法计算；组合快照里有该持仓再补权重。
     if (holdingRows.length > 0) {
       const h = holdingRows[0];
       const shares = Number(h.shares ?? 0);
@@ -327,6 +372,7 @@ export class EvidenceService {
       });
     }
 
+    // 第四块：并行追加供应商估值与财报证据（内部自带缺口降级）
     const [metrics, financials] = await Promise.all([
       this.collectResearch(ticker, userId, 'valuation', language, options),
       this.collectResearch(ticker, userId, 'financials', language, options),
@@ -336,6 +382,7 @@ export class EvidenceService {
     return evidence;
   }
 
+  /** 估值采集：Finnhub 指标不可用时产出"估值数据缺失"缺口（文案冻结）。 */
   private async collectValuation(ticker: string, userId: string): Promise<EvidenceInput[]> {
     let reason: string = finnhubGapReason(new FinnhubEvidenceError('no_data'));
     try {
@@ -353,6 +400,11 @@ export class EvidenceService {
     ];
   }
 
+  /**
+   * 财报采集，两级回退：Finnhub 已申报财报 → SEC EDGAR 原始申报。
+   * 每级开始/结束都上报 acquisition 事件；两级都拿不到完整报表时，
+   * 汇总缺口原因与缺失科目，产出一条 dataGap（部分可用则标注来源）。
+   */
   private async collectFinancials(
     ticker: string,
     userId: string,
@@ -362,6 +414,8 @@ export class EvidenceService {
     const en: boolean = language === 'en';
     let selected: FinnhubFinancialsResult | null = null;
     let failure: unknown;
+
+    // 第一级：Finnhub 已申报财报
     await this.acquisition(options, {
       source: 'Finnhub',
       status: 'started',
@@ -390,6 +444,7 @@ export class EvidenceService {
     });
     if (selected?.hasStatements) return selected.items;
 
+    // 第二级：SEC EDGAR 原始申报回查（仅美股；失败码→双语说明表）
     await this.acquisition(options, {
       source: 'SEC EDGAR',
       status: 'started',
@@ -459,6 +514,8 @@ export class EvidenceService {
           : `${en ? 'SEC missing concepts: ' : 'SEC 仍缺少科目：'}${secResult?.missingFields.join(', ')}`),
     });
     if (secResult?.hasStatements) return secResult.items;
+
+    // 两级都未产出完整报表：汇总部分可用来源与全部缺口原因，产出 dataGap
     const partial: boolean = !!selected?.items.length;
     const partialSource: string = selected?.items.some(
       (item: EvidenceInput) => item.sourceName === 'SEC EDGAR',
@@ -484,7 +541,7 @@ export class EvidenceService {
     ];
   }
 
-  /** Build a single evidence row from a provider quote. */
+  /** 从供应商报价构造一条行情证据（涨跌方向词为用户可见中文）。 */
   private buildQuoteEvidence(quote: QuoteResponse): EvidenceInput {
     const changePct = Number(quote.changePercent);
     const direction = changePct > 0 ? '上涨' : changePct < 0 ? '下跌' : '持平';
@@ -509,7 +566,10 @@ export class EvidenceService {
     };
   }
 
-  /** Use verified company headlines when available; never invent sentiment. */
+  /**
+   * 新闻采集：有经过核实的公司头条就用，绝不虚构情绪；
+   * 取不到时产出"新闻与情绪缺失"缺口（文案冻结）。
+   */
   private async collectNews(ticker: string, userId: string): Promise<EvidenceInput[]> {
     let reason: string = finnhubGapReason(new FinnhubEvidenceError('no_data'));
     try {
@@ -528,8 +588,8 @@ export class EvidenceService {
   }
 
   /**
-   * Current-session price action is available from the quote. Historical
-   * indicators and support/resistance are unavailable without K-line data.
+   * 当日价格行为可从行情取得；历史指标与支撑阻力位在没有 K 线数据时
+   * 一律不可得，产出对应缺口（文案冻结）。
    */
   private async collectTechnical(ticker: string): Promise<EvidenceInput[]> {
     let quote: QuoteResponse | null = null;
@@ -539,6 +599,7 @@ export class EvidenceService {
       this.logger.warn(`Technical quote lookup failed for ${ticker}: ${analysisErrorCode(error)}`);
     }
 
+    // 行情无效 → 技术面整体缺口；有效 → 当日价格行为 + 历史指标缺失两条
     if (!quote || !Number.isFinite(Number(quote.price)) || Number(quote.price) <= 0) {
       return [
         this.dataGap(
