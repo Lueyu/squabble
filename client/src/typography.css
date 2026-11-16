@@ -1,11 +1,13 @@
 /**
  * @file client/src/typography.css
- * @description Typography layer: registers the Tailwind typography plugin and
- * maps its prose color variables to the theme's foreground/background tokens
- * so rendered long-form content (e.g. LLM reports) matches the app theme.
+ * @description 排版层：注册 Tailwind typography 插件，并把 prose 的颜色变量
+ * 映射到主题的 foreground/background 令牌，使渲染的长文内容（如 LLM 报告）
+ * 自动与应用主题保持一致。
  */
 @plugin "@tailwindcss/typography";
 
+/* prose 变量映射：常规（浅色）与 --tw-prose-invert-*（深色/反色）成对出现，
+   全部指向主题令牌而非硬编码色值。 */
 @utility prose {
   --tw-prose-body: var(--foreground);
   --tw-prose-headings: var(--foreground);

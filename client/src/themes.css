@@ -1,4 +1,14 @@
-/* Four worlds, one Squabble. Decorative brand colors never replace P&L colors. */
+/**
+ * @file client/src/themes.css
+ * @description designTheme 四世界主题层：classic（:root 默认）/ arcade / comic /
+ * orbit 各含浅色与 .dark 深色变体；后半段为应用壳（侧栏/顶栏/导航/内容区）样式
+ * 与按 data-design-theme 的主题差异覆盖。
+ * 装饰性品牌色（--brand）只做氛围，绝不替代盈亏（P&L）语义色。
+ */
+
+/* 四个世界，一个吵股。装饰性品牌色永远不取代盈亏（P&L）色。 */
+
+/* ===== 默认主题 classic：品牌基础变量 ===== */
 :root {
   --brand: #26765c;
   --brand-soft: #e3ece3;
@@ -11,6 +21,7 @@
   --font-serif: var(--font-sans);
 }
 
+/* ===== 默认主题 classic 深色变体 ===== */
 .dark {
   --brand: #7dd7ad;
   --brand-soft: #1c3028;
@@ -18,6 +29,7 @@
   --panel-shadow: 0 4px 20px #0000000d;
 }
 
+/* ===== designTheme=arcade（像素街机）浅色 ===== */
 :root[data-design-theme='arcade'] {
   --background: #eeeeda;
   --foreground: #25342b;
@@ -62,6 +74,7 @@
     linear-gradient(90deg, #75865c09 1px, transparent 1px);
 }
 
+/* ===== designTheme=arcade 深色 ===== */
 :root[data-design-theme='arcade'].dark {
   --background: #141b1a;
   --foreground: #e8efdb;
@@ -100,6 +113,7 @@
     linear-gradient(90deg, #c4ed7805 1px, transparent 1px);
 }
 
+/* ===== designTheme=comic（暖纸漫画）浅色 ===== */
 :root[data-design-theme='comic'] {
   --background: #f2e8d8;
   --foreground: #342d34;
@@ -142,6 +156,7 @@
   --shell-pattern: radial-gradient(#57483c12 0.8px, transparent 0.8px);
 }
 
+/* ===== designTheme=comic 深色 ===== */
 :root[data-design-theme='comic'].dark {
   --background: #211e29;
   --foreground: #f5eadd;
@@ -178,6 +193,7 @@
   --shell-pattern: radial-gradient(#e8ccac0b 0.8px, transparent 0.8px);
 }
 
+/* ===== designTheme=orbit（冷色轨道）浅色 ===== */
 :root[data-design-theme='orbit'] {
   --background: #e6edf0;
   --foreground: #183444;
@@ -220,6 +236,7 @@
   --shell-pattern: radial-gradient(#2467811c 0.7px, transparent 0.7px);
 }
 
+/* ===== designTheme=orbit 深色 ===== */
 :root[data-design-theme='orbit'].dark {
   --background: #0b1823;
   --foreground: #dbeaf2;
@@ -256,7 +273,9 @@
   --shell-pattern: radial-gradient(#83dbed1a 0.7px, transparent 0.7px);
 }
 
-/* Restrained common geometry keeps long bilingual labels and figures legible. */
+/* ===== 应用壳基础样式 ===== */
+
+/* 克制的公共几何参数，保证中英双语长标签与数字的可读性。 */
 html {
   background: var(--background);
   color-scheme: light;
@@ -485,7 +504,7 @@ body {
   margin-inline: auto;
 }
 
-/* Arcade: stepped mascot, console labels, hard corners and offset pixels. */
+/* arcade：像素化吉祥物、控制台风格标签、直角与偏移像素阴影。 */
 [data-design-theme='arcade'] .squabble-mascot img {
   image-rendering: pixelated;
 }
@@ -535,7 +554,7 @@ body {
   border-top: 3px solid var(--panel-border);
 }
 
-/* Comic: friendly ink contours, sticker mascot and warm paper. */
+/* comic：友好的墨线描边、贴纸感吉祥物与暖纸面。 */
 [data-design-theme='comic'] [data-slot='card'] {
   border-width: 1.5px;
 }
@@ -573,7 +592,7 @@ body {
   background: var(--brand-soft);
 }
 
-/* Orbital: plotting-paper rhythm, navigation rails and soft cockpit lighting. */
+/* orbit：绘图纸节奏、导航轨道线与柔和座舱光。 */
 [data-design-theme='orbit'] .app-brand-mark::before {
   content: '';
   position: absolute;
@@ -613,6 +632,7 @@ body {
   border-top-color: var(--brand);
 }
 
+/* ===== 响应式断点 ===== */
 @media (width <= 1100px) {
   .app-sidebar {
     width: 224px;
@@ -672,6 +692,7 @@ body {
   }
 }
 
+/* ===== 动画降级（减弱动态效果偏好） ===== */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

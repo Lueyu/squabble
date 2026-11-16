@@ -1,11 +1,11 @@
 /**
- * RiskAlertBadge - summarizes the risk-gate check results as a single badge.
- *
- * A "risk gate" runs a set of rules against a rating before it is finalized.
- * Rules are either 'hard' (blocking) or 'soft' (advisory). Display priority:
- *   1. any failed HARD rule  -> rose badge: blocking violations exist
- *   2. any failed SOFT rule  -> amber badge: warnings, not blocking
- *   3. none failed           -> emerald badge: risk gate passed
+ * @file components/MultiAgent/RiskAlertBadge.tsx
+ * @description 将风控闸门（risk gate）检查结果汇总为单枚徽章。
+ * 风控闸门在评级定稿前运行一组规则；规则分 'hard'（阻断性）与 'soft'（提示性）。
+ * 展示优先级：
+ *   1. 任一 HARD 规则未通过 -> 玫瑰红徽章：存在阻断性违规
+ *   2. 任一 SOFT 规则未通过 -> 琥珀色徽章：有警告但不阻断
+ *   3. 全部通过             -> 翡翠绿徽章：风控闸门通过
  */
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, ShieldCheck } from 'lucide-react';
@@ -13,14 +13,14 @@ import type { RiskGateResult } from '@shared/api.interface';
 import { useTranslation } from 'react-i18next';
 
 interface RiskAlertBadgeProps {
-  /** All risk-gate rule results for the current agent run */
+  /** 当前 agent run 的全部风控闸门规则结果 */
   results: RiskGateResult[];
 }
 
-/** Renders the aggregate risk-gate status badge (hard > soft > pass priority). */
+/** 渲染聚合后的风控闸门状态徽章（优先级：hard > soft > 全部通过）。 */
 function RiskAlertBadge({ results }: RiskAlertBadgeProps) {
   const { t } = useTranslation();
-  // Count blocking vs advisory rule failures separately
+  // 分别统计阻断性（hard）与提示性（soft）规则的未通过数量。
   const failedHard = results.filter(
     (r: RiskGateResult) => r.ruleType === 'hard' && !r.passed,
   ).length;

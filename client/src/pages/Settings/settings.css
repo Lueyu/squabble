@@ -1,3 +1,11 @@
+/**
+ * @file client/src/pages/Settings/settings.css
+ * @description 设置页（/settings/*）专属样式：双栏壳 —— 左侧设置导航（分组
+ * 标题 + 菜单链接 + 底部说明）、右侧内容区（页头/面板/隐私说明/外观控件）；
+ * 进入设置态（app-shell-settings）时全局侧栏收缩为图标栏，另有中屏与移动端适配。
+ */
+
+/* ===== 容器接管与双栏壳 ===== */
 .app-content.app-settings-content {
   padding: 0;
   background-image: none;
@@ -16,6 +24,7 @@
   margin: 0;
 }
 
+/* ===== 左侧设置导航 ===== */
 .settings-sidebar {
   display: flex;
   width: 244px;
@@ -146,6 +155,7 @@
   display: none;
 }
 
+/* ===== 右侧内容区与页头 ===== */
 .settings-content {
   min-width: 0;
   min-height: 0;
@@ -202,6 +212,7 @@
   color: var(--muted-foreground);
 }
 
+/* ===== 面板与隐私说明 ===== */
 .settings-panel {
   min-width: 0;
 }
@@ -241,6 +252,7 @@
   padding: 0;
 }
 
+/* ===== ≥768px：设置态全局侧栏收缩为图标栏 ===== */
 @media (width >= 768px) {
   .app-shell-settings .app-sidebar {
     width: 76px;
@@ -304,6 +316,7 @@
   }
 }
 
+/* ===== 中屏（768–1100px）：收窄设置侧栏与内容内边距 ===== */
 @media (768px <= width <= 1100px) {
   .settings-sidebar {
     width: 210px;
@@ -322,6 +335,7 @@
   }
 }
 
+/* ===== 移动端（<768px）：隐藏侧栏、启用移动导航 ===== */
 @media (width < 768px) {
   .settings-shell {
     flex-direction: column;

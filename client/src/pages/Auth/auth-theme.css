@@ -1,3 +1,11 @@
+/**
+ * @file client/src/pages/Auth/auth-theme.css
+ * @description 登录/注册/找回页（/login /register /recover）的专属样式：
+ * 双栏卡片壳 —— 左侧叙事区（吉祥物场景 + 标语 + 隐私说明）、右侧表单区；
+ * 后半段为各 designTheme（arcade / comic / orbit）的差异覆盖与移动端单栏适配。
+ */
+
+/* ===== 页面容器与顶栏 ===== */
 .auth-page {
   min-height: 100svh;
   padding: 24px clamp(20px, 5vw, 72px) 48px;
@@ -14,6 +22,7 @@
   margin: 0 auto;
 }
 
+/* ===== 双栏卡片壳与左叙事区 ===== */
 .auth-shell {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
@@ -35,6 +44,7 @@
   background: color-mix(in srgb, var(--chart-1) 5%, var(--card));
 }
 
+/* ===== 吉祥物场景（轨道环 + 吉祥物 + 角标） ===== */
 .auth-scene {
   position: relative;
   display: grid;
@@ -78,6 +88,7 @@
   bottom: 28px;
 }
 
+/* ===== 叙事文案与隐私说明 ===== */
 .auth-intro-copy {
   padding-top: 30px;
 }
@@ -108,6 +119,7 @@
   line-height: 1.7;
 }
 
+/* ===== 右侧表单区 ===== */
 .auth-form-panel {
   display: flex;
   flex-direction: column;
@@ -124,6 +136,7 @@
   background: var(--background);
 }
 
+/* ===== designTheme=arcade 差异覆盖 ===== */
 [data-design-theme='arcade'] .auth-shell {
   border-width: 2px;
   border-radius: 4px;
@@ -149,6 +162,7 @@
   transform: rotate(-8deg);
 }
 
+/* ===== designTheme=comic 差异覆盖 ===== */
 [data-design-theme='comic'] .auth-shell {
   border: 2px solid var(--foreground);
   border-radius: 22px;
@@ -179,6 +193,7 @@
   transform: rotate(-8deg);
 }
 
+/* ===== designTheme=orbit 差异覆盖 ===== */
 [data-design-theme='orbit'] .auth-page {
   background-image: radial-gradient(
     ellipse at 25% 30%,
@@ -218,6 +233,7 @@
   transform: rotate(60deg);
 }
 
+/* ===== 移动端适配（≤720px：单栏堆叠、隐藏桌面元素） ===== */
 @media (width <= 720px) {
   .auth-page {
     padding: 18px 20px 36px;

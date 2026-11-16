@@ -1,3 +1,13 @@
+/**
+ * @file components/AppearancePicker.tsx
+ * @description 外观（主题）选择器：深浅模式 + designTheme 的统一选择入口。
+ * 三块导出共享同一套 useTheme 偏好（读写同一持久化存储）：
+ *   - AppearanceControls      —— 纯控件区（模式单选 + 主题网格），供弹窗/设置页内嵌
+ *   - AppearancePicker        —— 顶栏触发的 Dialog 弹窗（桌面与移动共用，焦点圈定）
+ *   - AppearanceSettingsCard  —— 设置页的可选入口卡片（内嵌同一选择器）
+ * 上游依赖 radix radio-group、ui/Dialog、ui/RadioGroup、hooks/use-theme；
+ * 样式在同目录 appearance-picker.css（className 前缀 appearance-*）。
+ */
 import { useId } from 'react';
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group';
 import { Check, Moon, Palette, Sun, X } from 'lucide-react';
@@ -25,12 +35,18 @@ import { cn } from '@/lib/utils';
 import './appearance-picker.css';
 
 interface AppearancePickerProps {
-  /** Compact icon trigger for the top bar; false includes its text label. */
+  /** 顶栏紧凑图标触发器；false 时附带文字标签。 */
   compact?: boolean;
   className?: string;
 }
 
+/**
+ * 主题网格中的静态预览图：用少量 div 近似还原各 designTheme 在对应深浅模式下的
+ * 工作台外观。所有视觉细节（配色、圆角、纹理、像素化）由 appearance-picker.css
+ * 按 data-preview-theme / data-preview-mode 属性选择器驱动。
+ */
 function ThemePreview({ designTheme, mode }: { designTheme: DesignTheme; mode: Theme }) {
+  // 结构自上而下：rail（品牌块 + 轨道条）、desk（顶栏 + 舞台内嵌吉祥物/信号柱 + 面板行）。
   return (
     <span
       className="appearance-preview"
@@ -79,6 +95,11 @@ function ThemePreview({ designTheme, mode }: { designTheme: DesignTheme; mode: T
   );
 }
 
+/**
+ * 外观控件区（无弹窗外壳）：上半部为深浅模式单选行（light/dark），
+ * 下半部为 designTheme 网格，每项含 ThemePreview 预览 + 名称/副标题，
+ * 选中项右上角显示对勾徽标。表单可访问性由 aria-labelledby/describedby 串联。
+ */
 export function AppearanceControls() {
   const { t } = useTranslation();
   const { theme, designTheme, setTheme, setDesignTheme } = useTheme();
@@ -153,7 +174,7 @@ export function AppearanceControls() {
   );
 }
 
-/** Focus-trapped, keyboard navigable theme picker shared by desktop and mobile. */
+/** 焦点圈定、键盘可导航的主题选择弹窗，桌面端与移动端共用。 */
 export function AppearancePicker({ compact = true, className }: AppearancePickerProps) {
   const { t } = useTranslation();
 
@@ -202,7 +223,7 @@ export function AppearancePicker({ compact = true, className }: AppearancePicker
   );
 }
 
-/** Optional settings entry using the same picker and synchronized preference. */
+/** 设置页可选入口卡片：复用同一选择器，偏好自动同步。 */
 export function AppearanceSettingsCard({ className }: { className?: string }) {
   const { t } = useTranslation();
   const { theme, designTheme } = useTheme();

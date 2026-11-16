@@ -1,17 +1,15 @@
 /**
  * @file index.tsx
- * @description Application entry point.
+ * @description 应用入口。
  *
- * Creates the React root and wires the first-party provider stack every page
- * depends on: the router (`BrowserRouter`), the react-query client, a
- * top-level `ErrorBoundary`, and the global toast renderer (`Toaster`)
- * portaled onto `<body>` so toasts escape any clipped containers. The theme
- * hook is called once here so the persisted dark/light preference applies
- * before any route (including /login outside the app layout) renders.
+ * 创建 React root，并装配所有页面都依赖的第一方 provider 栈：
+ * 路由器（`BrowserRouter`）、react-query client、顶层 `ErrorBoundary`，
+ * 以及通过 `createPortal` 挂到 `<body>` 的全局 toast 渲染器（`Toaster`）——
+ * portal 让 toast 逃逸出任何会被裁剪的容器。主题 hook 在此处调用一次，
+ * 使持久化的 dark/light 偏好在任何路由（包括壳外的 /login）渲染之前生效。
  *
- * Architecture: this file only composes providers; actual routes are declared
- * in `app.tsx`. The bundle stylesheet (Tailwind + theme + typography) is
- * imported here so it is part of the entry chunk.
+ * 架构：本文件只做 provider 组合；具体路由声明在 `app.tsx`。
+ * 打包样式表（Tailwind + 主题 + 排版）也在入口处导入，使其进入入口 chunk。
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -22,19 +20,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import RoutesComponent from './app.tsx';
 import './index.css';
-import './i18n'; // i18n must load before any page renders
+import './i18n'; // i18n 必须先于任何页面渲染加载
 import { createPortal } from 'react-dom';
 import { Toaster } from '@/components/ui/sonner';
 import { useTheme } from './hooks/use-theme';
 import { useTranslation } from 'react-i18next';
 
 /**
- * Base path for the SPA, used as the router basename. Vite injects
- * `import.meta.env.BASE_URL` (the `base` build option, default "/").
+ * SPA 的基础路径，用作路由器 basename。Vite 注入 `import.meta.env.BASE_URL`
+ * （即构建配置的 `base` 选项，默认 "/"）。
  */
 const CLIENT_BASE_PATH = import.meta.env.BASE_URL || '/';
 
-/** Single react-query client for the whole app: modest retries, no refetch-on-focus. */
+/** 全应用唯一的 react-query client：重试 1 次、窗口聚焦不 refetch、staleTime 30 秒。 */
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -45,7 +43,7 @@ const queryClient = new QueryClient({
   },
 });
 
-/** Root-level crash fallback: brand mark, the error, and a reload button. */
+/** 根级崩溃兜底 UI：品牌标识、错误信息与一个重新加载按钮。 */
 function CrashFallback({
   error,
   resetErrorBoundary,
@@ -68,9 +66,9 @@ function CrashFallback({
   );
 }
 
-/** Root component: providers only. */
+/** 根组件：只负责 provider 组合。 */
 const MainApp = () => {
-  // Apply the persisted theme before any route renders (including /login).
+  // 在任何路由（包括 /login）渲染之前，先应用持久化的主题偏好。
   useTheme();
 
   return (

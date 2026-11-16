@@ -1,16 +1,18 @@
 /**
- * AgentRunDetailModal - full-screen dialog inspecting one multi-agent analysis run.
+ * AgentRunDetailModal - 全屏弹窗，检视一次 multi-agent 分析 run 的完整细节。
  *
- * Loads the run detail (getAgentRun) when opened and presents five tabs:
- *   overview - pipeline timeline + rating summary + failure info
- *   evidence - gathered evidence grouped by role (fundamental/news/technical/macro)
- *   debate   - bull vs bear arguments plus critic challenge records
- *   risk     - risk-gate rule results in a table
- *   rating   - final rating, catalysts, risks, and uncertainties
+ * 打开时加载 run 详情（getAgentRun），提供五个标签页：
+ *   overview - 流水线时间线 + 评级摘要 + 失败信息
+ *   evidence - 按角色（fundamental/news/technical/macro）分组的证据
+ *   debate   - 多空论点与批评者质询记录
+ *   risk     - 风控闸门规则结果表
+ *   rating   - 最终评级、催化剂、风险与不确定性
  *
- * When the run is 'awaiting_human', a human-in-the-loop (HITL) action bar lets
- * the user approve, modify, or reject the rating; approve/modify syncs the
- * rating back to holdings and the analysis log (submitHumanDecision).
+ * 当 run 处于 'awaiting_human' 时，底部显示 human-in-the-loop（HITL）操作条，
+ * 可批准、修改或驳回评级；批准/修改会经 submitHumanDecision 把评级
+ * 同步回持仓与分析日志。上游数据来自 `@/api`；下游复用本目录的
+ * RatingBadge / ConfidenceBadge / RunProgressBar / RiskAlertBadge 与
+ * getPipelineStepState。
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -82,14 +84,15 @@ import type {
 } from '@shared/api.interface';
 
 interface AgentRunDetailModalProps {
-  /** Whether the dialog is open */
+  /** 弹窗是否打开 */
   open: boolean;
-  /** Called by the dialog to request open/close changes */
+  /** Dialog 回调：请求开/关状态变化 */
   onOpenChange: (open: boolean) => void;
-  /** ID of the run to inspect; null when closed/loading */
+  /** 要检视的 run id；关闭/加载中为 null */
   runId: string | null;
 }
 
+/** 各 AgentRunStatus 对应的 i18n 文案 key。 */
 const statusLabelKeys: Record<AgentRunStatus, string> = {
   pending: 'agent.pending',
   fetching: 'agent.fetching',
@@ -102,6 +105,7 @@ const statusLabelKeys: Record<AgentRunStatus, string> = {
   cancelled: 'agent.cancelled',
 };
 
+/** 各证据角色对应的 i18n 文案 key。 */
 const roleLabelKeys: Record<EvidenceRole, string> = {
   fundamental: 'ui.agent.evidenceRoleFundamental',
   news: 'ui.agent.evidenceRoleNews',
@@ -109,7 +113,7 @@ const roleLabelKeys: Record<EvidenceRole, string> = {
   macro: 'ui.agent.evidenceRoleMacro',
 };
 
-/** Lucide icon per evidence category, used as the section header icon */
+/** 每个证据类别的 Lucide 图标，用作区块标题图标 */
 const roleIcons: Record<EvidenceRole, typeof FileText> = {
   fundamental: FileText,
   news: Newspaper,
@@ -117,7 +121,7 @@ const roleIcons: Record<EvidenceRole, typeof FileText> = {
   macro: Globe,
 };
 
-/** Ordered pipeline stages shown in the overview timeline (with their icons) */
+/** overview 时间线中按序展示的流水线阶段（含各自图标） */
 const pipelineSteps = [
   { key: 'fetching', labelKey: 'ui.agent.stepEvidence', icon: FileText },
   { key: 'debating', labelKey: 'ui.agent.debate', icon: TrendingUp },
@@ -127,8 +131,8 @@ const pipelineSteps = [
 ] as const;
 
 /**
- * Dialog body: fetches the run detail, renders the tabbed view, and owns the
- * human-decision flow. Rendered content branches on loading/error/data states.
+ * Dialog 主体：加载 run 详情、渲染标签页视图，并承载人工决策（HITL）流程。
+ * 渲染内容按 loading/error/数据三种状态分支。
  */
 function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalProps) {
   const { t, i18n } = useTranslation();
@@ -136,20 +140,20 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('overview');
-  // Which HITL control panel is shown: none | modify form open
+  // 当前展示的 HITL 控制面板：none | 修改表单打开
   const [decisionMode, setDecisionMode] = useState<'none' | 'approve' | 'modify' | 'reject'>(
     'none',
   );
   const [submitting, setSubmitting] = useState(false);
 
-  // Modify form state
+  // 修改表单的状态
   const [modifyRating, setModifyRating] = useState<AgentRating>('Hold');
   const [modifyConfidence, setModifyConfidence] = useState<AgentConfidence>('medium');
   const [modifyTargetPrice, setModifyTargetPrice] = useState('');
   const [modifyAction, setModifyAction] = useState('');
   const [modifyNote, setModifyNote] = useState('');
 
-  /** Loads the run detail and pre-fills the modify-form fields from the existing rating */
+  /** 加载 run 详情，并按已有评级预填修改表单字段 */
   const loadRun = useCallback(
     async (id: string) => {
       setLoading(true);
@@ -173,9 +177,8 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
     [t],
   );
 
-  // (Re)load whenever the dialog opens with a runId; reset tab/decision state and
-  // clear data when closed. Note: this modal loads once per open; live updates
-  // for in-progress runs are driven by the parent run list.
+  // 弹窗带着 runId 打开时（重新）加载；关闭时重置标签页/决策状态并清空数据。
+  // 注意：本弹窗每次打开只加载一次；进行中 run 的实时更新由父级 run 列表驱动。
   useEffect(() => {
     if (open && runId) {
       loadRun(runId);
@@ -188,13 +191,14 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
   }, [open, runId, loadRun]);
 
   /**
-   * Submits the human decision for an awaiting_human run. 'modified' includes the
-   * edited rating fields; 'approved'/'modified' also flag syncToHoldings +
-   * syncToAnalysis so the rating propagates to the portfolio.
+   * 提交 awaiting_human run 的人工决策。'modified' 携带编辑后的评级字段；
+   * 'approved'/'modified' 同时置位 applyToHoldings + syncToAnalysis，
+   * 使评级同步传播到持仓组合。
    */
   const handleSubmitDecision = async (decision: 'approved' | 'modified' | 'rejected') => {
     if (!runId || !run) return;
     setSubmitting(true);
+    // 组装决策载荷：决策类型 + 可选备注；"修改"时附带编辑后的评级字段。
     try {
       const payload: {
         decision: string;
@@ -216,6 +220,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
         };
       }
 
+      // 批准/修改都要把评级落到持仓与分析日志。
       if (decision === 'approved' || decision === 'modified') {
         payload.applyToHoldings = true;
         payload.syncToAnalysis = true;
@@ -231,6 +236,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
         toast.info(t('ui.agent.ratingRejected'));
       }
 
+      // 成功后收起操作面板、重载详情，使本地状态与后端一致。
       setDecisionMode('none');
       await loadRun(runId);
     } catch (err) {
@@ -241,7 +247,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
     }
   };
 
-  // Group evidence items by their role for the Evidence tab accordions
+  // 按角色给证据条目分组，供 Evidence 标签页的手风琴展示
   const evidenceByRole = run
     ? run.evidence.reduce<Record<EvidenceRole, typeof run.evidence>>(
         (acc, item) => {
@@ -253,7 +259,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
       )
     : ({} as Record<EvidenceRole, typeof run.evidence>);
 
-  // Split the debate into bull / bear sides and isolate critic challenge records
+  // 把辩论拆成多/空两侧，并单独抽出批评者质询记录
   const bullArguments = run?.arguments.filter((a: BullBearArgument) => a.side === 'bull') || [];
   const bearArguments = run?.arguments.filter((a: BullBearArgument) => a.side === 'bear') || [];
   const criticRecords = run?.debate.filter((d: DebateRecord) => d.speaker === 'critic') || [];
@@ -317,9 +323,9 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
               </div>
 
               <div className="p-6">
-                {/* Overview Tab */}
+                {/* Overview 标签页 */}
                 <TabsContent value="overview" className="mt-0 space-y-6">
-                  {/* Summary bar */}
+                  {/* 摘要条 */}
                   {run.rating && (
                     <div className="flex flex-wrap items-center gap-3">
                       <RatingBadge rating={run.rating.rating} />
@@ -334,7 +340,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                     </div>
                   )}
 
-                  {/* Pipeline Timeline */}
+                  {/* 流水线时间线 */}
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base font-semibold">
@@ -348,7 +354,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                           const StepIcon = step.icon;
                           return (
                             <div key={step.key} className="relative flex gap-4 pb-6 last:pb-0">
-                              {/* Vertical line */}
+                              {/* 纵向连接线 */}
                               {idx < pipelineSteps.length - 1 && (
                                 <div
                                   className={[
@@ -359,7 +365,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                                   ].join(' ')}
                                 />
                               )}
-                              {/* Dot / icon */}
+                              {/* 圆点 / 图标 */}
                               <div
                                 className={[
                                   'relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2',
@@ -395,7 +401,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                     </CardContent>
                   </Card>
 
-                  {/* Rating summary card */}
+                  {/* 评级摘要卡片 */}
                   {run.rating && (
                     <Card>
                       <CardHeader>
@@ -436,7 +442,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                     </Card>
                   )}
 
-                  {/* Failed error */}
+                  {/* 失败错误信息 */}
                   {run.status === 'failed' && run.errorMessage && (
                     <Card className="border-rose-500/50 bg-rose-500/5">
                       <CardHeader>
@@ -454,7 +460,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                   )}
                 </TabsContent>
 
-                {/* Evidence Tab */}
+                {/* Evidence 标签页 */}
                 <TabsContent value="evidence" className="mt-0 space-y-4">
                   {(Object.keys(evidenceByRole) as EvidenceRole[]).length === 0 && (
                     <div className="text-center py-8 text-muted-foreground text-sm">
@@ -516,10 +522,10 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                   })}
                 </TabsContent>
 
-                {/* Debate Tab */}
+                {/* Debate 标签页 */}
                 <TabsContent value="debate" className="mt-0 space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
-                    {/* Bull column */}
+                    {/* 多头栏 */}
                     <Card className="border-emerald-500/30 bg-emerald-500/[0.03]">
                       <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
@@ -556,7 +562,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                       </CardContent>
                     </Card>
 
-                    {/* Bear column */}
+                    {/* 空头栏 */}
                     <Card className="border-rose-500/30 bg-rose-500/[0.03]">
                       <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-semibold text-rose-700 dark:text-rose-400 flex items-center gap-2">
@@ -594,7 +600,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                     </Card>
                   </div>
 
-                  {/* Critic section */}
+                  {/* 批评者质询区 */}
                   {criticRecords.length > 0 && (
                     <Card className="border-amber-500/30 bg-amber-500/[0.03]">
                       <CardHeader className="pb-2">
@@ -622,7 +628,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                   )}
                 </TabsContent>
 
-                {/* Risk Tab */}
+                {/* Risk 标签页 */}
                 <TabsContent value="risk" className="mt-0">
                   <Card>
                     <CardHeader className="pb-2">
@@ -714,7 +720,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
                   </Card>
                 </TabsContent>
 
-                {/* Rating Tab */}
+                {/* Rating 标签页 */}
                 <TabsContent value="rating" className="mt-0 space-y-4">
                   {run.rating ? (
                     <>
@@ -802,7 +808,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
           )}
         </div>
 
-        {/* HITL action bar */}
+        {/* HITL 操作条 */}
         {run && run.status === 'awaiting_human' && (
           <div className="border-t bg-amber-500/5 px-6 py-4">
             {decisionMode === 'none' && (
@@ -938,7 +944,7 @@ function AgentRunDetailModal({ open, onOpenChange, runId }: AgentRunDetailModalP
   );
 }
 
-/** Loading placeholder that mirrors the modal's pipeline timeline layout */
+/** 加载占位骨架：布局镜像弹窗的流水线时间线 */
 function DetailSkeleton() {
   return (
     <div className="p-6 space-y-6">

@@ -1,7 +1,16 @@
+/**
+ * @file client/src/pages/Dashboard/market-overview.css
+ * @description Dashboard 市场总览卡片样式：区域切换分段按钮（US/HK/CN）、
+ * 市场情绪面板（看多/看空色调 + 双向渐变轨道与指针）、指数列表，
+ * 以及 arcade 主题的直角覆盖。
+ */
+
+/* ===== 卡片容器 ===== */
 .market-overview-card {
   min-width: 0;
 }
 
+/* ===== 区域切换分段按钮（aria-pressed 标记选中态） ===== */
 .market-region-switch {
   display: flex;
   gap: 4px;
@@ -35,6 +44,7 @@
   outline-offset: 2px;
 }
 
+/* ===== 市场情绪面板（data-tone 控制数值颜色；轨道为红-灰-绿渐变） ===== */
 .market-mood {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -91,6 +101,7 @@
   box-shadow: 0 0 0 2px var(--card);
 }
 
+/* ===== 指数列表与计算口径折叠说明 ===== */
 .market-index-list li {
   display: flex;
   align-items: center;
@@ -109,6 +120,7 @@
   content: '';
 }
 
+/* ===== designTheme=arcade 直角覆盖 ===== */
 html[data-design-theme='arcade'] .market-mood,
 html[data-design-theme='arcade'] .market-region-switch,
 html[data-design-theme='arcade'] .market-region-switch button,

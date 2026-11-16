@@ -1,14 +1,12 @@
 /**
  * @file components/Layout.tsx
- * @description App-level shell: sidebar navigation, top bar, user menu, theme
- * toggle and the session guard.
+ * @description 应用级全局壳：侧栏导航、顶栏、用户菜单、主题切换与会话守卫。
  *
- * Mounted as the layout route in `app.tsx`; every feature page renders inside
- * its `<Outlet/>`. Also owns the market-status indicator shown in the top bar.
+ * 由 `app.tsx` 以 layout 路由挂载；所有功能页面都渲染在它的 `<Outlet/>` 内。
+ * 顶栏的市场状态指示器也归本组件所有。
  *
- * Auth: the layout requires a stored session (token presence check; actual
- * validity is enforced server-side and by the http 401 interceptor). The
- * user menu reads the profile from GET /api/auth/me.
+ * 鉴权：本壳要求本地已有会话（仅检查 token 是否存在；真实有效性由服务端与
+ * http 401 拦截器兜底）。用户菜单通过 GET /api/auth/me 读取个人资料。
  */
 import { Outlet, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
@@ -46,8 +44,8 @@ import { Mascot } from '@/components/Mascot';
 import { AppearancePicker } from '@/components/AppearancePicker';
 
 /**
- * Sidebar navigation entries. `end: true` marks the index route so it is only
- * active on the exact path rather than on every child route.
+ * 侧栏导航条目。`end: true` 标记 index 路由：仅在路径完全一致时激活，
+ * 而不是在所有子路由上都激活。
  */
 const navItems = [
   { path: '/', label: 'nav.dashboard', icon: LayoutDashboard, end: true },
@@ -63,7 +61,7 @@ const navItems = [
   { path: '/settings', label: 'ui.settings.nav', icon: Settings },
 ];
 
-/** Profile shape used by the sidebar user block. */
+/** 侧栏用户区块使用的个人资料结构。 */
 interface SidebarProfile {
   id: string;
   username: string;
@@ -71,35 +69,40 @@ interface SidebarProfile {
 }
 
 /**
- * Root layout component. Renders the responsive sidebar (off-canvas on
- * mobile), top bar with page title + market indicator, and the routed
- * `<Outlet/>`. Redirects to /login when no session exists.
+ * 根布局组件。渲染响应式侧栏（移动端为 off-canvas 抽屉）、带页面标题 +
+ * 市场状态指示器的顶栏，以及路由出口 `<Outlet/>`。无会话时重定向到 /login。
  */
 function Layout() {
   const { theme, toggleTheme } = useTheme();
   const { t, i18n } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
+  // 设置页使用专用布局变体（由 app-shell-settings class 驱动差异化样式）。
   const inSettings =
     location.pathname === '/settings' || location.pathname.startsWith('/settings/');
   const pageScrollRef = useRef<HTMLElement>(null);
+  // 语言判定：zh-CN 及其他中文变体都按中文处理。
   const zh = i18n.language.startsWith('zh');
+  // 把 11 个导航项切成三组（我的投资 / 研究与实验 / 偏好设置）；分组标签按当前语言就地生成。
   const navGroups = [
     { label: zh ? '我的投资' : 'Portfolio', items: navItems.slice(0, 4) },
     { label: zh ? '研究与实验' : 'Research & lab', items: navItems.slice(4, 10) },
     { label: zh ? '偏好设置' : 'Preferences', items: navItems.slice(10) },
   ];
 
+  // 中英互切：zh-CN <-> en。
   const toggleLang = () => {
     const next = i18n.language === 'zh-CN' ? 'en' : 'zh-CN';
     setLanguage(next);
   };
 
+  // 路由变化时：收起移动端抽屉，并把内容区滚动位置复位到顶部。
   useEffect(() => {
     setMobileOpen(false);
     if (pageScrollRef.current) pageScrollRef.current.scrollTop = 0;
   }, [location.pathname]);
 
+  // 会话守卫：本地无 token 即重定向登录页（记录来源路径，供登录后回跳）。
   if (!hasSession()) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
@@ -108,7 +111,7 @@ function Layout() {
     <div
       className={`app-shell flex w-screen overflow-hidden bg-background text-foreground ${inSettings ? 'app-shell-settings' : ''} ${location.pathname === '/council' ? 'h-dvh' : 'h-screen'}`}
     >
-      {/* Sidebar */}
+      {/* 侧栏 */}
       <aside
         aria-label={zh ? '主导航' : 'Main navigation'}
         className={`app-sidebar fixed inset-y-0 left-0 z-40 w-56 transform bg-sidebar text-sidebar-foreground transition-transform duration-200 md:static md:translate-x-0 ${
@@ -195,7 +198,7 @@ function Layout() {
         </div>
       </aside>
 
-      {/* Mobile overlay */}
+      {/* 移动端遮罩层 */}
       {mobileOpen && (
         <div
           className="fixed inset-0 z-30 bg-black/40 md:hidden"
@@ -203,9 +206,9 @@ function Layout() {
         />
       )}
 
-      {/* Main content */}
+      {/* 主内容区 */}
       <div className="app-workspace flex flex-1 flex-col overflow-hidden">
-        {/* Top bar */}
+        {/* 顶栏 */}
         <header className="app-topbar flex flex-shrink-0 items-center justify-between border-b border-border">
           <div className="flex min-w-0 items-center gap-3">
             <button
@@ -234,7 +237,7 @@ function Layout() {
           </div>
         </header>
 
-        {/* Page content */}
+        {/* 页面内容 */}
         <main
           ref={pageScrollRef}
           className={
@@ -253,14 +256,14 @@ function Layout() {
 }
 
 /**
- * Top-bar market status dot. Polls the aggregate market phase every 30s and
- * shows "交易中" (green) when at least one market is in continuous trading,
- * otherwise "休市". Also exposes a refresh button that forces a quote refetch.
+ * 顶栏市场状态圆点。每 30 秒轮询一次聚合市场阶段：只要有一个市场处于连续
+ * 交易时段就显示"交易中"（绿色），否则显示"休市"。附带一个强制刷新行情的按钮。
  */
 function MarketStatusIndicator() {
   const { t } = useTranslation();
   const [anyTrading, setAnyTrading] = useState(false);
 
+  // 先立即检查一次，再按 30 秒节奏轮询聚合市场状态（卸载时清理定时器）。
   useEffect(() => {
     const check = () => {
       const { anyTrading: at } = getAggregateMarketStatus();
@@ -271,6 +274,7 @@ function MarketStatusIndicator() {
     return () => clearInterval(timer);
   }, []);
 
+  // 状态文案与配色成对出现：交易中为成功绿，休市为弱化灰。
   const statusLabel = anyTrading ? t('layout.trading') : t('layout.closed');
   const statusColor = anyTrading ? 'text-success' : 'text-muted-foreground';
 
@@ -297,8 +301,8 @@ function MarketStatusIndicator() {
 }
 
 /**
- * Sidebar user block: avatar with initial, display name and username.
- * Fetches GET /api/auth/me (react-query); shows skeletons until resolved.
+ * 侧栏用户区块：首字母头像、显示名与用户名。
+ * 通过 react-query 请求 GET /api/auth/me；加载完成前显示骨架屏。
  */
 function SidebarUserBlock() {
   const { t } = useTranslation();
@@ -309,6 +313,7 @@ function SidebarUserBlock() {
     retry: false,
   });
 
+  // 显示名兜底链：demo 演示账号固定本地化文案 -> displayName -> username。
   const name =
     profile?.username === 'demo' && profile.displayName === '演示用户'
       ? t('layout.demoUser')
@@ -332,12 +337,13 @@ function SidebarUserBlock() {
   );
 }
 
-/** Sign out: drop the local session and return to the login page. */
+/** 登出：清除本地会话并返回登录页。 */
 function LogoutButton() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  // 清空本地 token 与 react-query 缓存，替换式跳转回登录页（避免"后退"回到受保护页面）。
   const handleLogout = () => {
     tokenStore.clear();
     queryClient.clear();

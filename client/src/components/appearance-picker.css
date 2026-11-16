@@ -1,3 +1,13 @@
+/**
+ * @file client/src/components/appearance-picker.css
+ * @description 外观选择器（AppearancePicker 组件）专属样式：顶栏触发按钮、
+ * 弹窗（深浅模式单选 + 四主题选项网格）、内嵌主题预览图（data-preview-theme /
+ * data-preview-mode 属性驱动各主题变体的配色与纹理），以及设置页入口卡片；
+ * 末尾为移动端适配与 prefers-reduced-motion 动画降级。
+ */
+
+/* ===== 触发按钮（顶栏入口） ===== */
+
 .appearance-trigger {
   color: var(--muted-foreground);
 }
@@ -6,6 +16,8 @@
   color: var(--foreground);
   background: var(--secondary);
 }
+
+/* ===== 弹窗容器与头部 ===== */
 
 .appearance-dialog {
   width: min(680px, calc(100vw - 2rem));
@@ -63,6 +75,8 @@
   gap: 12px;
 }
 
+/* ===== 深浅模式单选行 ===== */
+
 .appearance-mode-row {
   display: flex;
   flex-wrap: wrap;
@@ -110,6 +124,8 @@
   color: var(--foreground);
   box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
 }
+
+/* ===== 主题选项网格 ===== */
 
 .appearance-theme-grid {
   display: grid;
@@ -189,6 +205,8 @@
   font-weight: 600;
 }
 
+/* ===== 主题预览图（data-preview-theme / -mode 属性驱动各主题变体配色与纹理） ===== */
+
 .appearance-preview {
   --preview-canvas: #f5f2ec;
   --preview-card: #fbfaf7;
@@ -260,6 +278,8 @@
   --preview-card: #112534;
   --preview-brand: #83dbed;
 }
+
+/* ===== 预览图内部结构：侧栏轨道 / 桌面舞台 / 吉祥物 / 信号柱 / 面板 ===== */
 
 .appearance-preview-rail {
   display: flex;
@@ -418,6 +438,8 @@
   box-shadow: 0 0 0 11px var(--preview-line);
 }
 
+/* ===== 弹窗页脚 ===== */
+
 .appearance-footer {
   display: flex;
   align-items: center;
@@ -428,6 +450,8 @@
   font-size: 11px;
   text-align: center;
 }
+
+/* ===== 设置页入口卡片 ===== */
 
 .appearance-settings-card {
   display: flex;
@@ -475,6 +499,8 @@
 .appearance-settings-current {
   color: var(--brand, var(--foreground));
 }
+
+/* ===== 移动端适配（≤480px） ===== */
 
 @media (width <= 480px) {
   .appearance-dialog {
@@ -535,6 +561,8 @@
     display: none;
   }
 }
+
+/* ===== 动画降级（减弱动态效果偏好） ===== */
 
 @media (prefers-reduced-motion: reduce) {
   .appearance-mode-option,

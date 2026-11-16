@@ -1,8 +1,8 @@
 /**
- * AgentRunCard - compact summary card for one multi-agent analysis run, used in
- * the run list. Shows ticker, live pipeline status, rating/confidence once the
- * run completes, three-scenario target prices for "full" (deep) runs, bull/bear
- * summary lines, error message on failure, and a human-in-the-loop approval cue.
+ * @file components/MultiAgent/AgentRunCard.tsx
+ * @description 多 agent 分析单次 run 的紧凑摘要卡片，用于 run 列表。
+ * 展示：ticker、实时流水线状态、完成后的评级/置信度、"full"（深度）run 的
+ * 三情景目标价、多空摘要行、失败时的错误信息，以及 human-in-the-loop 审批提示。
  */
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -24,15 +24,15 @@ import { useTranslation } from 'react-i18next';
 import type { AgentRunWithRating, AgentRunStatus, RiskGateResult } from '@shared/api.interface';
 
 interface AgentRunCardProps {
-  /** The run record (with its rating, if any) to render */
+  /** 要渲染的 run 记录（含其评级，如有） */
   run: AgentRunWithRating;
-  /** Optional risk-gate results, rendered as a RiskAlertBadge in the footer */
+  /** 可选的风控闸门结果，在页脚渲染为 RiskAlertBadge */
   riskGate?: RiskGateResult[];
-  /** Optional number of evidence items gathered by the run */
+  /** 可选：本次 run 收集的证据条数 */
   evidenceCount?: number;
-  /** Callback when the card is clicked (opens the detail modal) */
+  /** 卡片被点击时的回调（打开详情弹窗） */
   onClick?: () => void;
-  /** Three-scenario target prices from deep report (optional) */
+  /** 深度报告的三情景目标价（可选） */
   targetBear?: string | null;
   targetBase?: string | null;
   targetBull?: string | null;
@@ -40,15 +40,15 @@ interface AgentRunCardProps {
 }
 
 /**
- * Tailwind outline-badge classes per pipeline status. Color encodes stage type:
- *   pending/cancelled  -> slate (idle)
- *   fetching           -> blue  (data collection)
- *   debating           -> purple (multi-agent argumentation)
- *   critiquing         -> amber (critic review)
- *   risk_check         -> rose  (risk gate)
- *   awaiting_human     -> amber-strong (needs human decision)
- *   completed          -> emerald
- *   failed             -> rose-strong
+ * 各流水线状态对应的 Tailwind outline 徽章 class。颜色编码阶段类型：
+ *   pending/cancelled  -> slate（空闲）
+ *   fetching           -> 蓝（数据采集）
+ *   debating           -> 紫（多 agent 论辩）
+ *   critiquing         -> 琥珀（批评者复核）
+ *   risk_check         -> 玫瑰红（风控闸门）
+ *   awaiting_human     -> 琥珀加重（等待人工决策）
+ *   completed          -> 翡翠绿
+ *   failed             -> 玫瑰红加重
  */
 const statusStyles: Record<AgentRunStatus, string> = {
   pending: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
@@ -62,6 +62,7 @@ const statusStyles: Record<AgentRunStatus, string> = {
   cancelled: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
 };
 
+/** 各流水线状态对应的 i18n 文案 key。 */
 const statusLabelKeys: Record<AgentRunStatus, string> = {
   pending: 'agent.pending',
   fetching: 'agent.fetching',
@@ -75,10 +76,9 @@ const statusLabelKeys: Record<AgentRunStatus, string> = {
 };
 
 /**
- * Renders one run row. Sections are conditionally shown by run state:
- * in-progress runs get a live RunProgressBar; completed runs get rating +
- * bull/bear summaries; failed runs show the error; awaiting_human runs show an
- * approval call-to-action box.
+ * 渲染一条 run 记录。各区块按 run 状态条件展示：
+ * 进行中的 run 显示实时 RunProgressBar；完成的 run 显示评级 + 多空摘要；
+ * 失败的 run 显示错误信息；awaiting_human 的 run 显示审批操作提示框。
  */
 function AgentRunCard({
   run,
@@ -92,9 +92,9 @@ function AgentRunCard({
   const { t, i18n } = useTranslation();
   const isAwaiting = run.status === 'awaiting_human';
   const isCompleted = run.status === 'completed';
-  // Stages that still have a live (polling) progress bar shown on the card
+  // 卡片上仍显示实时（轮询）进度条的进行中阶段
   const isInProgress = ['fetching', 'debating', 'critiquing', 'risk_check'].includes(run.status);
-  // 'full' runs produce the long-form deep report; quick runs do not
+  // 'full' run 产出长篇深度报告；quick run 不产出
   const isDeep = run.runMode === 'full';
   const hasTargets = targetBear != null || targetBase != null || targetBull != null;
 
@@ -110,7 +110,7 @@ function AgentRunCard({
       ].join(' ')}
     >
       <div className="p-4 space-y-3">
-        {/* Header: ticker + status */}
+        {/* 头部：ticker + 状态 */}
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-baseline gap-2">
@@ -134,14 +134,14 @@ function AgentRunCard({
           </Badge>
         </div>
 
-        {/* Progress bar for in-progress statuses */}
+        {/* 进行中状态的进度条 */}
         {isInProgress && (
           <div className="py-1">
             <RunProgressBar status={run.status} />
           </div>
         )}
 
-        {/* Completed: rating + confidence */}
+        {/* 已完成：评级 + 置信度 */}
         {isCompleted && run.rating && (
           <div className="space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -157,7 +157,7 @@ function AgentRunCard({
               )}
             </div>
 
-            {/* Deep analysis: three-scenario target prices */}
+            {/* 深度分析：三情景目标价 */}
             {isDeep && hasTargets && (
               <div className="text-xs text-muted-foreground">
                 {t('ui.agent.scenarioBear')}{' '}
@@ -171,7 +171,7 @@ function AgentRunCard({
               </div>
             )}
 
-            {/* Bull / bear summary */}
+            {/* 多 / 空摘要 */}
             {run.rating.bullSummary && (
               <div className="flex items-start gap-2 text-xs">
                 <TrendingUp size={14} className="mt-0.5 shrink-0 text-emerald-500" />
@@ -191,7 +191,7 @@ function AgentRunCard({
           </div>
         )}
 
-        {/* Failed status */}
+        {/* 失败状态 */}
         {run.status === 'failed' && run.errorMessage && (
           <div className="flex items-start gap-2 text-xs text-rose-600 dark:text-rose-400">
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
@@ -199,7 +199,7 @@ function AgentRunCard({
           </div>
         )}
 
-        {/* Awaiting human tag */}
+        {/* 等待人工决策提示 */}
         {isAwaiting && (
           <div className="rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2">
             <div className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
@@ -215,7 +215,7 @@ function AgentRunCard({
           </div>
         )}
 
-        {/* Footer: metadata */}
+        {/* 页脚：元数据 */}
         <div className="flex items-center gap-3 pt-1 text-xs text-muted-foreground flex-wrap">
           {evidenceCount !== undefined && (
             <div className="flex items-center gap-1">
@@ -230,7 +230,7 @@ function AgentRunCard({
           {riskGate && riskGate.length > 0 && <RiskAlertBadge results={riskGate} />}
         </div>
 
-        {/* Deep analysis CTA */}
+        {/* 深度分析入口提示 */}
         {isDeep && isCompleted && (
           <div className="flex items-center justify-end gap-0.5 pt-1 text-xs font-medium text-amber-600 dark:text-amber-400">
             {t('ui.agent.fullReport')}
@@ -243,17 +243,19 @@ function AgentRunCard({
 }
 
 /**
- * Formats an ISO date string as a relative time ("just now", "5 min ago",
- * "3 days ago") and falls back to a short absolute date older than 7 days.
+ * 把 ISO 日期字符串格式化为相对时间（"刚刚"、"5 分钟前"、"3 天前"），
+ * 超过 7 天时回退为短格式绝对日期。
  */
 function formatDate(dateStr: string, locale: string): string {
   const date = new Date(dateStr);
   const now = new Date();
+  // 预先换算分钟/小时/天三档时间差，供下方逐档判断使用。
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
+  // 7 天内用相对时间格式；超出则回退为"月 日"短格式。
   const relativeTime = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
   if (diffMins < 1) return relativeTime.format(0, 'minute');
   if (diffMins < 60) return relativeTime.format(-diffMins, 'minute');
@@ -262,7 +264,7 @@ function formatDate(dateStr: string, locale: string): string {
   return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
-/** Loading placeholder that mirrors AgentRunCard's layout while runs are being fetched */
+/** run 列表加载中时，与 AgentRunCard 布局一致的加载占位卡片 */
 export function AgentRunCardSkeleton() {
   const { t } = useTranslation();
   return (

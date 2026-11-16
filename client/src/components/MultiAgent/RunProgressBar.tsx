@@ -1,36 +1,34 @@
 /**
- * RunProgressBar - horizontal stepper showing progress through the multi-agent
- * analysis pipeline (fetch evidence -> bull/bear debate -> critic review ->
- * risk-gate check -> final rating).
+ * RunProgressBar - 多 agent 分析流水线的横向步骤条（获取证据 → 多空辩论 →
+ * 批评者复核 → 风控闸门检查 → 最终评级）。
  *
- * Each step is a circle whose visual state is derived from the run's current
- * status via getStepState():
- *   done     -> emerald circle with check icon
- *   active   -> primary-colored pulsing circle (the stage currently running)
- *   failed   -> rose circle with X icon (run failed/cancelled)
- *   awaiting -> amber circle (pipeline finished, waiting on human decision)
- *   pending  -> muted gray circle (not reached yet)
+ * 每一步渲染为一个圆点，其视觉状态由 run 当前状态经 getStepState() 推导：
+ *   done     -> 翡翠绿圆点 + 对勾图标
+ *   active   -> 主色脉冲圆点（当前正在执行的阶段）
+ *   failed   -> 玫红圆点 + 叉号图标（run 失败/取消）
+ *   awaiting -> 琥珀圆点（流水线跑完，等待人工决策）
+ *   pending  -> 弱化灰圆点（尚未到达）
  */
 import { Check, X } from 'lucide-react';
 import type { AgentRunStatus } from '@shared/api.interface';
 import { useTranslation } from 'react-i18next';
 
 interface RunProgressBarProps {
-  /** Current pipeline status of the agent run being visualized */
+  /** 所可视化 agent run 的当前流水线状态 */
   status: AgentRunStatus;
 }
 
-/** A single pipeline step shown in the stepper */
+/** 步骤条中展示的单个流水线步骤 */
 interface StepDef {
-  /** Unique step key */
+  /** 唯一步骤 key */
   key: string;
-  /** Short label rendered under the circle */
+  /** 圆点下方渲染的短标签 */
   labelKey: string;
-  /** AgentRunStatus value that means "this step is the active one" */
+  /** 表示"本步骤正在执行"的 AgentRunStatus 值 */
   statusKey: AgentRunStatus;
 }
 
-/** Ordered pipeline stages (left to right) rendered as stepper circles */
+/** 按顺序（自左向右）渲染为步骤圆点的流水线阶段 */
 const steps: StepDef[] = [
   { key: 'fetching', labelKey: 'ui.agent.stepEvidence', statusKey: 'fetching' },
   { key: 'debating', labelKey: 'ui.agent.stepDebate', statusKey: 'debating' },
@@ -40,9 +38,9 @@ const steps: StepDef[] = [
 ];
 
 /**
- * Canonical ordering of statuses along the pipeline. A step is "done" once the
- * run's status has advanced past that step's own statusKey in this list.
- * Note: 'failed'/'cancelled' are terminal and handled specially below.
+ * 流水线上各状态的规范顺序。run 的状态在本列表中越过了某步骤自身的
+ * statusKey 之后，该步骤即视为"已完成"。
+ * 注意：'failed'/'cancelled' 是终态，在下方单独处理。
  */
 const statusOrder: AgentRunStatus[] = [
   'pending',
@@ -55,9 +53,8 @@ const statusOrder: AgentRunStatus[] = [
 ];
 
 /**
- * Derives the visual state of one stepper circle from the current run status.
- * 'awaiting_human' means all analytical stages finished but a human must approve
- * the rating before it can be published.
+ * 由 run 当前状态推导单个步骤圆点的视觉状态。
+ * 'awaiting_human' 表示全部分析阶段已完成，但评级须人工批准后才能发布。
  */
 function getStepState(
   stepIndex: number,
@@ -67,8 +64,8 @@ function getStepState(
   const stepStatusIdx = statusOrder.indexOf(steps[stepIndex].statusKey);
 
   if (status === 'failed' || status === 'cancelled') {
-    // all steps up to current are done-ish, the failing step shows failed
-    // find which step was running when it failed — approximate: use prior step index
+    // 已越过的步骤按完成渲染，失败步骤显示 failed；
+    // 需要知道失败时正在执行哪一步 —— 近似处理：参考前一步的索引。
     const stepKeys: AgentRunStatus[] = [
       'fetching',
       'debating',
@@ -76,7 +73,7 @@ function getStepState(
       'risk_check',
       'completed',
     ];
-    // Without a failed-step field, show first step as failed approximation
+    // 由于缺少"失败步骤"字段，近似处理为把第一步显示为失败
     if (stepIndex === 0) return 'failed';
     return 'pending';
   }
@@ -86,7 +83,7 @@ function getStepState(
   if (stepStatusIdx < currentIdx) return 'done';
   if (stepStatusIdx === currentIdx) return 'active';
 
-  // awaiting_human: all 5 steps done, but awaiting human decision
+  // awaiting_human：五个步骤全部完成，仅等待人工决策
   if (status === 'awaiting_human' && stepIndex === steps.length - 1) {
     return 'awaiting';
   }
@@ -94,13 +91,14 @@ function getStepState(
   return 'pending';
 }
 
-/** Renders the 5-step stepper circles plus the connector lines between them. */
+/** 渲染五个步骤圆点及其间的连接线。 */
 function RunProgressBar({ status }: RunProgressBarProps) {
   const { t } = useTranslation();
   return (
     <div className="w-full">
       <div className="flex items-center justify-between">
         {steps.map((step, idx) => {
+          // 由 run 状态推导本步骤的视觉状态。
           const state = getStepState(idx, status);
           return (
             <div key={step.key} className="flex flex-1 flex-col items-center last:flex-none">
@@ -146,15 +144,15 @@ function RunProgressBar({ status }: RunProgressBarProps) {
               </span>
               {idx < steps.length - 1 && (
                 <div className="absolute top-3 left-full h-0.5 w-full -translate-y-1/2">
-                  {/* connector handled by parent flex */}
+                  {/* 连接线由父级 flex 行绘制（见下方 -mt-9 区域） */}
                 </div>
               )}
             </div>
           );
         })}
       </div>
-      {/* Connector lines row: pulled up with -mt-9 to sit between the circles;
-          a line is emerald once the transition from step idx to idx+1 is underway/done */}
+      {/* 连接线行：用 -mt-9 上移，落在两排圆点之间；
+          当第 idx 步到第 idx+1 步的过渡已开始或完成时，该线呈翡翠绿 */}
       <div className="-mt-9 flex">
         {steps.slice(0, -1).map((_step, idx) => {
           const state = getStepState(idx, status);
