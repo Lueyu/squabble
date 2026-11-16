@@ -1,1 +1,1 @@
-"""Tools registry (filled in M2)."""
+"""工具注册表子包（M2 阶段填充）。"""

@@ -1,16 +1,20 @@
-"""Append-only JSONL event log for run checkpointing.
+"""面向 run checkpoint 的 append-only JSONL 事件日志。
 
-This is the Day 3 foundation for long-run reliability (the full resume feature
-lands in M3). The design is event sourcing:
+这是 Day 3 的长跑可靠性基础（完整的 resume 功能在 M3 落地）。设计为事件溯源
+（event sourcing）：
 
-  - A run never mutates stored state in place. It *appends* immutable events to
-    ``<checkpoint_dir>/<run_id>.jsonl``, one JSON object per line.
-  - State is reconstructed by replaying the event log from the beginning through
-    a reducer (``replay``). Appending is cheap and crash-safe: if the process dies
-    mid-run, everything already on disk is a valid prefix, and replaying it
-    rebuilds the state reached so far.
+  - run 永不原地修改已存储状态，而是向 ``<checkpoint_dir>/<run_id>.jsonl``
+    *追加*不可变事件，每行一个 JSON 对象。
+  - 状态通过从头重放事件日志（reducer，见 ``replay``）重建。追加廉价且
+    crash-safe：进程中途死亡时，磁盘上已有内容是合法前缀，重放即可恢复到
+    当时的状态。
 
-Each event is ``{"seq": int, "type": str, "ts": float, "payload": dict}``.
+每条事件形如 ``{"seq": int, "type": str, "ts": float, "payload": dict}``。
+
+上游/下游：
+  - 依赖：仅 Python 标准库（json / time / uuid / pathlib / dataclasses /
+    typing），不依赖包内其他模块。
+  - 根目录由调用方传入；默认目录值见 ``config.Settings.checkpoint_dir``。
 """
 
 from __future__ import annotations
@@ -22,38 +26,50 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-#: Shape of a single logged event.
+#: 单条日志事件的形状。
 Event = dict[str, Any]
 
 
 @dataclass(frozen=True)
 class Checkpoint:
-    """Handle identifying one run's append-only log."""
+    """标识一个 run 的 append-only 日志的句柄。"""
 
     run_id: str
     path: Path
 
 
 class CheckpointStore:
-    """Creates and appends to per-run JSONL logs under a root directory."""
+    """在根目录下创建并追加各 run 的 JSONL 日志。"""
 
     def __init__(self, root: str | Path) -> None:
+        """初始化存储根目录（不存在则连同父目录一起创建）。
+
+        Args:
+            root: JSONL 日志的存放根目录。
+        """
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
 
     def create(self, run_id: str | None = None) -> Checkpoint:
-        """Return a checkpoint handle for a run (generates an id if absent)."""
+        """返回一个 run 的 checkpoint 句柄（未提供 id 时自动生成 12 位十六进制 id）。"""
         run_id = run_id or uuid.uuid4().hex[:12]
         return Checkpoint(run_id=run_id, path=self.root / f"{run_id}.jsonl")
 
-    def append(self, cp: Checkpoint, event_type: str, payload: dict | None = None) -> Event:
-        """Append one event and return the stored record.
+    def append(
+        self,
+        cp: Checkpoint,
+        event_type: str,
+        payload: dict | None = None,
+    ) -> Event:
+        """追加一条事件并返回落盘后的完整记录。
 
-        ``seq`` is derived from the existing line count so events are numbered
-        consecutively even across process restarts.
+        ``seq`` 由现有行数推导，保证跨进程重启后事件编号依然连续。
         """
+        # 确保目录存在，并以现有行数推导连续序号。
         cp.path.parent.mkdir(parents=True, exist_ok=True)
         seq = self._count_lines(cp.path)
+
+        # 组装事件并追加写入（utf-8，保留非 ASCII 字符）。
         event: Event = {
             "seq": seq,
             "type": event_type,
@@ -65,9 +81,11 @@ class CheckpointStore:
         return event
 
     def load(self, cp: Checkpoint) -> list[Event]:
-        """Read all events back in append order (empty list if the log is absent)."""
+        """按追加顺序读回全部事件（日志不存在时返回空列表）。"""
         if not cp.path.exists():
             return []
+
+        # 逐行解析非空行，保持追加顺序。
         events: list[Event] = []
         with cp.path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -78,6 +96,7 @@ class CheckpointStore:
 
     @staticmethod
     def _count_lines(path: Path) -> int:
+        """统计文件中的非空行数（文件不存在时返回 0）。"""
         if not path.exists():
             return 0
         count = 0
@@ -93,12 +112,12 @@ def replay(
     initial: Any,
     reducer: Callable[[Any, Event], Any],
 ) -> Any:
-    """Fold an event log into state by applying ``reducer`` left to right.
+    """将事件日志经 ``reducer`` 从左到右折叠为状态。
 
     Args:
-        events: Ordered events, typically from ``CheckpointStore.load``.
-        initial: Starting state before any event.
-        reducer: Pure function ``(state, event) -> next_state``.
+        events: 有序事件，通常来自 ``CheckpointStore.load``。
+        initial: 任何事件应用之前的初始状态。
+        reducer: 纯函数 ``(state, event) -> next_state``。
     """
     state = initial
     for event in events:

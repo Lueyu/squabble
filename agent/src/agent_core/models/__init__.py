@@ -1,1 +1,1 @@
-"""Model providers (full abstraction in M1)."""
+"""模型 provider 子包（完整抽象在 M1 阶段落地）。"""
