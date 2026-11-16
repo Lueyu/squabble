@@ -296,3 +296,9 @@ behavior tests plus `scripts/ui-probe/team-organization-browser.cjs` against its
 fictional server after a Web build. Inspect actual deep/light-theme screenshots,
 mobile editing, relationship properties and friend assignment; container presence
 is insufficient. See `docs/team-organization-redesign/ui-repair-plan.zh-CN.md`.
+
+The durable Council workflow fixture fixes only initial archive jobs as due and
+uses a read cutoff after both the host and database clocks. Docker/Windows clock
+drift otherwise makes an archival integration test accidentally test wall-clock
+scheduling or hide a just-created source. Keep retry backoff and production
+source-time visibility intact; do not disable those guards to make tests pass.
