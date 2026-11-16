@@ -1,22 +1,5 @@
 /**
  * CouncilTeamEditor.tsx — 理事会团队编辑器：成员列表增删改、预设一键套用、Web 研究开关。
- *
- * 职责边界：
- *  - 受控组件（value/onChange）：维护 CouncilConfig.members 与 webResearch；
- *  - 提供：本地智能体一键分配、预设团队套用（COUNCIL_TEAM_PRESETS）、成员卡片列表
- *    （编辑/删除）、添加面板（COUNCIL_MEMBER_TEMPLATES 模板或自定义）、
- *    Web 研究开关（关闭时剔除非本地成员的 web 研究焦点）；
- *  - 成员保存走 saveMember：唯一 manager 约束 + validateCouncilSettings 校验后才回传 onChange。
- * 上下游：
- *  - 上游（路由入口/谁引用）：CouncilNewDialog、AgentBuilder/CouncilConfigEditor。
- *  - 下游（调用哪些 hooks/api/组件）：useCouncilModels（options/localAgents/memberLabel/refetch）；
- *    useCouncilModels 的 assignLocalAgents；@shared/council-templates 的模板与预设工厂；
- *    validateCouncilSettings；CouncilMemberAvatar / CouncilMemberEditor。
- * 关键约定：
- *  - 成员数量上限 6、下限 2（删除按钮在 ≤2 或 manager 时禁用）；
- *  - manager 唯一：保存 manager 成员时把其余 manager 降级为 researcher；
- *  - 新成员 id 由 模板id-16位随机串 生成；自定义成员四项文案清空、研究焦点清空；
- *  - 模型列表加载失败时给"重试"入口（models.refetch）。
  */
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -237,7 +220,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
       )}
       {/* 添加面板：模板网格 + 自定义入口；否则显示"添加成员"虚线按钮（满 6 人禁用） */}
       {adding ? (
-        <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
+        <div className="space-y-3 rounded-xl border border-border bg-card p-3">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium">{t('council.members.chooseTemplate')}</p>
             <Button

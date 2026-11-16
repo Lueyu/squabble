@@ -1,21 +1,5 @@
 /**
  * CouncilNewDialog.tsx — 新建理事会会话弹窗：标的、团队配置、可选绑定 Builder 档案。
- *
- * 职责边界：
- *  - 收集 ticker 与团队（CouncilTeamEditor），可选从 Builder 档案预填团队；
- *  - 首次拿到本地智能体列表时自动轮转分配（assignLocalAgents）；
- *  - 提交前做两道校验（ticker 正则 + 档案存在性、validateCouncilSettings），
- *    通过后回调 onCreate 创建会话。
- * 上下游：
- *  - 上游（路由入口/谁引用）：CouncilPage（新建按钮）。
- *  - 下游（调用哪些 hooks/api/组件）：useQuery ['settings','local-agents']（fetchLocalAgents）；
- *    useCouncilModels 的 assignLocalAgents；validateCouncilSettings；AgentBuilder/errorMessage；
- *    CouncilTeamEditor。
- * 关键约定：
- *  - initializedProfile/initializedAgents 两个 ref 保证档案预填与智能体分配只发生一次；
- *    用户手动改团队（changeTeam）后两者立即置位，后续数据到达不再覆盖用户输入；
- *  - 档案预填会过滤 researchFocus 中的 'web'（仅保留本地执行成员），保持 webResearch:false 口径；
- *  - 提交 payload：ticker 大写归一、profileId 有值才带、语言 zh 开头 → zh-CN。
  */
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -198,7 +182,7 @@ export default function CouncilNewDialog({
             {/* 可折叠的档案选择区：有初始档案时默认展开 */}
             <Collapsible
               defaultOpen={Boolean(initialProfileId)}
-              className="rounded-xl border border-border"
+              className="rounded-xl border border-border bg-card"
             >
               <CollapsibleTrigger asChild>
                 <Button
