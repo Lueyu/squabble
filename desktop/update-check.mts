@@ -1,3 +1,17 @@
+/**
+ * update-check.mts — 手动更新检查：查询 GitHub 最新 release 并严格校验其地址可信。
+ *
+ * 职责边界：
+ *  - isNewerVersion 做三段语义化版本比较；checkForUpdate 调 GitHub Releases API，
+ *    解析 tag/正文/资产，并返回一个经 URL 白名单校验的下载地址。
+ * 上下游：
+ *  - 上游（谁调用）：desktop/main.mts 在不支持自动更新的平台或非打包环境下走本文件；
+ *    desktop/update-check.spec.ts 直接测试。
+ *  - 下游：返回的 downloadUrl 交给 main.mts 用 shell.openExternal 打开浏览器。
+ * 关键约定：
+ *  - 只信任 https://github.com 且路径精确匹配 Lueyu/squabble 的 release 页与安装包资产，
+ *    带 username/password/query/hash 的地址一律判无效。
+ */
 const RELEASE_API = 'https://api.github.com/repos/Lueyu/squabble/releases/latest';
 
 export interface AvailableUpdate {

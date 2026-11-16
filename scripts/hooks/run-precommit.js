@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 /**
- * run-precommit.js — git pre-commit hook entry point.
+ * run-precommit.js — git pre-commit 钩子入口（.githooks/pre-commit 经 `npm run precommit` 调到这里）。
  *
- * Simply runs `npm run lint` and aborts the commit if it exits non-zero.
- * The detailed lint orchestration (eslint + type-check + stylelint, default
- * vs. selective modes) lives in scripts/lint.js. Users can bypass with
- * `git commit --no-verify`.
+ * 只做一件事：执行 `npm run lint`，退出码非零就中止提交。lint 的具体编排（eslint + type-check +
+ * stylelint，默认/选择性两种模式）都在 scripts/lint.js。用户可用 `git commit --no-verify` 跳过。
  */
 // FULLSTACK_PRECOMMIT_V1
 'use strict';
@@ -27,8 +25,8 @@ function failAndExit(step, body) {
 
 function runLint() {
   const cwd = process.cwd();
-  // String command + shell: cross-platform. With an argv array Node cannot
-  // resolve npm on Windows (spawn EINVAL / ENOENT for .cmd since CVE-2024-27980).
+  // 字符串命令 + shell：跨平台必需。用 argv 数组时 Node 无法在 Windows 上解析 npm
+  // （CVE-2024-27980 之后对 .cmd 抛 spawn EINVAL / ENOENT）。
   const res = spawnSync('npm run lint', {
     cwd,
     stdio: ['ignore', 'pipe', 'pipe'],

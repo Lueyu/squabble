@@ -1,19 +1,16 @@
 #!/usr/bin/env node
 /**
- * lint.js — unified lint entry point used by both `npm run lint` and the
- * pre-commit hook.
+ * lint.js — 统一 lint 入口：`npm run lint` 与 git pre-commit 钩子都走到这里。
  *
- * Two modes:
- *  - Default (no --files): run eslint + type:check across the whole project,
- *    plus stylelint if the project has a stylelint script and config.
- *  --files <path…>: selective mode — only lint the changed files. Routes
- *    .ts/.tsx to eslint + the matching type:check:client/server; .css to
- *    stylelint. Type-checks are split by directory (client/ vs server/; files
- *    in shared/ are checked by both tsconfigs).
+ * 两种模式：
+ *  - 默认（不带 --files）：全量跑 eslint + type:check；项目同时具备 stylelint script 与配置时
+ *    再加跑 stylelint。
+ *  --files <path…>：选择性模式——只 lint 指定文件。.ts/.tsx 路由到 eslint + 对应的
+ *    type:check:client/server；.css 路由到 stylelint。类型检查按目录拆分（client/ 与 server/；
+ *    shared/ 下的文件两边 tsconfig 都会检查）。
  *
- * Tasks run serially (not in parallel) to keep resource usage low and output
- * readable, but a failure in any task sets the overall exit code to 1 so all
- * problems surface in one pass.
+ * 任务串行执行（不并行）以控制资源占用并保持输出可读；任一任务失败都会把整体退出码置 1，
+ * 保证一轮就能暴露全部 lint 问题。
  */
 
 const path = require('node:path');
@@ -26,16 +23,15 @@ function getBinName(name) {
   return process.platform === 'win32' ? `${name}.cmd` : name;
 }
 
-// Quote an argument for a shell command line. Windows cmd treats "" as an
-// escaped quote; POSIX shells keep the argument whole when wrapped in quotes.
+// 把参数转义成可放进 shell 命令行的形式。Windows cmd 把 "" 视作转义引号；
+// POSIX shell 在参数整体被引号包裹时保持原样。
 function quoteArg(arg) {
   return /[\s"^]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg;
 }
 
 function runCommand(command, args) {
-  // Node >= 20.12.2 refuses to spawn .cmd/.bat files without a shell
-  // (CVE-2024-27980) and throws spawn EINVAL on Windows, so pass a single
-  // command line through the shell instead of an argv array.
+  // Node >= 20.12.2 拒绝在无 shell 的情况下 spawn .cmd/.bat（CVE-2024-27980），在 Windows 上
+  // 会抛 spawn EINVAL，因此传单条命令行字符串走 shell，而不是 argv 数组。
   const commandLine = [command, ...args.map(quoteArg)].join(' ');
   return new Promise((resolve) => {
     const child = spawn(commandLine, {

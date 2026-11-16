@@ -1,5 +1,23 @@
 'use strict';
 
+/**
+ * dev-processes.cjs — 跨平台的进程/端口管理工具集，供 scripts/dev.js（以及 dev.spec.cjs）复用。
+ *
+ * 职责边界：
+ *  - processSnapshot：枚举全部进程（Windows 用 PowerShell Get-CimInstance；POSIX 用 ps）。
+ *  - listeningPids：找出监听指定 TCP 端口的 PID（Windows netstat；POSIX lsof，缺失时退回 ss）。
+ *  - planListenerCleanup：把旧监听者回溯到 dev.js/nest --watch 等旧监督者根进程，且拒绝清理
+ *    当前进程或其祖先。
+ *  - terminateTree / stopOwnedChild：整树终止进程（Windows taskkill /T /F；POSIX 进程组 SIGKILL）。
+ *  - reclaimPorts：回收被占端口并轮询等待真正释放（10 秒超时）。
+ * 上下游：
+ *  - 上游（谁调用）：scripts/dev.js 编排启动前用 reclaimPorts 清端口、退出时用 stopOwnedChild
+ *    收子进程；scripts/dev.spec.cjs 直接单测各纯函数。
+ *  - 下游（连接什么）：只与本机 OS 进程/端口打交道（powershell/netstat/lsof/ss/taskkill）。
+ * 关键约定：
+ *  - 安全护栏：绝不终止当前进程自身或其祖先（PID <=1 同样拒绝）；Windows 上以 startedAt 复验
+ *    PID 未被复用后才动手杀。
+ */
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { setTimeout: delay } = require('node:timers/promises');
@@ -100,7 +118,7 @@ function planListenerCleanup(listeners, rows, currentPid = process.pid) {
     for (const ancestor of ancestors(pid, rows)) {
       if (protectedPids.has(ancestor)) break;
       const command = byPid.get(ancestor)?.command || '';
-      // Stop the old supervisor/watcher as well, or it will respawn its listener.
+      // 旧监督者/watcher 一并停掉，否则它会立刻重新拉起监听者。
       if (
         /(?:^|[\\/\s"'])scripts[\\/]dev\.js(?=["'\s]|$)/i.test(command) ||
         /(?:^|[\\/\s"'])nest(?:\.js)?["'\s].*\bstart\b.*--watch\b/i.test(command)
@@ -134,24 +152,23 @@ async function terminateTree(target, rows) {
     throw new Error(`Refusing to stop current process or ancestor (PID ${pid}).`);
   const owned = rows.filter((row) => ancestors(row.pid, rows).has(pid));
   if (!owned.length) return;
-  // Parent first: a watcher must not restart a child while we stop the tree.
+  // 先杀父进程：否则 watcher 会在我们清理整树期间重启子进程。
   owned.sort((a, b) => (a.pid === pid ? -1 : b.pid === pid ? 1 : 0));
   if (process.platform === 'win32') {
     for (const record of owned) {
-      // Most descendants are already gone after taskkill /T; avoid another
-      // PowerShell snapshot for each of those exited processes.
+      // taskkill /T 之后大多数后代已消失；跳过这些已退出的进程，避免再逐个做 PowerShell 快照。
       try {
         process.kill(record.pid, 0);
       } catch (error) {
         if (error.code === 'ESRCH') continue;
         throw error;
       }
-      // Revalidate after each asynchronous tree kill; PIDs can be reused.
+      // 每次异步整树终止后都要复验；PID 可能已被复用。
       if (!sameProcess(record, await processSnapshot())) continue;
       try {
         await exec('taskkill.exe', ['/PID', String(record.pid), '/T', '/F'], options);
       } catch (error) {
-        // taskkill also kills descendants; a subsequent PID may already be gone.
+        // taskkill 会连后代一起杀；队列里后续 PID 可能已经不在了。
         try {
           process.kill(record.pid, 0);
         } catch (check) {
@@ -175,8 +192,8 @@ async function terminateTree(target, rows) {
 async function stopOwnedChild(child, rows) {
   if (!child.pid) return;
   if (process.platform !== 'win32') {
-    // Owned children are detached group leaders on POSIX. The group retains
-    // orphaned grandchildren even after their watcher has exited.
+    // POSIX 上托管子进程是分离的进程组组长。即使其 watcher 已退出，
+    // 进程组仍会保留孤儿化的孙进程，所以要按负 PID 杀整组。
     try {
       process.kill(-child.pid, 'SIGKILL');
     } catch (error) {

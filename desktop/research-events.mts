@@ -1,3 +1,16 @@
+/**
+ * research-events.mts — 研究活动事件缓冲：把本机 CLI 产生的事件攒成批次回传 broker。
+ *
+ * 职责边界：
+ *  - ResearchEventBuffer 按事件 id 去重、做容量截断保护（上限 256 条 / 256KB，超限插入一条
+ *    truncated 摘要标记并保留更早的事件），并按 broker 已成功送达的 poll 批次做 acknowledge 清理。
+ * 上下游：
+ *  - 上游（谁调用）：desktop/companion.mts 在任务执行期间 append 事件、poll 成功后 acknowledge；
+ *    desktop/companion.integration.spec.ts 覆盖其行为。
+ *  - 下游：无（纯内存缓冲，不做任何 I/O）。
+ * 关键约定：
+ *  - 入队前会检查事件序列化结果是否包含配对 token，防止凭据经事件流外泄。
+ */
 import { randomUUID } from 'node:crypto';
 import { validResearchActivity, type ResearchActivity } from './research-protocol.mjs';
 
@@ -8,7 +21,7 @@ interface QueuedEvent {
   bytes: number;
 }
 
-/** Acknowledgements remove only entries captured by a successfully delivered poll. */
+/** 只有随成功送达的 poll 一并被捕获的条目，才会在 acknowledge 时移除。 */
 export class ResearchEventBuffer {
   private entries: QueuedEvent[] = [];
   private bytes = 0;

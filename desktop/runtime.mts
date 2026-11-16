@@ -1,3 +1,20 @@
+/**
+ * runtime.mts — 桌面运行时设施：内嵌 PostgreSQL、回环端口分配与后端子进程环境。
+ *
+ * 职责边界：
+ *  - desktopPaths 约定数据目录布局（数据库/机密/端口文件/日志/迁移脚本/服务端入口）。
+ *  - loadOrCreateSecrets / loadOrCreateServerPort 生成并持久化机密与回环端口（0600，独占写）。
+ *  - startDesktopDatabase 用 embedded-postgres 启停私有数据库集群，应用基线 schema 与增量迁移。
+ *  - nestEnvironment 组装后端子进程环境变量；waitForHealth 轮询 /api/health 直到就绪。
+ * 上下游：
+ *  - 上游（谁调用）：desktop/main.mts 用它启动数据库并 fork 后端；desktop/smoke.mts 与
+ *    desktop/crash-child.helper.ts 复用；desktop/runtime.spec.ts 直接测试。
+ *  - 下游（连接什么）：内嵌 PostgreSQL（绑定 127.0.0.1 随机端口，数据目录在数据根 postgres/ 下）；
+ *    后端子进程通过 DATABASE_URL 连接它。
+ * 关键约定：
+ *  - 进程模型：本文件运行在 Electron 主进程（或 smoke 测试进程）；PostgreSQL 是本文件启停的独立 OS 进程。
+ *  - 端口与机密均为本机随机生成、仅绑定 IPv4 回环，绝不写死；机密只出现在数据目录内 0600 文件中。
+ */
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
@@ -153,7 +170,7 @@ export async function waitForHealth(origin: string, timeoutMs: number): Promise<
         if (body && typeof body === 'object' && 'status' in body && body.status === 'ok') return;
       }
     } catch {
-      // Startup may not have opened the listener yet.
+      // 后端可能尚未打开监听端口，继续轮询即可。
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
   }
@@ -263,7 +280,7 @@ async function releaseExistingCluster(paths: DesktopPaths, secrets: DesktopSecre
         (error as NodeJS.ErrnoException).code ?? '',
       )
     ) {
-      return; // The PID file is stale; PostgreSQL removes it during startup.
+      return; // PID 文件是陈旧残留；PostgreSQL 启动时会自行清理它。
     }
     throw error;
   } finally {

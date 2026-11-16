@@ -1,3 +1,23 @@
+/**
+ * main.mts — Electron 主进程入口（打包后由 package.json "main" 指向 dist/desktop/main.mjs 启动）。
+ *
+ * 职责边界：
+ *  - 应用生命周期：单实例锁、squabble:// 协议配对链接分发、应用菜单、更新检查（自动/手动两条路径）。
+ *  - 拉起本地三件套：本地 Agent 伴侣（companion.mts）、内嵌 PostgreSQL 与后端 server（runtime.mts）；
+ *    后端以 utilityProcess 子进程运行 dist/server/main.js，输出写入数据目录 logs/backend.log。
+ *  - 创建主窗口加载回环 SPA，并做外部链接/导航护栏（仅放行本站 origin）。
+ * 上下游：
+ *  - 上游（谁启动）：Electron 运行时（npm run desktop:dev / 打包安装器）；烟测经 SQUABBLE_DESKTOP_SMOKE=1 驱动。
+ *  - 下游（启动谁/连接什么）：companion.mts 的 LocalAgentCompanion、runtime.mts 的内嵌 PostgreSQL、
+ *    utilityProcess 里的 NestJS 后端；主窗口加载 http://127.0.0.1:<port>。
+ * 关键约定：
+ *  - 进程模型：本文件仅运行在 Electron 主进程；companion 的 HTTP 轮询也在主进程；后端 NestJS 是独立子进程。
+ *  - 渲染进程不开 preload API（contextIsolation + sandbox + nodeIntegration=false），页面只经回环 HTTP 访问后端。
+ *  - 配对协议：squabble:// 链接（open-url 或命令行参数）先进 pendingPairLinks 队列（最多 3 条），
+ *    配对确认弹窗由用户手动放行。
+ *  - 烟测模式：SQUABBLE_DESKTOP_SMOKE=1 + SQUABBLE_DESKTOP_DATA_DIR（必须绝对路径）；各阶段经
+ *    markSmokeStage 写 packaged-smoke-stage.log，成功后写 packaged-smoke.json 并退出。
+ */
 import { appendFileSync, createWriteStream } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -150,7 +170,7 @@ async function startCompanion(dataRoot: string): Promise<void> {
     void handlePendingPairings();
   } catch {
     companion = null;
-    // Pairing storage and CLI diagnostics can contain credentials. Never show raw errors.
+    // 配对存储与 CLI 诊断信息可能包含凭据，任何情况下都不展示原始错误。
     await dialog.showMessageBox({
       type: 'warning',
       title: 'Squabble',
@@ -162,7 +182,7 @@ async function startCompanion(dataRoot: string): Promise<void> {
 }
 
 async function showWindowsUpdateCheck(chinese: boolean, silent: boolean): Promise<void> {
-  // Eager loading electron-updater stalls packaged startup before the app is ready.
+  // 急切加载 electron-updater 会拖慢打包后的启动，必须等 app 就绪后再动态 import。
   const { autoUpdater } = await import('electron-updater');
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
@@ -298,7 +318,7 @@ function markSmokeStage(stage: string): void {
   try {
     appendFileSync(join(root, 'packaged-smoke-stage.log'), `${stage}\n`, { mode: 0o600 });
   } catch {
-    // Diagnostics must never change application startup.
+    // 诊断写入绝不影响应用启动流程。
   }
 }
 
@@ -338,19 +358,22 @@ function externalLink(value: string, ownOrigin: string): void {
       void shell.openExternal(target.toString());
     }
   } catch {
-    // Invalid URLs stay inside neither the app nor the operating system.
+    // 无效 URL 既不放进应用窗口，也不交给操作系统打开。
   }
 }
 
 async function startDesktop(): Promise<void> {
   markSmokeStage('start-desktop');
+  // 解析数据根目录：SQUABBLE_DESKTOP_DATA_DIR 可覆盖（必须是绝对路径），默认用 Electron userData。
   const override = process.env.SQUABBLE_DESKTOP_DATA_DIR;
   if (override && !isAbsolute(override)) throw new Error('Desktop data directory must be absolute');
   const dataRoot = override ?? app.getPath('userData');
+  // 非烟测模式下先启动本地 Agent 伴侣，再取目录布局与机密文件。
   if (process.env.SQUABBLE_DESKTOP_SMOKE !== '1') await startCompanion(dataRoot);
   const paths = desktopPaths(app.getAppPath(), dataRoot);
   const secrets = await loadOrCreateSecrets(paths.secretsFile);
   markSmokeStage('before-database');
+  // 启动内嵌 PostgreSQL，拿回连接串后再取回环端口并组装后端环境变量。
   database = await startDesktopDatabase(paths, secrets);
   markSmokeStage('after-database');
   const port = await loadOrCreateServerPort(paths.serverPortFile);
@@ -358,6 +381,7 @@ async function startDesktop(): Promise<void> {
   const environment = nestEnvironment(paths, secrets, database.connectionUrl, port);
 
   markSmokeStage('before-backend-fork');
+  // fork 后端子进程：stdout/stderr 并入 backend.log；异常退出时提示用户并退出应用。
   backendLog = createWriteStream(join(paths.logsDir, 'backend.log'), { flags: 'a', mode: 0o600 });
   backendLog.on('error', () => undefined);
   backend = utilityProcess.fork(paths.serverEntry, [], {
@@ -379,6 +403,7 @@ async function startDesktop(): Promise<void> {
       app.quit();
     }
   });
+  // 等待后端健康检查通过与"子进程提前退出"竞速：任一先发生就结束等待。
   await Promise.race([
     waitForHealth(origin, 45_000),
     new Promise<never>((_resolve, reject) =>
@@ -387,6 +412,7 @@ async function startDesktop(): Promise<void> {
   ]);
   markSmokeStage('server-healthy');
 
+  // 烟测分支：校验"全新数据目录的首启注册可用"，写标记文件后退出，不创建窗口。
   if (process.env.SQUABBLE_DESKTOP_SMOKE === '1') {
     if (isAutomaticUpdateSupported(process.platform, process.arch, app.isPackaged)) {
       await import('electron-updater');
@@ -412,6 +438,8 @@ async function startDesktop(): Promise<void> {
     return;
   }
 
+  // 正常分支：拒绝所有权限请求；创建主窗口（contextIsolation+sandbox，无 preload），
+  // 导航与弹窗只放行本站 origin，其余一律转交外部浏览器。
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
     callback(false),
   );
@@ -437,7 +465,7 @@ async function startDesktop(): Promise<void> {
     try {
       allowed = new URL(url).origin === origin;
     } catch {
-      /* block malformed navigation */
+      /* 无法解析的导航地址一律按不允许处理 */
     }
     if (!allowed) {
       event.preventDefault();
@@ -446,6 +474,7 @@ async function startDesktop(): Promise<void> {
   });
   window.once('ready-to-show', () => window?.show());
   await window.loadURL(origin);
+  // 支持自动更新的平台：启动 20 秒后静默检查一次，之后每 6 小时复查。
   if (isAutomaticUpdateSupported(process.platform, process.arch, app.isPackaged)) {
     setTimeout(() => {
       if (!quitting) void showUpdateCheck(true);
@@ -467,6 +496,7 @@ app.on('open-url', (event, url) => {
 });
 
 markSmokeStage('before-single-instance-lock');
+// 单实例锁：抢不到锁的实例直接退出；首个实例转发后续实例带来的配对链接并聚焦窗口。
 const singleInstance = app.requestSingleInstanceLock();
 markSmokeStage(`single-instance-lock-${singleInstance ? 'acquired' : 'denied'}`);
 if (!singleInstance) {

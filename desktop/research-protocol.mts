@@ -1,5 +1,19 @@
-// Electron builds with an independent rootDir. These narrow wire types mirror
-// shared/research-{tools,events}.interface.ts; HTTP integration tests check both sides.
+/**
+ * research-protocol.mts — 研究工具（research tools）线上契约与入站校验的 Electron 侧副本。
+ *
+ * 职责边界：
+ *  - 定义 ResearchToolBundle/ResearchActivity 等线上类型，以及 validResearchBundle/Request/Result/Activity
+ *    等严格校验器；researchFailure 用于把传输/取消/失败统一折算成合法的 ResearchToolResult。
+ * 上下游：
+ *  - 上游（谁调用）：desktop/companion.mts 校验 broker 下发的工具包/请求与响应；
+ *    desktop/research-events.mts 复用 validResearchActivity；desktop/companion-research.integration.spec.ts 测试。
+ *  - 下游：无（纯类型与校验，不发起任何 I/O）。
+ * 关键约定：
+ *  - Electron 以独立 rootDir 编译，本文件是 shared/research-{tools,events}.interface.ts 的窄镜像，
+ *    两端一致性由 HTTP 集成测试保证，不可单边随意改动。
+ */
+// Electron 构建使用独立 rootDir。这些窄线上类型镜像 shared/research-{tools,events}.interface.ts；
+// 两端一致性由 HTTP 集成测试兜底检查。
 export interface ResearchSource {
   title: string;
   url?: string;

@@ -1,3 +1,22 @@
+/**
+ * companion.mts — 本地智能体伴侣：与网页端 broker 经回环 HTTP 配对，拉取任务并驱动本机 CLI agent。
+ *
+ * 职责边界：
+ *  - parsePairingLink 解析 squabble://pair?origin=…&code=… 配对链接（只接受回环 origin 与 48 位 hex code）。
+ *  - LocalAgentCompanion 维护配对凭据（pairing.json，0600 原子写入）、按指数退避轮询 broker，
+ *    接受 run/login 命令，经 NativeRuntime 调用本机 CLI，并把进度、事件与结果回传。
+ *  - 研究工具调用经 /research-tools 回源转发，取消经 /research-tools/cancel 幂等通知。
+ * 上下游：
+ *  - 上游（谁调用）：desktop/main.mts 创建 LocalAgentCompanion 并转发 squabble:// 配对链接；
+ *    desktop/companion.spec.ts、companion.integration.spec.ts、companion-research.integration.spec.ts 测试。
+ *  - 下游（连接什么）：配对源站 origin 的 /api/local-agent-companion/pair|poll|research-tools(/cancel)；
+ *    本机 CLI agent 经 NativeRuntime（dist/server/local-agents/native.js）执行。
+ * 关键约定：
+ *  - 进程模型：运行在 Electron 主进程内（无独立子进程）；不 import 后端源码，仅与
+ *    shared/local-agents.interface.ts 保持窄线上契约。
+ *  - 配对协议：origin 仅限 localhost/127.0.0.1/[::1]；token 为 64 位 hex，且绝不允许出现在任何响应体中。
+ *  - 命令幂等：processedTaskIds 先持久化再执行 CLI，崩溃重启不会重放已接任务（见 accept 内注释）。
+ */
 import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -14,8 +33,8 @@ import {
   type ResearchToolResult,
 } from './research-protocol.mjs';
 
-// This package has an independent rootDir. Keep this narrow wire contract in sync
-// with shared/local-agents.interface.ts without pulling backend sources into Electron.
+// 本包以独立 rootDir 编译。保持这份窄线上契约与 shared/local-agents.interface.ts 同步，
+// 但绝不把后端源码引入 Electron 进程。
 const NATIVE_PROVIDERS = [
   'codex',
   'claude',
@@ -119,8 +138,8 @@ const OFFLINE_LIMIT_MS = 30_000;
 const TASK_ID = /^[a-zA-Z0-9_-]{1,128}$/u;
 
 function localOrigin(value: string): string | null {
-  // Validate the literal host before URL normalization (127.1 and integer IPs
-  // would otherwise normalize to loopback and silently broaden the allowlist).
+  // 在 URL 归一化之前先按字面量校验主机名（127.1 与整数形式 IP 会被 URL 归一化成回环地址，
+  // 从而悄悄放宽允许列表）。
   if (!/^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?$/u.test(value)) return null;
   try {
     const url = new URL(value);
@@ -314,8 +333,8 @@ export class LocalAgentCompanion {
       for (const id of value.processedTaskIds) this.processed.add(id);
       this.updates.clear();
       this.events.clear();
-      // Notify the broker immediately after a crash. It ignores already-terminal
-      // task updates; recent IDs go first so interrupted work is released promptly.
+      // 崩溃恢复后立刻通知 broker。它会把已是终态的任务更新忽略；最近的 id 排在前面，
+      // 让被中断的任务尽快得到释放。
       for (const id of [...this.processed].reverse())
         this.updates.set(id, {
           id,
@@ -522,15 +541,15 @@ export class LocalAgentCompanion {
       let source = queued;
       const buffer = this.events.get(queued.id);
       const events = buffer?.snapshot() ?? [];
-      // A terminal update with a partial event batch would cause the broker to
-      // reject later activity. Keep the terminal report until older batches drain.
+      // 带着不完整事件批次的终态更新会让 broker 拒收其后的活动。在旧批次排干之前，
+      // 终态报告先按 running 上报，保住顺序。
       let update: Update =
         buffer && buffer.length > events.length
           ? { id: queued.id, state: 'running' }
           : { ...queued };
       if (events.length) update.events = events;
       let size = Buffer.byteLength(JSON.stringify(update), 'utf8');
-      // JSON escaping can make a bounded UTF-8 report exceed the HTTP body limit.
+      // JSON 转义可能让一份原本受限的 UTF-8 报告超出 HTTP 请求体上限。
       if (size + baseBytes > MAX_POLL_BYTES) {
         source = {
           id: queued.id,
@@ -572,7 +591,7 @@ export class LocalAgentCompanion {
       return;
     }
     this.processed.add(command.id);
-    // Persist before invoking the CLI. A crash after this point cannot cause replay.
+    // 先持久化再调用 CLI：此点之后崩溃不会导致任务重放。
     await this.save({ ...pairing, processedTaskIds: [...this.processed] });
     if (this.pairing !== pairing || this.generation !== generation) return;
     if (cancelled) {
@@ -736,8 +755,8 @@ export class LocalAgentCompanion {
     callId: string,
     pairing: Pairing,
   ): Promise<void> {
-    // A transport disconnect is not a cancellation. Only the explicit call signal
-    // sends this idempotent intent, using a fresh deadline rather than the aborted signal.
+    // 传输层断开不等于取消。只有显式的调用中止信号才发送这个幂等的取消意图，
+    // 并且使用全新的超时期限，而不是复用已中止的 signal。
     for (let attempt = 0; attempt < 2 && this.pairing === pairing; attempt++) {
       try {
         const response = await this.request(
@@ -756,7 +775,7 @@ export class LocalAgentCompanion {
         await response.body?.cancel();
         if (response.ok || response.status === 401 || response.status === 403) return;
       } catch {
-        /* A lost acknowledgement can safely retry this cancellation. */
+        /* 确认回执丢失可以安全重试这次取消。 */
       }
     }
   }

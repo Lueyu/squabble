@@ -1,6 +1,26 @@
 #!/usr/bin/env node
 'use strict';
 
+/**
+ * dev.js — 本地一键开发启动器（npm run dev）：同时监督 NestJS watch 服务端与 Vite 前端。
+ *
+ * 职责边界：
+ *  - createDevSupervisor：读 .env/.env.local、校验端口与超时参数；用会话文件+启动锁实现
+ *    "替换式重启"（发现同根旧会话就整树终止）；清理被占端口；清掉 server/shared 构建产物；
+ *    监督子进程崩溃按指数退避重启（上限 MAX_RESTART_COUNT）。
+ *  - loadDevelopmentEnv / cleanServerBuild 作为可导出的纯工具一并导出，供 scripts/dev.spec.cjs 单测。
+ * 上下游：
+ *  - 上游（谁启动）：开发者手动 `npm run dev`（package.json "dev" script）；进程内工具被
+ *    scripts/dev.spec.cjs 复用。
+ *  - 下游（启动谁/连接什么）：node_modules/@nestjs/cli 的 `nest start --watch`（SERVER_PORT，默认 3000）
+ *    与 node_modules/vite 的 `vite --config vite.config.ts --force`（CLIENT_DEV_PORT，默认 8080）；
+ *    轮询 /api/health 与前端首页判断就绪。
+ * 关键约定：
+ *  - 进程管理细节（快照/端口回收/整树终止）都在 scripts/dev-processes.cjs。
+ *  - 会话文件 node_modules/.cache/squabble-dev.json + 同名 .lock（硬链接原子加锁）只允许一个
+ *    监督者运行；日志写入 logs/dev.std.log（各子进程另有 *.std.log）。
+ *  - SIGINT/SIGTERM/SIGHUP 与启动失败都会走 stop()：先停子进程再删会话文件与锁。
+ */
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -113,7 +133,7 @@ function createDevSupervisor({
   }
   async function lockStartup(identity) {
     fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
-    // Link a complete record atomically: readers can never observe an empty lock.
+    // 以硬链接原子地挂上完整记录：读锁方永远不会看到空锁文件。
     const candidate = `${lockPath}.${token}`;
     fs.writeFileSync(candidate, JSON.stringify({ ...identity, token }), { flag: 'wx' });
     try {
@@ -214,7 +234,7 @@ function createDevSupervisor({
       await recordChildren();
       const code = await exited;
       if (stopping) return;
-      // A dead watcher can leave descendants behind. Only clean its own tree.
+      // 死掉的 watcher 可能遗留后代进程；只清理它自己那一棵树。
       await stopOwnedChild(child);
       children.delete(name);
       failures = Date.now() - started > 60000 ? 1 : failures + 1;
@@ -281,7 +301,7 @@ function createDevSupervisor({
       }
       if (stopping) return;
       session = { root, token, pid: process.pid, startedAt: identity.startedAt, children: [] };
-      // Claim before reclaiming ports so even a startup still compiling can be replaced.
+      // 先写会话占位、再回收端口：即便对手是仍在编译中的旧启动也能被替换。
       writeSession();
       await reclaimPorts([serverPort, clientPort], log);
       if (stopping) return;
@@ -301,8 +321,7 @@ function createDevSupervisor({
           '--force',
         ]),
       ]);
-      // Finish recording spawned children while holding the startup lock. A
-      // second launch can now replace this whole session, even before readiness.
+      // 持有启动锁期间完成子进程记录。此刻起第二个启动可以替换整个会话，即使尚未就绪。
       const recorded = recordChildren();
       await Promise.race([recorded, jobs]);
       releaseLock();
