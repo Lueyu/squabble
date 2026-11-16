@@ -1,12 +1,18 @@
 /**
  * @file utils/img-resources/banner-placeholders.ts
- * @brief Remote banner placeholder image URLs grouped by visual style.
+ * @description 按视觉风格分组的远程横幅占位图 URL 常量。
  *
- * Three style buckets (technology / professional / minimalism), each with
- * eight images. Used as hero/banner fallbacks on content cards.
+ * 三个风格桶（technology 科技 / professional 商务 / minimalism 极简），
+ * 每组 8 张图，用作内容卡片的 hero/横幅兜底图。URL 字符串一字不改。
+ *
+ * 职责边界：
+ *  - 只导出常量；无逻辑
+ * 上下游：
+ *  - 上游（谁调用这里）：当前仓内未发现引用（待确认）
+ *  - 下游（本文件调用谁）：无（纯常量）
  */
 
-// Banner images - technology style.
+// 横幅占位图 —— 科技风格。
 export const techBannerImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/banner/technology/1.jpg';
 export const techBannerImg2 =
@@ -24,7 +30,7 @@ export const techBannerImg7 =
 export const techBannerImg8 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/banner/technology/8.jpg';
 
-// Banner images - professional style.
+// 横幅占位图 —— 商务风格。
 export const professionalBannerImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/banner/professional/1.jpg';
 export const professionalBannerImg2 =
@@ -42,7 +48,7 @@ export const professionalBannerImg7 =
 export const professionalBannerImg8 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/banner/professional/8.jpg';
 
-// Banner images - minimalism style.
+// 横幅占位图 —— 极简风格。
 export const minimalismBannerImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/banner/minimalism/1.jpg';
 export const minimalismBannerImg2 =

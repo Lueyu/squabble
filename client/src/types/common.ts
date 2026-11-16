@@ -1,45 +1,49 @@
 /**
  * @file types/common.ts
- * @description Shared application-level TypeScript types.
+ * @description 共享的应用级 TypeScript 类型。
  *
- * Holds generic domain shapes (user profile, file attachments) and augments
- * the global `Window` interface with runtime-injected auth fields. Portfolio-
- * specific records are typically inferred inline from the API responses in
- * `api/index.ts` rather than re-declared here.
+ * 存放通用领域形状（用户资料、文件附件），并配合全局声明扩充 `Window`
+ * 接口的运行时注入字段。组合记录（持仓/订单等）通常直接从
+ * `api/index.ts` 的 API 响应里推断类型，而不是在这里重复声明。
+ *
+ * 职责边界：
+ *  - 只放跨页面共享的通用类型；页面私有类型留在各自文件
+ * 上下游：
+ *  - 上游（谁调用这里）：经 types/index.ts barrel 供客户端引用
+ *  - 下游（本文件调用谁）：无（纯类型声明）
  */
-
 /**
- * Lifecycle status of a user account.
+ * 用户账号的生命周期状态。
  */
 enum IUserStatus {
-  /** Account is active and can sign in. */
+  /** 账号活跃，可正常登录。 */
   active = 1,
-  /** Account is disabled/inactive. */
+  /** 账号已停用。 */
   inactive = 2,
 }
 
 /**
- * Profile metadata for the currently authenticated user.
+ * 当前已登录用户的资料元数据。
  */
 export type IUserProfile = {
-  /** Primary user id. */
+  /** 用户主键 id。 */
   user_id: string;
-  /** Login email address. */
+  /** 登录邮箱。 */
   email: string;
-  /** Display name. */
+  /** 展示名。 */
   name: string;
-  /** URL of the avatar image. */
+  /** 头像图片 URL。 */
   avatar: string;
-  /** Account lifecycle status. */
+  /** 账号生命周期状态。 */
   status: IUserStatus;
 };
 
 /**
- * Reference to a file stored in the object-storage bucket.
+ * 对象存储桶中一个文件的引用。
  */
 export type IFileAttachment = {
-  /** Bucket the file lives in. */
+  /** 文件所在的桶。 */
   bucket_id: string;
-  /** Path/key of the file inside the bucket. */
+  /** 桶内的文件路径/键。 */
   file_path: string;
 };

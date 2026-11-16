@@ -1,13 +1,20 @@
 /**
  * @file utils/img-resources/cover-placeholders.ts
- * @brief Remote cover-image placeholder URLs grouped by theme.
+ * @description 按主题分组的远程封面占位图 URL 常量。
  *
- * Six themes (office / architecture / appeal-clothing / scenery /
- * technology-internet / abstract-art-3d-rendering), each with six images.
- * Used as card-cover fallbacks when an entity has no custom image.
+ * 六个主题（office 办公 / architecture 建筑 / appeal-clothing 服饰 /
+ * scenery 风景 / technology-internet 科技互联网 / abstract-art-3d-rendering
+ * 抽象 3D 艺术），每组 6 张，用作实体没有自定义图时的卡片封面兜底。
+ * URL 字符串一字不改。
+ *
+ * 职责边界：
+ *  - 只导出常量；无逻辑
+ * 上下游：
+ *  - 上游（谁调用这里）：当前仓内未发现引用（待确认）
+ *  - 下游（本文件调用谁）：无（纯常量）
  */
 
-// Cover images - office theme.
+// 封面占位图 —— 办公主题。
 export const officeCoverImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/office/1.jpg';
 export const officeCoverImg2 =
@@ -21,7 +28,7 @@ export const officeCoverImg5 =
 export const officeCoverImg6 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/office/6.jpg';
 
-// Cover images - architecture theme.
+// 封面占位图 —— 建筑主题。
 export const architectureCoverImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/architecture/1.jpg';
 export const architectureCoverImg2 =
@@ -35,7 +42,7 @@ export const architectureCoverImg5 =
 export const architectureCoverImg6 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/architecture/6.jpg';
 
-// Cover images - appeal-clothing theme.
+// 封面占位图 —— 服饰主题。
 export const appealClothingCoverImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/appeal-clothing/1.jpg';
 export const appealClothingCoverImg2 =
@@ -49,7 +56,7 @@ export const appealClothingCoverImg5 =
 export const appealClothingCoverImg6 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/appeal-clothing/6.jpg';
 
-// Cover images - scenery theme.
+// 封面占位图 —— 风景主题。
 export const sceneryCoverImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/scenery/1.jpg';
 export const sceneryCoverImg2 =
@@ -63,7 +70,7 @@ export const sceneryCoverImg5 =
 export const sceneryCoverImg6 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/scenery/6.jpg';
 
-// Cover images - technology-internet theme.
+// 封面占位图 —— 科技互联网主题。
 export const technologyInternetCoverImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/technology-internet/1.jpg';
 export const technologyInternetCoverImg2 =
@@ -77,7 +84,7 @@ export const technologyInternetCoverImg5 =
 export const technologyInternetCoverImg6 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/technology-internet/6.jpg';
 
-// Cover images - abstract-art-3d-rendering theme.
+// 封面占位图 —— 抽象 3D 艺术主题。
 export const abstractArt3dRenderingCoverImg1 =
   'https://lf3-static.bytednsdoc.com/obj/eden-cn/ylcylz_fsph_ryhs/ljhwZthlaukjlkulzlp/feisuda/cover/abstract-art-3d-rendering/1.jpg';
 export const abstractArt3dRenderingCoverImg2 =
