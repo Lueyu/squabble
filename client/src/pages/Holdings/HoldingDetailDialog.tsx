@@ -1,13 +1,22 @@
 /**
- * @file pages/Holdings/HoldingDetailDialog.tsx
- * @description Detail / edit dialog for a single holding.
+ * HoldingDetailDialog.tsx — 单个持仓的详情 / 编辑对话框。
  *
- * Two view modes:
- *  - Read-only: tabbed layout with a "详情" tab (price, P/L, cost, group, notes)
- *    and an "AI 推理" tab (rating, confidence, target price, bull/bear summaries).
- *  - Editing: a grid form that PATCHes the changed fields on save.
- *
- * Also hosts a delete confirmation and a quick group-move selector.
+ * 职责边界：
+ *  - 两种视图模式：只读态用双 Tab 布局（"详情"Tab 展示价格 / 盈亏 / 成本 / 分组 / 备注，
+ *    "AI 推理"Tab 展示评级 / 置信度 / 目标价 / 多空观点摘要）；
+ *    编辑态是两列网格表单，保存时 PATCH 只提交有差异的字段；
+ *  - 同时承载删除确认（AlertDialog）与"移动分组"快捷下拉。
+ * 上下游：
+ *  - 上游：HoldingsPage（open / holding / groups / onUpdated / onDeleted / aiRating）；
+ *  - 下游：@/api 的 updateHolding / deleteHolding，@/utils/format 格式化函数，
+ *    @/components/MultiAgent 的 RatingBadge / ConfidenceBadge，@/components/ui 各控件。
+ * 关键约定：
+ *  - Holding 的 shares / buyPrice / currentPrice / targetPrice 是"字符串数值"；
+ *    编辑表单全程保存 string，提交时才 parseFloat 转 number；
+ *  - PATCH 语义：字段值为空串时提交 undefined = 通知后端"清空该字段"；
+ *    未出现在 payload 里的字段后端保持不变；
+ *  - 无选中持仓（holding 为 null）时整个对话框渲染 null——所有 hooks 都在早退之前调用，
+ *    hook 调用顺序不受影响。
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -72,7 +81,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-/** AI rating info shown on the "AI 推理" tab. */
+/** "AI 推理"Tab 上展示的 AI 评级信息。 */
 interface AiRatingInfo {
   rating: AgentRating;
   confidence: AgentConfidence;
@@ -83,7 +92,7 @@ interface AiRatingInfo {
   bearSummary: string | null;
 }
 
-/** Props for {@link HoldingDetailDialog}. */
+/** {@link HoldingDetailDialog} 的入参。 */
 interface HoldingDetailDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -95,8 +104,9 @@ interface HoldingDetailDialogProps {
   onViewFullAnalysis?: (runId: string) => void;
 }
 
-/** Derived market value, cost, P/L and return % from a raw holding. */
+/** 由原始持仓推导市值 / 成本 / 盈亏 / 收益率（与 HoldingsPage.computeDerived 同一套公式）。 */
 function computeDerived(h: Holding) {
+  // 字符串数值字段 parseFloat 转 number（空串兜底 0）；成本为 0 时收益率记 0。
   const shares = parseFloat(h.shares || '0');
   const buyPrice = parseFloat(h.buyPrice || '0');
   const currentPrice = parseFloat(h.currentPrice || '0');
@@ -108,7 +118,8 @@ function computeDerived(h: Holding) {
 }
 
 /**
- * Render the holding detail dialog. Returns null when no holding is selected.
+ * 渲染持仓详情对话框；无选中持仓时返回 null。
+ * @param props - 见 {@link HoldingDetailDialogProps}。
  */
 export default function HoldingDetailDialog({
   open,
@@ -120,13 +131,17 @@ export default function HoldingDetailDialog({
   aiRating,
   onViewFullAnalysis,
 }: HoldingDetailDialogProps) {
+  // ---- 状态声明区 ----
   const { t } = useTranslation();
+  // 编辑模式开关 / 删除确认开关 / 提交中标记。
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
+  // 编辑表单草稿：全部字段为 string，进入编辑时从 holding 拷贝。
   const [form, setForm] = useState<Record<string, string>>({});
 
-  /** Copy the holding's current fields into the edit form and enter edit mode. */
+  // ---- 事件处理区 ----
+  /** 把持仓当前字段拷进编辑表单并进入编辑模式。 */
   const startEdit = () => {
     if (!holding) return;
     setForm({
@@ -145,21 +160,21 @@ export default function HoldingDetailDialog({
     setEditing(true);
   };
 
-  /** Exit edit mode and clear the form. */
+  /** 退出编辑模式并清空表单草稿。 */
   const closeEdit = () => {
     setEditing(false);
     setForm({});
   };
 
   /**
-   * PATCH only the fields that differ from the holding's current values.
-   * Numeric fields are parsed to numbers; empty strings are sent as undefined
-   * so the backend treats them as "clear".
+   * 只 PATCH 与持仓当前值不同的字段：数字字段 parseFloat 转 number；
+   * 空串提交为 undefined（后端按"清空"处理）。
    */
   const handleSave = async () => {
     if (!holding) return;
     setSaving(true);
     try {
+      // 第一步：逐字段组装 payload——form 里有定义才进 payload，空串归一为 undefined。
       const payload: Record<string, string | number | undefined> = {};
       if (form.company !== undefined) payload.company = form.company || undefined;
       if (form.sector !== undefined) payload.sector = form.sector || undefined;
@@ -177,6 +192,7 @@ export default function HoldingDetailDialog({
       if (form.analysis !== undefined) payload.analysis = form.analysis || undefined;
       if (form.groupId !== undefined) payload.groupId = form.groupId || undefined;
 
+      // 第二步：请求保存；成功后退出编辑并通知父组件刷新。
       await updateHolding(holding.id, payload);
       toast.success(t('holdings.editSaved'));
       setEditing(false);
@@ -188,7 +204,7 @@ export default function HoldingDetailDialog({
     }
   };
 
-  /** Confirm-and-delete the holding, then close and refresh the list. */
+  /** 确认删除持仓：成功后关对话框与确认框，并回调 onDeleted 刷新列表。 */
   const handleDelete = async () => {
     if (!holding) return;
     setSaving(true);
@@ -205,7 +221,7 @@ export default function HoldingDetailDialog({
     }
   };
 
-  /** Quick group-move handler used by the "移动分组" selector. */
+  /** "移动分组"快捷下拉的回调：空 value 提交 undefined（清空分组归属）。 */
   const handleGroupChange = async (value: string) => {
     if (!holding) return;
     try {
@@ -217,11 +233,14 @@ export default function HoldingDetailDialog({
     }
   };
 
+  // ---- 派生计算区 ----
+  // 无选中持仓时渲染 null（hooks 已全部在上方调用，顺序安全）。
   if (!holding) return null;
 
   const { marketValue, cost, pl, returnPct } = computeDerived(holding);
   const groupName =
     groups.find((g: Group) => g.id === holding.groupId)?.name ?? t('holdings.noGroup');
+  // 操作建议文案映射：历史数据可能是中文或英文原文，映射到 i18n key；未命中原样展示。
   const actionLabel = (value: string) => {
     const keys: Record<string, string> = {
       加仓: 'analysis.add',
@@ -240,11 +259,13 @@ export default function HoldingDetailDialog({
     return keys[value] ? t(keys[value]) : value;
   };
 
+  // ---- 渲染区 ----
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
+            {/* 标题行：代码 + 公司名 + 人工评级徽标（有才显示）。 */}
             <DialogTitle className="font-serif text-xl flex items-center gap-3">
               <span className="font-mono-nums text-primary">{holding.ticker}</span>
               <span className="text-base font-normal text-muted-foreground">{holding.company}</span>
@@ -256,6 +277,7 @@ export default function HoldingDetailDialog({
             </DialogTitle>
           </DialogHeader>
 
+          {/* 编辑态：两列网格表单；只读态：双 Tab 布局。 */}
           {editing ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">
               <div className="space-y-1.5">
@@ -280,6 +302,7 @@ export default function HoldingDetailDialog({
                   onChange={(e) => setForm({ ...form, buyDate: e.target.value })}
                 />
               </div>
+              {/* 价格与股数：number 输入框，草稿仍是 string，提交时才解析。 */}
               <div className="space-y-1.5">
                 <Label>{t('holdings.buyPrice')}</Label>
                 <Input
@@ -307,6 +330,7 @@ export default function HoldingDetailDialog({
                   onChange={(e) => setForm({ ...form, currentPrice: e.target.value })}
                 />
               </div>
+              {/* 评级下拉：value 与展示均为英文原文。 */}
               <div className="space-y-1.5">
                 <Label>{t('ui.holdings.rating')}</Label>
                 <Select value={form.rating} onValueChange={(v) => setForm({ ...form, rating: v })}>
@@ -322,6 +346,7 @@ export default function HoldingDetailDialog({
                   </SelectContent>
                 </Select>
               </div>
+              {/* 操作建议下拉：value 存中文原文，展示走 i18n。 */}
               <div className="space-y-1.5">
                 <Label>{t('ui.holdings.actions')}</Label>
                 <Select value={form.action} onValueChange={(v) => setForm({ ...form, action: v })}>
@@ -371,6 +396,7 @@ export default function HoldingDetailDialog({
                   </SelectContent>
                 </Select>
               </div>
+              {/* 分析备注：占满两列。 */}
               <div className="space-y-1.5 md:col-span-2">
                 <Label>{t('ui.holdings.analysis')}</Label>
                 <Textarea
@@ -391,6 +417,7 @@ export default function HoldingDetailDialog({
                   {t('ui.holdings.aiReasoning')}
                 </TabsTrigger>
               </TabsList>
+              {/* "详情"Tab：核心指标网格 → 明细字段网格 → 分析备注 → 移动分组。 */}
               <TabsContent value="detail" className="pt-3 space-y-5">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
@@ -489,6 +516,7 @@ export default function HoldingDetailDialog({
                     <Label className="text-xs text-muted-foreground">
                       {t('ui.holdings.moveGroup')}
                     </Label>
+                    {/* 移动分组：变更即 PATCH 保存（handleGroupChange），无需进编辑模式。 */}
                     <Select value={holding.groupId ?? ''} onValueChange={handleGroupChange}>
                       <SelectTrigger className="w-40 h-8 text-xs" size="sm">
                         <SelectValue placeholder={t('holdings.noGroup')} />
@@ -504,12 +532,14 @@ export default function HoldingDetailDialog({
                   </div>
                 </div>
               </TabsContent>
+              {/* "AI 推理"Tab：有评级展示摘要卡片，无则空态引导。 */}
               <TabsContent value="ai" className="pt-3 space-y-5">
                 {aiRating ? (
                   <>
                     <div className="flex flex-wrap items-center gap-3">
                       <RatingBadge rating={aiRating.rating} size="md" />
                       <ConfidenceBadge confidence={aiRating.confidence} size="md" />
+                      {/* AI 给出的目标价（有才显示）。 */}
                       {aiRating.targetPrice && (
                         <div className="flex items-center gap-1.5 text-sm">
                           <span className="text-muted-foreground">
@@ -525,6 +555,7 @@ export default function HoldingDetailDialog({
                       </Badge>
                     </div>
 
+                    {/* 多空观点双卡片：多（绿）/ 空（红），空摘要回退占位文案。 */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <Card>
                         <CardContent className="p-4">
@@ -557,6 +588,7 @@ export default function HoldingDetailDialog({
                       </span>
                     </div>
 
+                    {/* 查看完整推理：跳转 AI 运行详情弹窗（父组件处理）。 */}
                     <Button
                       variant="outline"
                       size="sm"
@@ -568,6 +600,7 @@ export default function HoldingDetailDialog({
                     </Button>
                   </>
                 ) : (
+                  // 空态：该持仓还没有 AI 分析结果。
                   <div className="py-12 text-center space-y-3">
                     <div className="flex justify-center">
                       <Sparkles className="size-10 text-muted-foreground/40" />
@@ -584,6 +617,7 @@ export default function HoldingDetailDialog({
             </Tabs>
           )}
 
+          {/* 底部操作条：删除（左）、编辑态的取消/保存 或 只读态的编辑按钮。 */}
           <DialogFooter className="flex-row gap-2 sm:gap-2">
             <Button
               variant="destructive"
@@ -615,6 +649,7 @@ export default function HoldingDetailDialog({
         </DialogContent>
       </Dialog>
 
+      {/* 删除确认弹窗：展示待删代码，确认后执行 handleDelete。 */}
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>

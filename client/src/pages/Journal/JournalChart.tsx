@@ -1,10 +1,19 @@
 /**
- * @file pages/Journal/JournalChart.tsx
- * @description Dual-axis ECharts for the journal page.
+ * JournalChart.tsx — 交易日志页的双轴 ECharts 图（每日盈亏柱 + 账户净值线）。
  *
- * Bars show daily P/L (left axis, green/red by sign); a smoothed area line
- * shows account value over time (right axis). Snapshots are sorted by date
- * ascending; invalid dates are filtered out.
+ * 职责边界：
+ *  - 柱状图画每日盈亏（左轴，按正负着色：绿 = 盈利、红 = 亏损），
+ *    平滑面积线画账户净值走势（右轴）；
+ *  - 数据先按日期升序排序、过滤掉无法解析的日期，再组装 ECharts option；
+ *  - 纯展示组件：不发请求、不持业务状态，快照数据与加载态由父组件传入。
+ * 上下游：
+ *  - 上游：JournalPage（snapshots + loading）；
+ *  - 下游：echarts-for-react（ReactECharts）、useChartTheme（图表主题色）、
+ *    @/utils/format 的 toDate（日期有效性判断）、react-i18next（文案）。
+ * 关键约定：
+ *  - Snapshot 的 dailyPl / accountValue 为"字符串数值"（服务端序列化约定），
+ *    参与图表前必须 Number() 转 number（并 || 0 兜底），禁止直接字符串运算；
+ *  - 无有效数据时 chartOption 返回 {}，组件级再由 loading / 空态分支兜住。
  */
 import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
@@ -16,26 +25,35 @@ import { Empty, EmptyContent, EmptyTitle, EmptyDescription } from '@/components/
 import { useTranslation } from 'react-i18next';
 import { useChartTheme } from '@/hooks/use-chart-theme';
 
-/** Props for {@link JournalChart}. */
+/** {@link JournalChart} 的入参。 */
 interface JournalChartProps {
+  /** 账户快照序列（金额字段为字符串数值）。 */
   snapshots: Snapshot[];
+  /** 加载中标记：为 true 时渲染骨架屏。 */
   loading: boolean;
 }
 
 /**
- * Render the daily-P/L bar + account-value line chart.
+ * 渲染"每日盈亏柱 + 账户净值线"双轴图。
+ * @param props - 见 {@link JournalChartProps}。
  */
 export function JournalChart({ snapshots, loading }: JournalChartProps) {
   const { t } = useTranslation();
+  // 图表主题色（随亮 / 暗主题切换）。
   const colors = useChartTheme();
-  /** Build the ECharts option from snapshots; returns {} when there is no data. */
+
+  // 图表配置构建：过滤无效日期 → 按日期升序 → 抽出三个序列 → 组装 option。
+  // 仅在 snapshots / 文案 / 主题变化时重建。
   const chartOption = useMemo(() => {
+    // 第一步：过滤掉 snapshotDate 解析不出有效日期的脏数据。
     const valid = snapshots.filter((s) => toDate(s.snapshotDate));
     if (valid.length === 0) return {};
+    // 第二步：按日期升序排序（不改动原数组，拷贝后 sort）。
     const sorted = [...valid].sort(
       (a, b) => new Date(a.snapshotDate).getTime() - new Date(b.snapshotDate).getTime(),
     );
 
+    // 第三步：抽出 X 轴标签（M/D 短格式）与两个数值序列（字符串数值 → number，|| 0 兜底）。
     const dates = sorted.map((s) => {
       const d = new Date(s.snapshotDate);
       return `${d.getMonth() + 1}/${d.getDate()}`;
@@ -43,6 +61,7 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
     const dailyPl = sorted.map((s) => Number(s.dailyPl) || 0);
     const accountValues = sorted.map((s) => Number(s.accountValue) || 0);
 
+    // 第四步：组装 ECharts option（tooltip 十字准星、双 Y 轴、两个 series）。
     return {
       backgroundColor: colors.surface,
       textStyle: { color: colors.foreground, fontFamily: colors.fontFamily },
@@ -76,6 +95,7 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
       },
       yAxis: [
         {
+          // 左轴：每日盈亏，大数缩写为 k。
           type: 'value',
           axisLabel: {
             fontSize: 10,
@@ -86,6 +106,7 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
           splitLine: { lineStyle: { color: colors.grid, type: 'dashed' } },
         },
         {
+          // 右轴：账户净值，同样缩写但不画分隔线（避免与左轴网格重叠）。
           type: 'value',
           axisLabel: {
             fontSize: 10,
@@ -98,6 +119,7 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
       ],
       series: [
         {
+          // 序列一：每日盈亏柱（绑左轴），逐点按正负着色。
           name: t('journal.dailyPl'),
           type: 'bar',
           yAxisIndex: 0,
@@ -111,6 +133,7 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
           barWidth: '50%',
         },
         {
+          // 序列二：账户净值平滑面积线（绑右轴），颜色取主题 line 色。
           name: t('journal.accountNav'),
           type: 'line',
           yAxisIndex: 1,
@@ -138,6 +161,7 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
     };
   }, [snapshots, t, colors]);
 
+  // 渲染区：加载骨架屏 → 无快照空态 → 正常图表，三选一。
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between pb-3">
@@ -146,8 +170,10 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
       </CardHeader>
       <CardContent>
         {loading ? (
+          // 加载中：固定高度骨架占位（与图表同高）。
           <Skeleton className="h-[300px] w-full" />
         ) : snapshots.length === 0 ? (
+          // 无数据：整个快照列表为空时的空态提示。
           <Empty className="py-16">
             <EmptyContent>
               <EmptyTitle>{t('ui.journal.noSnapshots')}</EmptyTitle>
@@ -155,6 +181,7 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
             </EmptyContent>
           </Empty>
         ) : (
+          // 有数据：渲染图表。notMerge 防止旧 option 残留。
           <ReactECharts
             option={chartOption}
             style={{ height: 300, width: '100%' }}

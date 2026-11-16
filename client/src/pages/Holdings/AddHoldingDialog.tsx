@@ -1,10 +1,20 @@
 /**
- * @file pages/Holdings/AddHoldingDialog.tsx
- * @description Create-a-holding dialog.
+ * AddHoldingDialog.tsx — 新增持仓对话框。
  *
- * Controlled form; only ticker and shares are required. Numeric fields are
- * parsed on submit; optional string fields are omitted from the payload when
- * empty so the backend can default them. Market is auto-detected from ticker.
+ * 职责边界：
+ *  - 受控表单收集持仓信息：仅代码与股数必填；数字字段提交时 parseFloat 转 number，
+ *    可选字符串字段为空时不进 payload（交给后端取默认值）；
+ *  - 代码输入时前端预演市场归属（detectMarket），徽标实时显示市场 / 币种 / 规范化代码；
+ *  - 支持就地新建分组：创建成功后追加进本地 extraGroups 并自动选中，
+ *    同时回调 onGroupsChanged 通知父组件重新拉取分组列表。
+ * 上下游：
+ *  - 上游：HoldingsPage（open / groups / onCreated / onGroupsChanged）；
+ *  - 下游：@/api 的 createHolding / createGroup、sonner 的 toast、@/components/ui 表单控件。
+ * 关键约定：
+ *  - 表单数字字段（buyPrice / shares / currentPrice / targetPrice）一律保存为 string，
+ *    组装 payload 时才 parseFloat 转 number——字符串数值与 number 的转换只发生在提交处；
+ *  - detectMarket 是后端 quoteService.detectMarket 的前端预演副本，两边规则必须同步维护；
+ *  - 新建分组的回调 onGroupsChanged 是可选的（缺省时父组件不刷新，本地 extraGroups 兜底展示）。
  */
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -33,23 +43,29 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-/** Props for {@link AddHoldingDialog}. */
+/** {@link AddHoldingDialog} 的入参。 */
 interface AddHoldingDialogProps {
+  /** 对话框开关（受控）。 */
   open: boolean;
+  /** 开关变更回调（父组件持有 open state）。 */
   onOpenChange: (open: boolean) => void;
+  /** 分组列表（来自父组件）。 */
   groups: Group[];
+  /** 创建成功后的回调（父组件刷新持仓列表）。 */
   onCreated: () => void;
-  /** 新建分组后通知父组件重新拉取 groups */
+  /** 新建分组后通知父组件重新拉取 groups。 */
   onGroupsChanged?: () => void;
 }
 
-/** 与后端 quoteService.detectMarket 保持一致的前端预演 */
+/** 与后端 quoteService.detectMarket 保持一致的前端预演。 */
 function detectMarket(symbol: string): {
   market: Market;
   currency: Currency;
   displaySymbol: string;
 } {
+  // 统一转大写再去空白。
   const upper = symbol.toUpperCase().trim();
+  // 规则一：带后缀的直接归类——.HK 港股，.SH / .SZ / .BJ 均 A 股。
   if (upper.endsWith('.HK')) {
     return { market: 'HK', currency: 'HKD', displaySymbol: upper };
   }
@@ -62,7 +78,9 @@ function detectMarket(symbol: string): {
   if (upper.endsWith('.BJ')) {
     return { market: 'CN', currency: 'CNY', displaySymbol: upper };
   }
+  // 规则二：纯数字代码按位数与首位推断，并补上规范后缀。
   if (/^\d+$/.test(upper)) {
+    // 5 位数字 → 港股（前导 0 去掉后补 .HK）。
     if (upper.length === 5) {
       const displayCode = upper.startsWith('0') ? upper.slice(1) : upper;
       return {
@@ -71,6 +89,7 @@ function detectMarket(symbol: string): {
         displaySymbol: `${displayCode}.HK`,
       };
     }
+    // 6 位数字 → A 股：6 开头沪市、0/3 开头深市、8/4 开头北交所。
     if (upper.length === 6) {
       if (upper.startsWith('6')) {
         return { market: 'CN', currency: 'CNY', displaySymbol: `${upper}.SH` };
@@ -83,9 +102,14 @@ function detectMarket(symbol: string): {
       }
     }
   }
+  // 规则三：其余默认美股 / USD。
   return { market: 'US', currency: 'USD', displaySymbol: upper };
 }
 
+/**
+ * 渲染新增持仓对话框。
+ * @param props - 见 {@link AddHoldingDialogProps}。
+ */
 export default function AddHoldingDialog({
   open,
   onOpenChange,
@@ -93,11 +117,16 @@ export default function AddHoldingDialog({
   onCreated,
   onGroupsChanged,
 }: AddHoldingDialogProps) {
+  // ---- 状态声明区 ----
   const { t } = useTranslation();
+  // 提交中 / 新建分组中两个独立标记。
   const [saving, setSaving] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
+  // 新建分组的名称草稿。
   const [newGroupName, setNewGroupName] = useState('');
+  // 本次会话内新建的分组（父组件刷新 groups 前先在本地兜底展示）。
   const [extraGroups, setExtraGroups] = useState<Group[]>([]);
+  // 表单受控状态：数字字段保存字符串，提交时才转 number。
   const [form, setForm] = useState({
     ticker: '',
     company: '',
@@ -113,14 +142,17 @@ export default function AddHoldingDialog({
     groupId: '',
   });
 
+  // ---- 派生计算区 ----
+  // 下拉可选分组 = 父组件下发的 groups + 本地新建的 extraGroups。
   const allGroups = useMemo(() => [...groups, ...extraGroups], [groups, extraGroups]);
 
+  // 市场预演结果：代码为空时 null（不显示徽标），否则按 detectMarket 推断。
   const marketPreview = useMemo(() => {
     if (!form.ticker.trim()) return null;
     return detectMarket(form.ticker);
   }, [form.ticker]);
 
-  /** Reset the form to blank values (called after a successful create). */
+  /** 创建成功后把表单与新建分组相关状态全部重置为空白。 */
   const reset = () => {
     setForm({
       ticker: '',
@@ -141,12 +173,16 @@ export default function AddHoldingDialog({
     setExtraGroups([]);
   };
 
+  // ---- 事件处理区 ----
+  /** 就地新建分组：成功后本地追加、自动选中、清空草稿，并通知父组件刷新分组。 */
   const handleCreateGroup = async () => {
+    // 第一步：校验分组名非空。
     const name = newGroupName.trim();
     if (!name) {
       toast.error(t('ui.holdings.enterGroupName'));
       return;
     }
+    // 第二步：请求创建；成功后本地追加并自动选中。
     setCreatingGroup(true);
     try {
       const g = (await createGroup({ name })) as Group;
@@ -164,10 +200,10 @@ export default function AddHoldingDialog({
   };
 
   /**
-   * Validate required fields and POST the new holding. On success, resets the
-   * form, closes the dialog and invokes `onCreated` so the parent refetches.
+   * 校验必填项并 POST 新持仓。成功后重置表单、关对话框、回调 onCreated 让父组件重新拉取。
    */
   const handleSubmit = async () => {
+    // 第一步：校验必填——代码非空、股数为正数。
     if (!form.ticker.trim()) {
       toast.error(t('holdings.tickerInvalid'));
       return;
@@ -176,6 +212,8 @@ export default function AddHoldingDialog({
       toast.error(t('tx.sharesInvalid'));
       return;
     }
+    // 第二步：组装 payload——必填字段直接带；可选字段有值才带（空 = 交后端默认值），
+    // 数字字段 parseFloat 转 number。
     setSaving(true);
     try {
       const payload: Record<string, string | number | undefined> = {
@@ -193,8 +231,10 @@ export default function AddHoldingDialog({
       if (form.analysis) payload.analysis = form.analysis;
       if (form.groupId) payload.groupId = form.groupId;
 
+      // 第三步：请求创建；失败仅 toast 提示（错误详情不上抛）。
       await createHolding(payload);
       toast.success(t('holdings.addHolding'));
+      // 第四步：成功后重置表单、关闭对话框、通知父组件刷新。
       reset();
       onOpenChange(false);
       onCreated();
@@ -205,6 +245,7 @@ export default function AddHoldingDialog({
     }
   };
 
+  // ---- 渲染区：两列表单网格（目标价与备注占满两列）+ 底部按钮。 ----
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -214,6 +255,7 @@ export default function AddHoldingDialog({
         </DialogHeader>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">
+          {/* 代码：必填，输入即转大写；非空时旁边显示市场预演徽标。 */}
           <div className="space-y-1.5">
             <Label>
               {t('holdings.ticker')} <span className="text-destructive">*</span>
@@ -224,6 +266,7 @@ export default function AddHoldingDialog({
                 value={form.ticker}
                 onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })}
               />
+              {/* 市场预演徽标：市场名 + 币种 + 规范化代码。 */}
               {marketPreview && (
                 <Badge
                   variant="outline"
@@ -251,6 +294,7 @@ export default function AddHoldingDialog({
               onChange={(e) => setForm({ ...form, sector: e.target.value })}
             />
           </div>
+          {/* 分组：下拉选择 + "新建分组"按钮；creatingGroup 展开就地建组输入行。 */}
           <div className="space-y-1.5">
             <Label>{t('ui.holdings.groupName')}</Label>
             <div className="flex items-center gap-2">
@@ -266,6 +310,7 @@ export default function AddHoldingDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {/* 切换就地建组输入行的展开 / 收起。 */}
               <Button
                 type="button"
                 variant="outline"
@@ -277,6 +322,7 @@ export default function AddHoldingDialog({
                 {t('ui.holdings.newGroup')}
               </Button>
             </div>
+            {/* 就地建组输入行：仅 creatingGroup 时渲染；回车或点确认都会提交。 */}
             {creatingGroup && (
               <div className="flex items-center gap-2 pt-1">
                 <Input
@@ -304,6 +350,7 @@ export default function AddHoldingDialog({
               </div>
             )}
           </div>
+          {/* 买入日期：原生 date input，值为 YYYY-MM-DD 字符串。 */}
           <div className="space-y-1.5">
             <Label>{t('holdings.buyDate')}</Label>
             <Input
@@ -312,6 +359,7 @@ export default function AddHoldingDialog({
               onChange={(e) => setForm({ ...form, buyDate: e.target.value })}
             />
           </div>
+          {/* 价格与股数：number 输入框，值仍以字符串保存在 form 中，提交时才解析。 */}
           <div className="space-y-1.5">
             <Label>{t('holdings.buyPrice')}</Label>
             <Input
@@ -341,6 +389,7 @@ export default function AddHoldingDialog({
               onChange={(e) => setForm({ ...form, currentPrice: e.target.value })}
             />
           </div>
+          {/* 评级下拉：value 与展示值都是英文原文。 */}
           <div className="space-y-1.5">
             <Label>{t('ui.holdings.rating')}</Label>
             <Select value={form.rating} onValueChange={(v) => setForm({ ...form, rating: v })}>
@@ -356,6 +405,7 @@ export default function AddHoldingDialog({
               </SelectContent>
             </Select>
           </div>
+          {/* 操作建议下拉：value 存中文原文，展示走 i18n。 */}
           <div className="space-y-1.5">
             <Label>{t('ui.holdings.actions')}</Label>
             <Select value={form.action} onValueChange={(v) => setForm({ ...form, action: v })}>
@@ -378,6 +428,7 @@ export default function AddHoldingDialog({
               </SelectContent>
             </Select>
           </div>
+          {/* 目标价：占满两列。 */}
           <div className="space-y-1.5 md:col-span-2">
             <Label>{t('ui.holdings.targetPrice')}</Label>
             <Input
@@ -387,6 +438,7 @@ export default function AddHoldingDialog({
               onChange={(e) => setForm({ ...form, targetPrice: e.target.value })}
             />
           </div>
+          {/* 分析备注：占满两列。 */}
           <div className="space-y-1.5 md:col-span-2">
             <Label>{t('ui.holdings.analysis')}</Label>
             <Textarea
@@ -401,6 +453,7 @@ export default function AddHoldingDialog({
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>
+          {/* 提交按钮：saving 期间禁用并显示保存中文案。 */}
           <Button size="sm" onClick={handleSubmit} disabled={saving}>
             {saving ? t('common.saving') : t('holdings.add')}
           </Button>

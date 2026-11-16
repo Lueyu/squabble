@@ -1,12 +1,22 @@
 /**
- * @file pages/Transactions/AddTransactionDialog.tsx
- * @description Create-a-transaction dialog.
+ * AddTransactionDialog.tsx — 新建交易记录对话框。
  *
- * Supports Buy, Sell, Deposit, and Withdrawal types. Deposit/Withdrawal are
- * cash flows (no ticker/price; shares field holds the amount). When a Buy
- * fails with a server-side "insufficient cash" error, a secondary alert offers
- * to either auto-deposit the shortfall and retry, or switch the form to a
- * manual Deposit for the shortfall amount.
+ * 职责边界：
+ *  - 支持四类交易：Buy / Sell / Deposit / Withdrawal。存取款是纯现金流
+ *    （不需要代码与价格，shares 字段承载金额）；
+ *  - 买入遇服务端"现金不足"错误时进入二次恢复流程：弹窗里可
+ *    "自动补足差额并重试"（一次服务端调用完成入金+买入），或
+ *    "手动入金"（把主表单切为预填差额的 Deposit）。
+ * 上下游：
+ *  - 上游：TransactionsPage（open / onCreated / 各 default* 预填项）；
+ *  - 下游：@/api 的 createTransaction / createTransactionWithAutoDeposit、
+ *    @/components/ui/ticker-search 的股票搜索下拉、@/components/ui 各控件。
+ * 关键约定：
+ *  - 表单数字字段（shares / price / fees）保存为 string，组装 payload 时才 parseFloat
+ *    转 number；现金流记录约定 shares=金额、price=1、ticker=空串；
+ *  - 服务端"现金不足"错误是约定格式的中文文案（"现金不足：…余额 X …需要 Y"），
+ *    parseCashShortfall 靠正则从消息里解析币种 / 余额 / 需求 / 差额——改文案需同步改解析；
+ *  - 对话框每次打开（open 变 true）都重置表单与恢复流程状态。
  */
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -44,7 +54,7 @@ import {
 } from '@/components/ui/select';
 import TickerSearch from '@/components/ui/ticker-search';
 
-/** Props for {@link AddTransactionDialog}. */
+/** {@link AddTransactionDialog} 的入参。 */
 interface AddTransactionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -55,8 +65,8 @@ interface AddTransactionDialogProps {
 }
 
 /**
- * Render the add-transaction dialog with controlled form state and the
- * cash-shortfall recovery flow.
+ * 渲染新建交易对话框：受控表单 + 现金不足恢复流程。
+ * @param props - 见 {@link AddTransactionDialogProps}。
  */
 export default function AddTransactionDialog({
   open,
@@ -66,9 +76,12 @@ export default function AddTransactionDialog({
   defaultCurrency = 'USD',
   defaultTxType = 'Buy',
 }: AddTransactionDialogProps) {
+  // ---- 状态声明区 ----
   const { t } = useTranslation();
   const [saving, setSaving] = useState(false);
+  // 股票代码校验失败标记（驱动 TickerSearch 的红框与提示）。
   const [tickerInvalid, setTickerInvalid] = useState(false);
+  // 表单受控状态：数字字段保存 string，提交时才 parseFloat。
   const [form, setForm] = useState({
     txDate: new Date().toISOString().slice(0, 10),
     txType: 'Buy' as TxType,
@@ -80,6 +93,7 @@ export default function AddTransactionDialog({
     currency: defaultCurrency as Currency,
   });
 
+  // 现金不足恢复流程：弹窗开关 / 解析出的差额信息 / 自动补足进行中标记。
   const [cashShortfallOpen, setCashShortfallOpen] = useState(false);
   const [shortfallInfo, setShortfallInfo] = useState<{
     currency: Currency;
@@ -89,6 +103,7 @@ export default function AddTransactionDialog({
   } | null>(null);
   const [autoDepositing, setAutoDepositing] = useState(false);
 
+  // 对话框打开时重置表单（交易日期取当天）并关掉恢复流程。
   useEffect(() => {
     if (open) {
       setForm({
@@ -106,9 +121,11 @@ export default function AddTransactionDialog({
     }
   }, [open, defaultTicker, defaultCurrency, defaultTxType]);
 
+  // ---- 派生计算区 ----
+  // 是否为纯现金流（存/取款）：表单字段与校验规则都随之切换。
   const isCashFlow = form.txType === 'Deposit' || form.txType === 'Withdrawal';
 
-  /** Estimated cash required for a Buy/Sell: shares × price + fees. */
+  /** 买入/卖出的预估所需现金：股数 × 价格 + 手续费（现金流恒为 0）。 */
   const requiredAmount = useMemo(() => {
     if (isCashFlow) return 0;
     const shares = parseFloat(form.shares) || 0;
@@ -117,7 +134,8 @@ export default function AddTransactionDialog({
     return shares * price + fees;
   }, [form.shares, form.price, form.fees, isCashFlow]);
 
-  /** Extract a human-readable error message from an unknown thrown value. */
+  // ---- 事件处理区 ----
+  /** 从未知抛出值里提取可读错误消息：优先响应体的 message / error 字段。 */
   const extractErrMsg = (err: unknown): string => {
     const rawMsg = err instanceof Error ? err.message : t('ui.tx.failed');
     const respErr = (err as { response?: { data?: { message?: string; error?: string } } })
@@ -126,9 +144,8 @@ export default function AddTransactionDialog({
   };
 
   /**
-   * Parse a server "insufficient cash" error message to extract the currency,
-   * current balance, required amount, and shortfall. Returns null when the
-   * message does not match the expected format.
+   * 解析服务端"现金不足"错误消息，提取币种 / 当前余额 / 所需金额 / 差额。
+   * 消息不符合约定格式时返回 null。
    */
   const parseCashShortfall = (
     msg: string,
@@ -138,9 +155,11 @@ export default function AddTransactionDialog({
     required: number;
     shortfall: number;
   } | null => {
+    // 依赖服务端固定文案格式："现金不足：…余额 X …需要 Y"（冒号中英文皆可）。
     const cashMatch = msg.match(/现金不足[：:].*余额\s*([\d.]+).*需要\s*([\d.]+)/);
     const currencyMatch = msg.match(/现金不足[：:]\s*([A-Z]{3})/);
     if (!cashMatch) return null;
+    // 币种解析失败时回退用表单当前币种。
     const cur = (currencyMatch?.[1] || form.currency) as Currency;
     const balance = Number(cashMatch[1]);
     const needed = Number(cashMatch[2]);
@@ -152,7 +171,7 @@ export default function AddTransactionDialog({
     };
   };
 
-  /** Build the POST payload; cash flows use price=1 and empty ticker. */
+  /** 组装 POST payload：现金流用 price=1、ticker 空串；fees / notes 有值才带。 */
   const buildPayload = (): Record<string, string | number> => {
     const payload: Record<string, string | number> = {
       txDate: form.txDate,
@@ -167,8 +186,9 @@ export default function AddTransactionDialog({
     return payload;
   };
 
-  /** Validate and submit; on insufficient-cash error for a Buy, open the recovery dialog. */
+  /** 校验并提交；买入遇"现金不足"错误时打开恢复弹窗，其余错误直接 toast。 */
   const handleSubmit = async () => {
+    // 第一步：逐项校验——日期必填；非现金流要求代码/股数/价格合法，现金流只要求金额为正。
     if (!form.txDate) {
       toast.error(t('ui.tx.chooseDate'));
       return;
@@ -186,6 +206,7 @@ export default function AddTransactionDialog({
       toast.error(t('ui.tx.validPrice'));
       return;
     }
+    // 第二步：提交；成功后关对话框并回调 onCreated 刷新。
     setSaving(true);
     try {
       const payload = buildPayload();
@@ -194,6 +215,7 @@ export default function AddTransactionDialog({
       onOpenChange(false);
       onCreated();
     } catch (err: unknown) {
+      // 第三步：失败时尝试解析"现金不足"——仅买入类型进入恢复弹窗。
       const msg = extractErrMsg(err);
       const shortfall = parseCashShortfall(msg);
       if (shortfall && form.txType === 'Buy') {
@@ -207,7 +229,7 @@ export default function AddTransactionDialog({
     }
   };
 
-  /** Auto-deposit the shortfall and retry the buy in one server call. */
+  /** 恢复路径一：自动补足差额并重试买入（服务端一次调用完成入金+买入）。 */
   const handleAutoDeposit = async () => {
     if (!shortfallInfo) return;
     setAutoDepositing(true);
@@ -227,7 +249,7 @@ export default function AddTransactionDialog({
     }
   };
 
-  /** Switch the main form to a Deposit prefilled with the shortfall amount. */
+  /** 恢复路径二：把主表单切换为预填差额金额的 Deposit（保留原交易日期与币种）。 */
   const handleGoToDeposit = () => {
     if (!shortfallInfo) return;
     setForm({
@@ -244,7 +266,7 @@ export default function AddTransactionDialog({
     setShortfallInfo(null);
   };
 
-  /** Apply a ticker from the search dropdown and adopt its currency. */
+  /** 应用搜索下拉选中的股票：回填代码并同步其币种。 */
   const handleTickerSelect = (result: StockSearchResult) => {
     setTickerInvalid(false);
     setForm((prev) => ({
@@ -254,11 +276,13 @@ export default function AddTransactionDialog({
     }));
   };
 
+  // ---- 渲染区 ----
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-md">
           <DialogHeader>
+            {/* 标题与描述随交易类型切换：现金流 vs 交易。 */}
             <DialogTitle className="font-serif text-xl">
               {isCashFlow ? t('ui.tx.cashFlowTitle') : t('ui.tx.tradeTitle')}
             </DialogTitle>
@@ -315,6 +339,7 @@ export default function AddTransactionDialog({
                 </SelectContent>
               </Select>
             </div>
+            {/* 股票代码：仅非现金流显示；选中搜索结果会联动币种。 */}
             {!isCashFlow && (
               <div className="space-y-1.5 col-span-2">
                 <Label>
@@ -335,6 +360,7 @@ export default function AddTransactionDialog({
                 )}
               </div>
             )}
+            {/* 股数/金额输入：现金流时 label 为"金额"（shares 字段承载金额）。 */}
             <div className="space-y-1.5">
               <Label>
                 {isCashFlow ? t('ui.tx.amountLabel') : t('ui.tx.shares')}{' '}
@@ -347,6 +373,7 @@ export default function AddTransactionDialog({
                 onChange={(e) => setForm({ ...form, shares: e.target.value })}
               />
             </div>
+            {/* 价格：仅非现金流显示。 */}
             {!isCashFlow && (
               <div className="space-y-1.5">
                 <Label>
@@ -392,6 +419,7 @@ export default function AddTransactionDialog({
         </DialogContent>
       </Dialog>
 
+      {/* 现金不足恢复弹窗：展示差额明细，提供"手动入金"与"自动补足并买入"两条路径。 */}
       <AlertDialog open={cashShortfallOpen} onOpenChange={setCashShortfallOpen}>
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
@@ -408,6 +436,7 @@ export default function AddTransactionDialog({
                     shortfall: shortfallInfo?.shortfall.toFixed(2),
                   })}
                 </p>
+                {/* 金额明细：股数×价格 + 手续费 = 所需总额（直接由表单草稿算出）。 */}
                 <div className="rounded-lg bg-muted/50 p-3 space-y-1 text-xs text-muted-foreground">
                   <div>
                     {t('ui.tx.tradeAmount')}: {form.shares} × {form.price} ={' '}
@@ -430,9 +459,11 @@ export default function AddTransactionDialog({
                 {t('common.cancel')}
               </Button>
             </AlertDialogCancel>
+            {/* 路径一：切回主表单为预填差额的 Deposit。 */}
             <Button variant="outline" size="sm" onClick={handleGoToDeposit}>
               {t('ui.tx.manualDeposit')}
             </Button>
+            {/* 路径二：一次服务端调用自动入金+买入。 */}
             <Button size="sm" onClick={handleAutoDeposit} disabled={autoDepositing}>
               {autoDepositing ? t('ui.tx.processing') : t('ui.tx.autoDepositBuy')}
             </Button>

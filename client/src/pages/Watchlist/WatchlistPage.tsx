@@ -1,11 +1,24 @@
 /**
- * @file pages/Watchlist/WatchlistPage.tsx
- * @description Route `/watchlist`: tracked tickers with live quotes.
+ * WatchlistPage.tsx — 自选清单页（路由 /watchlist）。
  *
- * Renders a desktop table and mobile card grid, both click-through to a detail
- * dialog. Supports text search, signal filter, and an add-watch dialog. Live
- * quotes are subscribed via `useMarketQuotes`; when a quote is fresher than
- * the stored `currentPrice`, the quote price is displayed instead.
+ * 职责边界：
+ *  - 拉取并展示全部关注标的：桌面端表格 + 移动端卡片网格两套渲染，行/卡片
+ *    点击进入 DetailDialog 查看/编辑；
+ *  - 提供搜索（代码/公司名）、信号筛选与"新增关注"对话框（WatchForm）；
+ *  - 自身不做行情轮询：实时报价由 useMarketQuotes hook 按当前列表的 ticker
+ *    订阅，本页只负责把报价合并进展示。
+ * 上下游：
+ *  - 上游：路由 /watchlist（App 路由表）；
+ *  - 下游：@/api 的 fetchWatchlist / createWatchItem、@/hooks/use-market-quotes
+ *    （实时报价 + 市场状态）、@/utils/format 格式化工具、./DetailDialog、
+ *    ./WatchForm、@/components/MarketStatusBadges。
+ * 关键约定：
+ *  - 价格类字段（entryPrice / currentPrice / targetBuy 及 quote.price /
+ *    changePercent）均为"字符串数值"（string|null），展示前才 parseFloat，
+ *    严禁提前转 number 破坏空值语义；
+ *  - 当前价优先用实时报价 quote.price（合法时），否则回退库里的 currentPrice；
+ *  - signal 存中文原文（如"强烈买入"），经 localizedSignal 映射 i18n key 展示，
+ *    未命中映射时原样展示。
  */
 import { useState, useEffect, useMemo } from 'react';
 import { Search, Plus, Eye, AlertTriangle } from 'lucide-react';
@@ -66,7 +79,7 @@ import WatchForm, { type WatchFormData } from './WatchForm';
 
 import { useTranslation } from 'react-i18next';
 
-/** Signal filter options (built inside the component for i18n). */
+/** 信号筛选下拉选项：'all' + 四种信号；在组件外声明、渲染时传入 t 以支持 i18n。 */
 function signalFilters(t: (k: string) => string): Array<{ value: 'all' | string; label: string }> {
   return [
     { value: 'all', label: t('watchlist.allSignals') },
@@ -77,6 +90,7 @@ function signalFilters(t: (k: string) => string): Array<{ value: 'all' | string;
   ];
 }
 
+/** 把信号原文（中文或英文）映射为 i18n key 后翻译；未命中映射时原样返回。 */
 function localizedSignal(signal: string, t: (k: string) => string): string {
   const keys: Record<string, string> = {
     强烈买入: 'analysis.strongBuy',
@@ -91,7 +105,7 @@ function localizedSignal(signal: string, t: (k: string) => string): string {
   return keys[signal] ? t(keys[signal]) : signal;
 }
 
-/** Blank watch-form state; `dateAdded` defaults to today. */
+/** 新增关注表单的空白初始值；dateAdded 默认取当天（YYYY-MM-DD）。 */
 const EMPTY_FORM: WatchFormData = {
   ticker: '',
   company: '',
@@ -105,16 +119,15 @@ const EMPTY_FORM: WatchFormData = {
   analysis: '',
 };
 
-/** Parse a string to a number, returning undefined for empty/NaN input. */
+/** 字符串数值解析：空串/NaN 返回 undefined（提交 API 时空值不传）。 */
 function parseNumber(v: string): number | undefined {
   const n = parseFloat(v);
   return isNaN(n) ? undefined : n;
 }
 
 /**
- * Compute how far the current price is below the target buy price, as a
- * positive percent. Returns null when the price is at/above target or inputs
- * are missing/invalid.
+ * 计算当前价低于目标买价的幅度（正百分数）。
+ * 当前价 >= 目标价，或输入缺失/非法时返回 null（不展示提示）。
  */
 function belowTargetPct(current: string | null, target: string | null): number | null {
   const c = parseFloat(current ?? '');
@@ -125,12 +138,13 @@ function belowTargetPct(current: string | null, target: string | null): number |
 }
 
 /**
- * Watchlist page component.
+ * 自选清单页组件。
  *
- * State: watch items, search/signal filters, selected item for the detail
- * dialog, add-dialog open state, and the create form.
+ * 状态：关注列表 items、搜索/信号筛选、详情对话框选中项、
+ * 新增对话框开关与新建表单。
  */
 function WatchlistPage() {
+  // ---- 状态声明区 ----
   const { t } = useTranslation();
   const [items, setItems] = useState<WatchItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,11 +157,14 @@ function WatchlistPage() {
   const [formData, setFormData] = useState<WatchFormData>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
 
+  // ---- 数据获取区 ----
+  // 报价订阅的 ticker 列表随 items 变化而更新。
   const tickers = useMemo(() => items.map((item) => item.ticker), [items]);
 
+  // 实时报价、各市场开闭市状态与最近更新时间都来自同一个订阅 hook。
   const { quotes, marketStatus, marketErrors, lastUpdated } = useMarketQuotes(tickers);
 
-  /** Fetch the watchlist and populate state. */
+  /** 拉取关注列表并写入状态；失败时同时写 error 状态并 toast。 */
   const loadData = async () => {
     setLoading(true);
     setError(null);
@@ -163,11 +180,13 @@ function WatchlistPage() {
     }
   };
 
+  // 首次挂载拉取一次列表。
   useEffect(() => {
     void loadData();
   }, []);
 
-  /** Apply text search and signal filter to the watch items. */
+  // ---- 派生计算区 ----
+  /** 按搜索词（代码/公司名，大小写不敏感）与信号筛选过滤列表。 */
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter((item: WatchItem) => {
@@ -179,7 +198,7 @@ function WatchlistPage() {
     });
   }, [items, search, signalFilter]);
 
-  /** Prefer the live quote price when available; fall back to stored currentPrice. */
+  /** 展示用当前价：优先实时报价（合法时），否则回退库里存的 currentPrice。 */
   function getDisplayPrice(item: WatchItem): string {
     const quote = quotes[item.ticker];
     if (quote && quote.price !== undefined && !isNaN(parseFloat(quote.price))) {
@@ -188,18 +207,21 @@ function WatchlistPage() {
     return item.currentPrice ?? '';
   }
 
-  /** Open the detail dialog for the selected watch item. */
+  // ---- 事件处理区 ----
+  /** 打开所选关注项的详情对话框。 */
   const openDetail = (item: WatchItem) => {
     setSelected(item);
     setDetailOpen(true);
   };
 
-  /** Validate and submit the create-watch form, then reset and refetch. */
+  /** 校验并提交新建关注表单：成功后关对话框、重置表单并重新拉列表。 */
   const handleCreate = async () => {
+    // 第一步：校验代码必填。
     if (!formData.ticker.trim()) {
       toast.error(t('ui.watchlist.enterTicker'));
       return;
     }
+    // 第二步：提交 createWatchItem（空串字段转 undefined 不传）。
     setSubmitting(true);
     try {
       await createWatchItem({
@@ -214,6 +236,7 @@ function WatchlistPage() {
         signal: formData.signal || undefined,
         analysis: formData.analysis.trim() || undefined,
       });
+      // 第三步：成功后收尾。
       toast.success(t('ui.watchlist.signalAdded'));
       setAddOpen(false);
       setFormData(EMPTY_FORM);
@@ -226,13 +249,15 @@ function WatchlistPage() {
     }
   };
 
+  // 加载中先渲染骨架屏。
   if (loading) {
     return <WatchlistSkeleton />;
   }
 
+  // ---- 渲染区 ----
   return (
     <div className="space-y-4 md:space-y-6">
-      {/* Header actions */}
+      {/* 页头：标题 + 各市场开闭市状态徽章。 */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex-1">
           <h1 className="font-serif text-2xl font-semibold tracking-tight text-foreground">
@@ -247,6 +272,7 @@ function WatchlistPage() {
           </div>
         </div>
       </div>
+      {/* 工具条：搜索框 + 信号筛选 + "新增关注"按钮（按钮即对话框触发器）。 */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row">
           <div className="relative flex-1">
@@ -295,6 +321,7 @@ function WatchlistPage() {
         </Dialog>
       </div>
 
+      {/* 加载失败横幅：展示错误信息并提供重试按钮。 */}
       {error && (
         <Card className="border-destructive/40">
           <CardContent className="flex items-center justify-between p-4">
@@ -309,7 +336,7 @@ function WatchlistPage() {
         </Card>
       )}
 
-      {/* Desktop Table */}
+      {/* 桌面端表格（md 及以上可见）：有数据才渲染。 */}
       {!loading && !error && filteredItems.length > 0 && (
         <div className="hidden md:block">
           <Card>
@@ -339,6 +366,7 @@ function WatchlistPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredItems.map((item: WatchItem) => {
+                    // 每行先算"低于目标价幅度"，非 null 才在现价下方展示提示。
                     const belowPct = belowTargetPct(item.currentPrice, item.targetBuy);
                     return (
                       <TableRow
@@ -353,6 +381,7 @@ function WatchlistPage() {
                         <TableCell className="text-muted-foreground">
                           {item.sector ?? '—'}
                         </TableCell>
+                        {/* 信号列：有值才渲染彩色徽章，否则占位符。 */}
                         <TableCell>
                           {item.signal ? (
                             <Badge
@@ -371,6 +400,7 @@ function WatchlistPage() {
                         <TableCell className="text-right font-mono-nums">
                           {formatPrice(item.entryPrice)}
                         </TableCell>
+                        {/* 现价列：实时价优先，低于目标价时附绿色提示行。 */}
                         <TableCell className="text-right font-mono-nums">
                           {formatPrice(getDisplayPrice(item))}
                           {belowPct !== null && (
@@ -380,6 +410,7 @@ function WatchlistPage() {
                             </div>
                           )}
                         </TableCell>
+                        {/* 涨跌幅列：有实时报价才展示，无报价时灰占位 '--'。 */}
                         {quotes[item.ticker] ? (
                           <TableCell
                             className={cn(
@@ -399,6 +430,7 @@ function WatchlistPage() {
                         <TableCell className="text-right font-mono-nums">
                           {formatPrice(item.targetBuy)}
                         </TableCell>
+                        {/* 评级列：原文直展示（rating 存英文原文，不走 i18n 映射）。 */}
                         <TableCell>
                           {item.rating ? (
                             <Badge
@@ -428,7 +460,7 @@ function WatchlistPage() {
         </div>
       )}
 
-      {/* Mobile Cards */}
+      {/* 移动端卡片网格（md 以下可见）：与表格同数据、字段精简。 */}
       {!loading && !error && filteredItems.length > 0 && (
         <div className="grid gap-3 md:hidden">
           {filteredItems.map((item: WatchItem) => {
@@ -440,6 +472,7 @@ function WatchlistPage() {
                 className="cursor-pointer transition-colors"
               >
                 <CardContent className="p-4">
+                  {/* 卡片头：代码 + 信号徽章 + 公司名，右侧眼睛图标提示可点开。 */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -460,6 +493,7 @@ function WatchlistPage() {
                     <Eye className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                   </div>
                   <Separator className="my-3" />
+                  {/* 四列指标：现价 / 涨跌幅 / 目标价 / 建仓价。 */}
                   <div className="grid grid-cols-4 gap-2 text-sm">
                     <div>
                       <div className="text-xs text-muted-foreground">
@@ -507,6 +541,7 @@ function WatchlistPage() {
                       </div>
                     </div>
                   </div>
+                  {/* 低于目标价提示（与表格行为一致）。 */}
                   {belowPct !== null && (
                     <div className="mt-2 text-xs text-success">
                       {t('ui.watchlist.belowTarget')} {formatPercent(belowPct).replace('+', '')}
@@ -519,7 +554,7 @@ function WatchlistPage() {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* 空状态：区分"真的没有关注"与"被筛选条件滤空"两种文案。 */}
       {!loading && !error && filteredItems.length === 0 && (
         <Card>
           <CardContent className="p-6">
@@ -544,7 +579,7 @@ function WatchlistPage() {
         </Card>
       )}
 
-      {/* Detail Dialog */}
+      {/* 详情对话框：编辑/删除回调后都重新拉列表。 */}
       <DetailDialog
         open={detailOpen}
         onOpenChange={setDetailOpen}
@@ -556,7 +591,7 @@ function WatchlistPage() {
   );
 }
 
-/** Loading skeleton shown while the watchlist is being fetched. */
+/** 列表加载中的骨架屏（工具条 + 6 行占位）。 */
 function WatchlistSkeleton() {
   return (
     <div className="space-y-4 md:space-y-6">
