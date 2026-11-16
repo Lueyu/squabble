@@ -2,14 +2,15 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus } from 'lucide-react';
-import type { AgentProfile } from '@shared/agent-roster.interface';
+import { BookOpen, Plus } from 'lucide-react';
+import type { AgentProfile, AgentTemplateId } from '@shared/agent-roster.interface';
 import { agentRosterApi } from '@/api/agent-roster';
 import { fetchModelConnections } from '@/api/model-connections';
 import { fetchLocalAgents } from '@/api/local-agents';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { createRequestIntent } from '@/utils/simple-experience';
+import { missingSpecialtyIds } from '@/features/teams/team-staffing';
 import { AgentConnectionSetup } from './AgentConnectionSetup';
 import { defaultAgentExecutor } from './agent-roster-state';
 import { ExternalAgentDialog } from './ExternalAgentDialog';
@@ -28,6 +29,7 @@ export default function AgentRosterWorkspace() {
   const [open, setOpen] = useState(false);
   const [externalOpen, setExternalOpen] = useState(false);
   const [editing, setEditing] = useState<AgentProfile | null>(null);
+  const [initialTemplateId, setInitialTemplateId] = useState<AgentTemplateId | undefined>(undefined);
   const [failure, setFailure] = useState('');
   const [memoryAgent, setMemoryAgent] = useState<string | null>(null);
   const recommendedIntent = useRef(createRequestIntent(() => crypto.randomUUID()));
@@ -37,9 +39,8 @@ export default function AgentRosterWorkspace() {
     retry: false,
     mutationFn: async () => {
       if (!executor) throw new Error('AI connection required');
-      const existing = new Set(roster.data?.items.filter(agent => agent.status === 'active').map(agent => agent.currentVersion.config.templateId));
-      const templateIds = templates.data?.filter(template => !existing.has(template.id)).map(template => template.id);
-      if (templateIds?.length === 0) return;
+      const templateIds = missingSpecialtyIds(roster.data?.items ?? [], (templates.data ?? []).map(item => item.id));
+      if (templateIds.length === 0) return;
       const payload = { executor, templateIds, language: zh ? 'zh-CN' as const : 'en' as const };
       await agentRosterApi.recommended({ ...payload, requestKey: recommendedIntent.current.keyFor(payload) });
     },
@@ -58,11 +59,21 @@ export default function AgentRosterWorkspace() {
   });
   function edit(agent: AgentProfile | null) {
     setEditing(agent);
+    setInitialTemplateId(undefined);
+    setFailure('');
+    setOpen(true);
+  }
+  function addSpecialty(id: AgentTemplateId) {
+    setEditing(null);
+    setInitialTemplateId(id);
     setFailure('');
     setOpen(true);
   }
   const active = roster.data?.items.filter(agent => agent.status === 'active') ?? [];
+  const rosterComplete = !roster.isPending && !roster.isError && !roster.data?.nextCursor;
+  const missing = missingSpecialtyIds(active, (templates.data ?? []).map(item => item.id));
   const loading = roster.isPending || models.isPending || locals.isPending;
+  const byId = new Map((templates.data ?? []).map(item => [item.id, item]));
 
   return <section className="max-w-6xl mx-auto space-y-6 p-4 sm:p-6">
     <header className="flex flex-wrap items-start justify-between gap-4">
@@ -86,20 +97,44 @@ export default function AgentRosterWorkspace() {
     </div>}
     {!loading && !executor && <AgentConnectionSetup zh={zh} locals={locals.data ?? []} />}
     {failure && <p role="alert" className="text-destructive text-sm">{failure}</p>}
-    {!loading && executor && active.length < 5 && <section className="rounded-xl border border-primary/20 bg-primary/5 p-5 space-y-3">
-      <h2 className="font-semibold">{zh ? '从推荐股友开始' : 'Start with recommended agents'}</h2>
+    {!loading && executor && rosterComplete && missing.length > 0 && <section className="rounded-xl border border-primary/20 bg-primary/5 p-5 space-y-3">
+      <h2 className="font-semibold">{zh ? `还缺 ${missing.length} 种专业股友` : `${missing.length} specialties are still missing`}</h2>
       <p className="text-sm text-muted-foreground">{zh
-        ? '财报、估值、反方、风控和主持各有所长。一次添加，再按需要选择成员；这一步不会调用模型。'
-        : 'Financials, valuation, challenge, risk and moderation offer different strengths. Add them together, then choose members. Adding does not call a model.'}</p>
+        ? '按专业分工检查缺口，不按人数判断：同一专业多位股友不会补齐其他专业。一次添加只保存身份，不调用模型，也不会授予资料或工具。'
+        : 'Gaps are checked per specialty, not by headcount: several agents in one specialty do not cover the others. Adding saves identities only; it does not call a model or grant data or tools.'}</p>
       <Button disabled={recommended.isPending || !templates.data} onClick={() => { setFailure(''); recommended.mutate(); }}>
-        {recommended.isPending ? (zh ? '正在添加…' : 'Adding…') : (zh ? '添加推荐股友' : 'Add recommended agents')}
+        {recommended.isPending ? (zh ? '正在添加…' : 'Adding…') : (zh ? '添加缺失专业股友' : 'Add missing specialties')}
       </Button>
     </section>}
+    {!loading && templates.data && <details className="rounded-xl border p-5">
+      <summary className="flex cursor-pointer items-center gap-2 py-1 font-semibold"><BookOpen size={16} />{zh ? '查看专业目录（12 种）' : 'Browse all 12 specialties'}</summary>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {templates.data.map(template => {
+          const guide = zh ? template.guide : template.guideEn;
+          const ownedCount = active.filter(agent => agent.currentVersion.config.templateId === template.id).length;
+          return <div key={template.id} className="min-w-0 space-y-2 rounded-lg border p-4">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-medium">{zh ? template.name : template.nameEn}</p>
+              <span className="text-xs text-muted-foreground">{rosterComplete
+                ? (ownedCount > 0 ? (zh ? `已有 ${ownedCount} 位` : `${ownedCount} owned`) : (zh ? '尚无' : 'None yet'))
+                : (zh ? '名单读取中' : 'Roster loading')}</span>
+            </div>
+            <p className="text-sm text-muted-foreground">{zh ? template.specialty : template.specialtyEn}</p>
+            <p className="break-words text-xs">{zh ? '标准交付' : 'Delivery'}：{zh ? template.delivery : template.deliveryEn}</p>
+            {guide && <ul className="list-disc space-y-1 ps-4 text-xs text-muted-foreground">
+              {guide.workflow.slice(0, 3).map((step, index) => <li key={index}>{step}</li>)}
+            </ul>}
+            <Button size="sm" variant="outline" onClick={() => addSpecialty(template.id)}>{zh ? '添加此专业' : 'Add this specialty'}</Button>
+          </div>;
+        })}
+      </div>
+    </details>}
     <div className={cn(
       'grid sm:grid-cols-2 lg:grid-cols-3 gap-4 has-[details[open]]:items-start',
       memoryAgent !== null && 'items-start',
     )}>
       {active.map(agent => <AgentRosterCard key={agent.id} agent={agent} zh={zh}
+        template={byId.get(agent.currentVersion.config.templateId)}
         memoryOpen={memoryAgent === agent.id} archiving={archive.isPending}
         onEdit={() => edit(agent)} onMemory={() => setMemoryAgent(memoryAgent === agent.id ? null : agent.id)}
         onArchive={() => archive.mutate(agent)} />)}
@@ -109,9 +144,10 @@ export default function AgentRosterWorkspace() {
       <Button asChild><Link to="/teams?guided=1">{zh ? '下一步：创建团队' : 'Next: create a team'}</Link></Button>
     </div>}
     <ExternalAgentDialog zh={zh} open={externalOpen} onOpenChange={setExternalOpen} />
-    {open && templates.data && <AgentEditorDialog key={editing ? `${editing.id}:${editing.revision}` : 'new'}
+    {open && templates.data && <AgentEditorDialog key={editing ? `${editing.id}:${editing.revision}` : `new:${initialTemplateId ?? 'default'}`}
       editing={editing} templates={templates.data} models={models.data ?? []} locals={locals.data ?? []}
-      defaultExecutor={executor} zh={zh} onClose={() => setOpen(false)} onSaved={refresh}
+      defaultExecutor={executor} zh={zh} initialTemplateId={initialTemplateId}
+      onClose={() => setOpen(false)} onSaved={refresh}
       requestIntent={editorIntent.current} />}
   </section>;
 }

@@ -88,7 +88,7 @@ test('roster renders the saved animal and carries English into recommended creat
     await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Workspace))));
     assert.ok(document.querySelector('article [data-persona="news"]'));
     await React.act(async () => {
-      [...document.querySelectorAll('button')].find(button => button.textContent === 'Add recommended agents').click();
+      [...document.querySelectorAll('button')].find(button => button.textContent === 'Add missing specialties').click();
       await f.settled();
     });
     const request = f.state.requests.find(row => row.args[0] === '/api/agent-roster/recommended');

@@ -9,17 +9,7 @@ import { displaySchema, layoutSchema, semanticSchema, normalizeSemanticConfig } 
 import { teamCapabilities } from './team-config';
 import type { TeamDetail, TeamLayout, TeamSemanticConfig, TeamDisplay, TeamListResult } from '../../../shared/team-workspace.interface';
 import { TEAM_TEMPLATES } from '../../../shared/team-templates';
-function copyConfig(config: TeamSemanticConfig, display: TeamDisplay, layout: TeamLayout) {
-    const ids = new Map([...config.departments, ...config.roles, ...config.relations].map(n => [n.id, randomUUID()]));
-    const remap = (id: string | null) => id ? ids.get(id) ?? null : null;
-    return { config: { ...config, departments: config.departments.map(d => ({ ...d, id: ids.get(d.id)!, parentDepartmentId: remap(d.parentDepartmentId) })),
-            roles: config.roles.map(r => ({ ...r, id: ids.get(r.id)!, departmentId: remap(r.departmentId), sourceGrantIds: [] })),
-            relations: config.relations.map(r => ({ ...r, id: ids.get(r.id)!, fromRoleId: ids.get(r.fromRoleId)!, toRoleId: ids.get(r.toRoleId)! })),
-            defaults: { ...config.defaults, leadRoleId: remap(config.defaults.leadRoleId) } },
-        display: { ...display, departmentLabels: Object.fromEntries(Object.entries(display.departmentLabels).map(([k, v]) => [ids.get(k), v])),
-            roleLabels: Object.fromEntries(Object.entries(display.roleLabels).map(([k, v]) => [ids.get(k), v])) },
-        layout: { ...layout, positions: Object.fromEntries(Object.entries(layout.positions).filter(([k]) => ids.has(k)).map(([k, v]) => [ids.get(k), v])), collapsedDepartmentIds: layout.collapsedDepartmentIds.filter(id => ids.has(id)).map(id => ids.get(id)!) } };
-}
+import { instantiateOrganization, instantiateTemplate } from '../../../shared/team-template-instantiation';
 @Injectable()
 export class TeamsService {
     constructor(readonly store: TeamStore) { }
@@ -72,7 +62,7 @@ export class TeamsService {
                 if (!v)
                     teamError('TEAM_REFERENCE_NOT_FOUND');
                 const [sourceTeam] = await tx.select().from(teams).where(and(eq(teams.ownerId, owner), eq(teams.id, v.teamId)));
-                const copy = copyConfig(v.config, v.displaySnapshot, sourceTeam?.layout ?? EMPTY_LAYOUT);
+                const copy = instantiateOrganization(v.config, v.displaySnapshot, sourceTeam?.layout ?? EMPTY_LAYOUT);
                 layout = copy.layout;
                 config = copy.config;
                 display = { ...copy.display, name: request.name, avatar: request.avatar ?? null };
@@ -81,7 +71,7 @@ export class TeamsService {
                 const template = TEAM_TEMPLATES.find(t => t.id === request.templateId);
                 if (!template)
                     teamError('TEAM_REFERENCE_NOT_FOUND');
-                const copy = copyConfig(template.config, template.display, template.layout);
+                const copy = instantiateTemplate(template);
                 config = copy.config;
                 layout = copy.layout;
                 display = { ...copy.display, name: request.name, avatar: request.avatar ?? null };

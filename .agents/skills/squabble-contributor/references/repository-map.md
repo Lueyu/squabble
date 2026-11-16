@@ -126,3 +126,12 @@ Fine-grained Team source/work visibility lives in `server/database/team-member-s
 - Guided browser persistence: `features/teams/guided-team-storage.ts` partitions tab drafts/progress by owner, verifies old unscoped resource references through owner APIs and retains exact pending payloads. `pages/Import/ImportSavedNextSteps.tsx` continues a confirmed import to friends without starting research. Team work links use `/teams/:id?panel=history&commissionId=...`.
 - External agents: `shared/a2a-agents.interface.ts`, `server/modules/a2a-agents/`, `server/database/a2a-agent-context.ts`; exact owned connection fingerprints, encrypted durable invocation rows and constrained egress. Protocol completion is distinct from domain acceptance.
 - Migrations62–66 are registered startup additions and included in the generated fresh schema. Migration66 deterministically backfills profile avatars, preserves existing choices on replay and constrains the seven stable IDs; immutable versions and receipts are unchanged. Telemetry identity fields remain nullable for historical data and use immutable source snapshots for trustworthy enrichment.
+
+Fresh team creation selects one of eleven organization templates; the twelve
+friend specialties and current capabilities remain separate from team seats.
+`TeamEditorSidebar`, `TeamOutline`, `TeamCanvas`, `TeamInspector` and
+`TeamWorkPlanPreview` share one draft. The responsive editor's view parameter and
+property dialog preserve list editing. `team-work-blueprint.ts` and
+`team-work-plan-preview.service.ts` compile the same division of labour used by
+formal commissions; structural preview remains read-only and non-dispatchable.
+Legacy guided entry only resumes an existing progress record.

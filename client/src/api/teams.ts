@@ -1,5 +1,5 @@
 import http from './http';
-import type { BindingPreviewInput, CommissionPreviewInput, ConfirmPreview, CreateTeamInput, DecisionInput, RecoveryInput, TeamArchivePreviewInput, TeamBinding, TeamBudgetLimitInput, TeamCommission, TeamCommissionDetail, TeamConnectionCheck, TeamConnectionCheckInput, TeamDecision, TeamDetail, TeamDisplayInput, TeamDraftInput, TeamLayoutInput, TeamListResult, TeamPage, TeamPreview, TeamPublishPreviewInput, TeamRevisionInput, TeamSourceGrant, TeamSourceGrantInput, TeamVersion } from '@shared/team-workspace.interface';
+import type { BindingPreviewInput, CommissionPreviewInput, ConfirmPreview, CreateTeamInput, DecisionInput, RecoveryInput, TeamArchivePreviewInput, TeamBinding, TeamBudgetLimitInput, TeamCommission, TeamCommissionDetail, TeamConnectionCheck, TeamConnectionCheckInput, TeamDecision, TeamDetail, TeamDisplayInput, TeamDraftInput, TeamLayoutInput, TeamListResult, TeamPage, TeamPreview, TeamPublishPreviewInput, TeamRevisionInput, TeamSourceGrant, TeamSourceGrantInput, TeamVersion, TeamWorkPlanPreviewInput, TeamWorkPlanPreviewResult } from '@shared/team-workspace.interface';
 
 export interface TeamListFilters { q?: string; filter?: string; status?: string; cursor?: string; limit?: number }
 export interface TeamCommandResult { commissionId: string; state: TeamCommission['state']; rootBudgetTaskId?: string; commissionRevision?: number; requestKey: string }
@@ -36,6 +36,7 @@ export const teamsApi = {
   archivePreview: async (id: string, input: TeamArchivePreviewInput) => (await http.post<TeamPreview>(`${teamPath(id)}/archive-preview`, input)).data,
   archive: async (id: string, input: ConfirmPreview) => (await http.post<TeamBindingResult>(`${teamPath(id)}/archive`, input)).data,
   commissionPreview: async (id: string, input: CommissionPreviewInput) => (await http.post<TeamPreview>(`${teamPath(id)}/commission-preview`, input)).data,
+  workPlanPreview: async (id: string, input: TeamWorkPlanPreviewInput): Promise<TeamWorkPlanPreviewResult> => (await http.post<TeamWorkPlanPreviewResult>(`${teamPath(id)}/work-plan-preview`, input)).data,
   startCommission: async (id: string, input: ConfirmPreview) => (await http.post<TeamCommandResult>(`${teamPath(id)}/commissions`, input)).data,
   commissions: async (id: string, cursor?: string) => (await http.get<TeamPage<TeamCommission>>(`${teamPath(id)}/commissions`, { params: { cursor } })).data,
   commission: async (id: string, commissionId: string) => (await http.get<TeamCommissionDetail>(commissionPath(id, commissionId))).data,

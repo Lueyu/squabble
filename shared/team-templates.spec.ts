@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { TEAM_TEMPLATES } from './team-templates';
+import { AGENT_TEMPLATE_IDS } from './agent-roster.interface';
+
+const ORIGINAL_TEMPLATE_IDS = ['bull-bear-committee', 'reflective-manager', 'portfolio-specialists', 'fine-grained-diligence', 'competing-hypotheses', 'matrix-specialists', 'huawei-style', 'bytedance-style', 'alibaba-style', 'tencent-style'];
 
 test('templates are editable unconfigured organizations with research provenance and bounded participants', () => {
-  assert.ok(TEAM_TEMPLATES.filter(t => t.category === 'professional').length >= 6);
+  assert.equal(TEAM_TEMPLATES.length, 11);
+  assert.deepEqual(new Set(TEAM_TEMPLATES.map(t => t.id)).size, 11);
+  for (const id of ORIGINAL_TEMPLATE_IDS) assert.ok(TEAM_TEMPLATES.some(t => t.id === id), `stable id ${id} kept`);
+  assert.ok(TEAM_TEMPLATES.filter(t => t.category === 'professional').length >= 7);
   assert.ok(TEAM_TEMPLATES.filter(t => t.category === 'playful').length >= 4);
-  assert.equal(new Set(TEAM_TEMPLATES.map(t => t.id)).size, TEAM_TEMPLATES.length);
+  const catalog = new Set<string>(AGENT_TEMPLATE_IDS);
   for (const template of TEAM_TEMPLATES) {
     assert.ok(template.name.en && template.name['zh-CN']);
+    assert.equal(template.templateVersion, 2);
     assert.ok(template.config.roles.length <= 6);
     const ids = new Set([...template.config.roles, ...template.config.departments].map(n => n.id));
     for (const role of template.config.roles) {
@@ -24,8 +31,28 @@ test('templates are editable unconfigured organizations with research provenance
       assert.notEqual(edge.fromRoleId, edge.toRoleId);
       assert.ok(edge.responsibilityScope);
     }
-    if (template.category === 'professional') {
-      assert.ok(template.researchSources.length > 0);
+    // Staffing: one slot per seat, catalog specialty, stable role references.
+    assert.equal(template.staffing.length, template.config.roles.length);
+    for (const slot of template.staffing) {
+      assert.ok(ids.has(slot.roleId));
+      assert.ok(catalog.has(slot.recommendedTemplateId));
+    }
+    // Blueprint: bounded, resolvable, reviewable division of labour.
+    const blueprint = template.config.workBlueprint!;
+    assert.ok(blueprint, `${template.id} carries a work blueprint`);
+    assert.equal(blueprint.schemaVersion, 1);
+    assert.ok(blueprint.works.length >= 1 && blueprint.works.length <= 5);
+    const workIds = new Set(blueprint.works.map(work => work.workId));
+    assert.equal(workIds.size, blueprint.works.length);
+    for (const work of blueprint.works) {
+      assert.ok(ids.has(work.roleId) && ids.has(work.reviewerRoleId));
+      assert.ok(work.objective && work.expectedOutput);
+      for (const dep of work.dependencyWorkIds) assert.ok(workIds.has(dep));
+    }
+    assert.ok(ids.has(blueprint.summary.reviewerRoleId));
+    // Professional templates keep research provenance; classic is the documented product default.
+    if (template.category === 'professional' && template.id !== 'classic') {
+      assert.ok(template.researchSources.length > 0, `${template.id} cites research`);
       assert.ok(template.researchSources.every(source => source.url.startsWith('https://arxiv.org/abs/')));
     }
   }

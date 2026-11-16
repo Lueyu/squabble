@@ -86,6 +86,27 @@ export function teamPublicationDiff(previous: TeamVersion | null | undefined, co
   defaults.add(zh ? '默认负责人建议' : 'Suggested final lead', beforeConfig?.defaults.leadRoleId, config.defaults.leadRoleId, (value, old) => label(value as string | null | undefined, 'role', old));
   defaults.add(zh ? '默认并行度' : 'Parallelism', beforeConfig?.defaults.parallelism, config.defaults.parallelism);
   if (defaults.values.length) result.push({ id: 'defaults', label: zh ? '委托默认建议' : 'Commission defaults', state: beforeConfig ? 'changed' : 'added', fields: defaults.values });
+  const beforeBlueprint = beforeConfig?.workBlueprint;
+  const afterBlueprint = config.workBlueprint;
+  const beforeWorks = beforeBlueprint?.works ?? [];
+  const afterWorks = afterBlueprint?.works ?? [];
+  const workIds = [...new Set([...beforeWorks.map(work => work.workId), ...afterWorks.map(work => work.workId)])];
+  for (const workId of workIds) {
+    const before = beforeWorks.find(work => work.workId === workId); const after = afterWorks.find(work => work.workId === workId); const change = fields();
+    change.add(zh ? '执行岗位' : 'Executing role', before?.roleId, after?.roleId, (value, old) => label(value as string | undefined, 'role', old));
+    change.add(zh ? '工作类型' : 'Task kind', before?.taskKind, after?.taskKind);
+    change.add(zh ? '研究目标' : 'Objective', before?.objective, after?.objective);
+    change.add(zh ? '预期交付' : 'Expected output', before?.expectedOutput, after?.expectedOutput);
+    change.add(zh ? '依赖工作' : 'Dependencies', before?.dependencyWorkIds, after?.dependencyWorkIds);
+    change.add(zh ? '复核岗位' : 'Reviewer', before?.reviewerRoleId, after?.reviewerRoleId, (value, old) => label(value as string | undefined, 'role', old));
+    change.add(zh ? '复核方式' : 'Review mode', before?.reviewMode, after?.reviewMode, value => value === 'self_check' ? (zh ? '同岗自检' : 'Same-role self-check') : value === 'independent' ? (zh ? '独立复核' : 'Independent') : readable(value, zh));
+    if (change.values.length) result.push({ id: `work-${workId}`, label: `${zh ? '工作' : 'Work'} · ${workId}`, state: !before ? 'added' : !after ? 'removed' : 'changed', fields: change.values });
+  }
+  const summaryChange = fields();
+  summaryChange.add(zh ? '负责人汇总复核岗位' : 'Summary reviewer', beforeBlueprint?.summary.reviewerRoleId, afterBlueprint?.summary.reviewerRoleId, (value, old) => label(value as string | undefined, 'role', old));
+  summaryChange.add(zh ? '负责人汇总复核方式' : 'Summary review mode', beforeBlueprint?.summary.reviewMode, afterBlueprint?.summary.reviewMode, value => value === 'self_check' ? (zh ? '负责人自检（非独立复核）' : 'Lead self-check (not independent)') : value === 'independent' ? (zh ? '独立复核' : 'Independent') : readable(value, zh));
+  summaryChange.add(zh ? '负责人汇总交付要求' : 'Summary output requirement', beforeBlueprint?.summary.expectedOutput, afterBlueprint?.summary.expectedOutput);
+  if (summaryChange.values.length) result.push({ id: 'work-summary', label: zh ? '负责人汇总' : 'Lead summary', state: !beforeBlueprint ? 'added' : !afterBlueprint ? 'removed' : 'changed', fields: summaryChange.values });
   return result;
 }
 

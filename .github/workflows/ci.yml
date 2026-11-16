@@ -63,6 +63,7 @@ jobs:
           npm run build:client
           npm run ui:density
           node scripts/ui-probe/overview-layout-browser.cjs
+          node scripts/ui-probe/team-organization-browser.cjs
 
       - name: Initialize isolated integration database
         env:

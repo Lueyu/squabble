@@ -54,7 +54,8 @@ is needed for local Docker.
 - [Compact UI and team removal / 界面比例与团队移除](compact-ui-team-removal.md): existing layout with denser desktop dimensions, research-pane scrolling and archive-backed removal with atomic agreement pause and history retention.
 - [Overview and intraday valuation / 总览对齐与盘中估值](overview-chart-polish.md): aligned tabs/cards, existing brand mark, five-minute retained quote facts, missing-interval connectors and truthful partial references.
 
-- [Team paper portfolios / 团队模拟盘审核入口](superpowers/specs/2026-11-12-team-paper-review.zh-CN.md): approved product and technical specifications, now implemented with editable organization canvases and 10 starting templates. 原型与详细方案已批准；实现入口见 [使用指南](team-workspace.md)，实际检查和限制见 [验证记录](team-workspace-validation.md)。
+- [Team paper portfolios / 团队模拟盘审核入口](superpowers/specs/2026-11-12-team-paper-review.zh-CN.md): approved product and technical specifications, now implemented with editable organization canvases and starting templates. 原型与详细方案已批准；实现入口见 [使用指南](team-workspace.md)，实际检查和限制见 [验证记录](team-workspace-validation.md)。
+- [Team organization redesign / 团队组织重设计（2026-11-14）](team-organization-redesign/README.zh-CN.md): approved direction for the organization-first config workspace, 12 specialty friends, 11 complete organization templates and a shared server-side work-blueprint compiler for previews and real runs. 本轮已按该方向实现（分支 `codex/team-organization-redesign`）：三栏画布、结构预览与正式冻结分离、`workPlanProof` 运行协议固定、旧配置/旧协议保持 legacy 语义。实施证据与限制见 [implementation-progress.md](team-organization-redesign/implementation-progress.md)，验收条目见 [05-acceptance-and-handoff.zh-CN.md](team-organization-redesign/05-acceptance-and-handoff.zh-CN.md)。
 
 ### Independent-agent design and implementation · 独立股友设计与实现
 

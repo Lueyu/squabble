@@ -284,3 +284,21 @@ Animal identity additionally requires migration66 in the explicit registry and g
 Client checks include `client/src/utils/guided-onboarding.test.cjs`, `guided-team*.test.cjs` and `client/src/features/telemetry/telemetry-identity.test.cjs`. Cover actual sequential API receipt replay after every lost response, pinned version/binding conflicts, expired previews requiring fresh user review, default global/account caps and the explicit startup replacement authorization. Browser checks should use a fictional isolated backend or intercepted fixtures for the full holdings→roster→team journey on desktop/mobile. Such checks do not substitute for five real novice participants; record that usability study separately and do not claim it passed.
 
 UI repair regressions include `agent-animal-identity.test.cjs`, `guided-team-draft.test.cjs`, `guided-team-interaction.test.cjs`, `guided-team-resume.test.cjs`, `import-continuation.test.cjs` and `workspace-navigation-interactions.test.cjs` under `client/src/utils/`, alongside existing navigation/layout/import/research/team suites. Check rendered editing, actual selected participants, owner-isolated drafts, legacy-resource verification, unchanged unknown request payloads, separate investment/holdings roots and valid return/history links. Run actual desktop1440/mobile390 browser journeys separately; source or DOM assertions do not establish visual acceptance. Preserve results and unfinished gates in `docs/ui-regression-repair-validation.md`.
+
+## Organization editor usability regression
+
+The organization editor uses an explicit `view=canvas|list` preference, a compact
+outline, and a responsive property dialog. `team-staffing.ts` owns the shared
+button/drop draft assignment command; this never grants tools or dispatches
+research. New template coordinates are parent-relative; do not reinterpret saved
+user layouts. Run the team-editor-navigation, team-staffing and team-flow client
+behavior tests plus `scripts/ui-probe/team-organization-browser.cjs` against its
+fictional server after a Web build. Inspect actual deep/light-theme screenshots,
+mobile editing, relationship properties and friend assignment; container presence
+is insufficient. See `docs/team-organization-redesign/ui-repair-plan.zh-CN.md`.
+
+The durable Council workflow fixture fixes only initial archive jobs as due and
+uses a read cutoff after both the host and database clocks. Docker/Windows clock
+drift otherwise makes an archival integration test accidentally test wall-clock
+scheduling or hide a just-created source. Keep retry backoff and production
+source-time visibility intact; do not disable those guards to make tests pass.

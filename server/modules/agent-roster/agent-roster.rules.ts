@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { ANIMAL_AVATAR_IDS, type AnimalAvatarId } from '../../../shared/animal-avatar';
 import { agentWorkingInstructions } from '../../../shared/agent-working-instructions';
+import { AGENT_TEMPLATE_IDS } from '../../../shared/agent-roster.interface';
 import type { AgentTemplate, AgentTemplateId, CreateAgentInput, AgentVersionConfig, AgentSelection, AgentCouncilMember } from '../../../shared/agent-roster.interface';
+import { AGENT_SPECIALTY_CATALOG } from '../../../shared/agent-specialty-catalog';
+
+export { LEGACY_AGENT_TEMPLATE_IDS } from '../../../shared/agent-roster.interface';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
 
 export function rosterError(code: string, message = code, details: Record<string, unknown> = {}): never {
@@ -29,7 +33,7 @@ export function rosterHash(input: unknown): string {
 export const uuid = z.string().uuid();
 export const requestKey = z.string().trim().min(1).max(128);
 export const revision = z.number().int().positive();
-export const templateId = z.enum(['financials', 'valuation', 'bear', 'risk', 'moderator']);
+export const templateId = z.enum(AGENT_TEMPLATE_IDS);
 const nativeSettings = z.object({ model: z.string().regex(/^[^\u0000-\u001f\u007f]*$/u).trim().min(1).max(160).optional(), reasoningEffort: z.string().regex(/^[^\u0000-\u001f\u007f]*$/u).trim().min(1).max(32).optional() }).strict();
 export const executorSchema = z.discriminatedUnion('executionMode', [
   z.object({ executionMode: z.literal('model'), connectionId: uuid.optional(), model: z.enum(['fast', 'slow']) }).strict(),
@@ -44,38 +48,19 @@ const editable = { avatar: z.enum(ANIMAL_AVATAR_IDS).optional(), templateId: tem
 const createSchema = z.object({ requestKey, ...editable, executor: executorSchema }).strict();
 export const updateSchema = z.object({ requestKey, expectedRevision: revision, ...editable }).strict();
 export const archiveSchema = z.object({ requestKey, expectedRevision: revision }).strict();
-export const recommendedSchema = z.object({ requestKey, executor: executorSchema, language: z.enum(['zh-CN', 'en']).optional(), templateIds: z.array(templateId).min(1).max(5).refine(ids => new Set(ids).size === ids.length).optional() }).strict();
+export const recommendedSchema = z.object({ requestKey, executor: executorSchema, language: z.enum(['zh-CN', 'en']).optional(), templateIds: z.array(templateId).min(1).max(AGENT_TEMPLATE_IDS.length).refine(ids => new Set(ids).size === ids.length).optional() }).strict();
 export const scopeSchema = z.discriminatedUnion('kind', [z.object({ kind: z.literal('personal') }).strict(), z.object({ kind: z.literal('team'), teamId: uuid }).strict(), z.object({ kind: z.literal('conversation'), conversationId: uuid }).strict()]);
 export const writeMemorySchema = z.object({ requestKey, expectedRevision: revision, scope: scopeSchema, content: z.string().trim().min(1).max(16000), origin: z.enum(['user_note', 'source_summary']), sourceRefs: sources }).strict()
   .refine(value => value.origin !== 'source_summary' || value.sourceRefs.length > 0, 'A source summary needs exact source provenance');
 export const shareMemorySchema = z.object({ requestKey, expectedRevision: revision, targetAgentId: uuid, targetScope: scopeSchema }).strict();
 export function parseCreate(input: unknown): CreateAgentInput { return parseRoster(createSchema, input) as CreateAgentInput; }
 
-const baseToolIds = ['get_discussion_context', 'get_research_memory', 'search_data_library', 'read_dataset_summary'];
-const templateTools: Record<AgentTemplateId, string[]> = {
-  financials: [...baseToolIds, 'get_financials', 'get_financial_source_data', 'get_portfolio_financials', 'get_quotes', 'get_portfolio_quotes'],
-  valuation: [...baseToolIds, 'get_financials', 'get_valuation', 'get_peer_comparison', 'get_valuation_scenarios', 'get_financial_source_data', 'get_portfolio_financials', 'get_quotes', 'get_portfolio_quotes'],
-  bear: [...baseToolIds, 'get_financials', 'get_valuation', 'get_news', 'get_quotes', 'get_portfolio_quotes'],
-  risk: [...baseToolIds, 'get_quotes', 'get_portfolio_quotes', 'get_financials', 'get_portfolio_financials', 'get_news'],
-  moderator: ['get_discussion_context', 'get_research_memory'],
-};
-const templateAvatars: Record<AgentTemplateId, AnimalAvatarId> = {
-  financials: 'technical', valuation: 'value', bear: 'risk', risk: 'macro', moderator: 'moderator',
-};
-const templateInstructionsEn: Record<AgentTemplateId, string> = {
-  financials: 'Check financial statements, earnings quality, balance sheets and cash flow. Distinguish facts, inferences and unknowns, cite exact authorized sources, and identify missing data.',
-  valuation: 'Analyze valuation using explicit assumptions, scenarios, value ranges and sensitivities. Separate verifiable facts from estimates; never invent current prices or financial data.',
-  bear: 'Independently seek counterevidence, flawed assumptions, cyclical risks and missing information. Test the strongest thesis fairly and explain which facts would overturn it.',
-  risk: 'Review portfolio concentration, liquidity, adverse scenarios and action limits. Suggest explainable constraints. The system owns account and trading checks; do not claim live trading authority.',
-  moderator: 'Combine completed research and moderate bounded discussion. Preserve evidence, disagreements, assumptions and unknowns. Explain incomplete work and never invent participants or consensus.',
-};
-export const AGENT_TEMPLATES: readonly AgentTemplate[] = [
-  { id: 'financials', name: '财报股友', specialty: '核对财报和现金流', description: '查看盈利质量、资产负债和现金流，指出需要核实的数据。', delivery: '财务事实、异常和待核对事项', nameEn: 'Financials friend', specialtyEn: 'Check accounts and cash flow', descriptionEn: 'Review earnings quality, balance sheets and cash flow, and identify facts to verify.', deliveryEn: 'Financial facts, exceptions and checks', instructions: '核对财务报表、盈利质量、资产负债和现金流。清楚区分事实、推断和未知项，引用获准的精确来源；资料不足时说明缺口。' },
-  { id: 'valuation', name: '估值股友', specialty: '估算价值和检验假设', description: '用明确假设比较估值情景，解释价格对经营变化的敏感性。', delivery: '估值区间、关键假设和敏感因素', nameEn: 'Valuation friend', specialtyEn: 'Estimate value and test assumptions', descriptionEn: 'Compare valuation scenarios with explicit assumptions and explain sensitivity.', deliveryEn: 'Value ranges, assumptions and sensitivities', instructions: '分析公司估值，给出清楚的假设、情景、价值区间和敏感性。将可验证的事实与主观估计分开，不伪造现价或财务数据。' },
-  { id: 'bear', name: '反方股友', specialty: '寻找反证和遗漏风险', description: '挑战看似合理的观点，寻找会推翻结论的事实。', delivery: '主要反证、失败条件和验证办法', nameEn: 'Counterpoint friend', specialtyEn: 'Find counterevidence and blind spots', descriptionEn: 'Challenge plausible views and identify facts that could overturn them.', deliveryEn: 'Counterevidence, failure conditions and checks', instructions: '独立寻找反证、错误假设、周期风险和遗漏信息。对最有力的论点进行公平检验；明确哪些事实会推翻原结论，不为反对而反对。' },
-  { id: 'risk', name: '风险股友', specialty: '复核组合风险和行动边界', description: '检查集中度、流动性和不利情景，说明仍不确定的风险。', delivery: '风险清单、压力情景和约束建议', nameEn: 'Risk friend', specialtyEn: 'Review portfolio risk and limits', descriptionEn: 'Review concentration, liquidity and adverse scenarios, including unknown risks.', deliveryEn: 'Risks, stress scenarios and suggested limits', instructions: '复核组合集中度、流动性、不利情景和行动边界。提出可解释的风险约束；确定性的账户和交易检查由系统执行，不宣称有真实交易权限。' },
-  { id: 'moderator', name: '主持股友', specialty: '梳理共识、分歧和下一步', description: '整合已完成的研究，保留分歧和未知项，不伪造全员共识。', delivery: '结论、证据、分歧和下一步', nameEn: 'Moderator friend', specialtyEn: 'Clarify agreement and next steps', descriptionEn: 'Combine completed research while preserving disagreement and unknowns.', deliveryEn: 'Conclusions, evidence, disagreements and next steps', instructions: '整合已完成的研究并主持有限讨论。保留证据、分歧、假设和未知项；缺少必要工作时说明部分完成，不将趋同包装成正确，不创建隐藏参与者。' },
-].map(template => ({ ...template, id: template.id as AgentTemplateId, avatar: templateAvatars[template.id], instructionsEn: templateInstructionsEn[template.id], allowedToolIds: templateTools[template.id] }));
+/**
+ * The twelve-preset catalog lives in shared/agent-specialty-catalog.ts (single source:
+ * identities, bilingual text, tool ceilings and guidance). Runtime derivation keeps one
+ * authority; nothing here maintains a second copy of template bodies or avatars.
+ */
+export const AGENT_TEMPLATES: readonly AgentTemplate[] = AGENT_SPECIALTY_CATALOG;
 export function prepareAgent(input: Omit<CreateAgentInput, 'requestKey'>) {
   const template = AGENT_TEMPLATES.find(t => t.id === (input.templateId ?? 'financials'))!;
   // This is a transparent editable template draft, not a model-generated capability claim.

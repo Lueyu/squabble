@@ -9,6 +9,7 @@ import { and, eq } from 'drizzle-orm';
 import { CouncilService } from './council.service';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { councilSessions } from '../../database/council.schema';
+import { researchArchiveJobs } from '../../database/research-memory.schema';
 import { DEFAULT_MEMBERS } from './council.rules';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
@@ -53,11 +54,28 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     const db = drizzle(client);
     const memory = new ResearchMemoryService(db, new QuoteService(db, undefined as never));
     const archives = new ResearchArchiveService(db, memory);
+    const memoryQuery = async (ticker: string) => {
+      // Reports use database timestamps while evidence uses the host clock. Read
+      // this completed fixture after both clocks without relaxing source visibility.
+      const [clock] = await client<{ cutoff: string }[]>`SELECT greatest(clock_timestamp(), ${new Date().toISOString()}::timestamptz)::text AS cutoff`;
+      return { ticker, asOf: new Date(clock.cutoff).toISOString() };
+    };
     const drainArchives = async () => {
+      // This workflow fixture tests archival, not wall-clock scheduling. PostgreSQL's
+      // default now() can lead the host clock, so make only first attempts due;
+      // a failed archive must retain its real retry backoff and fail this helper.
+      await db.update(researchArchiveJobs).set({ nextAttemptAt: new Date(0) }).where(and(
+        eq(researchArchiveJobs.owner, owner), eq(researchArchiveJobs.state, 'queued'), eq(researchArchiveJobs.attempts, 0)));
       for (let index = 0; index < 20; index++) {
         await archives.tick();
-        if (!(await archives.list(owner)).counts.queued) return;
+        const { counts } = await archives.list(owner);
+        if (!counts.queued && !counts.running) break;
       }
+      const result = await archives.list(owner);
+      const diagnostic = JSON.stringify(result.jobs.map(({ state, attempts, error }) => ({ state, attempts, error })));
+      assert.equal(result.counts.failed, 0, `Archive jobs failed: ${diagnostic}`);
+      assert.equal(result.counts.queued, 0, `Archive jobs remained queued: ${diagnostic}`);
+      assert.equal(result.counts.running, 0, `Archive jobs remained running: ${diagnostic}`);
     };
     const owner = randomUUID();
     await client`INSERT INTO users(id, username, password_hash) VALUES (${owner}, 'workflow-test', 'test-only')`;
@@ -122,14 +140,14 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     const published = complete.reports.at(-1)!;
     assert.equal(published.thesisCandidates?.[0].claim, 'Cash conversion remains resilient');
     await drainArchives();
-    const archived = (await memory.list(owner, { ticker: 'AAPL' })).theses[0];
+    const archived = (await memory.list(owner, await memoryQuery('AAPL'))).theses[0];
     assert.equal(archived.claim, published.thesisCandidates![0].claim);
     assert.equal(archived.status, 'accepted', 'Agent acceptance must never be human confirmation');
     assert.equal(archived.boundaryOrigin, 'proposed');
     assert.deepEqual(archived.horizon, { reviewAt: '2027-02-01T00:00:00.000Z' });
     assert.equal(archived.provenance?.origin, 'agent');
     assert.equal(archived.provenance?.workflow?.attemptId, complete.workflow!.tasks.find(t => t.key === 'summary')!.acceptedAttemptId);
-    const recalled = (await memory.recall(owner, { ticker: 'AAPL' })).items.find(item => item.kind === 'thesis');
+    const recalled = (await memory.recall(owner, await memoryQuery('AAPL'))).items.find(item => item.kind === 'thesis');
     assert.equal(recalled?.endorsement, 'agent');
     assert.ok(complete.messages.filter(m => m.role !== 'system').every(m => m.response));
     assert.deepEqual((await svc.listSessions(randomUUID())), []);
@@ -140,7 +158,7 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     assert.equal(gapResult.reports.at(-1)?.coverage?.complete, false);
     assert.ok(gapResult.workflow!.tasks.every(task => task.state === 'accepted'));
     await drainArchives();
-    assert.equal((await memory.list(owner, { ticker: 'AAPL' })).theses.find(t => t.source?.sessionId === withGap.id)?.status, 'accepted',
+    assert.equal((await memory.list(owner, await memoryQuery('AAPL'))).theses.find(t => t.source?.sessionId === withGap.id)?.status, 'accepted',
       'an explicitly accepted unrelated data gap does not disqualify a supported atomic claim');
     unrelatedGap = false;
 
@@ -251,10 +269,10 @@ test('durable workflow executes parallel work, reviews, partial failure and targ
     assert.equal(nativeComplete.reports.at(-1)!.tokensUsed, 56, 'native moderator review usage must be counted once per actual request');
     assert.equal(nativeComplete.reports.at(-1)!.externalUsageUnknown, false);
     await drainArchives();
-    const nativeThesis = (await memory.list(owner, { ticker: 'MSFT' })).theses.find(t => t.source?.sessionId === nativeSession.id)!;
+    const nativeThesis = (await memory.list(owner, await memoryQuery('MSFT'))).theses.find(t => t.source?.sessionId === nativeSession.id)!;
     assert.equal(nativeThesis.status, 'candidate', 'unverified native evidence cannot auto-accept a thesis');
     assert.ok(nativeThesis.flags.includes('unverified'));
-    assert.ok(!(await memory.recall(owner, { ticker: 'MSFT' })).items.some(item => item.kind === 'thesis' && item.id === nativeThesis.id));
+    assert.ok(!(await memory.recall(owner, await memoryQuery('MSFT'))).items.some(item => item.kind === 'thesis' && item.id === nativeThesis.id));
 
     nativeCalls.length = 0; nativeFailure = 'quota';
     const limited = await nativeSvc.createSession(owner, { ticker: 'MSFT', goal: 'comprehensive', language: 'en', recallEnabled: false, members: localMembers });

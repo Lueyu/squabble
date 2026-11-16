@@ -1,14 +1,24 @@
 import { Link } from 'react-router-dom';
 import { Archive, MessageSquare } from 'lucide-react';
-import type { AgentProfile } from '@shared/agent-roster.interface';
+import type { AgentProfile, AgentTemplate } from '@shared/agent-roster.interface';
 import { Button } from '@/components/ui/button';
 import { AgentIdentity } from './AgentIdentity';
 import { AgentMemoryPanel } from './AgentMemoryPanel';
 import { ExternalAgentStatus } from './ExternalAgentStatus';
 
-export function AgentRosterCard({ agent, zh, memoryOpen, archiving, onEdit, onMemory, onArchive }: {
+function GuideList({ title, items, numbered = false }: { title: string; items: string[]; numbered?: boolean }) {
+  return <div className="min-w-0">
+    <p className="font-medium text-foreground">{title}</p>
+    <ul className={numbered ? 'list-decimal space-y-1 ps-4' : 'list-disc space-y-1 ps-4'}>
+      {items.map((item, index) => <li key={index} className="break-words">{item}</li>)}
+    </ul>
+  </div>;
+}
+
+export function AgentRosterCard({ agent, zh, template, memoryOpen, archiving, onEdit, onMemory, onArchive }: {
   agent: AgentProfile;
   zh: boolean;
+  template?: AgentTemplate;
   memoryOpen: boolean;
   archiving: boolean;
   onEdit: () => void;
@@ -16,6 +26,7 @@ export function AgentRosterCard({ agent, zh, memoryOpen, archiving, onEdit, onMe
   onArchive: () => void;
 }) {
   const executor = agent.currentVersion.config.executor;
+  const guide = template ? (zh ? template.guide : template.guideEn) : null;
   const connectionLabel = executor.executionMode === 'model'
     ? (zh ? '共用模型连接' : 'Shared model connection')
     : executor.executionMode === 'a2a'
@@ -32,6 +43,17 @@ export function AgentRosterCard({ agent, zh, memoryOpen, archiving, onEdit, onMe
     <h2 className="break-words font-semibold text-lg">{agent.name}</h2>
     <p className="break-words text-sm font-medium">{agent.specialty}</p>
     <p className="break-words text-sm text-muted-foreground">{agent.description}</p>
+    {template && <p className="break-words text-sm">{zh ? '典型交付' : 'Typical delivery'}：{zh ? template.delivery : template.deliveryEn}</p>}
+    {guide && <details className="min-w-0 text-xs text-muted-foreground">
+      <summary className="min-h-6 cursor-pointer py-1 font-medium text-foreground">{zh ? '工作方式与专业说明' : 'How this specialty works'}</summary>
+      <div className="mt-2 space-y-3">
+        <GuideList title={zh ? '工作步骤' : 'Workflow'} items={guide.workflow} numbered />
+        <GuideList title={zh ? '反证核查' : 'Counterchecks'} items={guide.counterchecks} />
+        <GuideList title={zh ? '典型任务' : 'Example tasks'} items={guide.exampleTasks} />
+        <GuideList title={zh ? '推荐岗位' : 'Typical seats'} items={guide.recommendedSeats} />
+        <p>{zh ? '以上仅为专业预设说明，不会自动授予资料、工具或交易权限。' : 'Preset guidance only; it grants no data, tool or trading permission.'}</p>
+      </div>
+    </details>}
     <footer className="mt-auto space-y-3">
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" asChild>
