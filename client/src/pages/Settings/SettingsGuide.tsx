@@ -1,3 +1,15 @@
+/**
+ * SettingsGuide.tsx — 设置页顶部引导卡：四节静态帮助内容（默认接入 / 免费模型 / LLM API 配置 / 金融数据源）。
+ *
+ * 职责边界：
+ *  - 纯展示组件：全部文案与链接来自 i18n 与硬编码外链，无状态、无请求、无交互逻辑。
+ *  - 链接指向第三方文档（OpenRouter/OpenAI/DeepSeek/火山引擎/Finnhub），均新标签页打开。
+ * 上下游：
+ *  - 上游（路由入口/谁引用）：SettingsPage 顶部。
+ *  - 下游（调用哪些 hooks/api/组件）：useTranslation；Card 组件族；本文件的 GuideLink/GuideStep。
+ * 关键约定：
+ *  - 无关键约定（静态内容）。
+ */
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, BookOpenText } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,6 +19,7 @@ interface GuideLinkProps {
   label: string;
 }
 
+/** 带外跳图标的第三方链接（新标签页 + 安全 rel） */
 function GuideLink({ href, label }: GuideLinkProps) {
   return (
     <a
@@ -38,7 +51,9 @@ export default function SettingsGuide() {
         </CardTitle>
         <CardDescription className="leading-6">{t('integrations.guideIntro')}</CardDescription>
       </CardHeader>
+      {/* 四节内容双列排布；小节标题 id 供 aria-labelledby 引用 */}
       <CardContent className="grid gap-8 lg:grid-cols-2">
+        {/* 第一节：默认接入三步 */}
         <section className="min-w-0 space-y-4" aria-labelledby="settings-default-guide">
           <h2 id="settings-default-guide" className="text-base font-semibold">
             {t('integrations.guideDefaultTitle')}
@@ -49,6 +64,7 @@ export default function SettingsGuide() {
             <li>{t('integrations.guideDefaultStep3')}</li>
           </ol>
         </section>
+        {/* 第二节：免费模型接入四步 + OpenRouter 密钥/限额链接 */}
         <section className="min-w-0 space-y-4" aria-labelledby="settings-free-model-guide">
           <h2 id="settings-free-model-guide" className="text-base font-semibold">
             {t('integrations.guideFreeTitle')}
@@ -70,6 +86,7 @@ export default function SettingsGuide() {
             />
           </div>
         </section>
+        {/* 第三节：LLM API 配置四步（三家厂商密钥/文档链接 + 官方 baseUrl 一览） */}
         <section className="min-w-0 space-y-5" aria-labelledby="settings-llm-guide">
           <h2 id="settings-llm-guide" className="text-base font-semibold">
             {t('integrations.guideLlmTitle')}
@@ -88,6 +105,7 @@ export default function SettingsGuide() {
             </GuideStep>
             <GuideStep number={2} title={t('ui.settings.guide.llm.step2Title')}>
               <p>{t('ui.settings.guide.llm.step2')}</p>
+              {/* 三家官方 baseUrl 速查（等宽字体块） */}
               <div className="space-y-1 rounded-lg bg-secondary/50 px-3 py-2 font-mono text-xs text-foreground">
                 <p className="break-all">OpenAI · https://api.openai.com/v1</p>
                 <p className="break-all">DeepSeek · https://api.deepseek.com</p>
@@ -119,6 +137,7 @@ export default function SettingsGuide() {
           </ol>
         </section>
 
+        {/* 第四节：金融数据源（Finnhub）注册与配置四步 */}
         <section className="min-w-0 space-y-5" aria-labelledby="settings-data-guide">
           <h2 id="settings-data-guide" className="text-base font-semibold">
             {t('integrations.guideFinancialTitle')}
@@ -153,6 +172,7 @@ export default function SettingsGuide() {
   );
 }
 
+/** 编号步骤项：左侧圆形序号 + 右侧标题与内容（children） */
 function GuideStep({
   number,
   title,

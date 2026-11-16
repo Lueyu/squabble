@@ -1,3 +1,20 @@
+/**
+ * LocalAgentsPanel.tsx — 本地智能体分区：本地 CLI 智能体（native）与桌面伴侣（companion）的连接管理。
+ *
+ * 职责边界：
+ *  - 展示本地智能体清单与状态，提供连接 / 断开 / 登录动作；
+ *  - companion 模式下提供浏览器配对（squabble:// 深链）与解除配对；安装入口为外链。
+ *  - 不负责智能体消费模型连接（那是 ModelConnectionsPanel / 服务端的事）。
+ * 上下游：
+ *  - 上游（路由入口/谁引用）：SettingsPage 的 agents 分区；local-agents.test.cjs 全文转译执行本文件。
+ *  - 下游（调用哪些 hooks/api/组件）：useQuery/useMutation/useQueryClient；@/api/local-agents
+ *    的六个请求函数；AgentBuilder/errorMessage；Badge/Button/Card/Link。
+ * 关键约定：
+ *  - 状态查询轮询：配对等待期每 2 秒（pairingActive），常态每 10 秒；失败不重试（retry:false）。
+ *  - 配对码带过期时间（expiresAt）：过期后仅显示 pairExpired 文案与"重新配对"，不再给深链。
+ *  - 所有变更 mutation retry:false；错误经 errorMessage 脱敏（不泄漏私有诊断）。
+ *  - companion 一旦连上（useEffect）：自动清空配对码并失效列表缓存，视为配对流程完成。
+ */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -26,22 +43,31 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
 
+// 列表缓存键（exact 失效用）；STATUS_KEY 是其加 'status' 一层的子键
 const QUERY_KEY = ['settings', 'local-agents'];
 const STATUS_KEY = [...QUERY_KEY, 'status'];
+// 单个智能体动作描述：connect 连接 / disconnect 断开 / login 打开浏览器登录
 interface AgentAction {
   id: string;
   kind: 'connect' | 'disconnect' | 'login';
 }
 
 export default function LocalAgentsPanel() {
+  // —— 状态声明区 ——
   const { t } = useTranslation();
   const client = useQueryClient();
+  // 进行中的浏览器配对码（含过期时间）；null = 未发起配对
   const [pairing, setPairing] = useState<LocalAgentPairing | null>(null);
+  // 每秒跳动的当前时间戳：驱动配对码过期判断（配对等待期内由定时器刷新）
   const [now, setNow] = useState(Date.now());
+  // 操作失败提示文本 / 成功提示键名（渲染时经 key() 转译文）
   const [failure, setFailure] = useState('');
   const [notice, setNotice] = useState('');
   const key = (name: string) => t(`council.localAgents.${name}`);
+  // 配对码是否仍在有效期内
   const pairingActive = Boolean(pairing && Date.parse(pairing.expiresAt) > now);
+
+  // —— 数据获取区 ——
   const status = useQuery({
     queryKey: STATUS_KEY,
     queryFn: fetchLocalAgentsStatus,
@@ -49,6 +75,7 @@ export default function LocalAgentsPanel() {
     refetchInterval: pairingActive ? 2000 : 10000,
   });
   const companion = status.data?.companion;
+  // 是否配置过桌面伴侣：伴侣已连接 / 填过名字 / 任一 companion 来源的智能体已连接
   const hasCompanion = Boolean(
     companion?.connected ||
     companion?.name ||
@@ -56,6 +83,7 @@ export default function LocalAgentsPanel() {
       (agent: LocalAgentConnection) => agent.source === 'companion' && agent.connected,
     ),
   );
+  // 失效列表与状态两个缓存键，强制重新拉取
   const refresh = async () => {
     await Promise.all([
       client.invalidateQueries({ queryKey: QUERY_KEY, exact: true }),
@@ -63,17 +91,22 @@ export default function LocalAgentsPanel() {
     ]);
   };
 
+  // —— 副作用区 ——
+  // 配对等待期：每秒刷新 now，驱动"等待/过期"文案与深链显隐
   useEffect(() => {
     if (!pairingActive) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [pairingActive]);
+  // 什么时候走到这里：companion 已连上——配对流程完成，清理配对码并失效列表缓存
   useEffect(() => {
     if (!companion?.connected) return;
     setPairing(null);
     void client.invalidateQueries({ queryKey: QUERY_KEY, exact: true });
   }, [companion?.connected, client]);
 
+  // —— 事件处理区 ——
+  // 统一的智能体动作：按 kind 分派连接/断开/登录；成功按类型写提示并刷新，失败写脱敏错误
   const action = useMutation({
     retry: false,
     mutationFn: ({ id, kind }: AgentAction) =>
@@ -94,6 +127,7 @@ export default function LocalAgentsPanel() {
     },
     onError: (error: unknown) => setFailure(errorMessage(error, key('actionFailed'))),
   });
+  // 发起浏览器配对：拿到配对码后记录、重置时钟、清旧提示并刷新状态；失败提示 pairFailed
   const pair = useMutation({
     retry: false,
     mutationFn: createLocalAgentPairing,
@@ -105,6 +139,7 @@ export default function LocalAgentsPanel() {
     },
     onError: () => setFailure(key('pairFailed')),
   });
+  // 解除伴侣配对：清本地配对码、提示 companionRemoved 并刷新；失败写脱敏错误
   const unpair = useMutation({
     retry: false,
     mutationFn: disconnectLocalCompanion,
@@ -115,16 +150,19 @@ export default function LocalAgentsPanel() {
     },
     onError: (error: unknown) => setFailure(errorMessage(error, key('actionFailed'))),
   });
+  // 触发动作前先清空旧的失败/成功提示
   const run = (id: string, kind: AgentAction['kind']) => {
     setFailure('');
     setNotice('');
     return action.mutate({ id, kind });
   };
+  // 配对深链：squabble://pair?origin=...&code=...；仅配对码有效期内存在（未配对/已过期为 undefined）
   const pairUrl =
     pairing && pairingActive
       ? `squabble://pair?${new URLSearchParams({ origin: window.location.origin, code: pairing.code }).toString()}`
       : undefined;
 
+  // —— 渲染区 ——
   return (
     <Card id="local-agents" className="min-w-0 scroll-mt-6">
       <CardHeader className="flex-row flex-wrap items-start justify-between gap-3">
@@ -135,6 +173,7 @@ export default function LocalAgentsPanel() {
           </CardTitle>
           <CardDescription>{key('intro')}</CardDescription>
         </div>
+        {/* 手动刷新按钮：拉取期间转圈 */}
         <Button
           type="button"
           variant="outline"
@@ -147,26 +186,31 @@ export default function LocalAgentsPanel() {
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* 什么时候走到这里：状态首次加载中 */}
         {status.isPending && (
           <p role="status" className="text-sm text-muted-foreground">
             {t('council.loading')}
           </p>
         )}
+        {/* 什么时候走到这里：状态查询失败——保留错误提示（后续轮询恢复后自动消失） */}
         {status.isError && (
           <p role="alert" className="text-sm text-destructive">
             {key('loadFailed')}
           </p>
         )}
+        {/* 什么时候走到这里：最近的动作/配对/解除配对失败——错误横幅 */}
         {failure && (
           <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
             {failure}
           </p>
         )}
+        {/* 什么时候走到这里：最近一次动作成功——成功提示横幅 */}
         {notice && (
           <p role="status" className="rounded-lg bg-muted/40 p-3 text-sm leading-6">
             {key(notice)}
           </p>
         )}
+        {/* 什么时候走到这里：本地模式为 companion（桌面伴侣模式）——渲染伴侣连接区 */}
         {status.data?.mode === 'companion' && (
           <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -174,12 +218,14 @@ export default function LocalAgentsPanel() {
                 <Monitor className="size-4 text-primary" />
                 {key('companionTitle')}
               </h3>
+              {/* 伴侣状态徽标：已连接 / 离线 */}
               {hasCompanion && (
                 <Badge variant={companion?.connected ? 'secondary' : 'outline'}>
                   {key(companion?.connected ? 'states.connected' : 'states.offline')}
                 </Badge>
               )}
             </div>
+            {/* 文案三态：已连接 / 有配置但离线 / 从未配置 */}
             <p className="text-sm leading-6 text-muted-foreground">
               {key(
                 companion?.connected
@@ -189,6 +235,7 @@ export default function LocalAgentsPanel() {
                     : 'companionIntro',
               )}
             </p>
+            {/* 什么时候走到这里：伴侣尚未连接——给配对（或打开深链）与下载入口 */}
             {!companion?.connected && (
               <div className="flex flex-wrap items-center gap-2">
                 {pairUrl ? (
@@ -213,6 +260,7 @@ export default function LocalAgentsPanel() {
                     {key(pairing ? 'pairAgain' : 'pair')}
                   </Button>
                 )}
+                {/* 伴侣安装包下载入口（GitHub releases 外链） */}
                 <Button asChild size="sm" variant="outline">
                   <a
                     href="https://github.com/Lueyu/squabble/releases/latest"
@@ -225,11 +273,13 @@ export default function LocalAgentsPanel() {
                 </Button>
               </div>
             )}
+            {/* 什么时候走到这里：已发起配对且伴侣尚未连上——展示等待中/已过期文案 */}
             {pairing && !companion?.connected && (
               <p role="status" className="text-xs leading-5 text-muted-foreground">
                 {key(pairingActive ? 'pairWaiting' : 'pairExpired')}
               </p>
             )}
+            {/* 什么时候走到这里：配置过伴侣——给解除配对入口 */}
             {hasCompanion && (
               <Button
                 type="button"
@@ -253,11 +303,14 @@ export default function LocalAgentsPanel() {
             )}
           </div>
         )}
+        {/* 本地智能体卡片列表（native CLI 各 provider） */}
         <div className="grid gap-3 sm:grid-cols-2">
           {status.data?.items.map((agent: LocalAgentConnection) => {
+            // 离线判定：伴侣来源但伴侣未连接，或已连接就绪但探测不可用
             const offline =
               (agent.source === 'companion' && !companion?.connected) ||
               (agent.connected && agent.state === 'ready' && !agent.available);
+            // 展示态优先级：offline > busy > connected > 原始 state
             const state = offline
               ? 'offline'
               : agent.busy
@@ -265,7 +318,9 @@ export default function LocalAgentsPanel() {
                 : agent.state === 'ready' && agent.connected
                   ? 'connected'
                   : agent.state;
+            // 当前智能体的动作是否进行中（转圈只画在本卡）
             const pending = action.isPending && action.variables?.id === agent.id;
+            // 配置帮助：优先取译文 providerHelp.<provider>，未知 provider 回退服务端原文
             const agentHelp = t(`council.localAgents.providerHelp.${agent.provider}`, {
               defaultValue: agent.configurationHelp ?? '',
             });
@@ -278,6 +333,7 @@ export default function LocalAgentsPanel() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <h3 className="flex items-center gap-2 break-words font-semibold">
+                      {/* 已连接且非离线→绿色对勾，否则灰色机器人图标 */}
                       {agent.connected && !offline ? (
                         <CheckCircle2 className="size-4 shrink-0 text-success" />
                       ) : (
@@ -291,6 +347,7 @@ export default function LocalAgentsPanel() {
                       </p>
                     )}
                   </div>
+                  {/* 状态徽标：connected→次要 / error→危险 / 其余→描边 */}
                   <Badge
                     variant={
                       state === 'connected'
@@ -303,14 +360,17 @@ export default function LocalAgentsPanel() {
                     {key(`states.${state}`)}
                   </Badge>
                 </div>
+                {/* 状态说明文案 */}
                 <p className="mt-3 flex-1 text-xs leading-5 text-muted-foreground">
                   {key(`stateHints.${state}`)}
                 </p>
+                {/* 什么时候走到这里：该 provider 有配置帮助文案 */}
                 {agentHelp && (
                   <p className="mt-2 break-words text-xs leading-5 text-muted-foreground">
                     {agentHelp}
                   </p>
                 )}
+                {/* 什么时候走到这里：智能体暴露了研究工具模式——展示 live(MCP) / snapshot 及原因 */}
                 {agent.researchTools && (
                   <p className="mt-2 rounded-lg bg-muted/60 p-2.5 text-xs leading-5 text-muted-foreground">
                     {key(`tools.${agent.researchTools.mode === 'mcp' ? 'live' : 'snapshot'}`)}
@@ -319,7 +379,9 @@ export default function LocalAgentsPanel() {
                     )}
                   </p>
                 )}
+                {/* 动作按钮区：按状态渲染安装/登录/连接/断开，离线卡不给动作 */}
                 <div className="mt-4 flex flex-wrap gap-2">
+                  {/* 什么时候走到这里：未安装——给安装包外链 */}
                   {!offline && agent.state === 'not_installed' && (
                     <Button asChild size="sm" variant="outline">
                       <a
@@ -333,6 +395,7 @@ export default function LocalAgentsPanel() {
                       </a>
                     </Button>
                   )}
+                  {/* 什么时候走到这里：已安装但需要登录——打开浏览器登录 */}
                   {!offline && agent.state === 'login_required' && (
                     <Button
                       type="button"
@@ -345,6 +408,7 @@ export default function LocalAgentsPanel() {
                       {key('login')}
                     </Button>
                   )}
+                  {/* 什么时候走到这里：已就绪但未连接——发起连接（busy 时禁用） */}
                   {!offline && agent.state === 'ready' && !agent.connected && (
                     <Button
                       type="button"
@@ -357,6 +421,7 @@ export default function LocalAgentsPanel() {
                       {key('connect')}
                     </Button>
                   )}
+                  {/* 什么时候走到这里：已连接——提供断开 */}
                   {agent.connected && (
                     <Button
                       type="button"
@@ -375,6 +440,7 @@ export default function LocalAgentsPanel() {
             );
           })}
         </div>
+        {/* 底部提示：本地智能体也消耗研究预算，跳预算分区 */}
         <p className="text-xs leading-5 text-muted-foreground">
           {key('budgetHint')}{' '}
           <Link to="/settings/budget" className="font-medium text-primary hover:underline">

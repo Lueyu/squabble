@@ -1,3 +1,22 @@
+/**
+ * CouncilNewDialog.tsx — 新建理事会会话弹窗：标的、团队配置、可选绑定 Builder 档案。
+ *
+ * 职责边界：
+ *  - 收集 ticker 与团队（CouncilTeamEditor），可选从 Builder 档案预填团队；
+ *  - 首次拿到本地智能体列表时自动轮转分配（assignLocalAgents）；
+ *  - 提交前做两道校验（ticker 正则 + 档案存在性、validateCouncilSettings），
+ *    通过后回调 onCreate 创建会话。
+ * 上下游：
+ *  - 上游（路由入口/谁引用）：CouncilPage（新建按钮）。
+ *  - 下游（调用哪些 hooks/api/组件）：useQuery ['settings','local-agents']（fetchLocalAgents）；
+ *    useCouncilModels 的 assignLocalAgents；validateCouncilSettings；AgentBuilder/errorMessage；
+ *    CouncilTeamEditor。
+ * 关键约定：
+ *  - initializedProfile/initializedAgents 两个 ref 保证档案预填与智能体分配只发生一次；
+ *    用户手动改团队（changeTeam）后两者立即置位，后续数据到达不再覆盖用户输入；
+ *  - 档案预填会过滤 researchFocus 中的 'web'（仅保留本地执行成员），保持 webResearch:false 口径；
+ *  - 提交 payload：ticker 大写归一、profileId 有值才带、语言 zh 开头 → zh-CN。
+ */
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, Loader2, MessageCircle, X } from 'lucide-react';
@@ -36,6 +55,7 @@ interface CouncilNewDialogProps {
   onCreate: (request: CreateCouncilSession) => Promise<void>;
 }
 
+/** 新建理事会会话弹窗。 */
 export default function CouncilNewDialog({
   open,
   onOpenChange,
@@ -49,6 +69,8 @@ export default function CouncilNewDialog({
   onCreate,
 }: CouncilNewDialogProps) {
   const { t, i18n } = useTranslation();
+  // === 状态声明区 ===
+  // 档案 id / 标的 / 团队配置 / 表单错误
   const [profileId, setProfileId] = useState(initialProfileId);
   const [ticker, setTicker] = useState(initialTicker);
   const [team, setTeam] = useState<CouncilConfig>(
@@ -60,9 +82,13 @@ export default function CouncilNewDialog({
       },
   );
   const [formError, setFormError] = useState<string | null>(null);
+  // 本地智能体列表（用于自动分配）
   const agents = useQuery({ queryKey: ['settings', 'local-agents'], queryFn: fetchLocalAgents });
+  // 一次性初始化守卫：已有初始团队/档案则跳过档案预填；已有团队或无档案则跳过智能体分配
   const initializedAgents = useRef(Boolean(initialTeam) || Boolean(initialProfileId));
   const initializedProfile = useRef(Boolean(initialTeam) || !initialProfileId);
+  // === 数据获取区（副作用） ===
+  // 档案到位后一次性预填团队：沿用档案理事会成员，剔除非本地成员的 web 研究焦点
   useEffect(() => {
     if (initializedProfile.current) return;
     const profile = profiles.find((item: BuilderProfile) => item.id === initialProfileId);
@@ -80,6 +106,7 @@ export default function CouncilNewDialog({
       });
     initializedProfile.current = true;
   }, [profiles, initialProfileId]);
+  // 智能体列表首次到位后一次性轮转分配到团队成员
   useEffect(() => {
     if (initializedAgents.current || !agents.isSuccess) return;
     initializedAgents.current = true;
@@ -88,12 +115,16 @@ export default function CouncilNewDialog({
       members: assignLocalAgents(current.members, agents.data),
     }));
   }, [agents.isSuccess, agents.data]);
+
+  // === 事件处理区 ===
+  // 用户手动改团队：置位两个初始化守卫（不再被自动预填覆盖），清表单错误
   const changeTeam = (value: CouncilConfig) => {
     initializedProfile.current = true;
     initializedAgents.current = true;
     setTeam(value);
     setFormError(null);
   };
+  // 创建会话：两道校验（标的/档案、团队设置）后回调 onCreate
   const create = async () => {
     if (pending) return;
     const symbol = ticker.trim().toUpperCase();
@@ -125,10 +156,12 @@ export default function CouncilNewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* === 渲染区 === */}
       <DialogContent
         className="flex max-h-[92dvh] max-w-2xl flex-col gap-0 overflow-hidden p-0"
         showCloseButton={false}
       >
+        {/* 弹窗头：标题 + 说明 + 右上关闭 */}
         <DialogHeader className="shrink-0 border-b border-border p-5 pr-14 text-left">
           <DialogTitle>{t('council.newTitle')}</DialogTitle>
           <DialogDescription>{t('council.newHint')}</DialogDescription>
@@ -148,6 +181,7 @@ export default function CouncilNewDialog({
           }}
         >
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
+            {/* 标的输入 */}
             <div className="space-y-2">
               <Label htmlFor="council-ticker">{t('council.ticker')}</Label>
               <Input
@@ -159,7 +193,9 @@ export default function CouncilNewDialog({
                 onChange={(event) => setTicker(event.target.value)}
               />
             </div>
+            {/* 团队编辑器 */}
             <CouncilTeamEditor value={team} onChange={changeTeam} />
+            {/* 可折叠的档案选择区：有初始档案时默认展开 */}
             <Collapsible
               defaultOpen={Boolean(initialProfileId)}
               className="rounded-xl border border-border"
@@ -189,6 +225,7 @@ export default function CouncilNewDialog({
                     const profile = profiles.find(
                       (item: BuilderProfile) => item.id === event.target.value,
                     );
+                    // 什么时候走到这里：所选档案带理事会成员——覆盖团队（保留 web 焦点仅当已开 webResearch 或本地执行）
                     if (profile?.config.council?.members.length)
                       changeTeam({
                         ...team,
@@ -215,6 +252,7 @@ export default function CouncilNewDialog({
                 <p className="text-xs leading-5 text-muted-foreground">
                   {t('council.members.profileHint')}
                 </p>
+                {/* 什么时候走到这里：档案列表加载失败——错误提示 */}
                 {error ? (
                   <p role="alert" className="text-xs text-muted-foreground">
                     {t('council.members.profilesLoadFailed')}
@@ -223,6 +261,7 @@ export default function CouncilNewDialog({
               </CollapsibleContent>
             </Collapsible>
           </div>
+          {/* 底部：表单错误 + 提交按钮（创建中/智能体查询中禁用） */}
           <div className="shrink-0 space-y-3 border-t border-border p-4">
             {formError && (
               <p role="alert" className="break-words text-sm text-destructive">

@@ -1,3 +1,23 @@
+/**
+ * CouncilTeamEditor.tsx — 理事会团队编辑器：成员列表增删改、预设一键套用、Web 研究开关。
+ *
+ * 职责边界：
+ *  - 受控组件（value/onChange）：维护 CouncilConfig.members 与 webResearch；
+ *  - 提供：本地智能体一键分配、预设团队套用（COUNCIL_TEAM_PRESETS）、成员卡片列表
+ *    （编辑/删除）、添加面板（COUNCIL_MEMBER_TEMPLATES 模板或自定义）、
+ *    Web 研究开关（关闭时剔除非本地成员的 web 研究焦点）；
+ *  - 成员保存走 saveMember：唯一 manager 约束 + validateCouncilSettings 校验后才回传 onChange。
+ * 上下游：
+ *  - 上游（路由入口/谁引用）：CouncilNewDialog、AgentBuilder/CouncilConfigEditor。
+ *  - 下游（调用哪些 hooks/api/组件）：useCouncilModels（options/localAgents/memberLabel/refetch）；
+ *    useCouncilModels 的 assignLocalAgents；@shared/council-templates 的模板与预设工厂；
+ *    validateCouncilSettings；CouncilMemberAvatar / CouncilMemberEditor。
+ * 关键约定：
+ *  - 成员数量上限 6、下限 2（删除按钮在 ≤2 或 manager 时禁用）；
+ *  - manager 唯一：保存 manager 成员时把其余 manager 降级为 researcher；
+ *  - 新成员 id 由 模板id-16位随机串 生成；自定义成员四项文案清空、研究焦点清空；
+ *  - 模型列表加载失败时给"重试"入口（models.refetch）。
+ */
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bot, Pencil, Plus, Trash2, X } from 'lucide-react';
@@ -26,13 +46,22 @@ interface CouncilTeamEditorProps {
   onChange: (value: CouncilConfig) => void;
 }
 
+/** 理事会团队编辑器（受控）。 */
 export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditorProps) {
   const { t, i18n } = useTranslation();
+  // === 状态声明区 ===
+  // 文案语言口径 / Web 开关的表单 id
   const language = councilLanguage(i18n.language);
   const webId = useId();
+  // 添加面板开关 / 当前编辑中的成员（null = 关闭编辑器）
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<CouncilMember | null>(null);
+  // 模型选项与本地智能体（共享查询）
   const models = useCouncilModels();
+
+  // === 事件处理区 ===
+  // 选模板新增：生成新成员（轮转分配本地智能体）后直接进入编辑；
+  // custom=true 时清空四项文案与研究焦点（自定义成员起点）
   const selectTemplate = (templateId: CouncilTemplateId, custom = false) => {
     if (value.members.length >= 6) return;
     const [member] = assignLocalAgents(
@@ -59,6 +88,8 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
     );
     setAdding(false);
   };
+  // 保存成员：存在则替换否则追加；manager 唯一约束（其余降级 researcher）；
+  // 校验通过才回传 onChange，问题文案返回给编辑器展示
   const saveMember = (member: CouncilMember): string | null => {
     const exists = value.members.some((item: CouncilMember) => item.id === member.id);
     let members = exists
@@ -76,6 +107,8 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
 
   return (
     <div className="space-y-4">
+      {/* === 渲染区 === */}
+      {/* 什么时候走到这里：有可用本地智能体且仍有成员未用本地模式——一键分配按钮 */}
       {models.localAgents.some((agent) => agent.available) &&
         value.members.some((member) => member.executionMode !== 'local') && (
           <Button
@@ -91,6 +124,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
             {t('council.localAgents.useForTeam')}
           </Button>
         )}
+      {/* 预设团队按钮组（悬浮出描述） */}
       <div className="flex flex-wrap gap-2" role="group" aria-label={t('council.members.presets')}>
         {COUNCIL_TEAM_PRESETS.map((preset) => (
           <Tooltip key={preset.id}>
@@ -117,12 +151,14 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
           </Tooltip>
         ))}
       </div>
+      {/* 成员计数与人数边界说明 */}
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">
           {t('council.members.selected', { count: value.members.length })}
         </h3>
         <span className="text-[11px] text-muted-foreground">{t('council.members.bounds')}</span>
       </div>
+      {/* 成员卡片列表：头像/名字/职务徽标/模型标签 + 编辑/删除 */}
       <div className="space-y-2">
         {value.members.map((member: CouncilMember) => (
           <div
@@ -133,6 +169,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
             <div className="min-w-0 flex-1">
               <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium">
                 <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">{member.name}</span>
+                {/* 什么时候走到这里：该成员是 manager——追加"主持人"小徽标 */}
                 {member.role === 'manager' && (
                   <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
                     {t('council.members.moderator')}
@@ -159,6 +196,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
             >
               <Pencil className="size-3.5" />
             </Button>
+            {/* 删除：≤2 人或 manager 时禁用（manager 给专门提示） */}
             <Button
               type="button"
               variant="ghost"
@@ -183,6 +221,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
           </div>
         ))}
       </div>
+      {/* 什么时候走到这里：模型列表加载失败——错误提示 + 重试 */}
       {models.error && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>{t('council.members.modelsLoadFailed')}</span>
@@ -196,6 +235,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
           </Button>
         </div>
       )}
+      {/* 添加面板：模板网格 + 自定义入口；否则显示"添加成员"虚线按钮（满 6 人禁用） */}
       {adding ? (
         <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
           <div className="flex items-center justify-between">
@@ -253,6 +293,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
           {t(value.members.length >= 6 ? 'council.members.full' : 'council.members.add')}
         </Button>
       )}
+      {/* 什么时候走到这里：存在本地执行成员——本地工具/预算提示（含预算入口链接） */}
       {value.members.some((member) => member.executionMode === 'local') && (
         <div className="rounded-xl bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
           <p>{t('council.localAgents.toolsHint')}</p>
@@ -264,6 +305,8 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
           </p>
         </div>
       )}
+      {/* 什么时候走到这里：存在非本地成员——Web 研究开关；
+          关闭时同步剔除非本地成员的 'web' 研究焦点 */}
       {value.members.some((member) => member.executionMode !== 'local') && (
         <div className="rounded-xl bg-muted/40 p-3">
           <div className="flex items-center justify-between gap-3">
@@ -298,6 +341,7 @@ export default function CouncilTeamEditor({ value, onChange }: CouncilTeamEditor
           </p>
         </div>
       )}
+      {/* 成员编辑器（按成员 id 作 key 重建，保证表单状态干净） */}
       {editing && (
         <CouncilMemberEditor
           key={editing.id}

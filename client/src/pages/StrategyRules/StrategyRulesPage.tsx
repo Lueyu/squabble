@@ -1,15 +1,24 @@
 /**
- * @file pages/StrategyRules/StrategyRulesPage.tsx
- * @description Route `/settings/rules`: manage multi-agent strategy rules.
+ * StrategyRulesPage.tsx — 策略规则管理页：按分类分组的多智能体策略规则增删改、排序与恢复默认。
  *
- * Rules are grouped by category (position concentration, stop-loss/take-profit,
- * buy conditions, cash management, risk gates). Each rule has a `hard`/`soft`
- * type and a `warning`/`hard_block` severity. The page supports:
- *  - create / edit / delete via dialogs
- *  - per-rule enable toggle (optimistic update with rollback)
- *  - inline threshold editing
- *  - drag-and-drop reordering within a category (optimistic, rolled back on error)
- *  - resetting to the system-default rule set
+ * 职责边界：
+ *  - 规则按六类分组展示：仓位集中度 / 止盈止损 / 买入条件 / 现金管理 / 风险闸门 / 其他；
+ *  - 每条规则带 hard/soft 类型与 warning/hard_block 严重级别两种徽标；
+ *  - 支持弹窗新增/编辑/删除、逐条启用开关、阈值行内编辑（Enter 保存 / Escape 取消）、
+ *    分类内拖拽排序，以及一键恢复系统默认规则集。
+ * 上下游：
+ *  - 上游（路由入口/谁引用）：app.tsx 路由 /settings/rules；SettingsPage 以 embedded 形式内嵌
+ *    （embedded 隐藏页头；active=false 表示所在分区未激活，两个弹窗被强制关闭——面板保挂）。
+ *  - 下游（调用哪些 hooks/api/组件）：@/api 的 getStrategyRules / createStrategyRule /
+ *    updateStrategyRule / deleteStrategyRule / reorderStrategyRules / resetStrategyRules；
+ *    @shared/api.interface 的 StrategyRule / RuleCategory / RuleSeverity / RuleType 等；
+ *    Card/Switch/Badge/Input/Select/Dialog/AlertDialog/Textarea/Skeleton；logger；toast。
+ * 关键约定：
+ *  - 乐观更新 + 失败回滚：启停开关、拖拽排序、阈值行内编辑三处先改本地 state 再发请求，
+ *    失败时回滚旧值；新增/删除/恢复默认成功后整体 loadRules() 重拉。
+ *  - 拖拽仅允许同一分类内重排（跨分类 drop 拒绝并提示）；提交的 sort 按组内新顺序 0..n 编号。
+ *  - 阈值展示：formatThreshold 识别 pct/%、days、usd 三类单位，其余单位原样追加；
+ *    threshold 为 null/空/非数字时显示 — 且不可行内编辑。
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
@@ -78,8 +87,8 @@ import { Label } from '@/components/ui/label';
 
 import { useTranslation } from 'react-i18next';
 
-// ── Category definitions ─────────────────────────────────
-/** Ordered list of rule categories for grouping and rendering. */
+// ── 分类定义 ─────────────────────────────────
+/** 规则分类的固定渲染顺序：分组展示与归类都按此表进行，未知分类归入 other。 */
 const CATEGORY_ORDER: Array<{
   key: RuleCategory | 'other';
   labelKey: string;
@@ -93,29 +102,27 @@ const CATEGORY_ORDER: Array<{
   { key: 'other', labelKey: 'ui.rules.other' },
 ];
 
+// 严重级别 → i18n key 映射（hard_block=硬阻断 / warning=仅提示）
 const SEVERITY_LABEL_KEYS: Record<RuleSeverity, string> = {
   hard_block: 'rules.hardBlock',
   warning: 'rules.warning',
 };
 
+// 规则类型 → i18n key 映射（hard=硬规则 / soft=软规则）
 const RULE_TYPE_LABEL_KEYS: Record<RuleType, string> = {
   hard: 'rules.hardRule',
   soft: 'rules.softRule',
 };
 
-// ── Helpers ──────────────────────────────────────────────
-/**
- * Resolve a rule's category bucket, defaulting unknown values to `other`.
- */
+// ── 辅助函数 ──────────────────────────────────────────────
+/** 解析规则的分类桶：无 category 或不在 CATEGORY_ORDER 定义内的一律归 other。 */
 function getCategoryKey(rule: StrategyRule): RuleCategory | 'other' {
   if (!rule.category) return 'other';
   const defined = CATEGORY_ORDER.slice(0, -1).some((c) => c.key === rule.category);
   return defined ? rule.category : 'other';
 }
 
-/**
- * Bucket rules into the fixed category order, sorted by each rule's `sort`.
- */
+/** 把规则按固定分类顺序分桶，桶内再按各自 sort 值升序排列。 */
 function groupRules(rules: StrategyRule[]): Record<string, StrategyRule[]> {
   const groups: Record<string, StrategyRule[]> = {};
   for (const cat of CATEGORY_ORDER) {
@@ -131,10 +138,7 @@ function groupRules(rules: StrategyRule[]): Record<string, StrategyRule[]> {
   return groups;
 }
 
-/**
- * Pretty-print a threshold value with its unit.
- * Recognizes `pct/%`, `days`, `usd`; other units are appended verbatim.
- */
+/** 阈值人性化展示：识别 pct/%、days、usd 三类单位做后缀/翻译，其余单位原样追加；无效值显示 —。 */
 function formatThreshold(
   threshold: string | number | null,
   unit: string | null,
@@ -152,25 +156,25 @@ function formatThreshold(
   return `${numStr} ${unit}`;
 }
 
-// ── Main page component ────────────────────────────────────
+// ── 主页面组件 ────────────────────────────────────────────
 /**
- * Strategy rules management page.
+ * 策略规则管理页。
  *
- * State groups: list loading, create/edit dialog, delete confirmation, reset
- * confirmation, drag-and-drop, and inline threshold editing. Mutations use
- * optimistic updates where cheap (toggle, reorder, threshold) and roll back on
- * failure; create/delete/reset refetch the whole list.
+ * 状态分组：列表加载 / 新增编辑弹窗 / 删除确认 / 恢复默认确认 / 拖拽 / 阈值行内编辑。
+ * 弹窗均受 active 控制（所在分区未激活时强制关闭）；拖拽中转 id 与分类用 ref 承载。
  */
 function StrategyRulesPage({
   embedded = false,
   active = true,
 }: { embedded?: boolean; active?: boolean } = {}) {
+  // —— 状态声明区 ——
   const { t } = useTranslation();
+  // 规则全量列表与加载/错误态
   const [rules, setRules] = useState<StrategyRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 新增 / 编辑弹窗
+  // 新增 / 编辑弹窗：editingRule=null 表示新建；formData 为弹窗草稿；saving 为提交中
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<StrategyRule | null>(null);
   const [formData, setFormData] = useState<{
@@ -194,7 +198,7 @@ function StrategyRulesPage({
   });
   const [saving, setSaving] = useState(false);
 
-  // 删除确认
+  // 删除确认：deleteTarget 为待删规则，deleting 为请求进行中
   const [deleteTarget, setDeleteTarget] = useState<StrategyRule | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -202,18 +206,18 @@ function StrategyRulesPage({
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  // 拖拽状态
+  // 拖拽状态：被拖规则 id 与其分类用 ref 承载（避免拖拽事件闭包过期）；dragOverId 仅作高亮
   const dragIdRef = useRef<string | null>(null);
   const dragCatRef = useRef<RuleCategory | 'other' | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [reordering, setReordering] = useState(false);
 
-  // 阈值行内编辑
+  // 阈值行内编辑：editingThresholdId 定位正在编辑的行，thresholdValue 为输入草稿
   const [editingThresholdId, setEditingThresholdId] = useState<string | null>(null);
   const [thresholdValue, setThresholdValue] = useState('');
 
-  // ── Data loading ────────────────────────────────────────────
-  /** Fetch all strategy rules and populate state. */
+  // ── 数据加载 ────────────────────────────────────────────
+  /** 拉取全部策略规则写入 state；失败写 error 并 toast。 */
   const loadRules = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -230,24 +234,28 @@ function StrategyRulesPage({
     }
   }, [t]);
 
+  // 首次挂载拉取列表（loadRules 因 t 变化重建时重新拉取）
   useEffect(() => {
     void loadRules();
   }, [loadRules]);
 
+  // —— 派生计算区 ——
+  // 规则按分类分桶（渲染直接按 CATEGORY_ORDER 取桶）
   const grouped = useMemo(() => groupRules(rules), [rules]);
 
+  // 硬/软规则计数（顶部说明卡展示）
   const hardCount = rules.filter((r) => r.ruleType === 'hard').length;
   const softCount = rules.filter((r) => r.ruleType === 'soft').length;
 
-  // ── Enable/disable toggle ────────────────────────────────────
-  /**
-   * Optimistically flip a rule's `enabled` flag; reverts on API failure.
-   */
+  // ── 启停开关 ────────────────────────────────────
+  /** 乐观翻转规则的 enabled；API 失败时回滚旧值并 toast 错误。 */
   const handleToggle = useCallback(
     async (rule: StrategyRule, nextEnabled: boolean) => {
+      // 步骤 1：记住旧值并立即翻转本地 state
       const previous = rule.enabled;
       setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, enabled: nextEnabled } : r)));
       try {
+        // 步骤 2：持久化到服务端，成功提示
         await updateStrategyRule(rule.id, { enabled: nextEnabled });
         toast.success(
           t('ui.rules.statusChanged', {
@@ -256,6 +264,7 @@ function StrategyRulesPage({
           }),
         );
       } catch (err) {
+        // 步骤 3：失败回滚旧值并提示
         setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, enabled: previous } : r)));
         const message = err instanceof Error ? err.message : t('ui.rules.toggleFailed');
         logger.error('更新规则状态失败', err);
@@ -265,8 +274,8 @@ function StrategyRulesPage({
     [t],
   );
 
-  // ── Create rule ────────────────────────────────────────────
-  /** Open the create dialog with a blank form. */
+  // ── 新增规则 ────────────────────────────────────
+  /** 打开新增弹窗：清空编辑目标并重置表单为默认值。 */
   const openCreateDialog = useCallback(() => {
     setEditingRule(null);
     setFormData({
@@ -282,8 +291,8 @@ function StrategyRulesPage({
     setDialogOpen(true);
   }, []);
 
-  // ── Edit rule ────────────────────────────────────────────
-  /** Open the edit dialog, pre-filling the form from the given rule. */
+  // ── 编辑规则 ────────────────────────────────────
+  /** 打开编辑弹窗：按传入规则预填表单（threshold/unit/description/category 缺省补空）。 */
   const openEditDialog = useCallback((rule: StrategyRule) => {
     setEditingRule(rule);
     setFormData({
@@ -299,16 +308,15 @@ function StrategyRulesPage({
     setDialogOpen(true);
   }, []);
 
-  /**
-   * Validate and submit the create/edit dialog. Re-runs the list on success.
-   * Threshold must be a finite number when provided.
-   */
+  /** 校验并提交新增/编辑弹窗；成功后关弹窗并重拉列表。threshold 有值时必须是有限数字。 */
   const handleSaveDialog = useCallback(async () => {
+    // 步骤 1：必填项校验（ruleKey 与 ruleName）
     if (!formData.ruleKey.trim() || !formData.ruleName.trim()) {
       toast.error(t('ui.rules.fillRequired'));
       return;
     }
 
+    // 步骤 2：阈值校验——有输入时必须是有限数字；空输入表示不设阈值
     const thresholdNum = formData.threshold.trim() !== '' ? Number(formData.threshold) : undefined;
     if (
       formData.threshold.trim() !== '' &&
@@ -318,6 +326,7 @@ function StrategyRulesPage({
       return;
     }
 
+    // 步骤 3：组装 payload（trim；unit/description/category 为空时省略）
     setSaving(true);
     try {
       const payload: CreateStrategyRuleDto & UpdateStrategyRuleDto = {
@@ -331,6 +340,7 @@ function StrategyRulesPage({
         severity: formData.severity,
       };
 
+      // 步骤 4：按 editingRule 分派更新或新建
       if (editingRule) {
         await updateStrategyRule(editingRule.id, payload as unknown as Record<string, unknown>);
         toast.success(t('ui.rules.ruleUpdated'));
@@ -339,6 +349,7 @@ function StrategyRulesPage({
         toast.success(t('ui.rules.ruleCreated'));
       }
 
+      // 步骤 5：关弹窗、清编辑目标、重拉列表
       setDialogOpen(false);
       setEditingRule(null);
       await loadRules();
@@ -351,8 +362,8 @@ function StrategyRulesPage({
     }
   }, [formData, editingRule, loadRules, t]);
 
-  // ── Delete rule ────────────────────────────────────────────
-  /** Confirm-and-delete the rule held in `deleteTarget`. */
+  // ── 删除规则 ────────────────────────────────────
+  /** 确认删除 deleteTarget 持有的规则；成功后清目标并重拉列表。 */
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -371,8 +382,8 @@ function StrategyRulesPage({
     }
   }, [deleteTarget, loadRules, t]);
 
-  // ── Reset to defaults ────────────────────────────────────
-  /** Reset all rules to the system default set, then refetch. */
+  // ── 恢复默认 ────────────────────────────────────
+  /** 把全部规则重置为系统默认集，然后重拉列表。 */
   const handleReset = useCallback(async () => {
     setResetting(true);
     try {
@@ -389,8 +400,8 @@ function StrategyRulesPage({
     }
   }, [loadRules, t]);
 
-  // ── Drag-and-drop reordering ────────────────────────────────────
-  /** Track the dragged rule id + its category bucket. */
+  // ── 拖拽排序 ────────────────────────────────────
+  /** 记录被拖规则的 id 与所属分类（写入 ref 供 drop 事件读取），并设置拖拽数据。 */
   const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>, rule: StrategyRule) => {
     dragIdRef.current = rule.id;
     dragCatRef.current = getCategoryKey(rule);
@@ -398,7 +409,7 @@ function StrategyRulesPage({
     e.dataTransfer.setData('text/plain', rule.id);
   }, []);
 
-  /** Highlight the drop target row. */
+  /** 悬停高亮目标行：preventDefault 才允许放置，dropEffect=move。 */
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>, ruleId: string) => {
       e.preventDefault();
@@ -410,7 +421,7 @@ function StrategyRulesPage({
     [dragOverId],
   );
 
-  /** Clear the drop highlight when leaving the row (ignoring child enter/leave). */
+  /** 离开行时清除高亮：relatedTarget 仍在行内（子元素间移动）则忽略。 */
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     const related = e.relatedTarget as Node | null;
     const current = e.currentTarget as Node;
@@ -419,13 +430,14 @@ function StrategyRulesPage({
   }, []);
 
   /**
-   * Reorder within a single category. Cross-category drops are rejected.
-   * Applies an optimistic splice, persists the new `sort` to the backend, and
-   * rolls the UI back if the API call fails.
+   * 分类内重排：跨分类 drop 直接拒绝。流程——读 ref 定位拖拽与目标规则 →
+   * 组内乐观 splice 重排 → 重新编号 sort 0..n → 更新整体 rules →
+   * 持久化 reorderStrategyRules，失败回滚旧 rules。
    */
   const handleDrop = useCallback(
     async (e: React.DragEvent<HTMLDivElement>, targetRule: StrategyRule) => {
       e.preventDefault();
+      // 步骤 1：读取并清空拖拽 ref，清除高亮
       const draggedId = dragIdRef.current;
       const dragCat = dragCatRef.current;
       const targetCat = getCategoryKey(targetRule);
@@ -433,12 +445,14 @@ function StrategyRulesPage({
       dragCatRef.current = null;
       setDragOverId(null);
 
+      // 步骤 2：合法性检查——同规则、跨分类直接返回
       if (!draggedId || draggedId === targetRule.id) return;
       if (dragCat !== targetCat) {
         toast.error(t('ui.rules.sameCategoryOnly'));
         return;
       }
 
+      // 步骤 3：在组内定位拖拽与目标的索引
       const groupList = grouped[targetCat];
       const dragIdx = groupList.findIndex((r) => r.id === draggedId);
       const targetIdx = groupList.findIndex((r) => r.id === targetRule.id);
@@ -450,6 +464,7 @@ function StrategyRulesPage({
       const [removed] = newGroupList.splice(dragIdx, 1);
       newGroupList.splice(targetIdx, 0, removed);
 
+      // 组内新顺序重新编号 sort（0..n）
       const reordered: Array<{ id: string; sort: number }> = newGroupList.map((r, i) => ({
         id: r.id,
         sort: i,
@@ -462,6 +477,7 @@ function StrategyRulesPage({
       });
       setRules(updatedRules);
 
+      // 步骤 4：持久化新顺序；失败回滚旧 rules
       setReordering(true);
       try {
         await reorderStrategyRules(reordered);
@@ -479,51 +495,53 @@ function StrategyRulesPage({
     [grouped, rules, t],
   );
 
-  /** Clear drag refs after the drag ends. */
+  /** 拖拽结束后清空 ref 与高亮（drop 未触发的兜底清理）。 */
   const handleDragEnd = useCallback(() => {
     dragIdRef.current = null;
     dragCatRef.current = null;
     setDragOverId(null);
   }, []);
 
-  // ── Inline threshold editing ────────────────────────────────────
-  /** Enter inline edit mode for a rule's threshold. */
+  // ── 阈值行内编辑 ────────────────────────────────────
+  /** 进入某规则阈值的行内编辑态：预填当前阈值。 */
   const startThresholdEdit = useCallback((rule: StrategyRule) => {
     setEditingThresholdId(rule.id);
     setThresholdValue(rule.threshold ?? '');
   }, []);
 
-  /** Exit inline edit mode without saving. */
+  /** 取消行内编辑：清空编辑行与输入草稿。 */
   const cancelThresholdEdit = useCallback(() => {
     setEditingThresholdId(null);
     setThresholdValue('');
   }, []);
 
-  /**
-   * Persist an inline threshold edit. No-ops when the value is unchanged.
-   * Optimistically updates the row and rolls back on API failure.
-   */
+  /** 保存行内阈值：值未变则直接退出；乐观更新该行，失败回滚旧阈值。 */
   const saveThreshold = useCallback(
     async (rule: StrategyRule) => {
+      // 步骤 1：值未变化——无需请求，直接退出编辑态
       if (thresholdValue === (rule.threshold ?? '')) {
         cancelThresholdEdit();
         return;
       }
+      // 步骤 2：校验必须是有限数字
       const numValue = Number(thresholdValue);
       if (Number.isNaN(numValue) || !isFinite(numValue)) {
         toast.error(t('ui.rules.validNumber'));
         return;
       }
+      // 步骤 3：乐观更新该行阈值
       const previous = rule.threshold;
       setRules((prev) =>
         prev.map((r) => (r.id === rule.id ? { ...r, threshold: thresholdValue } : r)),
       );
       try {
+        // 步骤 4：持久化，成功后退出编辑态
         await updateStrategyRule(rule.id, { threshold: numValue });
         toast.success(t('ui.rules.thresholdSaved', { name: rule.ruleName }));
         setEditingThresholdId(null);
         setThresholdValue('');
       } catch (err) {
+        // 步骤 5：失败回滚旧阈值
         setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, threshold: previous } : r)));
         const message = err instanceof Error ? err.message : t('rules.saveFailed');
         logger.error('更新阈值失败', err);
@@ -533,13 +551,14 @@ function StrategyRulesPage({
     [thresholdValue, cancelThresholdEdit, t],
   );
 
-  // ── 渲染 ────────────────────────────────────────────────
+  // ── 渲染区 ────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      {/* 顶部操作栏 */}
+      {/* 顶部操作栏：embedded 时右对齐且不渲染页头 */}
       <div
         className={`flex flex-col gap-4 sm:flex-row sm:items-start ${embedded ? 'sm:justify-end' : 'sm:justify-between'}`}
       >
+        {/* 什么时候走到这里：独立路由页（非嵌入）——渲染标题与描述 */}
         {!embedded && (
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
@@ -564,7 +583,7 @@ function StrategyRulesPage({
         </div>
       </div>
 
-      {/* 说明卡片 */}
+      {/* 说明卡片：硬规则 / 软规则各一张 */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card className="border-destructive/20 bg-destructive/5">
           <CardHeader className="pb-3">
@@ -615,7 +634,7 @@ function StrategyRulesPage({
         </Card>
       </div>
 
-      {/* 错误提示 */}
+      {/* 错误提示：什么时候走到这里——列表加载失败（附原始错误信息 + 重试路径为刷新/重进） */}
       {error && (
         <div
           role="alert"
@@ -629,8 +648,9 @@ function StrategyRulesPage({
         </div>
       )}
 
-      {/* 分组展示 */}
+      {/* 分组展示：加载中走骨架屏，否则按 CATEGORY_ORDER 逐组渲染 */}
       {loading ? (
+        // 什么时候走到这里：首次加载中——两组骨架占位
         <div className="space-y-6">
           {[0, 1, 2].map((i) => (
             <div key={i} className="space-y-3">
@@ -649,7 +669,7 @@ function StrategyRulesPage({
             const groupRulesList = grouped[cat.key] ?? [];
             return (
               <div key={cat.key}>
-                {/* 分组标题 */}
+                {/* 分组标题：名称 + 数量徽标 + 分隔线 */}
                 <div className="mb-3 flex items-center gap-2">
                   <h2 className="text-base font-semibold text-foreground">{t(cat.labelKey)}</h2>
                   <Badge
@@ -661,8 +681,9 @@ function StrategyRulesPage({
                   <div className="ml-2 h-px flex-1 bg-border/50" />
                 </div>
 
-                {/* 规则列表 */}
+                {/* 规则列表：空组给虚线占位，否则渲染 RuleCard 行 */}
                 {groupRulesList.length === 0 ? (
+                  // 什么时候走到这里：该分类暂无规则——虚线空占位
                   <div className="rounded-lg border border-dashed border-border p-4">
                     <p className="text-center text-xs text-muted-foreground">
                       {t('ui.rules.emptyCategory')}
@@ -700,7 +721,7 @@ function StrategyRulesPage({
         </div>
       )}
 
-      {/* 新增 / 编辑弹窗 */}
+      {/* 新增 / 编辑弹窗：active=false（分区未激活）时强制关闭 */}
       <Dialog open={active && dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90dvh] max-w-xl overflow-y-auto">
           <DialogHeader>
@@ -712,6 +733,7 @@ function StrategyRulesPage({
             </DialogDescription>
           </DialogHeader>
 
+          {/* 表单：两列标识区 → 三列类型/阈值/单位 → 两列分类/严重级别 → 描述 */}
           <div className="grid gap-4 py-2">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -792,6 +814,7 @@ function StrategyRulesPage({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    {/* 分类下拉：排除 other（other 只是兜底桶，不允许手动选择）+ 未分类选项 */}
                     {CATEGORY_ORDER.filter((c) => c.key !== 'other').map((c) => (
                       <SelectItem key={c.key} value={c.key}>
                         {t(c.labelKey)}
@@ -850,7 +873,7 @@ function StrategyRulesPage({
         </DialogContent>
       </Dialog>
 
-      {/* 删除确认弹窗 */}
+      {/* 删除确认弹窗：active=false 强制关闭；deleting 进行中禁止再关（防误触丢确认） */}
       <AlertDialog
         open={active && deleteTarget !== null}
         onOpenChange={(open) => {
@@ -882,7 +905,7 @@ function StrategyRulesPage({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* 恢复默认确认弹窗 */}
+      {/* 恢复默认确认弹窗：active=false 强制关闭 */}
       <AlertDialog open={active && resetOpen} onOpenChange={setResetOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -910,8 +933,8 @@ function StrategyRulesPage({
   );
 }
 
-// ── Rule card sub-component ────────────────────────────────
-/** Props for {@link RuleCard}. */
+// ── 规则卡片子组件 ────────────────────────────────
+/** {@link RuleCard} 的入参：规则数据 + 阈值行内编辑受控值 + 父级注入的全部回调与拖拽状态。 */
 interface RuleCardProps {
   rule: StrategyRule;
   editingThresholdId: string | null;
@@ -933,10 +956,9 @@ interface RuleCardProps {
 }
 
 /**
- * A single draggable rule row.
- * Renders the name/key/description, threshold (click-to-edit), severity and
- * rule-type badges, enable switch, edit/delete actions, and the drag handle.
- * Drag wiring is delegated to the parent via callbacks.
+ * 单条可拖拽规则行。
+ * 渲染名称/key/描述、阈值（点击进入行内编辑）、严重级别与规则类型徽标、
+ * 启用开关、编辑/删除按钮与拖拽手柄；拖拽事件全部委托父级回调处理。
  */
 function RuleCard({
   rule,
@@ -958,6 +980,7 @@ function RuleCard({
   isReordering,
 }: RuleCardProps) {
   const { t } = useTranslation();
+  // 本行是否处于阈值编辑态；是否设有阈值（无阈值时阈值按钮禁用）
   const isEditing = editingThresholdId === rule.id;
   const hasThreshold = rule.threshold !== null && rule.threshold !== undefined;
 
@@ -978,7 +1001,7 @@ function RuleCard({
       <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-4">
         {/* 顶部行：拖拽手柄 + 名称 */}
         <div className="flex items-center gap-3 min-w-0 flex-1 w-full sm:w-auto">
-          {/* 拖拽手柄 */}
+          {/* 拖拽手柄（仅视觉提示，draggable 在 Card 上） */}
           <div
             className="flex shrink-0 cursor-grab items-center justify-center text-muted-foreground/60 transition-colors hover:text-muted-foreground active:cursor-grabbing"
             title={t('ui.rules.dragSort')}
@@ -986,7 +1009,7 @@ function RuleCard({
             <GripVertical size={18} />
           </div>
 
-          {/* 名称 + 说明 */}
+          {/* 名称 + key + 可选描述 */}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="min-w-0 break-words font-medium text-foreground">
@@ -1006,6 +1029,7 @@ function RuleCard({
         <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto sm:justify-end">
           {/* 中部：阈值参数 */}
           <div className="flex items-center gap-2">
+            {/* 什么时候走到这里：该行处于阈值行内编辑态——输入框（Enter 保存 / Escape 取消）+ 单位 + 确认/取消按钮 */}
             {isEditing ? (
               <div className="flex items-center gap-2">
                 <Input
@@ -1044,6 +1068,7 @@ function RuleCard({
                 </Button>
               </div>
             ) : (
+              // 什么时候走到这里：非编辑态——阈值展示按钮（有阈值才可点击进入编辑）
               <button
                 type="button"
                 onClick={() => hasThreshold && startThresholdEdit(rule)}
@@ -1074,7 +1099,7 @@ function RuleCard({
 
           {/* 右部：徽章 + 开关 + 操作按钮 */}
           <div className="flex items-center gap-2 flex-wrap">
-            {/* 严重级别徽章 */}
+            {/* 严重级别徽章：hard_block 红底 / warning 琥珀描边 */}
             <Badge
               variant={rule.severity === 'hard_block' ? 'destructive' : 'outline'}
               className={
@@ -1086,7 +1111,7 @@ function RuleCard({
               {t(SEVERITY_LABEL_KEYS[rule.severity])}
             </Badge>
 
-            {/* ruleType 徽章 */}
+            {/* ruleType 徽章：hard 主色 / soft 灰 */}
             <Badge
               variant="outline"
               className={
@@ -1098,7 +1123,7 @@ function RuleCard({
               {t(RULE_TYPE_LABEL_KEYS[rule.ruleType])}
             </Badge>
 
-            {/* 启停开关 */}
+            {/* 启停开关（乐观更新在父级 handleToggle） */}
             <Switch
               checked={rule.enabled}
               onCheckedChange={(checked) => {
@@ -1106,7 +1131,7 @@ function RuleCard({
               }}
             />
 
-            {/* 编辑按钮 */}
+            {/* 编辑按钮：打开预填弹窗 */}
             <Button
               variant="ghost"
               size="icon"
@@ -1117,7 +1142,7 @@ function RuleCard({
               <Pencil size={16} />
             </Button>
 
-            {/* 删除按钮 */}
+            {/* 删除按钮：仅打开确认弹窗，真正删除在确认后 */}
             <Button
               variant="ghost"
               size="icon"

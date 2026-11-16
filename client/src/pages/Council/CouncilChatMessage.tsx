@@ -1,9 +1,28 @@
+/**
+ * CouncilChatMessage.tsx — 单条理事会聊天消息：气泡、引用回复、依据、来源与追问按钮。
+ *
+ * 职责边界：
+ *  - 渲染一条 CouncilMessage：系统消息居中弱化；用户消息右对齐主色气泡；成员消息左对齐卡片气泡；
+ *  - 气泡内可选：引用回复跳转按钮、模型依据（reasoningSummary）、引用来源折叠列表、
+ *    追问按钮组（点击回调 onQuestion）。
+ * 上下游：
+ *  - 上游（路由入口/谁引用）：CouncilConversation（消息流逐条渲染）。
+ *  - 下游（调用哪些 hooks/api/组件）：@/utils/council-state 的 councilMessageDisplayContent；
+ *    CouncilMemberAvatar。
+ * 关键约定：
+ *  - 根节点 id=`council-message-<message.id>` 且 tabIndex=-1——时间线/研究进度"查看回复"
+ *    的滚动聚焦目标都锚定在这里，不可改名；
+ *  - 采集类（acquisition）与进度类（phase==='progress'）消息直接返回 null，不渲染；
+ *  - 成员查找优先按 memberId，无 id 时回退 name+role 匹配；
+ *  - 来源 URL 仅接受 http/https（safeSourceUrl 白名单）。
+ */
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, CornerUpLeft, FileText, MessageCircle } from 'lucide-react';
 import type { CouncilMessage, CouncilSession } from '@shared/council.interface';
 import { councilMessageDisplayContent } from '@/utils/council-state';
 import CouncilMemberAvatar from './CouncilMemberAvatar';
 
+/** 来源 URL 白名单过滤：只放行 http/https，解析失败或协议不在白名单返回 null。 */
 function safeSourceUrl(value: string | null): string | null {
   if (!value) return null;
   try {
@@ -14,6 +33,7 @@ function safeSourceUrl(value: string | null): string | null {
   }
 }
 
+/** 单条聊天消息（含系统消息与采集/进度占位的短路）。 */
 export default function CouncilChatMessage({
   message,
   session,
@@ -24,7 +44,9 @@ export default function CouncilChatMessage({
   onQuestion: (question: string) => void;
 }) {
   const { t, i18n } = useTranslation();
+  // 什么时候走到这里：采集/进度类消息——不属于聊天流，直接不渲染
   if (message.acquisition || message.phase === 'progress') return null;
+  // 什么时候走到这里：系统消息——居中灰字，无头像无气泡
   if (message.role === 'system')
     return (
       <article className="mx-auto max-w-xl text-center text-xs leading-6 text-muted-foreground">
@@ -32,18 +54,23 @@ export default function CouncilChatMessage({
       </article>
     );
   const isUser = message.role === 'user';
+  // 消息归属成员：优先 memberId 精确匹配，回退名字+角色匹配
   const member = session.members?.find((item) =>
     message.memberId
       ? item.id === message.memberId
       : item.name === message.memberName && item.role === message.role,
   );
+  // 显示名：用户消息固定"你"，成员消息取消息名或成员名兜底
   const name = isUser ? t('council.you') : message.memberName || member?.name;
+  // 被引用的原消息（存在引用 id 时从会话里找）
   const replyTo = message.replyToMessageId
     ? session.messages.find((item) => item.id === message.replyToMessageId)
     : undefined;
+  // 全会话证据池：报告按版本倒序展开证据，供引用 id 查找
   const evidence = [...session.reports]
     .sort((left, right) => right.version - left.version)
     .flatMap((report) => report.evidence);
+  // 本消息引用的证据：去重 id 后逐个在证据池中定位（可能找不到 → 占位）
   const cited = [...new Set(message.evidenceIds ?? [])].map((id) =>
     evidence.find((item) => item.id === id),
   );
@@ -57,6 +84,7 @@ export default function CouncilChatMessage({
       <div
         className={`flex min-w-0 max-w-[calc(100%-3rem)] flex-col sm:max-w-[84%] ${isUser ? 'items-end' : 'items-start'}`}
       >
+        {/* 消息头：名字 + 职务（成员消息）+ 时间 */}
         <div
           className={`mb-1.5 flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground ${isUser ? 'justify-end' : ''}`}
         >
@@ -75,6 +103,7 @@ export default function CouncilChatMessage({
             })}
           </time>
         </div>
+        {/* 气泡：用户主色圆角朝右上；成员卡片圆角朝左上 */}
         <div
           className={`min-w-0 max-w-full rounded-2xl px-4 py-3 shadow-sm ${
             isUser
@@ -82,6 +111,7 @@ export default function CouncilChatMessage({
               : 'rounded-tl-sm border border-border/60 bg-card text-card-foreground'
           }`}
         >
+          {/* 什么时候走到这里：消息引用了另一条消息——引用条可点击跳回原消息 */}
           {replyTo && (
             <button
               type="button"
@@ -105,9 +135,11 @@ export default function CouncilChatMessage({
               </span>
             </button>
           )}
+          {/* 正文 */}
           <p className="whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]">
             {councilMessageDisplayContent(message)}
           </p>
+          {/* 什么时候走到这里：成员消息带模型依据要点——列出依据列表 */}
           {!isUser && Boolean(message.reasoningSummary?.length) && (
             <div className="mt-3 border-t border-border/70 pt-2.5 text-xs">
               <p className="font-medium text-muted-foreground">{t('council.chat.basis')}</p>
@@ -120,6 +152,7 @@ export default function CouncilChatMessage({
               </ul>
             </div>
           )}
+          {/* 什么时候走到这里：成员消息引用了证据——折叠展示来源卡（找不到的给占位） */}
           {!isUser && cited.length > 0 && (
             <details className="mt-3 text-xs">
               <summary className="cursor-pointer text-muted-foreground">
@@ -163,6 +196,7 @@ export default function CouncilChatMessage({
             </details>
           )}
         </div>
+        {/* 什么时候走到这里：成员消息带追问选项——点击回填到输入框（onQuestion） */}
         {!isUser && Boolean(message.questions?.length) && (
           <div className="mt-2 flex max-w-full flex-col gap-1.5">
             {message.questions?.map((question: string, index: number) => (
