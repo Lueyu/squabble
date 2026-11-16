@@ -149,7 +149,7 @@ export function compileWorkBlueprint(config: TeamSemanticConfig, context: Compil
     dependencyWorkKeys: ordered.map(w => w.workId).sort(), reviewerRoleId: blueprint.summary.reviewerRoleId,
     reviewMode: blueprint.summary.reviewMode, inputRefs: [], requestedByRoleIds: [lead.id],
   };
-  const participantRoleIds = [...new Set([...compiled.map(w => w.roleId), ...compiled.map(w => w.reviewerRoleId), lead.id])].sort();
+  const participantRoleIds = [...new Set([...compiled.map(w => w.roleId), ...compiled.map(w => w.reviewerRoleId), summary.reviewerRoleId, lead.id])].sort();
   const nonParticipatingRoleIds = config.roles.map(r => r.id).filter(id => !participantRoleIds.includes(id)).sort();
   const unusedReviewRelationIds = issues.filter(issue => issue.code === 'REVIEW_RELATION_UNUSED' && issue.relationId).map(issue => issue.relationId!);
   const blueprintHash = canonicalHash({

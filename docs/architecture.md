@@ -471,6 +471,17 @@ Cash confirmation is an explicit request with expected timestamps and an idempot
 
 `server/modules/experience/portfolio-metrics.service.ts` combines recorded holdings/cash, quote/FX data and value points. UI coverage and dates matter: recorded balances are not broker synchronization, quote retrieval does not establish exchange-live execution, and missing data is not zero. Preserve these distinctions when changing asset totals or returns. The actual-NAV comparison reader consumes saved value points and their flow/cash/position fingerprints without calling the valuation writer. Separate current marks and historical references can populate only public market-data caches, never NAV, holdings, cash or trade rows. Flow or baseline changes can preserve visible equity while invalidating a comparable return.
 
+## 6. Team organization, work blueprints and preview compilation
+
+The team workspace (2026-11-14 redesign, docs in `docs/team-organization-redesign/`) keeps `TeamsModule` / `TeamRunsModule` / `CouncilModule` boundaries: the canvas only edits a draft, publication freezes an immutable version, and only a confirmed commission or run agreement starts research.
+
+- **Organization canvas**: `/teams/:id?panel=organization` renders the three-column editor (add-to-canvas + friends + templates + outline | ReactFlow canvas | inspector). Departments are display groups (nested, many roots), reporting and delegation lines are responsibilities — they are **not** task dependencies. Auto-layout only rewrites positions (one undo unit); saved positions are relative to their semantic parent.
+- **Work blueprint** (`shared/team-work-blueprint.interface.ts`): optional `workBlueprint` on `TeamSemanticConfig` (schemaVersion stays 1; legacy configs without it keep old semantics). Each work item has `workId` (stable alias), `roleId`, `taskKind`, objective, expected output, `dependencyWorkIds`, a single `reviewerRoleId` and an `independent|self_check` mode; the lead's `summary` is synthesized by the compiler.
+- **Pure compiler** (`server/modules/teams/team-work-blueprint.ts`): `compileWorkBlueprint(config, context)` and `diagnoseWorkBlueprint(config)` are deterministic and side-effect free (no DB/HTTP/LLM/React imports). It derives participants, dependencies (only from `dependencyWorkIds`), reviewers (only from saved reviewer roles plus matching `reviews` edges), the minimum reserved call count `2 × (works + 1)` and a canonical `blueprintHash`. Structural warnings (`ROLE_NOT_READY`, `REVIEW_RELATION_UNUSED`) still compile; structure errors (`WORK_CYCLE`, `REVIEW_RELATION_REQUIRED`, `INDEPENDENT_REVIEW_SAME_FRIEND`, `TOO_MANY_PARTICIPANTS`, …) are blocking.
+- **Two preview tiers**: `POST /api/teams/:id/work-plan-preview` (`TeamWorkPlanPreviewService`) is a read-only structural preview of the current draft (revision-checked, zero writes, no consumable preview id, no model call). The formal `commission-preview` (`planMode: 'blueprint'`) compiles from the exact published `teamVersionId` with the same compiler and then enters the existing freeze path (account snapshot, member grants, source fingerprints, budget guards, runtime capability checks). Plan mode `manual_custom`/`legacy_run_v1` keeps the previous fixed-fan-in behaviour for custom or legacy runs.
+- **Compile proofs**: every frozen plan stores `workPlanProof { mode, compilerVersion, semanticHash, blueprintHash }`; run agreement configurations persist the same proof in `teamRunAgreementRevisions`. The scheduler recompiles each new cycle from the agreement-fixed version and compares compiler version + hashes; any mismatch raises `TEAM_REAPPROVAL_REQUIRED` and pauses new dispatches (existing queued/uncertain work keeps its saved plan/receipt and is never re-keyed).
+- **Templates** (`shared/team-templates.ts`): 11 organisations (the original 10 stable ids plus `classic`), each with explicit departments/roles/relations, a work blueprint and `staffing` seat recommendations against the 12 specialty catalog. Instantiation (`shared/team-template-instantiation.ts`) remaps every role/department/relation/blueprint reference to fresh UUIDs while keeping `workId` aliases, so copying never leaves dangling ids; applying a template only mutates the draft and never rewrites published versions, bindings or run protocols.
+
 ## Maintaining this architecture
 
 Bundled capability review against e18b5fe plus this working tree checked all five flows. Flows1–2 add deployment readiness, persistent owner grants, candidate catalogs and the private per-job Docker broker. Flows3–5 retain explicit strategy application, source-sealed channel publication and real ledger writers: a local backtest or exploratory output is a research artifact, and activating a capability creates no investment execution authority. Old E2B jobs keep their original provider for cleanup; local failure never reroutes to cloud. Platform/container acceptance is recorded separately in the bundle validation record.
@@ -494,3 +505,15 @@ All five diagrams were rechecked for this refinement: system/cache and ledger-re
 ## Agent telemetry review · 2026-11-11
 
 Reviewed b57461a plus the telemetry working tree. Flows1–2 add owner-scoped run analysis, metadata capture and opt-in Langfuse export. `/telemetry` is a ninth workspace destination; research remains the owner of conversations and reports. Flows3–5 retain explicit strategy application, source-fenced channel publication and real-ledger writers; telemetry adds no execution authority. Missing identity and usage remain unknown. Export excludes prompts, completions, holdings and tool arguments. Source deletion hides operational detail and feedback; remote exported records have separate retention. See [Agent telemetry](agent-telemetry.md) for setup and verification.
+
+### Organization editor usability boundary
+
+The responsive outline/property dialog and canvas edit the same Team draft.
+Friend buttons and native drag/drop use a shared staffing command, retaining
+source grants and checking the current roster version/executor. Relationship
+selection opens the same semantic fields as the relations list. View preference,
+filtering and zoom do not grant access, publish a version, or start a commission.
+New template node positions are relative to their semantic parent; persisted
+user layouts are not migrated. The five diagrams above retain their ownership
+and execution fences. Acceptance scope is recorded in the
+[UI repair plan](team-organization-redesign/ui-repair-plan.zh-CN.md).

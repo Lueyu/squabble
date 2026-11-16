@@ -8,7 +8,7 @@ Confirm holdings and cash on the overview. Team setup reviews positions, cash an
 
 Connect your model service or installed local assistant once. Agents reuse that connection. Saving and checking a model connection explicitly sends one short, potentially billable request; adding agent profiles does not invoke a model.
 
-The recommended roster covers financials, valuation, challenge, risk and moderation. Every agent has a stable identity, chosen animal avatar, specialty and immutable capability versions. Different people sharing a model remain distinct. The editor saves working instructions and response preferences used in research; recommended agents created in English use English templates. Changing identity fields such as name, description or avatar updates the profile without creating a capability version. Changing instructions, preferences, executor or source/tool ceilings creates a new version; existing published teams retain their pinned version until explicitly updated. Advanced source/tool declarations are ceilings, not live grants.
+The specialty catalog covers twelve disciplines — financials, valuation, counterpoint (bear), risk, moderation, business fundamentals, industry, growth, macro, events, quantitative and portfolio — and the friend library recommends whichever of them you do not own yet. Every agent has a stable identity, chosen animal avatar, specialty and immutable capability versions. Different people sharing a model remain distinct. The editor saves working instructions and response preferences used in research; recommended agents created in English use English templates. Changing identity fields such as name, description or avatar updates the profile without creating a capability version. Changing instructions, preferences, executor or source/tool ceilings creates a new version; existing published teams retain their pinned version until explicitly updated. Advanced source/tool declarations are ceilings, not live grants.
 
 The roster, team selection and research selection display the same person. New conversations and team commissions freeze the person's name and animal avatar alongside their selected version; later profile edits do not rewrite existing conversations or commissions. Historical snapshots without an avatar retain their compatible role fallback.
 
@@ -18,9 +18,9 @@ Archiving prevents new selection and paid dispatch. Already-dispatched work may 
 
 ## Creating and operating a team
 
-1. Keep the recommended collaboration and name the team.
-2. Choose existing agents. The recommended template selects financials, challenge and moderation by default; valuation, defensive and full-research member templates swap the group in one click, and you can always adjust the checkboxes yourself.
-3. Review the holdings copy, main market, budget and startup authorization, then start.
+1. Open "New team" and pick an organization template (11 starting templates, including the default `classic` investment-research team), start blank, or copy an existing published version. Creating only saves a draft organization; seats can stay unfilled, so no friends or market data are required yet.
+2. On the organization canvas, add departments and seats, drag friends onto seats, draw reporting lines and (delegate/review) collaboration lines, then save the draft. "Preview research division" shows the structural work plan from the same server-side compiler that runs real research; saving does not dispatch models or place trades.
+3. Publish an immutable team version (the diff includes the work blueprint), link or create a simulation account, then confirm and start the run separately. Legacy guided setup (`?guided=1`) still resumes an in-flight guided request; published teams without a blueprint keep their legacy "independent research + lead summary" division until you explicitly establish a standard division and republish.
 
 Defaults cap calls at8/run,16/day and320/month. A run reserves at most half the daily dollar limit; the monthly dollar limit is twenty daily limits. Existing account/global limits still apply. Larger teams may need a higher existing call allowance; setup does not increase it implicitly.
 

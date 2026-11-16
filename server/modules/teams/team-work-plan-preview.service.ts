@@ -73,7 +73,7 @@ export class TeamWorkPlanPreviewService {
       semanticHash: hash,
       blueprintHash: compiled?.blueprintHash ?? null,
       compilerVersion: TEAM_WORK_BLUEPRINT_COMPILER_VERSION,
-      structurallyValid: blocking.length === 0,
+      structurallyValid: compiled !== null,
       dispatchable: false,
       leadRoleId: config.defaults.leadRoleId ?? null,
       participantRoleIds: compiled?.participantRoleIds ?? [],

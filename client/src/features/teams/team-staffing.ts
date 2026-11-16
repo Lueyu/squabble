@@ -1,5 +1,8 @@
 import { AGENT_TEMPLATE_IDS } from '@shared/agent-roster.interface';
 import type { AgentProfile, AgentTemplateId } from '@shared/agent-roster.interface';
+import type { ModelConnection } from '@shared/model-connections.interface';
+import { rosterTeamConfig } from './guided-team-state';
+import type { TeamEditorState } from './team-graph';
 
 /**
  * Pure staffing helpers shared by the roster page and the team canvas.
@@ -72,4 +75,45 @@ export function matchStaffing(slots: readonly StaffingSlot[], agents: readonly A
     }
   }
   return { assignments, open, candidates };
+}
+
+type StaffingFailureCode = 'read_only' | 'role_missing' | 'agent_missing' | 'agent_archived' | 'agent_unavailable' | 'connection_unavailable';
+
+export class TeamStaffingError extends Error {
+  constructor(public readonly code: StaffingFailureCode) {
+    super(code);
+    this.name = 'TeamStaffingError';
+  }
+}
+
+/** Both explicit assignment and canvas drop use the same existing roster binding rules. */
+export function assignAgentToRole(state: TeamEditorState, roleId: string, agentId: string, agents: readonly AgentProfile[], models: ModelConnection[], options: { readOnly?: boolean } = {}): TeamEditorState {
+  if (options.readOnly) throw new TeamStaffingError('read_only');
+  const role = state.config.roles.find(item => item.id === roleId);
+  if (!role) throw new TeamStaffingError('role_missing');
+  const agent = agents.find(item => item.id === agentId);
+  if (!agent) throw new TeamStaffingError('agent_missing');
+  if (agent.status !== 'active') throw new TeamStaffingError('agent_archived');
+  if (agent.availability !== 'configured') throw new TeamStaffingError('agent_unavailable');
+  let binding;
+  try {
+    binding = rosterTeamConfig([agent], models, [roleId]).roles[0];
+  } catch {
+    throw new TeamStaffingError('connection_unavailable');
+  }
+  const assigned = { ...role, agentId: binding.agentId, agentVersionId: binding.agentVersionId, executor: binding.executor, allowedToolIds: binding.allowedToolIds, participation: binding.participation };
+  return { ...state, config: { ...state.config, roles: state.config.roles.map(item => item.id === roleId ? assigned : item) } };
+}
+
+export function staffingFailureMessage(error: unknown, zh: boolean): string {
+  const code = error instanceof TeamStaffingError ? error.code : 'connection_unavailable';
+  const messages: Record<StaffingFailureCode, [string, string]> = {
+    read_only: ['当前团队只读，不能指派股友。', 'This team is read-only; agents cannot be assigned.'],
+    role_missing: ['请先选择一个现有岗位，再指派股友。', 'Select an existing seat before assigning an agent.'],
+    agent_missing: ['这位股友已不在当前名单中，请刷新后重试。', 'This agent is no longer in the current roster. Refresh and try again.'],
+    agent_archived: ['这位股友已归档，不能指派到岗位。', 'This agent is archived and cannot be assigned.'],
+    agent_unavailable: ['这位股友的连接待配置，请先在股友库设置连接。', 'This agent needs a connection. Configure it in the friend roster first.'],
+    connection_unavailable: ['这位股友的已保存连接不可用，请先修复连接后再指派。', 'This agent’s saved connection is unavailable. Restore it before assigning.'],
+  };
+  return messages[code][zh ? 0 : 1];
 }

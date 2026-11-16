@@ -39,7 +39,7 @@ export default function AgentRosterWorkspace() {
     retry: false,
     mutationFn: async () => {
       if (!executor) throw new Error('AI connection required');
-      const templateIds = missingSpecialtyIds(roster.data?.items ?? []);
+      const templateIds = missingSpecialtyIds(roster.data?.items ?? [], (templates.data ?? []).map(item => item.id));
       if (templateIds.length === 0) return;
       const payload = { executor, templateIds, language: zh ? 'zh-CN' as const : 'en' as const };
       await agentRosterApi.recommended({ ...payload, requestKey: recommendedIntent.current.keyFor(payload) });
@@ -71,7 +71,7 @@ export default function AgentRosterWorkspace() {
   }
   const active = roster.data?.items.filter(agent => agent.status === 'active') ?? [];
   const rosterComplete = !roster.isPending && !roster.isError && !roster.data?.nextCursor;
-  const missing = missingSpecialtyIds(active);
+  const missing = missingSpecialtyIds(active, (templates.data ?? []).map(item => item.id));
   const loading = roster.isPending || models.isPending || locals.isPending;
   const byId = new Map((templates.data ?? []).map(item => [item.id, item]));
 
@@ -121,9 +121,9 @@ export default function AgentRosterWorkspace() {
             </div>
             <p className="text-sm text-muted-foreground">{zh ? template.specialty : template.specialtyEn}</p>
             <p className="break-words text-xs">{zh ? '标准交付' : 'Delivery'}：{zh ? template.delivery : template.deliveryEn}</p>
-            <ul className="list-disc space-y-1 ps-4 text-xs text-muted-foreground">
+            {guide && <ul className="list-disc space-y-1 ps-4 text-xs text-muted-foreground">
               {guide.workflow.slice(0, 3).map((step, index) => <li key={index}>{step}</li>)}
-            </ul>
+            </ul>}
             <Button size="sm" variant="outline" onClick={() => addSpecialty(template.id)}>{zh ? '添加此专业' : 'Add this specialty'}</Button>
           </div>;
         })}

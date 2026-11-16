@@ -69,7 +69,7 @@ test('binding and archive previews disclose in-flight studies and reject confirm
     const release=await f.versions.bindingPreview(f.owner,c.team.id,{requestKey:'inflight-release-preview',action:'release',accountId:c.account.id,teamVersionId:c.version.id,expectedBindingRevision:1,expectedAccountBindingId:c.binding.id,executionChoice:'keep_confirmed_rules',acknowledgePendingReapproval:true});
     const displayed=release.result.inflightCommissions as {id:string;handoverEffect:string}[];
     assert.equal(displayed[0].id,row.id);assert.equal(displayed[0].handoverEffect,'stop_new_work_settle_dispatched');
-    const {schemaVersion:_schema,...plan}=row.plan;
+    const {schemaVersion:_schema, workPlanProof:_proof, ...plan}=row.plan;
     const cp=await f.commissions.preview(f.owner,c.team.id,{...plan,requestKey:'another-study-preview',teamVersionId:c.version.id,bindingId:c.binding.id,expectedBindingRevision:1,dataCutoffAt:null,inputRefs:[],objective:'Another explicitly confirmed fixture study'});
     await f.commissions.create(f.owner,c.team.id,{requestKey:'another-study',previewId:cp.previewId,previewHash:cp.previewHash});
     await assert.rejects(f.versions.binding(f.owner,c.team.id,{requestKey:'inflight-stale-confirm',previewId:release.previewId,previewHash:release.previewHash}),teamErrorIs('TEAM_PREVIEW_STALE'));

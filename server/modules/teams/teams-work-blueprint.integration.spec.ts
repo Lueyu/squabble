@@ -222,6 +222,59 @@ test('legacy teams keep the historical division and its explicit proof mode', op
   }
 });
 
+test('publishing a blueprint version re-approves an existing legacy automatic agreement without rewriting it', options, async () => {
+  const f = await makeTeamFixture();
+  try {
+    const t = await f.team();
+    const roster = new AgentRosterService(f.db);
+    const friend = await roster.create(f.owner, { requestKey: randomUUID(), name: 'Fictional analyst', instructions: 'Frozen base instructions',
+      executor: { executionMode: 'model', connectionId: f.connection.id, model: 'slow' }, allowedToolIds: [], allowedSources: [] });
+    const legacyConfig = structuredClone(t.version.config);
+    legacyConfig.roles[0].agentId = friend.id;
+    legacyConfig.roles[0].agentVersionId = friend.currentVersionId;
+    const detail = await f.service.detail(f.owner, t.team.id);
+    const saved = await f.service.save(f.owner, t.team.id, 'draft', { requestKey: randomUUID(), expectedSemanticRevision: detail.semanticRevision, config: legacyConfig });
+    const pp = await f.versions.publishPreview(f.owner, t.team.id, { requestKey: randomUUID(), expectedSemanticRevision: saved.semanticRevision });
+    const published = await f.versions.publish(f.owner, t.team.id, { requestKey: randomUUID(), previewId: pp.previewId, previewHash: pp.previewHash });
+    const account = await f.account();
+    const bp = await f.versions.bindingPreview(f.owner, t.team.id, { requestKey: randomUUID(), action: 'assign', accountId: account.id,
+      teamVersionId: published.version.id, expectedBindingRevision: published.team.bindingRevision, expectedAccountBindingId: null,
+      executionChoice: 'keep_confirmed_rules', acknowledgePendingReapproval: true });
+    const binding = await f.versions.binding(f.owner, t.team.id, { requestKey: randomUUID(), previewId: bp.previewId, previewHash: bp.previewHash });
+    const runs = new TeamRunService(f.store, f.commissions);
+    const input: TeamRunAgreementInput = { requestKey: randomUUID(), teamVersionId: published.version.id, bindingId: binding.binding!.id,
+      expectedBindingRevision: binding.team.bindingRevision, objective: 'Fictional portfolio review', market: 'CN',
+      budget: { perRun: { budgetMode: 'cost_and_calls', ceiling: { amount: '2', currency: 'USD' }, callLimit: 2, paidRevisionLimit: 0 },
+        daily: { costUsd: '2', calls: 2 }, monthly: { costUsd: '4', calls: 4 } },
+      replacementPolicy: { kind: 'replace_combination', allocationPct: 50 }, inputRefs: [] };
+    const initial = await runs.preview(f.owner, t.team.id, input);
+    assert.equal((initial.result as { configuration: { workPlanProof?: { mode: string } } }).configuration.workPlanProof?.mode, 'legacy_run_v1');
+    const agreement = await runs.confirm(f.owner, t.team.id, { requestKey: randomUUID(), previewId: initial.previewId, previewHash: initial.previewHash });
+    assert.equal(agreement.state, 'confirmed');
+    // Publish a new version with the classic blueprint while the old agreement is still confirmed.
+    const friends = await rosterFriends(f);
+    const second = await f.service.detail(f.owner, t.team.id);
+    const savedBlueprint = await f.service.save(f.owner, t.team.id, 'draft', { requestKey: randomUUID(), expectedSemanticRevision: second.semanticRevision, config: classicConfig(f.connection.id, friends) });
+    const blueprintPreview = await f.versions.publishPreview(f.owner, t.team.id, { requestKey: randomUUID(), expectedSemanticRevision: savedBlueprint.semanticRevision });
+    const blueprintVersion = await f.versions.publish(f.owner, t.team.id, { requestKey: randomUUID(), previewId: blueprintPreview.previewId, previewHash: blueprintPreview.previewHash });
+    assert.notEqual(blueprintVersion.version.id, published.version.id, 'A new immutable version is created; the old one is untouched');
+    // The standing agreement can no longer start under the old rules; starting requires re-approval.
+    await assert.rejects(runs.control(f.owner, t.team.id, 'start', { requestKey: randomUUID(), expectedRevision: agreement.revision }),
+      teamErrorIs('TEAM_REAPPROVAL_REQUIRED'), 'A new published version suspends the old agreement instead of silently running it');
+    // A fresh preview now compiles the published blueprint; nothing was rewritten inside the old agreement.
+    const refreshed = await runs.preview(f.owner, t.team.id, { ...input, requestKey: randomUUID(), teamVersionId: blueprintVersion.version.id, expectedBindingRevision: blueprintVersion.team.bindingRevision,
+      budget: { perRun: { budgetMode: 'cost_and_calls', ceiling: { amount: '8', currency: 'USD' }, callLimit: 8, paidRevisionLimit: 0 },
+        daily: { costUsd: '8', calls: 8 }, monthly: { costUsd: '16', calls: 16 } } });
+    const proof = (refreshed.result as { configuration: { workPlanProof?: { mode: string; blueprintHash: string } } }).configuration.workPlanProof;
+    assert.equal(proof?.mode, 'blueprint_v1', 'The new preview reflects the published blueprint');
+    assert.equal(proof?.blueprintHash.length, 64);
+    const [oldCommission] = await f.db.select().from(teamCommissions);
+    assert.ok(!oldCommission || oldCommission.plan.workPlanProof?.mode !== 'blueprint_v1' || oldCommission.plan.workPlanProof.mode === undefined, 'The old stored plan is never recompiled by the upgrade');
+  } finally {
+    await f.dispose();
+  }
+});
+
 test('automatic run previews carry the compiled proof for legacy and blueprint teams', options, async () => {
   const legacy = await makeTeamFixture();
   try {

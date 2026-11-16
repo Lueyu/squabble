@@ -39,6 +39,9 @@ export function AgentEditorDialog({ editing, templates, models, locals, defaultE
   const initial = editing?.currentVersion.config;
   const [templateId, setTemplateId] = useState<AgentTemplateId>(initial?.templateId ?? initialTemplateId ?? 'financials');
   const template = templates.find(item => item.id === templateId);
+  // Older fixtures and cached template payloads may predate the guide catalog;
+  // the editor must stay usable instead of dereferencing a missing guide.
+  const guide = template ? (zh ? template.guide : template.guideEn) : null;
   const [name, setName] = useState(editing?.name ?? '');
   const [description, setDescription] = useState(editing?.description ?? '');
   const [avatar, setAvatar] = useState<AnimalAvatarId>(editing?.avatar ?? template?.avatar ?? 'technical');
@@ -110,16 +113,16 @@ export function AgentEditorDialog({ editing, templates, models, locals, defaultE
             {templates.map(item => <option key={item.id} value={item.id}>{zh ? item.name : item.nameEn}</option>)}
           </select>
         </div>
-        {template && <details className="rounded-md border p-3 text-xs text-muted-foreground">
+        {template && guide && <details className="rounded-md border p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer py-1 text-sm font-medium text-foreground">{zh ? '这个专业会怎么做研究' : 'How this specialty researches'}</summary>
           <div className="mt-2 space-y-2">
-            <GuideSection title={zh ? '擅长' : 'Strengths'} items={zh ? template.guide.strengths : template.guideEn.strengths} />
-            <GuideSection title={zh ? '需要先确认' : 'Required inputs'} items={zh ? template.guide.requiredInputs : template.guideEn.requiredInputs} />
-            <GuideSection title={zh ? '研究步骤' : 'Workflow'} items={zh ? template.guide.workflow : template.guideEn.workflow} numbered />
-            <GuideSection title={zh ? '标准交付' : 'Output sections'} items={zh ? template.guide.outputSections : template.guideEn.outputSections} />
-            <GuideSection title={zh ? '反证与未知' : 'Counterchecks and unknowns'} items={zh ? [...template.guide.counterchecks, ...template.guide.unknownHandling] : [...template.guideEn.counterchecks, ...template.guideEn.unknownHandling]} />
-            <GuideSection title={zh ? '示例任务' : 'Example tasks'} items={zh ? template.guide.exampleTasks : template.guideEn.exampleTasks} />
-            <GuideSection title={zh ? '通常担任' : 'Typical seats'} items={zh ? template.guide.recommendedSeats : template.guideEn.recommendedSeats} />
+            <GuideSection title={zh ? '擅长' : 'Strengths'} items={guide.strengths} />
+            <GuideSection title={zh ? '需要先确认' : 'Required inputs'} items={guide.requiredInputs} />
+            <GuideSection title={zh ? '研究步骤' : 'Workflow'} items={guide.workflow} numbered />
+            <GuideSection title={zh ? '标准交付' : 'Output sections'} items={guide.outputSections} />
+            <GuideSection title={zh ? '反证与未知' : 'Counterchecks and unknowns'} items={[...guide.counterchecks, ...guide.unknownHandling]} />
+            <GuideSection title={zh ? '示例任务' : 'Example tasks'} items={guide.exampleTasks} />
+            <GuideSection title={zh ? '通常担任' : 'Typical seats'} items={guide.recommendedSeats} />
             <p>{zh ? '这些是专业预设说明，不代表已获得工具、资料或交易权限。' : 'Preset guidance only; not a grant of tools, data or trading permission.'}</p>
           </div>
         </details>}

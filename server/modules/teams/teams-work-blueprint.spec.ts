@@ -257,3 +257,25 @@ test('canonical blueprint hash is stable across JSON round trips', () => {
   const result = compileWorkBlueprint(base, context);
   assert.equal(result.blueprintHash, compileWorkBlueprint(roundTrip, context).blueprintHash);
 });
+
+test('a dedicated final reviewer remains a participating member without a research work item', () => {
+  const config = classicFixture();
+  config.roles = [config.roles[0], config.roles[3]];
+  config.relations = [relation(ids.bear, ids.lead, 'reviews', 50)];
+  config.workBlueprint!.works = [];
+  const compiled = compileWorkBlueprint(config, context);
+  assert.deepEqual(compiled.participantRoleIds, [ids.lead, ids.bear].sort());
+  assert.deepEqual(compiled.nonParticipatingRoleIds, []);
+  assert.equal(compiled.work[0].reviewerRoleId, ids.bear);
+});
+
+test('structural preview refuses a graph rejected by the shared graph validator', async () => {
+  const { TeamWorkPlanPreviewService } = await import('./team-work-plan-preview.service');
+  const config = classicFixture();
+  config.relations[1].id = config.relations[0].id;
+  const service = new TeamWorkPlanPreviewService({} as never);
+  const preview = service.compile('fixture-preview', 1, config);
+  assert.equal(preview.structurallyValid, false);
+  assert.equal(preview.work.length, 0);
+  assert.ok(preview.issues.some(issue => issue.code === 'TEAM_GRAPH_INVALID'));
+});
