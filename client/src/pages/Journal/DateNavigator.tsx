@@ -8,7 +8,15 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronLeft, ChevronRight, Calendar, TrendingUp, TrendingDown, Wallet, DollarSign } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
+  TrendingUp,
+  TrendingDown,
+  Wallet,
+  DollarSign,
+} from 'lucide-react';
 import type { Snapshot } from '@shared/api.interface';
 import { formatCurrency, formatPercent, formatDate, plClass, cn } from '@/utils/format';
 import { Card, CardContent } from '@/components/ui/card';
@@ -85,7 +93,9 @@ export function DateNavigator({
                     onChange={(e) => setInput(e.target.value)}
                     className="w-auto"
                   />
-                  <Button size="sm" onClick={handleSubmit}>{t('ui.journal.confirmDate')}</Button>
+                  <Button size="sm" onClick={handleSubmit}>
+                    {t('ui.journal.confirmDate')}
+                  </Button>
                 </div>
               )}
             </div>
@@ -96,9 +106,7 @@ export function DateNavigator({
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {loading ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 w-28" />
-              ))
+              Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-28" />)
             ) : snapshot ? (
               <>
                 <div>
@@ -109,7 +117,7 @@ export function DateNavigator({
                   <div
                     className={cn(
                       'font-mono text-lg font-semibold tabular-nums',
-                      plClass(snapshot.dailyPl)
+                      plClass(snapshot.dailyPl),
                     )}
                   >
                     {formatCurrency(snapshot.dailyPl)}
@@ -123,7 +131,7 @@ export function DateNavigator({
                   <div
                     className={cn(
                       'font-mono text-lg font-semibold tabular-nums',
-                      plClass(snapshot.dailyPct)
+                      plClass(snapshot.dailyPct),
                     )}
                   >
                     {formatPercent(snapshot.dailyPct)}

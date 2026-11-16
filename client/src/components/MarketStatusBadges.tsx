@@ -76,17 +76,9 @@ export function MarketStatusBadges({
 
     return (
       <div key={market} className="relative inline-flex items-center">
-        <Badge
-          variant="outline"
-          className={cn(
-            'h-5 px-2 text-[11px] font-medium',
-            badgeClass
-          )}
-        >
+        <Badge variant="outline" className={cn('h-5 px-2 text-[11px] font-medium', badgeClass)}>
           {marketLabels[market]} · {label}
-          {hasError && !isInactive && (
-            <span className="ml-1 text-destructive font-bold">!</span>
-          )}
+          {hasError && !isInactive && <span className="ml-1 text-destructive font-bold">!</span>}
         </Badge>
         {hasError && !isInactive && (
           <span

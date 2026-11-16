@@ -12,12 +12,7 @@ import type { Snapshot } from '@shared/api.interface';
 import { toDate } from '@/utils/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Empty,
-  EmptyContent,
-  EmptyTitle,
-  EmptyDescription,
-} from '@/components/ui/empty';
+import { Empty, EmptyContent, EmptyTitle, EmptyDescription } from '@/components/ui/empty';
 import { useTranslation } from 'react-i18next';
 import { useChartTheme } from '@/hooks/use-chart-theme';
 
@@ -37,8 +32,9 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
   const chartOption = useMemo(() => {
     const valid = snapshots.filter((s) => toDate(s.snapshotDate));
     if (valid.length === 0) return {};
-    const sorted = [...valid]
-      .sort((a, b) => new Date(a.snapshotDate).getTime() - new Date(b.snapshotDate).getTime());
+    const sorted = [...valid].sort(
+      (a, b) => new Date(a.snapshotDate).getTime() - new Date(b.snapshotDate).getTime(),
+    );
 
     const dates = sorted.map((s) => {
       const d = new Date(s.snapshotDate);
@@ -127,7 +123,10 @@ export function JournalChart({ snapshots, loading }: JournalChartProps) {
           areaStyle: {
             color: {
               type: 'linear',
-              x: 0, y: 0, x2: 0, y2: 1,
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
               colorStops: [
                 { offset: 0, color: colors.areaStart },
                 { offset: 1, color: colors.areaEnd },

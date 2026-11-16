@@ -122,12 +122,32 @@ export class AgentService {
       this.db.select().from(holdings).where(eq(holdings.owner, userId)),
       this.db.select().from(watchlist).where(eq(watchlist.owner, userId)),
       this.db.select().from(groups).where(eq(groups.owner, userId)).orderBy(groups.sort),
-      this.db.select().from(analysis).where(eq(analysis.owner, userId)).orderBy(desc(analysis.analysisDate)),
-      this.db.select().from(transactions).where(eq(transactions.owner, userId)).orderBy(desc(transactions.txDate)),
+      this.db
+        .select()
+        .from(analysis)
+        .where(eq(analysis.owner, userId))
+        .orderBy(desc(analysis.analysisDate)),
+      this.db
+        .select()
+        .from(transactions)
+        .where(eq(transactions.owner, userId))
+        .orderBy(desc(transactions.txDate)),
       this.db.select().from(closed).where(eq(closed.owner, userId)).orderBy(desc(closed.closeDate)),
-      this.db.select().from(journal).where(eq(journal.owner, userId)).orderBy(desc(journal.journalDate)),
-      this.db.select().from(snapshots).where(eq(snapshots.owner, userId)).orderBy(desc(snapshots.snapshotDate)),
-      this.db.select().from(alphaPicks).where(eq(alphaPicks.owner, userId)).orderBy(desc(alphaPicks.datePicked)),
+      this.db
+        .select()
+        .from(journal)
+        .where(eq(journal.owner, userId))
+        .orderBy(desc(journal.journalDate)),
+      this.db
+        .select()
+        .from(snapshots)
+        .where(eq(snapshots.owner, userId))
+        .orderBy(desc(snapshots.snapshotDate)),
+      this.db
+        .select()
+        .from(alphaPicks)
+        .where(eq(alphaPicks.owner, userId))
+        .orderBy(desc(alphaPicks.datePicked)),
       this.db.select().from(cashAccounts).where(eq(cashAccounts.owner, userId)),
     ]);
 
@@ -496,15 +516,18 @@ export class AgentService {
       companyOverview: input.companyOverview ?? null,
       businessModel: input.businessModel ?? null,
       moat: input.moat ?? null,
-      revenueStructure: (input.revenueStructure as unknown as Record<string, unknown> | null) ?? null,
+      revenueStructure:
+        (input.revenueStructure as unknown as Record<string, unknown> | null) ?? null,
       financialAnnual: (input.financialAnnual as unknown as Record<string, unknown> | null) ?? null,
-      financialQuarterly: (input.financialQuarterly as unknown as Record<string, unknown> | null) ?? null,
+      financialQuarterly:
+        (input.financialQuarterly as unknown as Record<string, unknown> | null) ?? null,
       profitability: (input.profitability as unknown as Record<string, unknown> | null) ?? null,
       balanceSheet: (input.balanceSheet as unknown as Record<string, unknown> | null) ?? null,
       cashFlow: (input.cashFlow as unknown as Record<string, unknown> | null) ?? null,
       financialQuality: input.financialQuality ?? null,
       segmentAnalysis: (input.segmentAnalysis as unknown as Record<string, unknown> | null) ?? null,
-      valuationRelative: (input.valuationRelative as unknown as Record<string, unknown> | null) ?? null,
+      valuationRelative:
+        (input.valuationRelative as unknown as Record<string, unknown> | null) ?? null,
       valuationSotp: (input.valuationSotp as unknown as Record<string, unknown> | null) ?? null,
       valuationMethodology: input.valuationMethodology ?? null,
       industryOverview: input.industryOverview ?? null,
@@ -515,9 +538,11 @@ export class AgentService {
       bearPoints: (input.bearPoints as unknown as Record<string, unknown> | null) ?? null,
       criticPoints: (input.criticPoints as unknown as Record<string, unknown> | null) ?? null,
       revisedAssumptions: input.revisedAssumptions ?? null,
-      catalystsTimeline: (input.catalystsTimeline as unknown as Record<string, unknown> | null) ?? null,
+      catalystsTimeline:
+        (input.catalystsTimeline as unknown as Record<string, unknown> | null) ?? null,
       riskItems: (input.riskItems as unknown as Record<string, unknown> | null) ?? null,
-      riskGateSnapshot: (input.riskGateSnapshot as unknown as Record<string, unknown> | null) ?? null,
+      riskGateSnapshot:
+        (input.riskGateSnapshot as unknown as Record<string, unknown> | null) ?? null,
       pmAction: input.pmAction ?? null,
       pmPriceRange: input.pmPriceRange ?? null,
       pmPositionSize: input.pmPositionSize ?? null,
@@ -531,10 +556,10 @@ export class AgentService {
     const [upserted] = await this.db
       .insert(deepReport)
       .values(deepValues)
-        .onConflictDoUpdate({
-          target: [deepReport.runId],
-          set: {
-            ticker,
+      .onConflictDoUpdate({
+        target: [deepReport.runId],
+        set: {
+          ticker,
           rating: input.rating ?? null,
           confidence: input.confidence ?? null,
           targetBear: input.targetBear ?? null,
@@ -549,15 +574,20 @@ export class AgentService {
           companyOverview: input.companyOverview ?? null,
           businessModel: input.businessModel ?? null,
           moat: input.moat ?? null,
-          revenueStructure: (input.revenueStructure as unknown as Record<string, unknown> | null) ?? null,
-          financialAnnual: (input.financialAnnual as unknown as Record<string, unknown> | null) ?? null,
-          financialQuarterly: (input.financialQuarterly as unknown as Record<string, unknown> | null) ?? null,
+          revenueStructure:
+            (input.revenueStructure as unknown as Record<string, unknown> | null) ?? null,
+          financialAnnual:
+            (input.financialAnnual as unknown as Record<string, unknown> | null) ?? null,
+          financialQuarterly:
+            (input.financialQuarterly as unknown as Record<string, unknown> | null) ?? null,
           profitability: (input.profitability as unknown as Record<string, unknown> | null) ?? null,
           balanceSheet: (input.balanceSheet as unknown as Record<string, unknown> | null) ?? null,
           cashFlow: (input.cashFlow as unknown as Record<string, unknown> | null) ?? null,
           financialQuality: input.financialQuality ?? null,
-          segmentAnalysis: (input.segmentAnalysis as unknown as Record<string, unknown> | null) ?? null,
-          valuationRelative: (input.valuationRelative as unknown as Record<string, unknown> | null) ?? null,
+          segmentAnalysis:
+            (input.segmentAnalysis as unknown as Record<string, unknown> | null) ?? null,
+          valuationRelative:
+            (input.valuationRelative as unknown as Record<string, unknown> | null) ?? null,
           valuationSotp: (input.valuationSotp as unknown as Record<string, unknown> | null) ?? null,
           valuationMethodology: input.valuationMethodology ?? null,
           industryOverview: input.industryOverview ?? null,
@@ -568,15 +598,18 @@ export class AgentService {
           bearPoints: (input.bearPoints as unknown as Record<string, unknown> | null) ?? null,
           criticPoints: (input.criticPoints as unknown as Record<string, unknown> | null) ?? null,
           revisedAssumptions: input.revisedAssumptions ?? null,
-          catalystsTimeline: (input.catalystsTimeline as unknown as Record<string, unknown> | null) ?? null,
+          catalystsTimeline:
+            (input.catalystsTimeline as unknown as Record<string, unknown> | null) ?? null,
           riskItems: (input.riskItems as unknown as Record<string, unknown> | null) ?? null,
-          riskGateSnapshot: (input.riskGateSnapshot as unknown as Record<string, unknown> | null) ?? null,
+          riskGateSnapshot:
+            (input.riskGateSnapshot as unknown as Record<string, unknown> | null) ?? null,
           pmAction: input.pmAction ?? null,
           pmPriceRange: input.pmPriceRange ?? null,
           pmPositionSize: input.pmPositionSize ?? null,
           pmStopLoss: input.pmStopLoss ?? null,
           pmExecutionPlan: input.pmExecutionPlan ?? null,
-          trackingMetrics: (input.trackingMetrics as unknown as Record<string, unknown> | null) ?? null,
+          trackingMetrics:
+            (input.trackingMetrics as unknown as Record<string, unknown> | null) ?? null,
           viewChangeTriggers: input.viewChangeTriggers ?? null,
           updatedAt: new Date(),
           updatedBy: userId,
@@ -689,21 +722,21 @@ export class AgentService {
    *
    * @param userId Owner id.
    */
-  async listDeepReports(
-    userId: string,
-  ): Promise<Array<{
-    runId: string;
-    ticker: string;
-    tickerName: string | null;
-    rating: string | null;
-    confidence: string | null;
-    targetBear: string | null;
-    targetBase: string | null;
-    targetBull: string | null;
-     reportDate: string;
-     completedAt: string;
-     updatedAt: string;
-   }>> {
+  async listDeepReports(userId: string): Promise<
+    Array<{
+      runId: string;
+      ticker: string;
+      tickerName: string | null;
+      rating: string | null;
+      confidence: string | null;
+      targetBear: string | null;
+      targetBase: string | null;
+      targetBull: string | null;
+      reportDate: string;
+      completedAt: string;
+      updatedAt: string;
+    }>
+  > {
     const rows = await this.db
       .select({
         runId: agentRuns.id,
@@ -738,10 +771,10 @@ export class AgentService {
       targetBear: row.targetBear?.toString() ?? null,
       targetBase: row.targetBase?.toString() ?? null,
       targetBull: row.targetBull?.toString() ?? null,
-       reportDate: (row.completedAt ?? row.updatedAt).toISOString().slice(0, 10),
-       completedAt: (row.completedAt ?? row.updatedAt).toISOString(),
-       updatedAt: row.updatedAt.toISOString(),
-     }));
+      reportDate: (row.completedAt ?? row.updatedAt).toISOString().slice(0, 10),
+      completedAt: (row.completedAt ?? row.updatedAt).toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
   }
 
   /**

@@ -19,7 +19,14 @@ import { PaperTradingController } from './paper-trading.controller';
 import { PaperTradingService } from './paper-trading.service';
 
 @Module({
-  imports: [QuoteModule, FxModule, NotificationModule, MultiAgentModule, CouncilModule, LocalAgentsModule],
+  imports: [
+    QuoteModule,
+    FxModule,
+    NotificationModule,
+    MultiAgentModule,
+    CouncilModule,
+    LocalAgentsModule,
+  ],
   controllers: [PaperTradingController, AgentBuilderController],
   providers: [PaperTradingService, AgentBuilderService, BuilderCadenceService, BotScheduler],
   exports: [PaperTradingService],

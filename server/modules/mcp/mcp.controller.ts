@@ -24,7 +24,11 @@ import {
 import type { Request, Response } from 'express';
 import { NeedLogin } from '../../common/platform/need-login.decorator';
 import { McpService } from './mcp.service';
-import type { CreateAgentSessionDto, AgentPermission, AgentApprovalMode } from '@shared/api.interface';
+import type {
+  CreateAgentSessionDto,
+  AgentPermission,
+  AgentApprovalMode,
+} from '@shared/api.interface';
 
 /** MCP protocol version we speak. */
 const MCP_PROTOCOL_VERSION = '2025-03-26';
@@ -73,7 +77,12 @@ export class McpController {
   async updateSession(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() patch: { dailyLimitUsd?: number; permission?: AgentPermission; approvalMode?: AgentApprovalMode },
+    @Body()
+    patch: {
+      dailyLimitUsd?: number;
+      permission?: AgentPermission;
+      approvalMode?: AgentApprovalMode;
+    },
   ) {
     return this.mcp.updateSession(req.userContext.userId, id, patch);
   }
@@ -157,9 +166,11 @@ export class McpController {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const code =
-        error instanceof UnauthorizedException ? -32001 :
-        error instanceof ForbiddenException ? -32002 :
-        -32000;
+        error instanceof UnauthorizedException
+          ? -32001
+          : error instanceof ForbiddenException
+            ? -32002
+            : -32000;
       return {
         jsonrpc: '2.0',
         id,

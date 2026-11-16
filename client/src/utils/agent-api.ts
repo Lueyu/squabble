@@ -45,16 +45,19 @@ interface PortfolioTerminalAPI {
   listDeepReports: () => Promise<unknown>;
   getMarketStatus?: () => {
     utcNow: string;
-    markets: Record<string, {
-      phase: string;
-      timezone: string;
-      localTime: string;
-      weekday: number;
-      nextRefresh: number;
-      lastUpdated: Date | null;
-      error: boolean;
-      tickerCount: number;
-    }>;
+    markets: Record<
+      string,
+      {
+        phase: string;
+        timezone: string;
+        localTime: string;
+        weekday: number;
+        nextRefresh: number;
+        lastUpdated: Date | null;
+        error: boolean;
+        tickerCount: number;
+      }
+    >;
   };
 }
 
@@ -126,10 +129,7 @@ export function initAgentAPI() {
 
     async removeWatchItems(tickers: string[]) {
       try {
-        const response = await http.post(
-          '/api/agent/watch-items/remove',
-          { tickers }
-        );
+        const response = await http.post('/api/agent/watch-items/remove', { tickers });
         return response.data;
       } catch (error) {
         logger.error('agent removeWatchItems failed', error);
@@ -149,9 +149,7 @@ export function initAgentAPI() {
 
     async getJournal(date?: string) {
       try {
-        const url = date
-          ? `/api/agent/journal?date=${date}`
-          : '/api/agent/journal';
+        const url = date ? `/api/agent/journal?date=${date}` : '/api/agent/journal';
         const response = await http.get(url);
         return response.data;
       } catch (error) {
@@ -172,9 +170,7 @@ export function initAgentAPI() {
 
     async getSnapshots(limit?: number) {
       try {
-        const url = limit
-          ? `/api/agent/snapshots?limit=${limit}`
-          : '/api/agent/snapshots';
+        const url = limit ? `/api/agent/snapshots?limit=${limit}` : '/api/agent/snapshots';
         const response = await http.get(url);
         return response.data;
       } catch (error) {
@@ -207,9 +203,7 @@ export function initAgentAPI() {
 
     async getLatestDeepReport(ticker: string) {
       try {
-        const response = await http.get(
-          `/api/agent/deep-report/latest?ticker=${ticker}`,
-        );
+        const response = await http.get(`/api/agent/deep-report/latest?ticker=${ticker}`);
         const data = response.data;
         if (data && data.runId) {
           const url = resolveAppUrl(`/analysis/deep-report/${data.runId}`);

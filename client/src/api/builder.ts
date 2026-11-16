@@ -7,7 +7,12 @@ import type {
   RecordBuilderFillDto,
 } from '@shared/api.interface';
 
-export type { BuilderConfig, BuilderPreview, BuilderProfile, BuilderProposal } from '@shared/api.interface';
+export type {
+  BuilderConfig,
+  BuilderPreview,
+  BuilderProfile,
+  BuilderProposal,
+} from '@shared/api.interface';
 
 export interface BuilderRunResult {
   scanned: number;

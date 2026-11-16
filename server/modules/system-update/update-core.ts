@@ -3,7 +3,10 @@ function versionParts(value: string): number[] | null {
   return match ? match.slice(1).map(Number) : null;
 }
 
-export function parseLatestRelease(release: unknown, currentVersion: string): { version: string; releaseUrl: string } | null {
+export function parseLatestRelease(
+  release: unknown,
+  currentVersion: string,
+): { version: string; releaseUrl: string } | null {
   if (!release || typeof release !== 'object') throw new Error('Invalid GitHub release');
   const value = release as Record<string, unknown>;
   if (typeof value.tag_name !== 'string') throw new Error('Invalid GitHub release tag');

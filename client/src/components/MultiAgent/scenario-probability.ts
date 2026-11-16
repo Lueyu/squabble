@@ -12,8 +12,9 @@ export function formatScenarioProbabilities(values: ScenarioProbabilities): Scen
   const raw: Array<string | null> = [values.probBear, values.probBase, values.probBull];
   if (raw.some((value: string | null) => value == null || value.trim() === '')) return values;
   const numbers: number[] = raw.map((value: string | null) => Number(value));
-  const isFraction: boolean = numbers.every((value: number) => Number.isFinite(value) && value >= 0 && value <= 1)
-    && Math.abs(numbers.reduce((sum: number, value: number) => sum + value, 0) - 1) <= 1e-6;
+  const isFraction: boolean =
+    numbers.every((value: number) => Number.isFinite(value) && value >= 0 && value <= 1) &&
+    Math.abs(numbers.reduce((sum: number, value: number) => sum + value, 0) - 1) <= 1e-6;
   if (!isFraction) return values;
 
   const percent = (value: number): string => String(Number((value * 100).toFixed(2)));

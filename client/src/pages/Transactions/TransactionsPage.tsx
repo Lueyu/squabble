@@ -46,12 +46,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -124,9 +119,9 @@ export default function TransactionsPage() {
         offset: append ? transactions.length : 0,
       };
       const data = await fetchTransactions(params);
-      const list = (append ? [...transactions, ...data] : data as Transaction[]).slice().sort((a, b) =>
-        b.txDate.localeCompare(a.txDate)
-      );
+      const list = (append ? [...transactions, ...data] : (data as Transaction[]))
+        .slice()
+        .sort((a, b) => b.txDate.localeCompare(a.txDate));
       setTransactions(list);
       setHasMoreTransactions(data.length === 100);
     } catch (err) {
@@ -215,7 +210,7 @@ export default function TransactionsPage() {
           holdings: result.holdingsCount,
           closed: result.closedCount,
           transactions: result.processedTxCount,
-        })
+        }),
       );
       loadTransactions();
       loadClosed();
@@ -252,19 +247,17 @@ export default function TransactionsPage() {
             <Receipt className="size-6 text-primary" />
             {t('tx.title')}
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t('ui.tx.subtitle')}
-          </p>
+          <p className="text-sm text-muted-foreground mt-1">{t('ui.tx.subtitle')}</p>
         </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              loadTransactions();
-              loadClosed();
-              loadRealizedPl();
-            }}
-          >
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            loadTransactions();
+            loadClosed();
+            loadRealizedPl();
+          }}
+        >
           <RefreshCw className="size-4" />
           {t('ui.tx.refresh')}
         </Button>
@@ -294,12 +287,7 @@ export default function TransactionsPage() {
               />
             </div>
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleReconcile}
-                disabled={reconciling}
-              >
+              <Button variant="outline" size="sm" onClick={handleReconcile} disabled={reconciling}>
                 <Calculator className="size-4" />
                 {reconciling ? t('ui.tx.reconciling') : t('ui.tx.reconcile')}
               </Button>
@@ -311,9 +299,9 @@ export default function TransactionsPage() {
           </div>
 
           <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
-             <Card>
-               <CardContent className="p-4">
-                 <div className="text-xs text-muted-foreground">{t('ui.tx.tradeCount')}</div>
+            <Card>
+              <CardContent className="p-4">
+                <div className="text-xs text-muted-foreground">{t('ui.tx.tradeCount')}</div>
                 <div className="font-mono-nums text-xl font-semibold mt-1">
                   {txLoading ? '—' : txStats.count}
                 </div>
@@ -326,9 +314,11 @@ export default function TransactionsPage() {
                   {t('ui.tx.totalBuys')}
                 </div>
                 <div className="font-mono-nums text-xl font-semibold mt-1 text-foreground">
-                  {txLoading ? '—' : Object.entries(txStats.buyTotal).map(([currency, value]) => (
-                    <div key={currency}>{formatCurrencyWithCurrency(value, currency)}</div>
-                  ))}
+                  {txLoading
+                    ? '—'
+                    : Object.entries(txStats.buyTotal).map(([currency, value]) => (
+                        <div key={currency}>{formatCurrencyWithCurrency(value, currency)}</div>
+                      ))}
                 </div>
               </CardContent>
             </Card>
@@ -339,14 +329,18 @@ export default function TransactionsPage() {
                   {t('ui.tx.totalSells')}
                 </div>
                 <div className="font-mono-nums text-xl font-semibold mt-1 text-foreground">
-                  {txLoading ? '—' : Object.entries(txStats.sellTotal).map(([currency, value]) => (
-                    <div key={currency}>{formatCurrencyWithCurrency(value, currency)}</div>
-                  ))}
+                  {txLoading
+                    ? '—'
+                    : Object.entries(txStats.sellTotal).map(([currency, value]) => (
+                        <div key={currency}>{formatCurrencyWithCurrency(value, currency)}</div>
+                      ))}
                 </div>
               </CardContent>
             </Card>
           </div>
-          {hasMoreTransactions && <p className="mb-4 text-xs text-muted-foreground">{t('ui.tx.loadedSubtotal')}</p>}
+          {hasMoreTransactions && (
+            <p className="mb-4 text-xs text-muted-foreground">{t('ui.tx.loadedSubtotal')}</p>
+          )}
 
           {/* Desktop Table */}
           <Card className="hidden md:block">
@@ -358,9 +352,7 @@ export default function TransactionsPage() {
                   ))}
                 </div>
               ) : txError ? (
-                <div className="p-12 text-center text-destructive text-sm">
-                  {txError}
-                </div>
+                <div className="p-12 text-center text-destructive text-sm">{txError}</div>
               ) : transactions.length === 0 ? (
                 <div className="p-12">
                   <Empty>
@@ -369,9 +361,7 @@ export default function TransactionsPage() {
                     </EmptyMedia>
                     <EmptyHeader>
                       <EmptyTitle>{t('ui.tx.emptyTx')}</EmptyTitle>
-                      <EmptyDescription>
-                        {t('ui.tx.emptyTxHint')}
-                      </EmptyDescription>
+                      <EmptyDescription>{t('ui.tx.emptyTxHint')}</EmptyDescription>
                     </EmptyHeader>
                     <EmptyContent>
                       <Button size="sm" onClick={() => setAddTxOpen(true)}>
@@ -411,11 +401,17 @@ export default function TransactionsPage() {
                           : isOpening
                             ? 0
                             : parseFloat(tx.shares) * parseFloat(tx.price) +
-                              (isBuy
-                                ? parseFloat(tx.fees || '0')
-                                : -parseFloat(tx.fees || '0'));
+                              (isBuy ? parseFloat(tx.fees || '0') : -parseFloat(tx.fees || '0'));
                       const isOutflow = isBuy || isWithdrawal;
-                      const typeLabel = isBuy ? t('tx.buy') : isSell ? t('tx.sell') : isDeposit ? t('ui.tx.typeDeposit') : isWithdrawal ? t('ui.tx.typeWithdrawal') : t('tx.opening');
+                      const typeLabel = isBuy
+                        ? t('tx.buy')
+                        : isSell
+                          ? t('tx.sell')
+                          : isDeposit
+                            ? t('ui.tx.typeDeposit')
+                            : isWithdrawal
+                              ? t('ui.tx.typeWithdrawal')
+                              : t('tx.opening');
                       const typeClass = isOpening
                         ? 'bg-slate-500/15 text-slate-300 border-slate-500/30'
                         : isBuy
@@ -427,9 +423,7 @@ export default function TransactionsPage() {
                               : 'bg-destructive/10 text-destructive border-destructive/20';
                       return (
                         <TableRow key={tx.id}>
-                          <TableCell className="font-mono-nums">
-                            {formatDate(tx.txDate)}
-                          </TableCell>
+                          <TableCell className="font-mono-nums">{formatDate(tx.txDate)}</TableCell>
                           <TableCell>
                             <Badge className={cn(typeClass)} variant="outline">
                               {typeLabel}
@@ -453,11 +447,11 @@ export default function TransactionsPage() {
                             {formatCurrencyWithCurrency(tx.fees || '0', tx.currency || 'USD')}
                           </TableCell>
                           <TableCell
-                             className={cn(
-                               'text-right font-mono-nums font-medium',
-                               isOpening ? 'text-slate-400' : 'text-foreground'
-                             )}
-                           >
+                            className={cn(
+                              'text-right font-mono-nums font-medium',
+                              isOpening ? 'text-slate-400' : 'text-foreground',
+                            )}
+                          >
                             {isOpening ? (
                               '—'
                             ) : (
@@ -521,9 +515,7 @@ export default function TransactionsPage() {
               </Card>
             </div>
           ) : realizedPlError ? (
-            <div className="p-12 text-center text-destructive text-sm">
-              {realizedPlError}
-            </div>
+            <div className="p-12 text-center text-destructive text-sm">{realizedPlError}</div>
           ) : !realizedPl || realizedPl.items.length === 0 ? (
             <div className="p-12">
               <Empty>
@@ -532,9 +524,7 @@ export default function TransactionsPage() {
                 </EmptyMedia>
                 <EmptyHeader>
                   <EmptyTitle>{t('ui.tx.emptyRealized')}</EmptyTitle>
-                  <EmptyDescription>
-                    {t('ui.tx.emptyRealizedHint')}
-                  </EmptyDescription>
+                  <EmptyDescription>{t('ui.tx.emptyRealizedHint')}</EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>
                   <Button size="sm" onClick={() => setAddClosedOpen(true)}>
@@ -569,16 +559,11 @@ export default function TransactionsPage() {
         }}
       />
 
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(null)}
-      >
+      <AlertDialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('tx.deleteConfirm')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('ui.tx.confirmDeleteDesc')}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t('ui.tx.confirmDeleteDesc')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
@@ -608,10 +593,10 @@ function RealizedPlContent({
 }) {
   const { t } = useTranslation();
   const currencies = Object.entries(summary.totalByCurrency).filter(
-    ([, v]) => parseFloat(v || '0') !== 0
+    ([, v]) => parseFloat(v || '0') !== 0,
   );
   const sortedItems = [...summary.items].sort(
-    (a, b) => parseFloat(b.realizedPl) - parseFloat(a.realizedPl)
+    (a, b) => parseFloat(b.realizedPl) - parseFloat(a.realizedPl),
   );
 
   return (
@@ -626,29 +611,24 @@ function RealizedPlContent({
       {/* Total summary card */}
       <Card className="overflow-hidden border-0 bg-muted/40">
         <CardContent className="p-6 md:p-8">
-          <div className="text-sm font-medium text-muted-foreground">
-            {t('tx.realizedPl')}
-          </div>
+          <div className="text-sm font-medium text-muted-foreground">{t('tx.realizedPl')}</div>
           <div className="mt-2 font-mono-nums text-3xl md:text-4xl font-bold tracking-tight space-y-1">
             {currencies.map(([currency, value]) => (
               <div key={currency} className={plClass(value)}>
-                {parseFloat(value) >= 0 ? '+' : ''}{formatCurrencyWithCurrency(value, currency)}
+                {parseFloat(value) >= 0 ? '+' : ''}
+                {formatCurrencyWithCurrency(value, currency)}
               </div>
             ))}
             {currencies.length === 0 && '—'}
           </div>
           <div className="mt-3 flex items-center gap-3 text-sm text-muted-foreground">
             <span className="flex items-center gap-1">
-              <span className="font-semibold text-success">
-                {summary.totalWinners}
-              </span>
+              <span className="font-semibold text-success">{summary.totalWinners}</span>
               {t('ui.tx.countWinners')}
             </span>
             <span className="text-border">·</span>
             <span className="flex items-center gap-1">
-              <span className="font-semibold text-destructive">
-                {summary.totalLosers}
-              </span>
+              <span className="font-semibold text-destructive">{summary.totalLosers}</span>
               {t('ui.tx.countLosers')}
             </span>
           </div>
@@ -674,27 +654,19 @@ function RealizedPlContent({
               {sortedItems.map((item) => (
                 <TableRow key={item.ticker}>
                   <TableCell>
-                    <div className="font-mono-nums font-semibold text-primary">
-                      {item.ticker}
-                    </div>
+                    <div className="font-mono-nums font-semibold text-primary">{item.ticker}</div>
                     <div className="text-xs text-muted-foreground truncate max-w-[180px]">
                       {item.company ?? '—'}
                     </div>
                   </TableCell>
                   <TableCell
-                    className={cn(
-                      'font-mono-nums font-semibold',
-                      plClass(item.realizedPl)
-                    )}
+                    className={cn('font-mono-nums font-semibold', plClass(item.realizedPl))}
                   >
                     {parseFloat(item.realizedPl) >= 0 ? '+' : ''}
                     {formatCurrencyWithCurrency(item.realizedPl, item.currency)}
                   </TableCell>
                   <TableCell
-                    className={cn(
-                      'text-right font-mono-nums font-medium',
-                      plClass(item.returnPct)
-                    )}
+                    className={cn('text-right font-mono-nums font-medium', plClass(item.returnPct))}
                   >
                     {formatPercent(item.returnPct)}
                   </TableCell>
@@ -708,9 +680,7 @@ function RealizedPlContent({
                     {formatDate(item.lastCloseDate)}
                   </TableCell>
                   <TableCell className="text-right">
-                    <span className="text-xs text-muted-foreground font-mono">
-                      {item.currency}
-                    </span>
+                    <span className="text-xs text-muted-foreground font-mono">{item.currency}</span>
                   </TableCell>
                 </TableRow>
               ))}
@@ -726,29 +696,19 @@ function RealizedPlContent({
             <CardContent className="p-4">
               <div className="flex items-start justify-between mb-2">
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono-nums font-bold text-primary text-lg">
-                    {item.ticker}
-                  </div>
+                  <div className="font-mono-nums font-bold text-primary text-lg">{item.ticker}</div>
                   <div className="text-sm text-muted-foreground truncate">
                     {item.company ?? '—'}
                   </div>
                 </div>
                 <div className="text-right">
                   <div
-                    className={cn(
-                      'font-mono-nums text-lg font-semibold',
-                      plClass(item.realizedPl)
-                    )}
+                    className={cn('font-mono-nums text-lg font-semibold', plClass(item.realizedPl))}
                   >
                     {parseFloat(item.realizedPl) >= 0 ? '+' : ''}
                     {formatCurrencyWithCurrency(item.realizedPl, item.currency)}
                   </div>
-                  <div
-                    className={cn(
-                      'font-mono-nums text-sm',
-                      plClass(item.returnPct)
-                    )}
-                  >
+                  <div className={cn('font-mono-nums text-sm', plClass(item.returnPct))}>
                     {formatPercent(item.returnPct)}
                   </div>
                 </div>
@@ -756,9 +716,7 @@ function RealizedPlContent({
               <div className="grid grid-cols-3 gap-2 text-sm pt-2 border-t border-border/50">
                 <div>
                   <div className="text-xs text-muted-foreground">{t('tx.shares')}</div>
-                  <div className="font-mono-nums">
-                    {formatShares(item.totalShares)}
-                  </div>
+                  <div className="font-mono-nums">{formatShares(item.totalShares)}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">{t('ui.tx.closeCount')}</div>
@@ -766,9 +724,7 @@ function RealizedPlContent({
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">{t('ui.tx.recentClose')}</div>
-                  <div className="font-mono-nums text-xs">
-                    {formatDate(item.lastCloseDate)}
-                  </div>
+                  <div className="font-mono-nums text-xs">{formatDate(item.lastCloseDate)}</div>
                 </div>
               </div>
             </CardContent>
@@ -778,5 +734,3 @@ function RealizedPlContent({
     </div>
   );
 }
-
-

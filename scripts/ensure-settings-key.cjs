@@ -29,7 +29,9 @@ function ensureSettingsKey(explicitKey, keyFile) {
     }
   }
   if (!/^[0-9a-f]{64}$/u.test(stored)) {
-    throw new Error('Saved settings encryption key is invalid; restore the settings-secrets volume');
+    throw new Error(
+      'Saved settings encryption key is invalid; restore the settings-secrets volume',
+    );
   }
   return stored;
 }

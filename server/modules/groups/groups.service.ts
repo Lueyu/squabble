@@ -10,21 +10,14 @@ import { eq, asc, and } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 
 import { groups } from '@server/database/schema';
-import type {
-  Group,
-  CreateGroupDto,
-  UpdateGroupDto,
-  ListResponse,
-} from '@shared/api.interface';
+import type { Group, CreateGroupDto, UpdateGroupDto, ListResponse } from '@shared/api.interface';
 
 /**
  * Provides group CRUD. Depends on the Drizzle database connection.
  */
 @Injectable()
 export class GroupsService {
-  constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-  ) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
   /**
    * Returns all groups for a user, ordered by the user's sort field ascending.

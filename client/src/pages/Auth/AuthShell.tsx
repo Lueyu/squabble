@@ -19,10 +19,7 @@ function AuthPrivacyNote({ className }: { className: string }) {
       <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
       <p>
         {t('auth.privacyLine')}{' '}
-        <Link
-          to="/privacy"
-          className="underline underline-offset-4 hover:text-foreground"
-        >
+        <Link to="/privacy" className="underline underline-offset-4 hover:text-foreground">
           {t('auth.privacyLink')}
         </Link>
       </p>
@@ -54,14 +51,18 @@ export function AuthShell({ title, subtitle, children }: AuthShellProps) {
           </div>
           <div className="auth-intro-copy">
             <p className="auth-wordmark">{t('layout.appName')}</p>
-            <h2 id="auth-brand-headline" className="auth-intro-title">{t('auth.tagline')}</h2>
+            <h2 id="auth-brand-headline" className="auth-intro-title">
+              {t('auth.tagline')}
+            </h2>
           </div>
           <AuthPrivacyNote className="auth-desktop-privacy" />
         </section>
 
         <section className="auth-form-panel" aria-labelledby="auth-form-title">
           <div className="auth-form-heading">
-            <h1 id="auth-form-title" className="text-2xl font-semibold tracking-tight">{title}</h1>
+            <h1 id="auth-form-title" className="text-2xl font-semibold tracking-tight">
+              {title}
+            </h1>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{subtitle}</p>
           </div>
           {children}

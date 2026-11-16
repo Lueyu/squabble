@@ -41,9 +41,15 @@ export function desktopPaths(resourceRoot: string, dataRoot: string): DesktopPat
 function validSecrets(value: unknown): value is DesktopSecrets {
   if (!value || typeof value !== 'object') return false;
   const secrets = value as Record<string, unknown>;
-  const values: unknown[] = [secrets.databasePassword, secrets.jwtSecret, secrets.settingsEncryptionKey];
-  return values.every((item: unknown) => typeof item === 'string' && /^[0-9a-f]{64}$/u.test(item))
-    && new Set(values).size === 3;
+  const values: unknown[] = [
+    secrets.databasePassword,
+    secrets.jwtSecret,
+    secrets.settingsEncryptionKey,
+  ];
+  return (
+    values.every((item: unknown) => typeof item === 'string' && /^[0-9a-f]{64}$/u.test(item)) &&
+    new Set(values).size === 3
+  );
 }
 
 export async function loadOrCreateSecrets(file: string): Promise<DesktopSecrets> {
@@ -54,7 +60,8 @@ export async function loadOrCreateSecrets(file: string): Promise<DesktopSecrets>
     return existing;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      if (error instanceof SyntaxError) throw new Error('Invalid desktop secrets file', { cause: error });
+      if (error instanceof SyntaxError)
+        throw new Error('Invalid desktop secrets file', { cause: error });
       throw error;
     }
   }
@@ -90,7 +97,8 @@ export async function allocateLoopbackPort(): Promise<number> {
       server.listen(0, '127.0.0.1', () => resolve());
     });
     const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Could not allocate loopback port');
+    if (!address || typeof address === 'string')
+      throw new Error('Could not allocate loopback port');
     return address.port;
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -106,7 +114,8 @@ async function portAvailable(port: number): Promise<boolean> {
     });
     return true;
   } catch (error) {
-    if (['EADDRINUSE', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) return false;
+    if (['EADDRINUSE', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? ''))
+      return false;
     throw error;
   } finally {
     if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -117,8 +126,13 @@ export async function loadOrCreateServerPort(file: string): Promise<number> {
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   try {
     const existing: number = Number((await readFile(file, 'utf8')).trim());
-    if (Number.isInteger(existing) && existing >= 1024 && existing <= 65535
-      && await portAvailable(existing)) return existing;
+    if (
+      Number.isInteger(existing) &&
+      existing >= 1024 &&
+      existing <= 65535 &&
+      (await portAvailable(existing))
+    )
+      return existing;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
@@ -131,7 +145,9 @@ export async function waitForHealth(origin: string, timeoutMs: number): Promise<
   const deadline: number = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const response: Response = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(1_000) });
+      const response: Response = await fetch(`${origin}/api/health`, {
+        signal: AbortSignal.timeout(1_000),
+      });
       if (response.ok) {
         const body: unknown = await response.json();
         if (body && typeof body === 'object' && 'status' in body && body.status === 'ok') return;
@@ -169,12 +185,19 @@ export function nestEnvironment(
 }
 
 async function controlBinary(): Promise<string> {
-  const packageName: string = process.platform === 'win32'
-    ? '@embedded-postgres/windows-x64'
-    : process.arch === 'arm64' ? '@embedded-postgres/darwin-arm64' : '@embedded-postgres/darwin-x64';
+  const packageName: string =
+    process.platform === 'win32'
+      ? '@embedded-postgres/windows-x64'
+      : process.arch === 'arm64'
+        ? '@embedded-postgres/darwin-arm64'
+        : '@embedded-postgres/darwin-x64';
   const binaries: unknown = await import(packageName);
-  if (!binaries || typeof binaries !== 'object' || !('pg_ctl' in binaries)
-    || typeof binaries.pg_ctl !== 'string') {
+  if (
+    !binaries ||
+    typeof binaries !== 'object' ||
+    !('pg_ctl' in binaries) ||
+    typeof binaries.pg_ctl !== 'string'
+  ) {
     throw new Error('Bundled PostgreSQL control binary is missing');
   }
   return binaries.pg_ctl;
@@ -198,14 +221,28 @@ async function releaseExistingCluster(paths: DesktopPaths, secrets: DesktopSecre
   const [pidText, dataDirectory, , portText] = pidFile.split(/\r?\n/u);
   const pid = Number(pidText);
   const port = Number(portText);
-  if (!Number.isInteger(pid) || pid <= 0 || !dataDirectory || !(await samePath(dataDirectory, paths.databaseDir))
-    || !Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('Existing desktop PostgreSQL PID file does not match its private data directory');
+  if (
+    !Number.isInteger(pid) ||
+    pid <= 0 ||
+    !dataDirectory ||
+    !(await samePath(dataDirectory, paths.databaseDir)) ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535
+  ) {
+    throw new Error(
+      'Existing desktop PostgreSQL PID file does not match its private data directory',
+    );
   }
 
   const client = new pg.Client({
-    host: '127.0.0.1', port, database: 'postgres', user: 'squabble',
-    password: secrets.databasePassword, connectionTimeoutMillis: 2_000, ssl: false,
+    host: '127.0.0.1',
+    port,
+    database: 'postgres',
+    user: 'squabble',
+    password: secrets.databasePassword,
+    connectionTimeoutMillis: 2_000,
+    ssl: false,
   });
   let connected = false;
   try {
@@ -213,11 +250,19 @@ async function releaseExistingCluster(paths: DesktopPaths, secrets: DesktopSecre
     connected = true;
     const result = await client.query('SHOW data_directory');
     const activeDirectory: unknown = result.rows[0]?.data_directory;
-    if (typeof activeDirectory !== 'string' || !(await samePath(activeDirectory, paths.databaseDir))) {
+    if (
+      typeof activeDirectory !== 'string' ||
+      !(await samePath(activeDirectory, paths.databaseDir))
+    ) {
       throw new Error('Existing PostgreSQL process uses another data directory');
     }
   } catch (error) {
-    if (!connected && ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+    if (
+      !connected &&
+      ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET'].includes(
+        (error as NodeJS.ErrnoException).code ?? '',
+      )
+    ) {
       return; // The PID file is stale; PostgreSQL removes it during startup.
     }
     throw error;
@@ -226,7 +271,8 @@ async function releaseExistingCluster(paths: DesktopPaths, secrets: DesktopSecre
   }
   const pgCtl = await controlBinary();
   await promisify(execFile)(pgCtl, ['-D', paths.databaseDir, '-m', 'fast', '-w', 'stop'], {
-    windowsHide: true, timeout: 20_000,
+    windowsHide: true,
+    timeout: 20_000,
   });
 }
 
@@ -234,7 +280,9 @@ async function applyBaseSchema(database: EmbeddedPostgres, schemaFile: string): 
   const administrator = database.getPgClient('postgres', '127.0.0.1');
   await administrator.connect();
   try {
-    const present = await administrator.query("SELECT 1 FROM pg_database WHERE datname = 'portfolio'");
+    const present = await administrator.query(
+      "SELECT 1 FROM pg_database WHERE datname = 'portfolio'",
+    );
     if (present.rowCount === 0) await administrator.query('CREATE DATABASE portfolio');
   } finally {
     await administrator.end();
@@ -252,13 +300,18 @@ async function applyBaseSchema(database: EmbeddedPostgres, schemaFile: string): 
         throw new Error(`Missing desktop database migration ${version}`);
       }
     }
-    const marker = await portfolio.query("SELECT to_regclass('public.desktop_installation') AS name");
+    const marker = await portfolio.query(
+      "SELECT to_regclass('public.desktop_installation') AS name",
+    );
     let installedVersion: number;
     if (marker.rows[0]?.name) {
       const version = await portfolio.query('SELECT version FROM desktop_installation');
       installedVersion = version.rows[0]?.version;
-      if (!Number.isInteger(installedVersion) || installedVersion < 1
-        || installedVersion > (migrations.at(-1)?.version ?? 1)) {
+      if (
+        !Number.isInteger(installedVersion) ||
+        installedVersion < 1 ||
+        installedVersion > (migrations.at(-1)?.version ?? 1)
+      ) {
         throw new Error('Unsupported desktop database schema version');
       }
     } else {
@@ -305,8 +358,12 @@ export function formatDatabaseStartupError(
   secrets: DesktopSecrets,
   exitCode?: number | null,
 ): Error {
-  const reason = error === undefined ? 'PostgreSQL process exited before readiness'
-    : error instanceof Error ? error.message : String(error);
+  const reason =
+    error === undefined
+      ? 'PostgreSQL process exited before readiness'
+      : error instanceof Error
+        ? error.message
+        : String(error);
   const code = exitCode == null ? '' : ` (exit code ${exitCode})`;
   const output = postgresOutput.trim().slice(-4_000) || '(no PostgreSQL output captured)';
   let message = `Desktop database startup failed: ${reason}${code}\nPostgreSQL output:\n${output}`;
@@ -314,7 +371,10 @@ export function formatDatabaseStartupError(
   return new Error(message, { cause: error });
 }
 
-export async function startDesktopDatabase(paths: DesktopPaths, secrets: DesktopSecrets): Promise<DesktopDatabase> {
+export async function startDesktopDatabase(
+  paths: DesktopPaths,
+  secrets: DesktopSecrets,
+): Promise<DesktopDatabase> {
   await mkdir(paths.logsDir, { recursive: true, mode: 0o700 });
   const log = createWriteStream(join(paths.logsDir, 'postgres.log'), { flags: 'a', mode: 0o600 });
   log.on('error', () => undefined);
@@ -335,7 +395,9 @@ export async function startDesktopDatabase(paths: DesktopPaths, secrets: Desktop
     initdbFlags: ['--encoding=UTF8'],
     postgresFlags: ['-c', 'listen_addresses=127.0.0.1', '-c', 'unix_socket_directories='],
     onLog: writeLog,
-    onError: (error: unknown) => { writeLog(`${String(error)}\n`); },
+    onError: (error: unknown) => {
+      writeLog(`${String(error)}\n`);
+    },
   });
   let started = false;
   const stop = async (): Promise<void> => {
@@ -366,7 +428,8 @@ export async function startDesktopDatabase(paths: DesktopPaths, secrets: Desktop
     const connectionUrl = `postgres://squabble:${encodeURIComponent(secrets.databasePassword)}@127.0.0.1:${port}/portfolio`;
     return { database, connectionUrl, stop };
   } catch (error) {
-    const postgresProcess = Reflect.get(database, 'process') as { exitCode?: number | null } | undefined;
+    const postgresProcess = Reflect.get(database, 'process') as
+      { exitCode?: number | null } | undefined;
     const exitCode = postgresProcess?.exitCode;
     if (started) await stop();
     else {

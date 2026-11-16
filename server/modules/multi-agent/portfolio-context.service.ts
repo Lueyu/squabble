@@ -24,9 +24,29 @@ import { FxService } from '@server/modules/fx/fx.service';
  * cap. Hard-coded list; extend as needed.
  */
 const LEVERAGE_ETF_TICKERS = new Set([
-  'TQQQ', 'SQQQ', 'SOXL', 'SOXS', 'NUGT', 'DUST', 'JDST', 'JPNL',
-  'UDOW', 'SDOW', 'UMDD', 'SMDD', 'UBOT', 'LABU', 'LABD', 'TMF',
-  'TMV', 'UPRO', 'SPXU', 'QID', 'QLD', 'SDS', 'SSO',
+  'TQQQ',
+  'SQQQ',
+  'SOXL',
+  'SOXS',
+  'NUGT',
+  'DUST',
+  'JDST',
+  'JPNL',
+  'UDOW',
+  'SDOW',
+  'UMDD',
+  'SMDD',
+  'UBOT',
+  'LABU',
+  'LABD',
+  'TMF',
+  'TMV',
+  'UPRO',
+  'SPXU',
+  'QID',
+  'QLD',
+  'SDS',
+  'SSO',
 ]);
 
 /** Company-group key for Xiaomi (covers all dual-listed tickers). */
@@ -93,7 +113,7 @@ export class PortfolioContextService {
         throw new Error(`无法计算组合风控：${row.currency} 现金余额无效`);
       }
       if (balance !== 0) {
-        cash += balance * await getUsdRate(row.currency);
+        cash += balance * (await getUsdRate(row.currency));
       }
     }
 
@@ -109,20 +129,24 @@ export class PortfolioContextService {
       if (shares !== 0 && h.currentPrice === null) {
         throw new Error(`无法计算组合风控：${h.ticker} 缺少现价`);
       }
-      if (!Number.isFinite(currentPrice) || currentPrice < 0 || (shares !== 0 && currentPrice === 0)) {
+      if (
+        !Number.isFinite(currentPrice) ||
+        currentPrice < 0 ||
+        (shares !== 0 && currentPrice === 0)
+      ) {
         throw new Error(`无法计算组合风控：${h.ticker} 现价无效`);
       }
       if (buyPrice !== null && !Number.isFinite(buyPrice)) {
         throw new Error(`无法计算组合风控：${h.ticker} 成本价无效`);
       }
       const nativeMarketValue = shares * currentPrice;
-      const marketValue = nativeMarketValue === 0
-        ? 0
-        : nativeMarketValue * await getUsdRate(h.currency ?? 'USD');
+      const marketValue =
+        nativeMarketValue === 0 ? 0 : nativeMarketValue * (await getUsdRate(h.currency ?? 'USD'));
       totalMv += marketValue;
-      const pnlPct = h.currentPrice !== null && buyPrice && buyPrice > 0
-        ? ((currentPrice - buyPrice) / buyPrice) * 100
-        : null;
+      const pnlPct =
+        h.currentPrice !== null && buyPrice && buyPrice > 0
+          ? ((currentPrice - buyPrice) / buyPrice) * 100
+          : null;
 
       holdingDetails.push({
         ticker: h.ticker,
@@ -243,7 +267,9 @@ export class PortfolioContextService {
             currentValue: Number(exposure.toFixed(2)),
             thresholdValue: threshold,
             detail: `${companyGroup} 合并敞口 ${exposure.toFixed(2)}%，阈值 ${threshold}%`,
-            suggestedAction: passed ? '敞口在允许范围内' : `需减持 ${companyGroup} 相关标的至 ${threshold}% 以下`,
+            suggestedAction: passed
+              ? '敞口在允许范围内'
+              : `需减持 ${companyGroup} 相关标的至 ${threshold}% 以下`,
           });
           break;
         }
@@ -259,7 +285,9 @@ export class PortfolioContextService {
             currentValue: Number(weight.toFixed(2)),
             thresholdValue: threshold,
             detail: `${ticker} 权重 ${weight.toFixed(2)}%，阈值 ${threshold}%`,
-            suggestedAction: passed ? '单股权重在建议范围内' : `建议减持 ${ticker} 至 ${threshold}% 以下`,
+            suggestedAction: passed
+              ? '单股权重在建议范围内'
+              : `建议减持 ${ticker} 至 ${threshold}% 以下`,
           });
           break;
         }
@@ -288,7 +316,9 @@ export class PortfolioContextService {
             currentValue: Number(exposure.toFixed(2)),
             thresholdValue: threshold,
             detail: `已识别杠杆/反向ETF合计仓位 ${exposure.toFixed(2)}%，阈值 ${threshold}%`,
-            suggestedAction: passed ? '已识别杠杆ETF敞口在范围内' : `需降低杠杆ETF合计仓位至 ${threshold}% 以下`,
+            suggestedAction: passed
+              ? '已识别杠杆ETF敞口在范围内'
+              : `需降低杠杆ETF合计仓位至 ${threshold}% 以下`,
           });
           break;
         }
@@ -303,7 +333,9 @@ export class PortfolioContextService {
             currentValue: Number(portfolio.cashRatio.toFixed(2)),
             thresholdValue: threshold,
             detail: `现金比例 ${portfolio.cashRatio.toFixed(2)}%，配置下限 ${threshold}%`,
-            suggestedAction: passed ? '现金比例达到配置下限' : `现金比例低于 ${threshold}%，建议增加现金储备`,
+            suggestedAction: passed
+              ? '现金比例达到配置下限'
+              : `现金比例低于 ${threshold}%，建议增加现金储备`,
           });
           break;
         }
@@ -383,7 +415,9 @@ export class PortfolioContextService {
               detail: `${ticker} ${isStopLoss ? '浮亏' : '浮盈'} ${currentValue.toFixed(2)}%，阈值 ${threshold}%`,
               suggestedAction: passed
                 ? '未触发阈值'
-                : isStopLoss ? '触发止损评估' : '触发止盈评估或分批减仓',
+                : isStopLoss
+                  ? '触发止损评估'
+                  : '触发止盈评估或分批减仓',
             });
           }
           break;
@@ -394,8 +428,11 @@ export class PortfolioContextService {
             addUnverified(rule, threshold, `${ticker} 缺少行业分类，无法核实行业敞口`);
             break;
           }
-          if (portfolio.holdings.some((item: PortfolioContext['holdings'][number]) =>
-            item.weightPct > 0 && !item.sector)) {
+          if (
+            portfolio.holdings.some(
+              (item: PortfolioContext['holdings'][number]) => item.weightPct > 0 && !item.sector,
+            )
+          ) {
             addUnverified(rule, threshold, '部分持仓缺少行业分类，无法核实行业合计敞口');
             break;
           }
@@ -414,7 +451,9 @@ export class PortfolioContextService {
             currentValue: Number(exposure.toFixed(2)),
             thresholdValue: threshold,
             detail: `${holding.sector} 行业合计仓位 ${exposure.toFixed(2)}%，阈值 ${threshold}%`,
-            suggestedAction: passed ? '行业敞口在配置范围内' : `需降低该行业仓位至 ${threshold}% 以下`,
+            suggestedAction: passed
+              ? '行业敞口在配置范围内'
+              : `需降低该行业仓位至 ${threshold}% 以下`,
           });
           break;
         }

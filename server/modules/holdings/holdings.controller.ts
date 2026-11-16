@@ -7,16 +7,7 @@
  * data access is automatically scoped to the logged-in user. Business logic and SQL
  * live in `HoldingsService`.
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Delete,
-  Param,
-  Body,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 
@@ -55,10 +46,7 @@ export class HoldingsController {
    * @param req Authenticated request.
    */
   @Get(':id')
-  async findOne(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ): Promise<Holding> {
+  async findOne(@Param('id') id: string, @Req() req: Request): Promise<Holding> {
     const { userId } = req.userContext;
     return this.holdingsService.findOne(id, userId);
   }
@@ -71,10 +59,7 @@ export class HoldingsController {
    * @param req Authenticated request.
    */
   @Post()
-  async create(
-    @Body() dto: CreateHoldingDto,
-    @Req() req: Request,
-  ): Promise<Holding> {
+  async create(@Body() dto: CreateHoldingDto, @Req() req: Request): Promise<Holding> {
     const { userId } = req.userContext;
     return this.holdingsService.create(dto, userId);
   }
@@ -119,10 +104,7 @@ export class HoldingsController {
    * @param req Authenticated request.
    */
   @Delete(':id')
-  async remove(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ): Promise<{ success: true }> {
+  async remove(@Param('id') id: string, @Req() req: Request): Promise<{ success: true }> {
     const { userId } = req.userContext;
     return this.holdingsService.remove(id, userId);
   }

@@ -5,24 +5,11 @@
  * thesis, target price, catalysts, risks) under `/api/portfolio/analysis`.
  * Requires login on every route.
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Delete,
-  Body,
-  Param,
-  Query,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 import { AnalysisService } from './analysis.service';
-import type {
-  Analysis,
-  CreateAnalysisDto,
-  ListResponse,
-} from '@shared/api.interface';
+import type { Analysis, CreateAnalysisDto, ListResponse } from '@shared/api.interface';
 
 /**
  * REST controller for stock analysis notes. Delegates to `AnalysisService`.
@@ -68,10 +55,7 @@ export class AnalysisController {
    * @param dto Analysis payload.
    */
   @Post()
-  async upsert(
-    @Req() req: Request,
-    @Body() dto: CreateAnalysisDto,
-  ): Promise<Analysis> {
+  async upsert(@Req() req: Request, @Body() dto: CreateAnalysisDto): Promise<Analysis> {
     const { userId } = req.userContext;
     return this.analysisService.upsert(userId, dto);
   }
@@ -98,10 +82,7 @@ export class AnalysisController {
    * @param id  Analysis row primary key.
    */
   @Delete(':id')
-  async remove(
-    @Req() req: Request,
-    @Param('id') id: string,
-  ): Promise<{ success: boolean }> {
+  async remove(@Req() req: Request, @Param('id') id: string): Promise<{ success: boolean }> {
     const { userId } = req.userContext;
     return this.analysisService.remove(userId, id);
   }

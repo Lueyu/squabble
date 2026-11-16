@@ -17,10 +17,17 @@ interface ChartTheme {
 }
 
 const INITIAL_CHART_THEME: ChartTheme = {
-  surface: '#fff', foreground: '#222', muted: '#666', border: '#ddd',
-  grid: '#eee', line: '#477fbe', areaStart: 'rgba(71, 127, 190, 0.2)',
-  areaEnd: 'rgba(71, 127, 190, 0)', tooltipBackground: '#fff',
-  tooltipForeground: '#222', fontFamily: 'sans-serif',
+  surface: '#fff',
+  foreground: '#222',
+  muted: '#666',
+  border: '#ddd',
+  grid: '#eee',
+  line: '#477fbe',
+  areaStart: 'rgba(71, 127, 190, 0.2)',
+  areaEnd: 'rgba(71, 127, 190, 0)',
+  tooltipBackground: '#fff',
+  tooltipForeground: '#222',
+  fontFamily: 'sans-serif',
 };
 
 /** Computed RGB is supported by ECharts even when the source token uses HSL. */

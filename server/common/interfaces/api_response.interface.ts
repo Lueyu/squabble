@@ -27,4 +27,3 @@ export interface ApiErrorResponse {
     timestamp?: number;
   };
 }
-

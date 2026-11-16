@@ -42,12 +42,7 @@ import {
   reorderStrategyRules,
   resetStrategyRules,
 } from '@/api';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -99,11 +94,13 @@ const CATEGORY_ORDER: Array<{
 ];
 
 const SEVERITY_LABEL_KEYS: Record<RuleSeverity, string> = {
-  hard_block: 'rules.hardBlock', warning: 'rules.warning',
+  hard_block: 'rules.hardBlock',
+  warning: 'rules.warning',
 };
 
 const RULE_TYPE_LABEL_KEYS: Record<RuleType, string> = {
-  hard: 'rules.hardRule', soft: 'rules.softRule',
+  hard: 'rules.hardRule',
+  soft: 'rules.softRule',
 };
 
 // ── Helpers ──────────────────────────────────────────────
@@ -112,9 +109,7 @@ const RULE_TYPE_LABEL_KEYS: Record<RuleType, string> = {
  */
 function getCategoryKey(rule: StrategyRule): RuleCategory | 'other' {
   if (!rule.category) return 'other';
-  const defined = CATEGORY_ORDER.slice(0, -1).some(
-    (c) => c.key === rule.category,
-  );
+  const defined = CATEGORY_ORDER.slice(0, -1).some((c) => c.key === rule.category);
   return defined ? rule.category : 'other';
 }
 
@@ -166,7 +161,10 @@ function formatThreshold(
  * optimistic updates where cheap (toggle, reorder, threshold) and roll back on
  * failure; create/delete/reset refetch the whole list.
  */
-function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boolean; active?: boolean } = {}) {
+function StrategyRulesPage({
+  embedded = false,
+  active = true,
+}: { embedded?: boolean; active?: boolean } = {}) {
   const { t } = useTranslation();
   const [rules, setRules] = useState<StrategyRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -211,9 +209,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
   const [reordering, setReordering] = useState(false);
 
   // 阈值行内编辑
-  const [editingThresholdId, setEditingThresholdId] = useState<string | null>(
-    null,
-  );
+  const [editingThresholdId, setEditingThresholdId] = useState<string | null>(null);
   const [thresholdValue, setThresholdValue] = useState('');
 
   // ── Data loading ────────────────────────────────────────────
@@ -250,23 +246,17 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
   const handleToggle = useCallback(
     async (rule: StrategyRule, nextEnabled: boolean) => {
       const previous = rule.enabled;
-      setRules((prev) =>
-        prev.map((r) =>
-          r.id === rule.id ? { ...r, enabled: nextEnabled } : r,
-        ),
-      );
+      setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, enabled: nextEnabled } : r)));
       try {
         await updateStrategyRule(rule.id, { enabled: nextEnabled });
-        toast.success(t('ui.rules.statusChanged', {
-          name: rule.ruleName,
-          status: t(nextEnabled ? 'ui.rules.enabled' : 'ui.rules.disabled'),
-        }));
-      } catch (err) {
-        setRules((prev) =>
-          prev.map((r) =>
-            r.id === rule.id ? { ...r, enabled: previous } : r,
-          ),
+        toast.success(
+          t('ui.rules.statusChanged', {
+            name: rule.ruleName,
+            status: t(nextEnabled ? 'ui.rules.enabled' : 'ui.rules.disabled'),
+          }),
         );
+      } catch (err) {
+        setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, enabled: previous } : r)));
         const message = err instanceof Error ? err.message : t('ui.rules.toggleFailed');
         logger.error('更新规则状态失败', err);
         toast.error(t('ui.rules.toggleFailed'), { description: message });
@@ -319,10 +309,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
       return;
     }
 
-    const thresholdNum =
-      formData.threshold.trim() !== ''
-        ? Number(formData.threshold)
-        : undefined;
+    const thresholdNum = formData.threshold.trim() !== '' ? Number(formData.threshold) : undefined;
     if (
       formData.threshold.trim() !== '' &&
       (Number.isNaN(thresholdNum) || !isFinite(thresholdNum))
@@ -340,8 +327,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
         threshold: thresholdNum,
         unit: formData.unit.trim() || undefined,
         description: formData.description.trim() || undefined,
-        category:
-          formData.category === 'none' ? undefined : formData.category,
+        category: formData.category === 'none' ? undefined : formData.category,
         severity: formData.severity,
       };
 
@@ -405,15 +391,12 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
 
   // ── Drag-and-drop reordering ────────────────────────────────────
   /** Track the dragged rule id + its category bucket. */
-  const handleDragStart = useCallback(
-    (e: React.DragEvent<HTMLDivElement>, rule: StrategyRule) => {
-      dragIdRef.current = rule.id;
-      dragCatRef.current = getCategoryKey(rule);
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', rule.id);
-    },
-    [],
-  );
+  const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>, rule: StrategyRule) => {
+    dragIdRef.current = rule.id;
+    dragCatRef.current = getCategoryKey(rule);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', rule.id);
+  }, []);
 
   /** Highlight the drop target row. */
   const handleDragOver = useCallback(
@@ -428,15 +411,12 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
   );
 
   /** Clear the drop highlight when leaving the row (ignoring child enter/leave). */
-  const handleDragLeave = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      const related = e.relatedTarget as Node | null;
-      const current = e.currentTarget as Node;
-      if (related && current.contains(related)) return;
-      setDragOverId(null);
-    },
-    [],
-  );
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    const related = e.relatedTarget as Node | null;
+    const current = e.currentTarget as Node;
+    if (related && current.contains(related)) return;
+    setDragOverId(null);
+  }, []);
 
   /**
    * Reorder within a single category. Cross-category drops are rejected.
@@ -444,10 +424,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
    * rolls the UI back if the API call fails.
    */
   const handleDrop = useCallback(
-    async (
-      e: React.DragEvent<HTMLDivElement>,
-      targetRule: StrategyRule,
-    ) => {
+    async (e: React.DragEvent<HTMLDivElement>, targetRule: StrategyRule) => {
       e.preventDefault();
       const draggedId = dragIdRef.current;
       const dragCat = dragCatRef.current;
@@ -473,9 +450,10 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
       const [removed] = newGroupList.splice(dragIdx, 1);
       newGroupList.splice(targetIdx, 0, removed);
 
-      const reordered: Array<{ id: string; sort: number }> = newGroupList.map(
-        (r, i) => ({ id: r.id, sort: i }),
-      );
+      const reordered: Array<{ id: string; sort: number }> = newGroupList.map((r, i) => ({
+        id: r.id,
+        sort: i,
+      }));
 
       // 更新整体 rules 状态
       const updatedRules = rules.map((r) => {
@@ -538,9 +516,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
       }
       const previous = rule.threshold;
       setRules((prev) =>
-        prev.map((r) =>
-          r.id === rule.id ? { ...r, threshold: thresholdValue } : r,
-        ),
+        prev.map((r) => (r.id === rule.id ? { ...r, threshold: thresholdValue } : r)),
       );
       try {
         await updateStrategyRule(rule.id, { threshold: numValue });
@@ -548,11 +524,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
         setEditingThresholdId(null);
         setThresholdValue('');
       } catch (err) {
-        setRules((prev) =>
-          prev.map((r) =>
-            r.id === rule.id ? { ...r, threshold: previous } : r,
-          ),
-        );
+        setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, threshold: previous } : r)));
         const message = err instanceof Error ? err.message : t('rules.saveFailed');
         logger.error('更新阈值失败', err);
         toast.error(t('rules.saveFailed'), { description: message });
@@ -565,15 +537,17 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
   return (
     <div className="space-y-6">
       {/* 顶部操作栏 */}
-      <div className={`flex flex-col gap-4 sm:flex-row sm:items-start ${embedded ? 'sm:justify-end' : 'sm:justify-between'}`}>
-        {!embedded && <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            {t('rules.title')}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {t('ui.rules.pageDescription')}
-          </p>
-        </div>}
+      <div
+        className={`flex flex-col gap-4 sm:flex-row sm:items-start ${embedded ? 'sm:justify-end' : 'sm:justify-between'}`}
+      >
+        {!embedded && (
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              {t('rules.title')}
+            </h1>
+            <p className="text-sm text-muted-foreground">{t('ui.rules.pageDescription')}</p>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
@@ -598,9 +572,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-destructive/10 text-destructive">
                 <Shield size={18} />
               </div>
-              <CardTitle className="text-base text-foreground">
-                {t('rules.hardRule')}
-              </CardTitle>
+              <CardTitle className="text-base text-foreground">{t('rules.hardRule')}</CardTitle>
               <Badge
                 variant="outline"
                 className="border-destructive/40 bg-destructive/10 text-destructive"
@@ -612,10 +584,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
           <CardContent>
             <p className="text-sm leading-6 text-muted-foreground">
               {t('ui.rules.hardDescription')}
-              <span className="font-medium text-destructive">
-                {t('ui.rules.hardEmphasis')}
-              </span>
-              。
+              <span className="font-medium text-destructive">{t('ui.rules.hardEmphasis')}</span>。
             </p>
             <p className="mt-2 text-xs text-muted-foreground">
               {t('ui.rules.hardCount', { count: hardCount })}
@@ -629,13 +598,8 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-warning/10 text-warning">
                 <Lightbulb size={18} />
               </div>
-              <CardTitle className="text-base text-foreground">
-                {t('rules.softRule')}
-              </CardTitle>
-              <Badge
-                variant="outline"
-                className="border-warning/40 bg-warning/10 text-warning"
-              >
+              <CardTitle className="text-base text-foreground">{t('rules.softRule')}</CardTitle>
+              <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">
                 Soft
               </Badge>
             </div>
@@ -653,7 +617,10 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
 
       {/* 错误提示 */}
       {error && (
-        <div role="alert" className="flex items-start gap-3 rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
+        >
           <AlertTriangle size={18} className="mt-0.5 shrink-0" />
           <div className="min-w-0">
             <div className="font-medium">{t('rules.loadFailed')}</div>
@@ -684,9 +651,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
               <div key={cat.key}>
                 {/* 分组标题 */}
                 <div className="mb-3 flex items-center gap-2">
-                  <h2 className="text-base font-semibold text-foreground">
-                    {t(cat.labelKey)}
-                  </h2>
+                  <h2 className="text-base font-semibold text-foreground">{t(cat.labelKey)}</h2>
                   <Badge
                     variant="outline"
                     className="border-warning/30 bg-warning/10 px-2 py-0 text-[10px] text-warning"
@@ -743,9 +708,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
               {t(editingRule ? 'ui.rules.editTitle' : 'ui.rules.createTitle')}
             </DialogTitle>
             <DialogDescription>
-              {editingRule
-                ? t('ui.rules.editDescription')
-                : t('ui.rules.createDescription')}
+              {editingRule ? t('ui.rules.editDescription') : t('ui.rules.createDescription')}
             </DialogDescription>
           </DialogHeader>
 
@@ -756,9 +719,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
                 <Input
                   id="ruleKey"
                   value={formData.ruleKey}
-                  onChange={(e) =>
-                    setFormData({ ...formData, ruleKey: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, ruleKey: e.target.value })}
                   placeholder={t('ui.rules.ruleKeyPlaceholder')}
                   disabled={!!editingRule}
                 />
@@ -768,9 +729,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
                 <Input
                   id="ruleName"
                   value={formData.ruleName}
-                  onChange={(e) =>
-                    setFormData({ ...formData, ruleName: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, ruleName: e.target.value })}
                   placeholder={t('ui.rules.ruleNamePlaceholder')}
                 />
               </div>
@@ -802,9 +761,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
                 <Input
                   id="threshold"
                   value={formData.threshold}
-                  onChange={(e) =>
-                    setFormData({ ...formData, threshold: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, threshold: e.target.value })}
                   placeholder={t('ui.rules.thresholdExample')}
                 />
               </div>
@@ -813,9 +770,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
                 <Input
                   id="unit"
                   value={formData.unit}
-                  onChange={(e) =>
-                    setFormData({ ...formData, unit: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
                   placeholder={t('ui.rules.unitExample')}
                 />
               </div>
@@ -837,13 +792,11 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {CATEGORY_ORDER.filter((c) => c.key !== 'other').map(
-                      (c) => (
-                        <SelectItem key={c.key} value={c.key}>
-                          {t(c.labelKey)}
-                        </SelectItem>
-                      ),
-                    )}
+                    {CATEGORY_ORDER.filter((c) => c.key !== 'other').map((c) => (
+                      <SelectItem key={c.key} value={c.key}>
+                        {t(c.labelKey)}
+                      </SelectItem>
+                    ))}
                     <SelectItem value="none">{t('ui.rules.uncategorized')}</SelectItem>
                   </SelectContent>
                 </Select>
@@ -875,9 +828,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
               <Textarea
                 id="description"
                 value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder={t('ui.rules.descriptionPlaceholder')}
                 rows={3}
               />
@@ -885,15 +836,15 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDialogOpen(false)}
-              disabled={saving}
-            >
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
               {t('common.cancel')}
             </Button>
             <Button onClick={() => void handleSaveDialog()} disabled={saving}>
-              {saving ? t('common.saving') : editingRule ? t('ui.rules.saveChanges') : t('ui.rules.createRule')}
+              {saving
+                ? t('common.saving')
+                : editingRule
+                  ? t('ui.rules.saveChanges')
+                  : t('ui.rules.createRule')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -917,10 +868,7 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel
-              onClick={() => setDeleteTarget(null)}
-              disabled={deleting}
-            >
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)} disabled={deleting}>
               {t('common.cancel')}
             </AlertDialogCancel>
             <AlertDialogAction
@@ -942,15 +890,10 @@ function StrategyRulesPage({ embedded = false, active = true }: { embedded?: boo
               <RotateCcw className="h-5 w-5 text-amber-500" />
               {t('ui.rules.resetTitle')}
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('ui.rules.resetDescription')}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t('ui.rules.resetDescription')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel
-              onClick={() => setResetOpen(false)}
-              disabled={resetting}
-            >
+            <AlertDialogCancel onClick={() => setResetOpen(false)} disabled={resetting}>
               {t('common.cancel')}
             </AlertDialogCancel>
             <AlertDialogAction
@@ -980,16 +923,10 @@ interface RuleCardProps {
   onToggle: (rule: StrategyRule, enabled: boolean) => Promise<void>;
   onEdit: (rule: StrategyRule) => void;
   onDelete: (rule: StrategyRule) => void;
-  onDragStart: (
-    e: React.DragEvent<HTMLDivElement>,
-    rule: StrategyRule,
-  ) => void;
+  onDragStart: (e: React.DragEvent<HTMLDivElement>, rule: StrategyRule) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>, ruleId: string) => void;
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
-  onDrop: (
-    e: React.DragEvent<HTMLDivElement>,
-    rule: StrategyRule,
-  ) => Promise<void>;
+  onDrop: (e: React.DragEvent<HTMLDivElement>, rule: StrategyRule) => Promise<void>;
   onDragEnd: () => void;
   isDragOver: boolean;
   isReordering: boolean;
@@ -1060,9 +997,7 @@ function RuleCard({
               </span>
             </div>
             {rule.description && (
-              <p className="mt-0.5 text-xs text-muted-foreground break-words">
-                {rule.description}
-              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground break-words">{rule.description}</p>
             )}
           </div>
         </div>
@@ -1071,51 +1006,49 @@ function RuleCard({
         <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto sm:justify-end">
           {/* 中部：阈值参数 */}
           <div className="flex items-center gap-2">
-          {isEditing ? (
-            <div className="flex items-center gap-2">
-              <Input
-                value={thresholdValue}
-                onChange={(e) => setThresholdValue(e.target.value)}
-                className="h-8 w-24 text-center font-mono"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    void saveThreshold(rule);
-                  } else if (e.key === 'Escape') {
-                    cancelThresholdEdit();
-                  }
-                }}
-              />
-              {rule.unit && (
-                <span className="w-6 text-xs text-muted-foreground">
-                  {rule.unit}
-                </span>
-              )}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-400"
-                onClick={() => void saveThreshold(rule)}
-                title={t('common.save')}
-              >
-                <Check size={16} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                onClick={cancelThresholdEdit}
-                title={t('common.cancel')}
-              >
-                <X size={16} />
-              </Button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => hasThreshold && startThresholdEdit(rule)}
-              disabled={!hasThreshold}
-              className={`
+            {isEditing ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  value={thresholdValue}
+                  onChange={(e) => setThresholdValue(e.target.value)}
+                  className="h-8 w-24 text-center font-mono"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      void saveThreshold(rule);
+                    } else if (e.key === 'Escape') {
+                      cancelThresholdEdit();
+                    }
+                  }}
+                />
+                {rule.unit && (
+                  <span className="w-6 text-xs text-muted-foreground">{rule.unit}</span>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-400"
+                  onClick={() => void saveThreshold(rule)}
+                  title={t('common.save')}
+                >
+                  <Check size={16} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                  onClick={cancelThresholdEdit}
+                  title={t('common.cancel')}
+                >
+                  <X size={16} />
+                </Button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => hasThreshold && startThresholdEdit(rule)}
+                disabled={!hasThreshold}
+                className={`
                 flex items-center gap-1.5 rounded-md border border-transparent
                 px-2 py-1 text-sm transition-colors
                 ${
@@ -1124,76 +1057,76 @@ function RuleCard({
                     : 'cursor-default'
                 }
               `}
-              title={hasThreshold ? t('ui.rules.editThreshold') : t('ui.rules.noThreshold')}
-            >
-              <span className="font-mono-nums font-medium text-foreground">
-                {hasThreshold ? formatThreshold(rule.threshold, rule.unit, t) : '—'}
-              </span>
-              {hasThreshold && (
-                <Pencil
-                  size={12}
-                  className="ml-0.5 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100"
-                />
-              )}
-            </button>
-          )}
-        </div>
+                title={hasThreshold ? t('ui.rules.editThreshold') : t('ui.rules.noThreshold')}
+              >
+                <span className="font-mono-nums font-medium text-foreground">
+                  {hasThreshold ? formatThreshold(rule.threshold, rule.unit, t) : '—'}
+                </span>
+                {hasThreshold && (
+                  <Pencil
+                    size={12}
+                    className="ml-0.5 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100"
+                  />
+                )}
+              </button>
+            )}
+          </div>
 
           {/* 右部：徽章 + 开关 + 操作按钮 */}
           <div className="flex items-center gap-2 flex-wrap">
-          {/* 严重级别徽章 */}
-          <Badge
-            variant={rule.severity === 'hard_block' ? 'destructive' : 'outline'}
-            className={
-              rule.severity === 'hard_block'
-                ? 'bg-destructive text-destructive-foreground'
-                : 'border-warning/40 bg-warning/10 text-warning'
-            }
-          >
-            {t(SEVERITY_LABEL_KEYS[rule.severity])}
-          </Badge>
+            {/* 严重级别徽章 */}
+            <Badge
+              variant={rule.severity === 'hard_block' ? 'destructive' : 'outline'}
+              className={
+                rule.severity === 'hard_block'
+                  ? 'bg-destructive text-destructive-foreground'
+                  : 'border-warning/40 bg-warning/10 text-warning'
+              }
+            >
+              {t(SEVERITY_LABEL_KEYS[rule.severity])}
+            </Badge>
 
-          {/* ruleType 徽章 */}
-          <Badge
-            variant="outline"
-            className={
-              rule.ruleType === 'hard'
-                ? 'border-primary/40 bg-primary/10 text-primary'
-                : 'border-border bg-muted text-muted-foreground'
-            }
-          >
-            {t(RULE_TYPE_LABEL_KEYS[rule.ruleType])}
-          </Badge>
+            {/* ruleType 徽章 */}
+            <Badge
+              variant="outline"
+              className={
+                rule.ruleType === 'hard'
+                  ? 'border-primary/40 bg-primary/10 text-primary'
+                  : 'border-border bg-muted text-muted-foreground'
+              }
+            >
+              {t(RULE_TYPE_LABEL_KEYS[rule.ruleType])}
+            </Badge>
 
-          {/* 启停开关 */}
-          <Switch
-            checked={rule.enabled}
-            onCheckedChange={(checked) => {
-              void onToggle(rule, checked);
-            }}
-          />
+            {/* 启停开关 */}
+            <Switch
+              checked={rule.enabled}
+              onCheckedChange={(checked) => {
+                void onToggle(rule, checked);
+              }}
+            />
 
-          {/* 编辑按钮 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
-            onClick={() => onEdit(rule)}
-            title={t('ui.rules.editRule')}
-          >
-            <Pencil size={16} />
-          </Button>
+            {/* 编辑按钮 */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              onClick={() => onEdit(rule)}
+              title={t('ui.rules.editRule')}
+            >
+              <Pencil size={16} />
+            </Button>
 
-          {/* 删除按钮 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400"
-            onClick={() => onDelete(rule)}
-            title={t('ui.rules.deleteRule')}
-          >
-            <Trash2 size={16} />
-          </Button>
+            {/* 删除按钮 */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400"
+              onClick={() => onDelete(rule)}
+              title={t('ui.rules.deleteRule')}
+            >
+              <Trash2 size={16} />
+            </Button>
           </div>
         </div>
       </CardContent>

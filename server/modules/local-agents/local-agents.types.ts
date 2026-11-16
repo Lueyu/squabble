@@ -1,7 +1,10 @@
 import type { NativeAgentConfiguration } from '../../../shared/local-agents.interface';
 import type { ResearchToolScope } from '../../../shared/research-tools.interface';
 
-export interface LocalAgentTaskRef { taskId: string; contextId: string }
+export interface LocalAgentTaskRef {
+  taskId: string;
+  contextId: string;
+}
 export interface LocalAgentExecution {
   researchScope?: ResearchToolScope;
   agentId: string;
@@ -24,7 +27,11 @@ export interface LocalAgentResult {
   usageTokens: number | null;
 }
 export class LocalAgentError extends Error {
-  constructor(readonly code: string, readonly taskId?: string, readonly contextId?: string) {
+  constructor(
+    readonly code: string,
+    readonly taskId?: string,
+    readonly contextId?: string,
+  ) {
     super(code);
     this.name = 'LocalAgentError';
   }
@@ -42,5 +49,7 @@ export function nativeFailureCode(error: unknown): string {
     NATIVE_AGENT_UPSTREAM_PENDING: 'LOCAL_DISPATCH_UNCERTAIN',
     NATIVE_AGENT_TOOL_ISOLATION_FAILED: 'LOCAL_TOOL_ISOLATION_FAILED',
   };
-  return error instanceof Error ? codes[error.message] ?? 'LOCAL_TASK_FAILED' : 'LOCAL_TASK_FAILED';
+  return error instanceof Error
+    ? (codes[error.message] ?? 'LOCAL_TASK_FAILED')
+    : 'LOCAL_TASK_FAILED';
 }

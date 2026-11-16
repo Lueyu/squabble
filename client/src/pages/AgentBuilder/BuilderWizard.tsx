@@ -3,8 +3,15 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
-  Check, ChevronLeft, ChevronRight, Loader2, Plus, Radar,
-  Shield, SlidersHorizontal, Trash2,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Plus,
+  Radar,
+  Shield,
+  SlidersHorizontal,
+  Trash2,
 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 
@@ -35,8 +42,10 @@ interface BuilderWizardProps {
 
 type Template = BuilderConfig['template'];
 
-const TEMPLATE_DEFAULTS: Record<Template, Pick<BuilderConfig,
-  'minimumRating' | 'maxOrderPct' | 'dailyLossLimitPct' | 'maxOrdersPerDay'>> = {
+const TEMPLATE_DEFAULTS: Record<
+  Template,
+  Pick<BuilderConfig, 'minimumRating' | 'maxOrderPct' | 'dailyLossLimitPct' | 'maxOrdersPerDay'>
+> = {
   guard: { minimumRating: 'Strong Buy', maxOrderPct: 2, dailyLossLimitPct: 2, maxOrdersPerDay: 1 },
   balanced: { minimumRating: 'Buy', maxOrderPct: 4, dailyLossLimitPct: 3, maxOrdersPerDay: 1 },
   scout: { minimumRating: 'Buy', maxOrderPct: 6, dailyLossLimitPct: 4, maxOrdersPerDay: 1 },
@@ -83,30 +92,41 @@ function parsePriceRules(rows: PriceRuleForm[]): BuilderConfig['priceRules'] {
 }
 
 function normalizeTickers(value: string): string[] {
-  return Array.from(new Set(value.split(/[\s,，]+/u)
-    .map((ticker: string) => ticker.trim().toUpperCase())
-    .filter((ticker: string) => ticker.length > 0)));
+  return Array.from(
+    new Set(
+      value
+        .split(/[\s,，]+/u)
+        .map((ticker: string) => ticker.trim().toUpperCase())
+        .filter((ticker: string) => ticker.length > 0),
+    ),
+  );
 }
 
 function validateConfig(config: BuilderConfig): string | null {
   if (!config.name.trim() || config.name.trim().length > 64) return 'nameInvalid';
-  if (config.tickers.length > 100 || config.tickers.some((ticker: string) =>
-    !/^[A-Z0-9.^-]{1,20}$/u.test(ticker))) return 'tickersInvalid';
-  if (config.tickers.length > 0 && new Set([
-    ...config.tickers,
-    ...(config.priceRules ?? []).map((rule) => rule.ticker),
-  ]).size > 100) return 'tickersInvalid';
+  if (
+    config.tickers.length > 100 ||
+    config.tickers.some((ticker: string) => !/^[A-Z0-9.^-]{1,20}$/u.test(ticker))
+  )
+    return 'tickersInvalid';
+  if (
+    config.tickers.length > 0 &&
+    new Set([...config.tickers, ...(config.priceRules ?? []).map((rule) => rule.ticker)]).size > 100
+  )
+    return 'tickersInvalid';
   if (config.customPrompt.length > 2000) return 'promptInvalid';
   if (config.priceRules && config.priceRules.length > 20) return 'priceRulesInvalid';
   const priceTickers: Set<string> = new Set();
   for (const rule of config.priceRules ?? []) {
-    if (!/^[A-Z0-9.^-]{1,20}$/u.test(rule.ticker)
-      || priceTickers.has(rule.ticker)
-      || (rule.buyAtOrBelow === undefined && rule.sellAtOrAbove === undefined)
-      || (rule.buyAtOrBelow !== undefined
-        && (!Number.isFinite(rule.buyAtOrBelow) || rule.buyAtOrBelow <= 0))
-      || (rule.sellAtOrAbove !== undefined
-        && (!Number.isFinite(rule.sellAtOrAbove) || rule.sellAtOrAbove <= 0))) {
+    if (
+      !/^[A-Z0-9.^-]{1,20}$/u.test(rule.ticker) ||
+      priceTickers.has(rule.ticker) ||
+      (rule.buyAtOrBelow === undefined && rule.sellAtOrAbove === undefined) ||
+      (rule.buyAtOrBelow !== undefined &&
+        (!Number.isFinite(rule.buyAtOrBelow) || rule.buyAtOrBelow <= 0)) ||
+      (rule.sellAtOrAbove !== undefined &&
+        (!Number.isFinite(rule.sellAtOrAbove) || rule.sellAtOrAbove <= 0))
+    ) {
       return 'priceRulesInvalid';
     }
     priceTickers.add(rule.ticker);
@@ -114,12 +134,18 @@ function validateConfig(config: BuilderConfig): string | null {
   if (!Number.isFinite(config.maxOrderPct) || config.maxOrderPct <= 0 || config.maxOrderPct > 20) {
     return 'orderPctInvalid';
   }
-  if (!Number.isFinite(config.dailyLossLimitPct)
-    || config.dailyLossLimitPct <= 0 || config.dailyLossLimitPct > 20) {
+  if (
+    !Number.isFinite(config.dailyLossLimitPct) ||
+    config.dailyLossLimitPct <= 0 ||
+    config.dailyLossLimitPct > 20
+  ) {
     return 'lossPctInvalid';
   }
-  if (!Number.isInteger(config.maxOrdersPerDay)
-    || config.maxOrdersPerDay < 1 || config.maxOrdersPerDay > 20) {
+  if (
+    !Number.isInteger(config.maxOrdersPerDay) ||
+    config.maxOrdersPerDay < 1 ||
+    config.maxOrdersPerDay > 20
+  ) {
     return 'ordersInvalid';
   }
   return null;
@@ -129,8 +155,13 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
   const { t, i18n } = useTranslation();
   const [step, setStep] = useState(0);
   const [config, setConfig] = useState<BuilderConfig>(() => ({
-    ...(editing?.config ?? { ...DEFAULT_CONFIG, name: t('ui.builder.template.balanced.defaultName') }),
-    council: editing ? (editing.config.council ?? { ...defaultCouncil(i18n.language), enabled: false }) : defaultCouncil(i18n.language),
+    ...(editing?.config ?? {
+      ...DEFAULT_CONFIG,
+      name: t('ui.builder.template.balanced.defaultName'),
+    }),
+    council: editing
+      ? (editing.config.council ?? { ...defaultCouncil(i18n.language), enabled: false })
+      : defaultCouncil(i18n.language),
     cadence: editing?.config.cadence ?? { ...DEFAULT_CADENCE },
   }));
   const [tickerText, setTickerText] = useState(editing?.config.tickers.join(', ') ?? '');
@@ -143,8 +174,11 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
     retry: false,
   });
 
-  const saveMutation = useMutation<BuilderProfile, Error,
-    { activate: boolean; config: BuilderConfig }>({
+  const saveMutation = useMutation<
+    BuilderProfile,
+    Error,
+    { activate: boolean; config: BuilderConfig }
+  >({
     mutationFn: async ({ activate, config: nextConfig }) => {
       const profile: BuilderProfile = editing
         ? await updateBuilderProfile(editing.id, nextConfig)
@@ -183,14 +217,16 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
 
   const selectTemplate = (template: Template) => {
     const defaultNames: string[] = TEMPLATES.map(({ key }) =>
-      t(`ui.builder.template.${key}.defaultName`));
+      t(`ui.builder.template.${key}.defaultName`),
+    );
     setConfig((previous: BuilderConfig) => ({
       ...previous,
       template,
       ...TEMPLATE_DEFAULTS[template],
-      name: !previous.name || defaultNames.includes(previous.name)
-        ? t(`ui.builder.template.${template}.defaultName`)
-        : previous.name,
+      name:
+        !previous.name || defaultNames.includes(previous.name)
+          ? t(`ui.builder.template.${template}.defaultName`)
+          : previous.name,
     }));
   };
 
@@ -238,8 +274,11 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
   };
 
   const updatePriceRow = (index: number, field: keyof PriceRuleForm, value: string) => {
-    setPriceRows((previous: PriceRuleForm[]) => previous.map((row: PriceRuleForm, rowIndex: number) =>
-      rowIndex === index ? { ...row, [field]: value } : row));
+    setPriceRows((previous: PriceRuleForm[]) =>
+      previous.map((row: PriceRuleForm, rowIndex: number) =>
+        rowIndex === index ? { ...row, [field]: value } : row,
+      ),
+    );
   };
 
   const stepLabels: string[] = [
@@ -266,7 +305,9 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
           {stepLabels.map((label: string, index: number) => (
             <div key={label} className="min-w-0">
               <div className={`h-1 rounded-full ${index <= step ? 'bg-primary' : 'bg-border'}`} />
-              <p className={`mt-2 truncate text-xs ${index === step ? 'font-semibold' : 'text-muted-foreground'}`}>
+              <p
+                className={`mt-2 truncate text-xs ${index === step ? 'font-semibold' : 'text-muted-foreground'}`}
+              >
                 {index + 1}. {label}
               </p>
             </div>
@@ -296,7 +337,9 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
                     <Icon className="size-5 text-primary" />
                     {config.template === key && <Check className="size-4 text-primary" />}
                   </span>
-                  <span className="mt-4 block font-semibold">{t(`ui.builder.template.${key}.title`)}</span>
+                  <span className="mt-4 block font-semibold">
+                    {t(`ui.builder.template.${key}.title`)}
+                  </span>
                   <span className="mt-1 block text-sm text-muted-foreground">
                     {t(`ui.builder.template.${key}.description`)}
                   </span>
@@ -305,14 +348,20 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
             </div>
             <div className="space-y-2">
               <Label htmlFor="builder-name">{t('ui.builder.name')}</Label>
-              <Input id="builder-name" maxLength={64} value={config.name}
+              <Input
+                id="builder-name"
+                maxLength={64}
+                value={config.name}
                 placeholder={t('ui.builder.namePlaceholder')}
-                onChange={(event) => setConfig({ ...config, name: event.target.value })} />
+                onChange={(event) => setConfig({ ...config, name: event.target.value })}
+              />
             </div>
-            <CouncilConfigEditor council={config.council ?? defaultCouncil(i18n.language)}
+            <CouncilConfigEditor
+              council={config.council ?? defaultCouncil(i18n.language)}
               cadence={config.cadence ?? DEFAULT_CADENCE}
               onCouncilChange={(council) => setConfig({ ...config, council })}
-              onCadenceChange={(cadence) => setConfig({ ...config, cadence })} />
+              onCadenceChange={(cadence) => setConfig({ ...config, cadence })}
+            />
             <div className="flex justify-end">
               <Button type="button" onClick={goToRules}>
                 {t('ui.builder.next')} <ChevronRight />
@@ -330,9 +379,12 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
             <div className="grid gap-5 md:grid-cols-2">
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="builder-tickers">{t('ui.builder.tickers')}</Label>
-                <Input id="builder-tickers" value={tickerText}
+                <Input
+                  id="builder-tickers"
+                  value={tickerText}
                   placeholder={t('ui.builder.tickersPlaceholder')}
-                  onChange={(event) => setTickerText(event.target.value)} />
+                  onChange={(event) => setTickerText(event.target.value)}
+                />
                 <p className="text-xs text-muted-foreground">{t('ui.builder.tickersHint')}</p>
               </div>
               <div className="space-y-3 rounded-xl border border-border p-4 md:col-span-2">
@@ -343,38 +395,84 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
                       {t('ui.builder.priceRulesHint')}
                     </p>
                   </div>
-                  <Button type="button" size="sm" variant="outline"
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
                     disabled={priceRows.length >= 20}
-                    onClick={() => setPriceRows((previous: PriceRuleForm[]) => [
-                      ...previous, { ticker: '', buyAtOrBelow: '', sellAtOrAbove: '' },
-                    ])}>
+                    onClick={() =>
+                      setPriceRows((previous: PriceRuleForm[]) => [
+                        ...previous,
+                        { ticker: '', buyAtOrBelow: '', sellAtOrAbove: '' },
+                      ])
+                    }
+                  >
                     <Plus /> {t('ui.builder.addPriceRule')}
                   </Button>
                 </div>
                 {priceRows.map((row: PriceRuleForm, index: number) => (
-                  <div key={index} className="grid gap-3 rounded-lg bg-muted/40 p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                  <div
+                    key={index}
+                    className="grid gap-3 rounded-lg bg-muted/40 p-3 sm:grid-cols-[1fr_1fr_1fr_auto]"
+                  >
                     <div className="space-y-2">
-                      <Label htmlFor={`builder-price-ticker-${index}`}>{t('ui.builder.ruleTicker')}</Label>
-                      <Input id={`builder-price-ticker-${index}`} value={row.ticker} maxLength={20}
+                      <Label htmlFor={`builder-price-ticker-${index}`}>
+                        {t('ui.builder.ruleTicker')}
+                      </Label>
+                      <Input
+                        id={`builder-price-ticker-${index}`}
+                        value={row.ticker}
+                        maxLength={20}
                         placeholder="AAPL"
-                        onChange={(event) => updatePriceRow(index, 'ticker', event.target.value)} />
+                        onChange={(event) => updatePriceRow(index, 'ticker', event.target.value)}
+                      />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor={`builder-price-buy-${index}`}>{t('ui.builder.buyAtOrBelow')}</Label>
-                      <Input id={`builder-price-buy-${index}`} type="number" min="0.000001" step="any"
-                        value={row.buyAtOrBelow} placeholder={t('ui.builder.optional')}
-                        onChange={(event) => updatePriceRow(index, 'buyAtOrBelow', event.target.value)} />
+                      <Label htmlFor={`builder-price-buy-${index}`}>
+                        {t('ui.builder.buyAtOrBelow')}
+                      </Label>
+                      <Input
+                        id={`builder-price-buy-${index}`}
+                        type="number"
+                        min="0.000001"
+                        step="any"
+                        value={row.buyAtOrBelow}
+                        placeholder={t('ui.builder.optional')}
+                        onChange={(event) =>
+                          updatePriceRow(index, 'buyAtOrBelow', event.target.value)
+                        }
+                      />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor={`builder-price-sell-${index}`}>{t('ui.builder.sellAtOrAbove')}</Label>
-                      <Input id={`builder-price-sell-${index}`} type="number" min="0.000001" step="any"
-                        value={row.sellAtOrAbove} placeholder={t('ui.builder.optional')}
-                        onChange={(event) => updatePriceRow(index, 'sellAtOrAbove', event.target.value)} />
+                      <Label htmlFor={`builder-price-sell-${index}`}>
+                        {t('ui.builder.sellAtOrAbove')}
+                      </Label>
+                      <Input
+                        id={`builder-price-sell-${index}`}
+                        type="number"
+                        min="0.000001"
+                        step="any"
+                        value={row.sellAtOrAbove}
+                        placeholder={t('ui.builder.optional')}
+                        onChange={(event) =>
+                          updatePriceRow(index, 'sellAtOrAbove', event.target.value)
+                        }
+                      />
                     </div>
-                    <Button type="button" size="icon" variant="ghost" className="self-end"
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="self-end"
                       aria-label={t('ui.builder.removePriceRule')}
-                      onClick={() => setPriceRows((previous: PriceRuleForm[]) =>
-                        previous.filter((_: PriceRuleForm, rowIndex: number) => rowIndex !== index))}>
+                      onClick={() =>
+                        setPriceRows((previous: PriceRuleForm[]) =>
+                          previous.filter(
+                            (_: PriceRuleForm, rowIndex: number) => rowIndex !== index,
+                          ),
+                        )
+                      }
+                    >
                       <Trash2 />
                     </Button>
                   </div>
@@ -382,39 +480,77 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
               </div>
               <div className="space-y-2">
                 <Label htmlFor="builder-rating">{t('ui.builder.minimumRating')}</Label>
-                <select id="builder-rating" value={config.minimumRating}
-                  onChange={(event) => setConfig({ ...config,
-                    minimumRating: event.target.value === 'Strong Buy' ? 'Strong Buy' : 'Buy' })}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
+                <select
+                  id="builder-rating"
+                  value={config.minimumRating}
+                  onChange={(event) =>
+                    setConfig({
+                      ...config,
+                      minimumRating: event.target.value === 'Strong Buy' ? 'Strong Buy' : 'Buy',
+                    })
+                  }
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
                   <option value="Buy">{t('ui.builder.ratingBuy')}</option>
                   <option value="Strong Buy">{t('ui.builder.ratingStrongBuy')}</option>
                 </select>
               </div>
-              <NumberField id="builder-order-pct" label={t('ui.builder.maxOrderPct')}
-                value={config.maxOrderPct} min={0.1} max={20} step={0.1}
-                onChange={(value: number) => setConfig({ ...config, maxOrderPct: value })} />
-              <NumberField id="builder-loss-pct" label={t('ui.builder.dailyLossLimitPct')}
-                value={config.dailyLossLimitPct} min={0.1} max={20} step={0.1}
-                onChange={(value: number) => setConfig({ ...config, dailyLossLimitPct: value })} />
-              <NumberField id="builder-order-count" label={t('ui.builder.maxOrdersPerDay')}
-                value={config.maxOrdersPerDay} min={1} max={20} step={1}
-                onChange={(value: number) => setConfig({ ...config, maxOrdersPerDay: value })} />
+              <NumberField
+                id="builder-order-pct"
+                label={t('ui.builder.maxOrderPct')}
+                value={config.maxOrderPct}
+                min={0.1}
+                max={20}
+                step={0.1}
+                onChange={(value: number) => setConfig({ ...config, maxOrderPct: value })}
+              />
+              <NumberField
+                id="builder-loss-pct"
+                label={t('ui.builder.dailyLossLimitPct')}
+                value={config.dailyLossLimitPct}
+                min={0.1}
+                max={20}
+                step={0.1}
+                onChange={(value: number) => setConfig({ ...config, dailyLossLimitPct: value })}
+              />
+              <NumberField
+                id="builder-order-count"
+                label={t('ui.builder.maxOrdersPerDay')}
+                value={config.maxOrdersPerDay}
+                min={1}
+                max={20}
+                step={1}
+                onChange={(value: number) => setConfig({ ...config, maxOrdersPerDay: value })}
+              />
               <div className="flex items-center justify-between rounded-lg border border-border p-4 md:col-span-2">
                 <div>
                   <Label htmlFor="builder-notify">{t('ui.builder.notifyOnProposal')}</Label>
                   <p className="mt-1 text-xs text-muted-foreground">{t('ui.builder.notifyHint')}</p>
                 </div>
-                <Switch id="builder-notify" checked={config.notifyOnProposal}
-                  onCheckedChange={(checked: boolean) => setConfig({ ...config, notifyOnProposal: checked })} />
+                <Switch
+                  id="builder-notify"
+                  checked={config.notifyOnProposal}
+                  onCheckedChange={(checked: boolean) =>
+                    setConfig({ ...config, notifyOnProposal: checked })
+                  }
+                />
               </div>
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="builder-prompt">{t('ui.builder.customPrompt')}</Label>
-                <Textarea id="builder-prompt" rows={4} value={config.customPrompt}
-                  maxLength={2000} placeholder={t('ui.builder.promptPlaceholder')}
-                  onChange={(event) => setConfig({ ...config, customPrompt: event.target.value })} />
+                <Textarea
+                  id="builder-prompt"
+                  rows={4}
+                  value={config.customPrompt}
+                  maxLength={2000}
+                  placeholder={t('ui.builder.promptPlaceholder')}
+                  onChange={(event) => setConfig({ ...config, customPrompt: event.target.value })}
+                />
                 <p className="text-xs text-muted-foreground">
                   {t('ui.builder.promptHint')}{' '}
-                  <Link to="/settings" className="font-medium text-primary underline-offset-4 hover:underline">
+                  <Link
+                    to="/settings"
+                    className="font-medium text-primary underline-offset-4 hover:underline"
+                  >
                     {t('ui.builder.openApiSettings')}
                   </Link>
                 </p>
@@ -424,8 +560,11 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
               <Button type="button" variant="outline" onClick={() => setStep(0)}>
                 <ChevronLeft /> {t('ui.builder.back')}
               </Button>
-              <Button type="button" onClick={() => void goToPreview()}
-                disabled={previewMutation.isPending}>
+              <Button
+                type="button"
+                onClick={() => void goToPreview()}
+                disabled={previewMutation.isPending}
+              >
                 {previewMutation.isPending && <Loader2 className="animate-spin" />}
                 {t('ui.builder.previewBehavior')} <ChevronRight />
               </Button>
@@ -442,14 +581,22 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
             <div className="grid gap-3 md:grid-cols-2">
               {previewMutation.data.scenarios.map((scenario) => (
                 <div key={scenario.key} className="rounded-lg border border-border p-4">
-                  <span className={`text-xs font-semibold uppercase tracking-wide ${
-                    scenario.result === 'paper' ? 'text-emerald-600 dark:text-emerald-400'
-                      : scenario.result === 'block' ? 'text-rose-600 dark:text-rose-400'
-                        : 'text-amber-600 dark:text-amber-400'
-                  }`}>{t(`ui.builder.previewResult.${scenario.result}`)}</span>
-                  <p className="mt-2 font-medium">{t(`ui.builder.scenario.${scenario.key}`, {
-                    defaultValue: scenario.key,
-                  })}</p>
+                  <span
+                    className={`text-xs font-semibold uppercase tracking-wide ${
+                      scenario.result === 'paper'
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : scenario.result === 'block'
+                          ? 'text-rose-600 dark:text-rose-400'
+                          : 'text-amber-600 dark:text-amber-400'
+                    }`}
+                  >
+                    {t(`ui.builder.previewResult.${scenario.result}`)}
+                  </span>
+                  <p className="mt-2 font-medium">
+                    {t(`ui.builder.scenario.${scenario.key}`, {
+                      defaultValue: scenario.key,
+                    })}
+                  </p>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {t(`ui.builder.scenarioExplanation.${scenario.key}`, {
                       defaultValue: scenario.explanation,
@@ -464,16 +611,25 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
               {t('ui.builder.paperOnlyNotice')}
             </p>
             <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm leading-6">
-              <p>{t(config.council?.enabled ? 'council.team.enabledHint' : 'council.team.rulesOnly')}</p>
-              <p className="mt-2 text-muted-foreground">{t('council.cadence.summary', {
-                days: config.cadence?.reviewEveryTradingDays ?? DEFAULT_CADENCE.reviewEveryTradingDays,
-                orders: config.cadence?.maxOrdersPerWeek ?? DEFAULT_CADENCE.maxOrdersPerWeek,
-              })}</p>
+              <p>
+                {t(config.council?.enabled ? 'council.team.enabledHint' : 'council.team.rulesOnly')}
+              </p>
+              <p className="mt-2 text-muted-foreground">
+                {t('council.cadence.summary', {
+                  days:
+                    config.cadence?.reviewEveryTradingDays ??
+                    DEFAULT_CADENCE.reviewEveryTradingDays,
+                  orders: config.cadence?.maxOrdersPerWeek ?? DEFAULT_CADENCE.maxOrdersPerWeek,
+                })}
+              </p>
             </div>
             {config.customPrompt && (
               <p className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
                 {t('ui.builder.modelNotice')}{' '}
-                <Link to="/settings" className="font-medium text-primary underline-offset-4 hover:underline">
+                <Link
+                  to="/settings"
+                  className="font-medium text-primary underline-offset-4 hover:underline"
+                >
                   {t('ui.builder.openApiSettings')}
                 </Link>
               </p>
@@ -483,12 +639,19 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
                 <ChevronLeft /> {t('ui.builder.back')}
               </Button>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="secondary" disabled={saveMutation.isPending}
-                  onClick={() => saveMutation.mutate({ activate: false, config })}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={saveMutation.isPending}
+                  onClick={() => saveMutation.mutate({ activate: false, config })}
+                >
                   {t(editing ? 'ui.builder.saveDraft' : 'ui.builder.createDraft')}
                 </Button>
-                <Button type="button" disabled={saveMutation.isPending}
-                  onClick={() => saveMutation.mutate({ activate: true, config })}>
+                <Button
+                  type="button"
+                  disabled={saveMutation.isPending}
+                  onClick={() => saveMutation.mutate({ activate: true, config })}
+                >
                   {saveMutation.isPending && <Loader2 className="animate-spin" />}
                   {t(editing ? 'ui.builder.saveAndActivate' : 'ui.builder.createAndActivate')}
                 </Button>
@@ -509,11 +672,17 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
               </p>
             </div>
             <div className="flex flex-wrap justify-center gap-3">
-              <Button asChild variant="outline"><Link to={`/council?profileId=${encodeURIComponent(saved.id)}`}>
-                {t('council.open')}</Link></Button>
+              <Button asChild variant="outline">
+                <Link to={`/council?profileId=${encodeURIComponent(saved.id)}`}>
+                  {t('council.open')}
+                </Link>
+              </Button>
               {saved.status !== 'active' && (
-                <Button type="button" onClick={() => activateMutation.mutate(saved.id)}
-                  disabled={activateMutation.isPending}>
+                <Button
+                  type="button"
+                  onClick={() => activateMutation.mutate(saved.id)}
+                  disabled={activateMutation.isPending}
+                >
                   {t('ui.builder.activate')}
                 </Button>
               )}
@@ -524,7 +693,11 @@ export default function BuilderWizard({ editing, onSaved, onClose }: BuilderWiza
           </div>
         )}
 
-        {formError && <p role="alert" className="text-sm text-destructive">{formError}</p>}
+        {formError && (
+          <p role="alert" className="text-sm text-destructive">
+            {formError}
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -544,8 +717,15 @@ function NumberField({ id, label, value, min, max, step, onChange }: NumberField
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
-      <Input id={id} type="number" min={min} max={max} step={step} value={value}
-        onChange={(event) => onChange(Number(event.target.value))} />
+      <Input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
     </div>
   );
 }

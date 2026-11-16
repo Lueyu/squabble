@@ -113,10 +113,7 @@ export default function AddHoldingDialog({
     groupId: '',
   });
 
-  const allGroups = useMemo(
-    () => [...groups, ...extraGroups],
-    [groups, extraGroups],
-  );
+  const allGroups = useMemo(() => [...groups, ...extraGroups], [groups, extraGroups]);
 
   const marketPreview = useMemo(() => {
     if (!form.ticker.trim()) return null;
@@ -189,12 +186,10 @@ export default function AddHoldingDialog({
       if (form.sector) payload.sector = form.sector;
       if (form.buyDate) payload.buyDate = form.buyDate;
       if (form.buyPrice) payload.buyPrice = parseFloat(form.buyPrice);
-      if (form.currentPrice)
-        payload.currentPrice = parseFloat(form.currentPrice);
+      if (form.currentPrice) payload.currentPrice = parseFloat(form.currentPrice);
       if (form.rating) payload.rating = form.rating;
       if (form.action) payload.action = form.action;
-      if (form.targetPrice)
-        payload.targetPrice = parseFloat(form.targetPrice);
+      if (form.targetPrice) payload.targetPrice = parseFloat(form.targetPrice);
       if (form.analysis) payload.analysis = form.analysis;
       if (form.groupId) payload.groupId = form.groupId;
 
@@ -215,9 +210,7 @@ export default function AddHoldingDialog({
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-serif text-xl">{t('holdings.addHolding')}</DialogTitle>
-          <DialogDescription>
-            {t('ui.holdings.addDescription')}
-          </DialogDescription>
+          <DialogDescription>{t('ui.holdings.addDescription')}</DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">
@@ -229,16 +222,17 @@ export default function AddHoldingDialog({
               <Input
                 placeholder={t('ui.holdings.tickerExample')}
                 value={form.ticker}
-                onChange={(e) =>
-                  setForm({ ...form, ticker: e.target.value.toUpperCase() })
-                }
+                onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })}
               />
               {marketPreview && (
                 <Badge
                   variant="outline"
                   className="shrink-0 text-[10px] font-normal whitespace-nowrap"
                 >
-                  {t(`common.${marketPreview.market === 'US' ? 'usMarket' : marketPreview.market === 'HK' ? 'hkMarket' : 'cnMarket'}`)} {marketPreview.currency} · {marketPreview.displaySymbol}
+                  {t(
+                    `common.${marketPreview.market === 'US' ? 'usMarket' : marketPreview.market === 'HK' ? 'hkMarket' : 'cnMarket'}`,
+                  )}{' '}
+                  {marketPreview.currency} · {marketPreview.displaySymbol}
                 </Badge>
               )}
             </div>
@@ -247,27 +241,20 @@ export default function AddHoldingDialog({
             <Label>{t('holdings.company')}</Label>
             <Input
               value={form.company}
-              onChange={(e) =>
-                setForm({ ...form, company: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, company: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
             <Label>{t('ui.holdings.sector')}</Label>
             <Input
               value={form.sector}
-              onChange={(e) =>
-                setForm({ ...form, sector: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, sector: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
             <Label>{t('ui.holdings.groupName')}</Label>
             <div className="flex items-center gap-2">
-              <Select
-                value={form.groupId}
-                onValueChange={(v) => setForm({ ...form, groupId: v })}
-              >
+              <Select value={form.groupId} onValueChange={(v) => setForm({ ...form, groupId: v })}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder={t('holdings.noGroup')} />
                 </SelectTrigger>
@@ -322,9 +309,7 @@ export default function AddHoldingDialog({
             <Input
               type="date"
               value={form.buyDate}
-              onChange={(e) =>
-                setForm({ ...form, buyDate: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, buyDate: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -333,9 +318,7 @@ export default function AddHoldingDialog({
               type="number"
               step="0.01"
               value={form.buyPrice}
-              onChange={(e) =>
-                setForm({ ...form, buyPrice: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, buyPrice: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -346,9 +329,7 @@ export default function AddHoldingDialog({
               type="number"
               step="0.0001"
               value={form.shares}
-              onChange={(e) =>
-                setForm({ ...form, shares: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, shares: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -357,37 +338,27 @@ export default function AddHoldingDialog({
               type="number"
               step="0.01"
               value={form.currentPrice}
-              onChange={(e) =>
-                setForm({ ...form, currentPrice: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, currentPrice: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
             <Label>{t('ui.holdings.rating')}</Label>
-            <Select
-              value={form.rating}
-              onValueChange={(v) => setForm({ ...form, rating: v })}
-            >
+            <Select value={form.rating} onValueChange={(v) => setForm({ ...form, rating: v })}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder={t('ui.holdings.chooseRating')} />
               </SelectTrigger>
               <SelectContent>
-                {['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell'].map(
-                  (r) => (
-                    <SelectItem key={r} value={r}>
-                      {r}
-                    </SelectItem>
-                  )
-                )}
+                {['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell'].map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {r}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
             <Label>{t('ui.holdings.actions')}</Label>
-            <Select
-              value={form.action}
-              onValueChange={(v) => setForm({ ...form, action: v })}
-            >
+            <Select value={form.action} onValueChange={(v) => setForm({ ...form, action: v })}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder={t('ui.holdings.chooseAction')} />
               </SelectTrigger>
@@ -400,10 +371,10 @@ export default function AddHoldingDialog({
                   ['卖出', 'analysis.sell'],
                   ['观望', 'analysis.watch'],
                 ].map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {t(label)}
-                    </SelectItem>
-                  ))}
+                  <SelectItem key={value} value={value}>
+                    {t(label)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -413,9 +384,7 @@ export default function AddHoldingDialog({
               type="number"
               step="0.01"
               value={form.targetPrice}
-              onChange={(e) =>
-                setForm({ ...form, targetPrice: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, targetPrice: e.target.value })}
             />
           </div>
           <div className="space-y-1.5 md:col-span-2">
@@ -423,19 +392,13 @@ export default function AddHoldingDialog({
             <Textarea
               rows={3}
               value={form.analysis}
-              onChange={(e) =>
-                setForm({ ...form, analysis: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, analysis: e.target.value })}
             />
           </div>
         </div>
 
         <DialogFooter>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-          >
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>
           <Button size="sm" onClick={handleSubmit} disabled={saving}>

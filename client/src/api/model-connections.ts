@@ -11,13 +11,21 @@ export async function fetchModelConnections(): Promise<ModelConnection[]> {
   return response.data.items;
 }
 
-export async function createModelConnection(request: SaveModelConnection): Promise<ModelConnection> {
+export async function createModelConnection(
+  request: SaveModelConnection,
+): Promise<ModelConnection> {
   const response = await http.post<ModelConnection>(BASE_URL, request);
   return response.data;
 }
 
-export async function updateModelConnection(id: string, request: SaveModelConnection): Promise<ModelConnection> {
-  const response = await http.put<ModelConnection>(`${BASE_URL}/${encodeURIComponent(id)}`, request);
+export async function updateModelConnection(
+  id: string,
+  request: SaveModelConnection,
+): Promise<ModelConnection> {
+  const response = await http.put<ModelConnection>(
+    `${BASE_URL}/${encodeURIComponent(id)}`,
+    request,
+  );
   return response.data;
 }
 
@@ -25,7 +33,13 @@ export async function removeModelConnection(id: string): Promise<void> {
   await http.delete(`${BASE_URL}/${encodeURIComponent(id)}`);
 }
 
-export async function testModelConnection(id: string, language?: 'zh-CN' | 'en'): Promise<IntegrationTestResult> {
-  const response = await http.post<IntegrationTestResult>(`${BASE_URL}/${encodeURIComponent(id)}/test`, { language });
+export async function testModelConnection(
+  id: string,
+  language?: 'zh-CN' | 'en',
+): Promise<IntegrationTestResult> {
+  const response = await http.post<IntegrationTestResult>(
+    `${BASE_URL}/${encodeURIComponent(id)}/test`,
+    { language },
+  );
   return response.data;
 }

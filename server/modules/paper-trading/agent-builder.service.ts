@@ -37,21 +37,27 @@ export class AgentBuilderService {
   ) {}
 
   async listProfiles(userId: string): Promise<BuilderProfile[]> {
-    const rows = await this.db.select().from(builderProfiles)
+    const rows = await this.db
+      .select()
+      .from(builderProfiles)
       .where(eq(builderProfiles.owner, userId))
       .orderBy(desc(builderProfiles.createdAt));
     return rows.map((row) => this.mapProfile(row));
   }
 
   async getProfile(userId: string, id: string): Promise<BuilderProfile> {
-    const [row] = await this.db.select().from(builderProfiles)
+    const [row] = await this.db
+      .select()
+      .from(builderProfiles)
       .where(and(eq(builderProfiles.id, id), eq(builderProfiles.owner, userId)));
     if (!row) throw new NotFoundException('Agent profile not found');
     return this.mapProfile(row);
   }
 
   async getActiveProfile(userId: string): Promise<BuilderProfile | null> {
-    const [row] = await this.db.select().from(builderProfiles)
+    const [row] = await this.db
+      .select()
+      .from(builderProfiles)
       .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.status, 'active')));
     return row ? this.mapProfile(row) : null;
   }
@@ -60,7 +66,8 @@ export class AgentBuilderService {
     const config = this.validateConfig(input);
     const count = await this.listProfiles(userId);
     if (count.length >= 10) throw new BadRequestException('最多可保存 10 个 Agent 配置');
-    const [row] = await this.db.insert(builderProfiles)
+    const [row] = await this.db
+      .insert(builderProfiles)
       .values({ owner: userId, config, status: 'draft' })
       .returning();
     return this.mapProfile(row);
@@ -72,13 +79,16 @@ export class AgentBuilderService {
     if (current.status === 'active') {
       throw new BadRequestException('Pause the agent before editing its rules');
     }
-    const [row] = await this.db.update(builderProfiles)
+    const [row] = await this.db
+      .update(builderProfiles)
       .set({ config, version: current.version + 1, updatedAt: new Date() })
-      .where(and(
-        eq(builderProfiles.id, id),
-        eq(builderProfiles.owner, userId),
-        ne(builderProfiles.status, 'active'),
-      ))
+      .where(
+        and(
+          eq(builderProfiles.id, id),
+          eq(builderProfiles.owner, userId),
+          ne(builderProfiles.status, 'active'),
+        ),
+      )
       .returning();
     if (!row) throw new BadRequestException('Agent state changed; reload and try again');
     return this.mapProfile(row);
@@ -88,10 +98,12 @@ export class AgentBuilderService {
     const current = await this.getProfile(userId, id);
     await this.assertCanActivate(userId, current.config);
     const row = await this.db.transaction(async (tx) => {
-      await tx.update(builderProfiles)
+      await tx
+        .update(builderProfiles)
         .set({ status: 'paused', updatedAt: new Date() })
         .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.status, 'active')));
-      const [updated] = await tx.update(builderProfiles)
+      const [updated] = await tx
+        .update(builderProfiles)
         .set({ status: 'active', updatedAt: new Date() })
         .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.id, id)))
         .returning();
@@ -105,23 +117,40 @@ export class AgentBuilderService {
     if (config.council?.enabled) {
       const members = config.council.members;
       for (const member of members.filter((item) => item.executionMode === 'local')) {
-        if (!this.localAgents || !member.agentId) throw new BadRequestException('Local agent unavailable');
-        try { await this.localAgents.validate(userId, member.agentId, member.agentSettings); }
-        catch (error) {
+        if (!this.localAgents || !member.agentId)
+          throw new BadRequestException('Local agent unavailable');
+        try {
+          await this.localAgents.validate(userId, member.agentId, member.agentSettings);
+        } catch (error) {
           if (error instanceof LocalAgentError) throw new BadRequestException(error.code);
           throw error;
         }
       }
-      await this.llm.validateConnectionIds(userId, members.flatMap((member) => member.executionMode !== 'local' && member.connectionId ? [member.connectionId] : []));
-      const configured = await Promise.all(members.map((member) => member.executionMode === 'local' ? true : this.llm.isConfigured(userId, member.connectionId)));
-      if (configured.some((value) => !value)) throw new BadRequestException('Configure a model connection for every council member');
+      await this.llm.validateConnectionIds(
+        userId,
+        members.flatMap((member) =>
+          member.executionMode !== 'local' && member.connectionId ? [member.connectionId] : [],
+        ),
+      );
+      const configured = await Promise.all(
+        members.map((member) =>
+          member.executionMode === 'local'
+            ? true
+            : this.llm.isConfigured(userId, member.connectionId),
+        ),
+      );
+      if (configured.some((value) => !value))
+        throw new BadRequestException('Configure a model connection for every council member');
     } else if (config.customPrompt && !(await this.llm.isConfigured(userId))) {
-      throw new BadRequestException('Configure a model for the council, or select basic rules mode');
+      throw new BadRequestException(
+        'Configure a model for the council, or select basic rules mode',
+      );
     }
   }
 
   async pauseProfile(userId: string, id: string): Promise<BuilderProfile> {
-    const [row] = await this.db.update(builderProfiles)
+    const [row] = await this.db
+      .update(builderProfiles)
       .set({ status: 'paused', updatedAt: new Date() })
       .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.id, id)))
       .returning();
@@ -134,13 +163,17 @@ export class AgentBuilderService {
     const canBuy = config.template !== 'guard';
     return {
       scenarios: [
-        ...(config.priceRules?.length ? [{
-          key: 'price-trigger',
-          result: (canBuy ? 'paper' : 'block') as 'paper' | 'block',
-          explanation: canBuy
-            ? 'A user-set price threshold can create a paper idea without an AI rating, subject to all safety limits.'
-            : 'The guard template can only use sell triggers for existing paper positions.',
-        }] : []),
+        ...(config.priceRules?.length
+          ? [
+              {
+                key: 'price-trigger',
+                result: (canBuy ? 'paper' : 'block') as 'paper' | 'block',
+                explanation: canBuy
+                  ? 'A user-set price threshold can create a paper idea without an AI rating, subject to all safety limits.'
+                  : 'The guard template can only use sell triggers for existing paper positions.',
+              },
+            ]
+          : []),
         {
           key: 'rated-buy',
           result: canBuy ? 'paper' : 'block',
@@ -151,7 +184,8 @@ export class AgentBuilderService {
         {
           key: 'stale-price',
           result: 'wait',
-          explanation: 'Without a current quote, the agent waits; stored portfolio prices cannot trigger an order.',
+          explanation:
+            'Without a current quote, the agent waits; stored portfolio prices cannot trigger an order.',
         },
         {
           key: 'risk-limit',
@@ -164,10 +198,14 @@ export class AgentBuilderService {
 
   async listProposals(userId: string): Promise<BuilderProposal[]> {
     const [pending, history] = await Promise.all([
-      this.db.select().from(builderProposals)
+      this.db
+        .select()
+        .from(builderProposals)
         .where(and(eq(builderProposals.owner, userId), eq(builderProposals.status, 'pending')))
         .orderBy(desc(builderProposals.createdAt)),
-      this.db.select().from(builderProposals)
+      this.db
+        .select()
+        .from(builderProposals)
         .where(and(eq(builderProposals.owner, userId), ne(builderProposals.status, 'pending')))
         .orderBy(desc(builderProposals.createdAt))
         .limit(100),
@@ -179,24 +217,31 @@ export class AgentBuilderService {
 
   async hasDailyProposal(profileId: string, ticker: string, side: PaperSide): Promise<boolean> {
     const today = new Date().toISOString().slice(0, 10);
-    const [row] = await this.db.select({ id: builderProposals.id }).from(builderProposals)
-      .where(and(
-        eq(builderProposals.profileId, profileId),
-        eq(builderProposals.signalDate, today),
-        eq(builderProposals.ticker, ticker),
-        eq(builderProposals.side, side),
-      ));
+    const [row] = await this.db
+      .select({ id: builderProposals.id })
+      .from(builderProposals)
+      .where(
+        and(
+          eq(builderProposals.profileId, profileId),
+          eq(builderProposals.signalDate, today),
+          eq(builderProposals.ticker, ticker),
+          eq(builderProposals.side, side),
+        ),
+      );
     return Boolean(row);
   }
 
   async skipProposal(userId: string, id: string): Promise<BuilderProposal> {
-    const [row] = await this.db.update(builderProposals)
+    const [row] = await this.db
+      .update(builderProposals)
       .set({ status: 'skipped' })
-      .where(and(
-        eq(builderProposals.id, id),
-        eq(builderProposals.owner, userId),
-        eq(builderProposals.status, 'pending'),
-      ))
+      .where(
+        and(
+          eq(builderProposals.id, id),
+          eq(builderProposals.owner, userId),
+          eq(builderProposals.status, 'pending'),
+        ),
+      )
       .returning();
     if (!row) throw new BadRequestException('Proposal is no longer pending');
     return this.mapProposal(row);
@@ -213,13 +258,16 @@ export class AgentBuilderService {
     } catch (error) {
       throw new BadRequestException(error instanceof Error ? error.message : String(error));
     }
-    const [row] = await this.db.select().from(builderProposals)
+    const [row] = await this.db
+      .select()
+      .from(builderProposals)
       .where(and(eq(builderProposals.id, id), eq(builderProposals.owner, userId)));
     if (!row) throw new NotFoundException('Proposal not found');
     if (new Date(fill.executedAt) < row.createdAt) {
       throw new BadRequestException('Execution cannot precede the proposal');
     }
-    const [updated] = await this.db.update(builderProposals)
+    const [updated] = await this.db
+      .update(builderProposals)
       .set({
         status: 'recorded',
         executedAt: new Date(fill.executedAt),
@@ -228,11 +276,13 @@ export class AgentBuilderService {
         executedFees: String(fill.fees),
         notes: fill.notes ?? null,
       })
-      .where(and(
-        eq(builderProposals.id, id),
-        eq(builderProposals.owner, userId),
-        eq(builderProposals.status, 'pending'),
-      ))
+      .where(
+        and(
+          eq(builderProposals.id, id),
+          eq(builderProposals.owner, userId),
+          eq(builderProposals.status, 'pending'),
+        ),
+      )
       .returning();
     if (!updated) throw new BadRequestException('Proposal is no longer pending');
     return this.mapProposal(updated);
@@ -247,16 +297,21 @@ export class AgentBuilderService {
   ): Promise<string | null> {
     if (!config.customPrompt) return reason;
     try {
-      const response = await this.llm.chatFastJSON([
-        {
-          role: 'system',
-          content: 'Review a PAPER-trade idea. Return JSON {"decision":"approve"|"veto","reason":"short explanation"}. You may veto, but cannot change side, ticker or quantity. If uncertain, veto.',
-        },
-        {
-          role: 'user',
-          content: `Ticker: ${ticker}\nCandidate: ${reason}\nInvestor instructions: ${config.customPrompt}`,
-        },
-      ], userId, { taskId: `builder:${ticker}:${Date.now()}`, purpose: 'builder-review' });
+      const response = await this.llm.chatFastJSON(
+        [
+          {
+            role: 'system',
+            content:
+              'Review a PAPER-trade idea. Return JSON {"decision":"approve"|"veto","reason":"short explanation"}. You may veto, but cannot change side, ticker or quantity. If uncertain, veto.',
+          },
+          {
+            role: 'user',
+            content: `Ticker: ${ticker}\nCandidate: ${reason}\nInvestor instructions: ${config.customPrompt}`,
+          },
+        ],
+        userId,
+        { taskId: `builder:${ticker}:${Date.now()}`, purpose: 'builder-review' },
+      );
       const data = response.data;
       if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
       const decision = (data as Record<string, unknown>).decision;

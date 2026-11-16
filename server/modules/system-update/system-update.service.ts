@@ -1,7 +1,14 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ConflictException, ForbiddenException, Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { asc } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { users } from '../../database/schema';
@@ -19,18 +26,27 @@ export interface WebUpdateStatus {
 }
 
 const RELEASE_API = 'https://api.github.com/repos/Lueyu/squabble/releases/latest';
-const APP_VERSION = (JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as { version: string }).version;
+const APP_VERSION = (
+  JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as { version: string }
+).version;
 
 function dumpDatabase(destination: string): Promise<void> {
   const connection = process.env.DATABASE_URL;
   if (!connection) throw new Error('DATABASE_URL is required for the update backup');
   return new Promise((done, fail) => {
-    const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', connection], {
-      stdio: 'ignore',
-      env: { ...process.env, PGCONNECT_TIMEOUT: '10' },
-    });
+    const child = spawn(
+      'pg_dump',
+      ['--format=custom', '--file', destination, '--dbname', connection],
+      {
+        stdio: 'ignore',
+        env: { ...process.env, PGCONNECT_TIMEOUT: '10' },
+      },
+    );
     const timeout = setTimeout(() => child.kill(), 120_000);
-    child.once('error', (error) => { clearTimeout(timeout); fail(error); });
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      fail(error);
+    });
     child.once('exit', (code) => {
       clearTimeout(timeout);
       if (code === 0) done();
@@ -53,9 +69,13 @@ export class SystemUpdateService {
   }
 
   private async requireOwner(userId: string): Promise<void> {
-    const [owner] = await this.db.select({ id: users.id }).from(users)
-      .orderBy(asc(users.createdAt), asc(users.id)).limit(1);
-    if (!owner || owner.id !== userId) throw new ForbiddenException('Only the installation owner can update Squabble');
+    const [owner] = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .orderBy(asc(users.createdAt), asc(users.id))
+      .limit(1);
+    if (!owner || owner.id !== userId)
+      throw new ForbiddenException('Only the installation owner can update Squabble');
   }
 
   private async availableRelease(): Promise<WebUpdateStatus['available']> {
@@ -71,21 +91,34 @@ export class SystemUpdateService {
   }
 
   async status(userId: string): Promise<WebUpdateStatus> {
-    if (!this.enabled) return { enabled: false, currentVersion: APP_VERSION, available: null, phase: 'idle' };
+    if (!this.enabled)
+      return { enabled: false, currentVersion: APP_VERSION, available: null, phase: 'idle' };
     await this.requireOwner(userId);
     try {
-      return { enabled: true, currentVersion: APP_VERSION, available: await this.availableRelease(),
-        phase: this.phase, ...(this.error ? { error: this.error } : {}) };
+      return {
+        enabled: true,
+        currentVersion: APP_VERSION,
+        available: await this.availableRelease(),
+        phase: this.phase,
+        ...(this.error ? { error: this.error } : {}),
+      };
     } catch {
-      return { enabled: true, currentVersion: APP_VERSION, available: null,
-        phase: this.phase, error: this.error ?? 'Could not reach GitHub Releases' };
+      return {
+        enabled: true,
+        currentVersion: APP_VERSION,
+        available: null,
+        phase: this.phase,
+        error: this.error ?? 'Could not reach GitHub Releases',
+      };
     }
   }
 
   async start(userId: string): Promise<{ started: true; backup: string }> {
-    if (!this.enabled) throw new ForbiddenException('Web updates are unavailable in this deployment');
+    if (!this.enabled)
+      throw new ForbiddenException('Web updates are unavailable in this deployment');
     await this.requireOwner(userId);
-    if (this.phase === 'backingUp' || this.phase === 'updating') throw new ConflictException('An update is already running');
+    if (this.phase === 'backingUp' || this.phase === 'updating')
+      throw new ConflictException('An update is already running');
     const release = await this.availableRelease().catch(() => {
       throw new ServiceUnavailableException('Could not check GitHub Releases');
     });
@@ -99,10 +132,14 @@ export class SystemUpdateService {
         dumpDatabase,
       );
       this.phase = 'updating';
-      setTimeout(() => { void this.triggerHelper(); }, 500).unref();
+      setTimeout(() => {
+        void this.triggerHelper();
+      }, 500).unref();
       return { started: true, backup };
     } catch (error) {
-      this.logger.error(`Update backup failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Update backup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       this.phase = 'failed';
       this.error = 'Database backup failed; the update was not started';
       throw new ServiceUnavailableException(this.error);
@@ -122,7 +159,9 @@ export class SystemUpdateService {
       this.phase = 'failed';
       this.error = 'No new image was installed; see the updater container logs';
     } catch (error) {
-      this.logger.error(`Update helper failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Update helper failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       this.phase = 'failed';
       this.error = 'Update failed; see the updater container logs';
     }

@@ -68,9 +68,12 @@ let refreshPromise: Promise<{ accessToken: string; refreshToken: string }> | nul
 
 function refreshSession(refreshToken: string) {
   if (!refreshPromise) {
-    refreshPromise = http.post('/api/auth/refresh', { refreshToken })
+    refreshPromise = http
+      .post('/api/auth/refresh', { refreshToken })
       .then((response) => response.data as { accessToken: string; refreshToken: string })
-      .finally(() => { refreshPromise = null; });
+      .finally(() => {
+        refreshPromise = null;
+      });
   }
   return refreshPromise;
 }

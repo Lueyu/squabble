@@ -21,9 +21,7 @@ const ALL_CURRENCIES: Currency[] = ['USD', 'HKD', 'CNY'];
  */
 @Injectable()
 export class CashAccountsService {
-  constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-  ) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
   /**
    * Lists all cash accounts for a user (provisioning any missing ones first).
@@ -114,10 +112,7 @@ export class CashAccountsService {
       updatedBy: userId,
     }));
 
-    await this.db
-      .insert(cashAccounts)
-      .values(values)
-      .onConflictDoNothing();
+    await this.db.insert(cashAccounts).values(values).onConflictDoNothing();
   }
 
   /**

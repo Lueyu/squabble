@@ -43,11 +43,7 @@ function generateETag(mtimeMs: number, size: number): string {
 /** Build the static file server for the given root directory. */
 export function staticAssets(rootDir: string): RequestHandler {
   const root = resolve(rootDir);
-  return function staticAssetsMiddleware(
-    req: Request,
-    res: Response,
-    next: () => void,
-  ): void {
+  return function staticAssetsMiddleware(req: Request, res: Response, next: () => void): void {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
 
     const rel = (req.path || '/').replace(/^\/+/, '');
@@ -73,7 +69,10 @@ export function staticAssets(rootDir: string): RequestHandler {
       return;
     }
 
-    res.setHeader('Content-Type', MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream');
+    res.setHeader(
+      'Content-Type',
+      MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream',
+    );
     res.setHeader('Content-Length', stat.size);
     res.setHeader('ETag', etag);
     res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');

@@ -16,8 +16,8 @@ export class AuthRateLimiter {
     const key = `${action}:${request.ip || request.socket.remoteAddress || 'unknown'}`;
     const limit = action === 'register' || action === 'recover' ? 5 : action === 'login' ? 15 : 30;
     const previous = this.buckets.get(key);
-    const current = !previous || previous.resetAt <= now
-      ? { count: 0, resetAt: now + this.windowMs } : previous;
+    const current =
+      !previous || previous.resetAt <= now ? { count: 0, resetAt: now + this.windowMs } : previous;
     if (current.count >= limit) throw new HttpException('Too many requests. Try again later.', 429);
     current.count += 1;
     this.buckets.set(key, current);

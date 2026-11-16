@@ -24,8 +24,9 @@ export default function SystemUpdateCard() {
       const version = status.data?.available?.version;
       setTimedOut(false);
       if (version) setRequestedVersion(version);
-      queryClient.setQueryData<WebUpdateStatus>(['system-update'], (current) => current
-        ? { ...current, phase: 'updating' } : current);
+      queryClient.setQueryData<WebUpdateStatus>(['system-update'], (current) =>
+        current ? { ...current, phase: 'updating' } : current,
+      );
       toast.success(t('updates.backedUp'));
     },
     onError: () => toast.error(t('updates.startFailed')),
@@ -49,22 +50,45 @@ export default function SystemUpdateCard() {
     if (requestedVersion && status.data?.phase === 'failed') setRequestedVersion(null);
   }, [requestedVersion, status.data?.phase]);
 
-  if (status.isPending) return <Card><CardContent className="flex items-center gap-2 pt-6" role="status">
-    <LoaderCircle className="size-4 animate-spin" />{t('ui.settings.loading')}
-  </CardContent></Card>;
-  if (status.isError) return <Card><CardContent className="flex flex-wrap items-center gap-3 pt-6">
-    <p role="alert" className="text-sm text-destructive">{t('settingsNav.updateLoadFailed')}</p>
-    <Button variant="outline" size="sm" onClick={() => void status.refetch()}>{t('ui.settings.retry')}</Button>
-  </CardContent></Card>;
-  if (!status.data?.enabled) return <Card>
-    <CardHeader><CardTitle>{t('updates.title')}</CardTitle></CardHeader>
-    <CardContent className="space-y-3 text-sm leading-7">
-      {status.data?.currentVersion && <p>{t('updates.current', { version: status.data.currentVersion })}</p>}
-      <p className="max-w-2xl text-muted-foreground">{t('settingsNav.updateUnavailable')}</p>
-    </CardContent>
-  </Card>;
+  if (status.isPending)
+    return (
+      <Card>
+        <CardContent className="flex items-center gap-2 pt-6" role="status">
+          <LoaderCircle className="size-4 animate-spin" />
+          {t('ui.settings.loading')}
+        </CardContent>
+      </Card>
+    );
+  if (status.isError)
+    return (
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-3 pt-6">
+          <p role="alert" className="text-sm text-destructive">
+            {t('settingsNav.updateLoadFailed')}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => void status.refetch()}>
+            {t('ui.settings.retry')}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  if (!status.data?.enabled)
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('updates.title')}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm leading-7">
+          {status.data?.currentVersion && (
+            <p>{t('updates.current', { version: status.data.currentVersion })}</p>
+          )}
+          <p className="max-w-2xl text-muted-foreground">{t('settingsNav.updateUnavailable')}</p>
+        </CardContent>
+      </Card>
+    );
   const { currentVersion, available, phase, error } = status.data;
-  const busy = start.isPending || phase === 'backingUp' || phase === 'updating' || !!requestedVersion;
+  const busy =
+    start.isPending || phase === 'backingUp' || phase === 'updating' || !!requestedVersion;
 
   return (
     <Card>
@@ -74,24 +98,42 @@ export default function SystemUpdateCard() {
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p>{t('updates.current', { version: currentVersion })}</p>
-        {available ? <p>{t('updates.available', { version: available.version })}</p>
-          : <p className="text-muted-foreground">{error && phase === 'idle'
-            ? t('updates.checkFailed') : t('updates.upToDate')}</p>}
-        {busy && <p role="status" className="flex items-center gap-2 text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" /> {t('updates.working')}
-        </p>}
-        {(phase === 'failed' || timedOut) && <p role="alert" className="text-destructive">
-          {t('updates.failed')}
-        </p>}
+        {available ? (
+          <p>{t('updates.available', { version: available.version })}</p>
+        ) : (
+          <p className="text-muted-foreground">
+            {error && phase === 'idle' ? t('updates.checkFailed') : t('updates.upToDate')}
+          </p>
+        )}
+        {busy && (
+          <p role="status" className="flex items-center gap-2 text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin" /> {t('updates.working')}
+          </p>
+        )}
+        {(phase === 'failed' || timedOut) && (
+          <p role="alert" className="text-destructive">
+            {t('updates.failed')}
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           <Button disabled={!available || busy} onClick={() => start.mutate()}>
             <RotateCw className="size-4" /> {t('updates.updateNow')}
           </Button>
-          {error && phase === 'idle' && <Button variant="outline" onClick={() => void status.refetch()}>
-            {t('updates.checkAgain')}
-          </Button>}
-          {available && <a className="text-primary underline" href={available.releaseUrl}
-            target="_blank" rel="noopener noreferrer">{t('updates.releaseNotes')}</a>}
+          {error && phase === 'idle' && (
+            <Button variant="outline" onClick={() => void status.refetch()}>
+              {t('updates.checkAgain')}
+            </Button>
+          )}
+          {available && (
+            <a
+              className="text-primary underline"
+              href={available.releaseUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {t('updates.releaseNotes')}
+            </a>
+          )}
         </div>
       </CardContent>
     </Card>

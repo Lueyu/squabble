@@ -32,7 +32,8 @@ const pendingPairLinks: string[] = [];
 let handlingPairLink = false;
 
 function queuePairingLink(link: string): void {
-  if (!parsePairingLink(link) || pendingPairLinks.includes(link) || pendingPairLinks.length >= 3) return;
+  if (!parsePairingLink(link) || pendingPairLinks.includes(link) || pendingPairLinks.length >= 3)
+    return;
   pendingPairLinks.push(link);
   if (app.isReady()) void handlePendingPairings();
 }
@@ -47,63 +48,116 @@ async function handlePendingPairings(): Promise<void> {
       if (!link) continue;
       try {
         const paired = await companion.pair(link, async (origin) => {
-          const choice = await dialog.showMessageBox({ type: 'question', title: 'Squabble',
-            message: chinese ? '允许此本地应用使用你的研究 Agent？' : 'Allow this local app to use your research agents?',
-            detail: chinese ? `${origin}\n\n连接后，此应用可以使用你的 CLI 登录账号运行 Codex 和 Claude Code 研究任务，可能消耗套餐用量或产生费用。请确认这正是你刚刚在设置中打开的地址。`
+          const choice = await dialog.showMessageBox({
+            type: 'question',
+            title: 'Squabble',
+            message: chinese
+              ? '允许此本地应用使用你的研究 Agent？'
+              : 'Allow this local app to use your research agents?',
+            detail: chinese
+              ? `${origin}\n\n连接后，此应用可以使用你的 CLI 登录账号运行 Codex 和 Claude Code 研究任务，可能消耗套餐用量或产生费用。请确认这正是你刚刚在设置中打开的地址。`
               : `${origin}\n\nThis app can run Codex and Claude Code research tasks using your CLI sign-in, which may consume your plan or incur charges. Confirm this is the address you just opened in Settings.`,
-            buttons: chinese ? ['连接', '取消'] : ['Connect', 'Cancel'], defaultId: 1, cancelId: 1,
+            buttons: chinese ? ['连接', '取消'] : ['Connect', 'Cancel'],
+            defaultId: 1,
+            cancelId: 1,
           });
           return choice.response === 0;
         });
-        if (paired) await dialog.showMessageBox({ type: 'info', title: 'Squabble',
-          message: chinese ? '桌面助手已配对' : 'Desktop companion paired',
-          detail: chinese ? '返回网页设置，登录并连接 Codex 或 Claude Code。使用期间请保持桌面应用开启。'
-            : 'Return to web Settings to sign in and connect Codex or Claude Code. Keep the desktop app open while using them.',
-        });
+        if (paired)
+          await dialog.showMessageBox({
+            type: 'info',
+            title: 'Squabble',
+            message: chinese ? '桌面助手已配对' : 'Desktop companion paired',
+            detail: chinese
+              ? '返回网页设置，登录并连接 Codex 或 Claude Code。使用期间请保持桌面应用开启。'
+              : 'Return to web Settings to sign in and connect Codex or Claude Code. Keep the desktop app open while using them.',
+          });
       } catch {
-        await dialog.showMessageBox({ type: 'warning', title: 'Squabble',
+        await dialog.showMessageBox({
+          type: 'warning',
+          title: 'Squabble',
           message: chinese ? '无法配对桌面助手' : 'Could not pair the desktop companion',
-          detail: chinese ? '确认本地应用正在运行，然后在网页设置中创建新的配对请求。'
+          detail: chinese
+            ? '确认本地应用正在运行，然后在网页设置中创建新的配对请求。'
             : 'Make sure the local app is running, then create a new pairing request in web Settings.',
         });
       }
     }
-  } finally { handlingPairLink = false; }
+  } finally {
+    handlingPairLink = false;
+  }
 }
 
 async function showCompanionStatus(): Promise<void> {
   const chinese = app.getLocale().toLowerCase().startsWith('zh');
   const status = companion?.status;
   const states = chinese
-    ? { unpaired: '尚未配对', connecting: '正在连接', connected: '已连接', offline: '暂时离线，正在重连' }
-    : { unpaired: 'Not paired', connecting: 'Connecting', connected: 'Connected', offline: 'Offline; reconnecting' };
+    ? {
+        unpaired: '尚未配对',
+        connecting: '正在连接',
+        connected: '已连接',
+        offline: '暂时离线，正在重连',
+      }
+    : {
+        unpaired: 'Not paired',
+        connecting: 'Connecting',
+        connected: 'Connected',
+        offline: 'Offline; reconnecting',
+      };
   const providerStates = chinese
     ? { not_installed: '未安装', login_required: '需要登录', ready: '已就绪', error: '检测失败' }
-    : { not_installed: 'Not installed', login_required: 'Sign-in required', ready: 'Ready', error: 'Detection failed' };
-  const details = status ? [
-    states[status.state], status.origin ?? '',
-    ...status.agents.map((agent) => `${agent.name}: ${providerStates[agent.state]}`),
-    chinese ? `正在运行的任务：${status.activeTasks}` : `Running tasks: ${status.activeTasks}`,
-    chinese ? '在 Docker 网页的设置中配对或断开助手。使用期间请保持此应用开启。'
-      : 'Pair or disconnect the companion in Docker web Settings. Keep this app open while using it.',
-  ] : [chinese ? '桌面助手不可用，请重启应用后重试。' : 'The desktop companion is unavailable. Restart the app to retry.'];
-  await dialog.showMessageBox({ type: 'info', title: 'Squabble',
-    message: chinese ? '本地研究 Agent 助手' : 'Local research agent companion', detail: details.filter(Boolean).join('\n\n') });
+    : {
+        not_installed: 'Not installed',
+        login_required: 'Sign-in required',
+        ready: 'Ready',
+        error: 'Detection failed',
+      };
+  const details = status
+    ? [
+        states[status.state],
+        status.origin ?? '',
+        ...status.agents.map((agent) => `${agent.name}: ${providerStates[agent.state]}`),
+        chinese ? `正在运行的任务：${status.activeTasks}` : `Running tasks: ${status.activeTasks}`,
+        chinese
+          ? '在 Docker 网页的设置中配对或断开助手。使用期间请保持此应用开启。'
+          : 'Pair or disconnect the companion in Docker web Settings. Keep this app open while using it.',
+      ]
+    : [
+        chinese
+          ? '桌面助手不可用，请重启应用后重试。'
+          : 'The desktop companion is unavailable. Restart the app to retry.',
+      ];
+  await dialog.showMessageBox({
+    type: 'info',
+    title: 'Squabble',
+    message: chinese ? '本地研究 Agent 助手' : 'Local research agent companion',
+    detail: details.filter(Boolean).join('\n\n'),
+  });
 }
 
 async function startCompanion(dataRoot: string): Promise<void> {
   try {
-    const runtime = createRequire(import.meta.url)(join(app.getAppPath(), 'dist', 'server', 'local-agents', 'native.js')) as NativeRuntime;
-    companion = new LocalAgentCompanion({ dataDir: join(dataRoot, 'local-agent-companion'), name: hostname(), native: runtime });
+    const runtime = createRequire(import.meta.url)(
+      join(app.getAppPath(), 'dist', 'server', 'local-agents', 'native.js'),
+    ) as NativeRuntime;
+    companion = new LocalAgentCompanion({
+      dataDir: join(dataRoot, 'local-agent-companion'),
+      name: hostname(),
+      native: runtime,
+    });
     await companion.restore();
     companion.start();
     void handlePendingPairings();
   } catch {
     companion = null;
     // Pairing storage and CLI diagnostics can contain credentials. Never show raw errors.
-    await dialog.showMessageBox({ type: 'warning', title: 'Squabble',
-      message: app.getLocale().toLowerCase().startsWith('zh') ? '桌面助手无法启动，请重启应用后重试。'
-        : 'The desktop companion could not start. Restart the app to retry.' });
+    await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Squabble',
+      message: app.getLocale().toLowerCase().startsWith('zh')
+        ? '桌面助手无法启动，请重启应用后重试。'
+        : 'The desktop companion could not start. Restart the app to retry.',
+    });
   }
 }
 
@@ -115,16 +169,26 @@ async function showWindowsUpdateCheck(chinese: boolean, silent: boolean): Promis
   const result = await autoUpdater.checkForUpdates();
   const version = result?.updateInfo.version;
   if (!version || !isNewerVersion(version, app.getVersion())) {
-    if (!silent) await dialog.showMessageBox({ type: 'info', title: 'Squabble',
-      message: chinese ? '已是最新版本' : 'Squabble is up to date',
-      detail: chinese ? `当前版本：${app.getVersion()}` : `Current version: ${app.getVersion()}` });
+    if (!silent)
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Squabble',
+        message: chinese ? '已是最新版本' : 'Squabble is up to date',
+        detail: chinese ? `当前版本：${app.getVersion()}` : `Current version: ${app.getVersion()}`,
+      });
     return;
   }
-  const choice = await dialog.showMessageBox({ type: 'info', title: 'Squabble',
+  const choice = await dialog.showMessageBox({
+    type: 'info',
+    title: 'Squabble',
     message: chinese ? `发现新版本 ${version}` : `Version ${version} is available`,
-    detail: chinese ? '下载后可以立即重启安装，数据会保留。' : 'Download and restart to install. Your data will be kept.',
+    detail: chinese
+      ? '下载后可以立即重启安装，数据会保留。'
+      : 'Download and restart to install. Your data will be kept.',
     buttons: chinese ? ['下载更新', '稍后'] : ['Download update', 'Later'],
-    defaultId: 0, cancelId: 1 });
+    defaultId: 0,
+    cancelId: 1,
+  });
   if (choice.response !== 0) return;
   const progress = (_event: { percent: number }) => window?.setProgressBar(_event.percent / 100);
   autoUpdater.on('download-progress', progress);
@@ -134,11 +198,17 @@ async function showWindowsUpdateCheck(chinese: boolean, silent: boolean): Promis
     autoUpdater.off('download-progress', progress);
     window?.setProgressBar(-1);
   }
-  const install = await dialog.showMessageBox({ type: 'info', title: 'Squabble',
+  const install = await dialog.showMessageBox({
+    type: 'info',
+    title: 'Squabble',
     message: chinese ? '更新已下载' : 'Update downloaded',
-    detail: chinese ? '现在重启 Squabble 以完成安装？' : 'Restart Squabble now to finish installing?',
+    detail: chinese
+      ? '现在重启 Squabble 以完成安装？'
+      : 'Restart Squabble now to finish installing?',
     buttons: chinese ? ['重启并安装', '稍后'] : ['Restart and install', 'Later'],
-    defaultId: 0, cancelId: 1 });
+    defaultId: 0,
+    cancelId: 1,
+  });
   if (install.response === 0) {
     await stopServices();
     quitAllowed = true;
@@ -157,23 +227,36 @@ async function showUpdateCheck(silent = false): Promise<void> {
     }
     const update = await checkForUpdate(app.getVersion(), process.platform, process.arch);
     if (!update) {
-      await dialog.showMessageBox({ type: 'info', title: 'Squabble',
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Squabble',
         message: chinese ? '已是最新版本' : 'Squabble is up to date',
-        detail: chinese ? `当前版本：${app.getVersion()}` : `Current version: ${app.getVersion()}` });
+        detail: chinese ? `当前版本：${app.getVersion()}` : `Current version: ${app.getVersion()}`,
+      });
       return;
     }
-    const choice = await dialog.showMessageBox({ type: 'info', title: 'Squabble',
+    const choice = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Squabble',
       message: chinese ? `发现新版本 ${update.version}` : `Version ${update.version} is available`,
-      detail: update.notes || (chinese ? '查看发布页面了解更新内容。' : 'See the release page for details.'),
+      detail:
+        update.notes ||
+        (chinese ? '查看发布页面了解更新内容。' : 'See the release page for details.'),
       buttons: chinese ? ['打开下载页面', '稍后'] : ['Open download page', 'Later'],
-      defaultId: 0, cancelId: 1,
+      defaultId: 0,
+      cancelId: 1,
     });
     if (choice.response === 0) await shell.openExternal(update.downloadUrl);
   } catch {
-    if (!silent) await dialog.showMessageBox({ type: 'warning', title: 'Squabble',
-      message: chinese ? '检查更新失败' : 'Could not check for updates',
-      detail: chinese ? '请检查网络连接，或前往 GitHub Releases 页面查看。'
-        : 'Check your connection or visit Squabble Releases on GitHub.' });
+    if (!silent)
+      await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Squabble',
+        message: chinese ? '检查更新失败' : 'Could not check for updates',
+        detail: chinese
+          ? '请检查网络连接，或前往 GitHub Releases 页面查看。'
+          : 'Check your connection or visit Squabble Releases on GitHub.',
+      });
   } finally {
     checkingForUpdate = false;
   }
@@ -182,16 +265,29 @@ async function showUpdateCheck(silent = false): Promise<void> {
 function installApplicationMenu(): void {
   const chinese = app.getLocale().toLowerCase().startsWith('zh');
   const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : [
-      { label: chinese ? '文件' : 'File', submenu: [{ role: 'quit' as const }] },
-    ]),
+    ...(process.platform === 'darwin'
+      ? [{ role: 'appMenu' as const }]
+      : [{ label: chinese ? '文件' : 'File', submenu: [{ role: 'quit' as const }] }]),
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
-    { label: chinese ? '帮助' : 'Help', submenu: [
-      { label: chinese ? '本地 Agent 助手…' : 'Local Agent Companion…', click: () => { void showCompanionStatus(); } },
-      { label: chinese ? '检查更新…' : 'Check for Updates…', click: () => { void showUpdateCheck(); } },
-    ] },
+    {
+      label: chinese ? '帮助' : 'Help',
+      submenu: [
+        {
+          label: chinese ? '本地 Agent 助手…' : 'Local Agent Companion…',
+          click: () => {
+            void showCompanionStatus();
+          },
+        },
+        {
+          label: chinese ? '检查更新…' : 'Check for Updates…',
+          click: () => {
+            void showUpdateCheck();
+          },
+        },
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -235,7 +331,10 @@ async function stopServices(): Promise<void> {
 function externalLink(value: string, ownOrigin: string): void {
   try {
     const target = new URL(value);
-    if (target.origin !== ownOrigin && (target.protocol === 'https:' || target.protocol === 'http:')) {
+    if (
+      target.origin !== ownOrigin &&
+      (target.protocol === 'https:' || target.protocol === 'http:')
+    ) {
       void shell.openExternal(target.toString());
     }
   } catch {
@@ -273,13 +372,18 @@ async function startDesktop(): Promise<void> {
   backend.on('exit', () => {
     markSmokeStage('backend-exited');
     if (!quitting) {
-      dialog.showErrorBox('Squabble stopped', 'The local server exited. See the log in your Squabble data folder.');
+      dialog.showErrorBox(
+        'Squabble stopped',
+        'The local server exited. See the log in your Squabble data folder.',
+      );
       app.quit();
     }
   });
   await Promise.race([
     waitForHealth(origin, 45_000),
-    new Promise<never>((_resolve, reject) => backend?.once('exit', () => reject(new Error('Local server exited during startup')))),
+    new Promise<never>((_resolve, reject) =>
+      backend?.once('exit', () => reject(new Error('Local server exited during startup'))),
+    ),
   ]);
   markSmokeStage('server-healthy');
 
@@ -289,18 +393,28 @@ async function startDesktop(): Promise<void> {
       markSmokeStage('updater-loaded');
     }
     const response = await fetch(`${origin}/api/auth/registration-status`);
-    if (!response.ok || (await response.json() as { registrationOpen?: boolean }).registrationOpen !== true) {
+    if (
+      !response.ok ||
+      ((await response.json()) as { registrationOpen?: boolean }).registrationOpen !== true
+    ) {
       throw new Error('Packaged desktop first-run registration is unavailable');
     }
-    await writeFile(join(dataRoot, 'packaged-smoke.json'), JSON.stringify({
-      healthy: true, registrationOpen: true, defaultDataRoot: app.getPath('userData'),
-    }));
+    await writeFile(
+      join(dataRoot, 'packaged-smoke.json'),
+      JSON.stringify({
+        healthy: true,
+        registrationOpen: true,
+        defaultDataRoot: app.getPath('userData'),
+      }),
+    );
     markSmokeStage('smoke-marker-written');
     app.quit();
     return;
   }
 
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
+    callback(false),
+  );
   window = new BrowserWindow({
     width: 1360,
     height: 900,
@@ -320,7 +434,11 @@ async function startDesktop(): Promise<void> {
   });
   window.webContents.on('will-navigate', (event, url) => {
     let allowed = false;
-    try { allowed = new URL(url).origin === origin; } catch { /* block malformed navigation */ }
+    try {
+      allowed = new URL(url).origin === origin;
+    } catch {
+      /* block malformed navigation */
+    }
     if (!allowed) {
       event.preventDefault();
       externalLink(url, origin);
@@ -329,14 +447,24 @@ async function startDesktop(): Promise<void> {
   window.once('ready-to-show', () => window?.show());
   await window.loadURL(origin);
   if (isAutomaticUpdateSupported(process.platform, process.arch, app.isPackaged)) {
-    setTimeout(() => { if (!quitting) void showUpdateCheck(true); }, 20_000).unref();
-    setInterval(() => { if (!quitting) void showUpdateCheck(true); }, 6 * 60 * 60_000).unref();
+    setTimeout(() => {
+      if (!quitting) void showUpdateCheck(true);
+    }, 20_000).unref();
+    setInterval(
+      () => {
+        if (!quitting) void showUpdateCheck(true);
+      },
+      6 * 60 * 60_000,
+    ).unref();
   }
 }
 
 markSmokeStage('module-loaded');
 app.setName('Squabble');
-app.on('open-url', (event, url) => { event.preventDefault(); queuePairingLink(url); });
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  queuePairingLink(url);
+});
 
 markSmokeStage('before-single-instance-lock');
 const singleInstance = app.requestSingleInstanceLock();
@@ -360,20 +488,26 @@ if (!singleInstance) {
     });
   });
   markSmokeStage('before-when-ready');
-  void app.whenReady().then(() => {
-    markSmokeStage('after-when-ready');
-    if (process.env.SQUABBLE_DESKTOP_SMOKE !== '1') {
-      if (app.isPackaged) app.setAsDefaultProtocolClient('squabble');
-      else if (process.defaultApp && process.argv[1]) {
-        app.setAsDefaultProtocolClient('squabble', process.execPath, [resolve(process.argv[1])]);
+  void app
+    .whenReady()
+    .then(() => {
+      markSmokeStage('after-when-ready');
+      if (process.env.SQUABBLE_DESKTOP_SMOKE !== '1') {
+        if (app.isPackaged) app.setAsDefaultProtocolClient('squabble');
+        else if (process.defaultApp && process.argv[1]) {
+          app.setAsDefaultProtocolClient('squabble', process.execPath, [resolve(process.argv[1])]);
+        }
       }
-    }
-    installApplicationMenu();
-    return startDesktop();
-  }).catch(async (error: unknown) => {
-    markSmokeStage('startup-error');
-    dialog.showErrorBox('Squabble could not start', error instanceof Error ? error.message : String(error));
-    await stopServices();
-    app.quit();
-  });
+      installApplicationMenu();
+      return startDesktop();
+    })
+    .catch(async (error: unknown) => {
+      markSmokeStage('startup-error');
+      dialog.showErrorBox(
+        'Squabble could not start',
+        error instanceof Error ? error.message : String(error),
+      );
+      await stopServices();
+      app.quit();
+    });
 }

@@ -14,7 +14,6 @@ import type { Request } from 'express';
  */
 @Controller()
 export class ViewController {
-
   /**
    * Renders the `index` view for the app root and any non-API fallback path.
    *
@@ -24,7 +23,7 @@ export class ViewController {
    */
   @Get(['/', '*'])
   @Render('index')
-  async render(@Req() req: Request): Promise<{ __platform__: string }>  {
+  async render(@Req() req: Request): Promise<{ __platform__: string }> {
     // Custom render params may be attached here.
     const platformData = req.__platform_data__ ?? {};
     return {

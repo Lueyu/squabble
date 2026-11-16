@@ -34,9 +34,15 @@ function LoginPage() {
   useEffect(() => {
     let active = true;
     fetchRegistrationStatus()
-      .then((status) => { if (active) setRegistrationOpen(status.registrationOpen); })
-      .catch(() => { if (active) setRegistrationStatusError(true); });
-    return () => { active = false; };
+      .then((status) => {
+        if (active) setRegistrationOpen(status.registrationOpen);
+      })
+      .catch(() => {
+        if (active) setRegistrationStatusError(true);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -63,13 +69,33 @@ function LoginPage() {
       <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
         <div className="space-y-2">
           <Label htmlFor="username">{t('auth.username')}</Label>
-          <Input id="username" autoComplete="username" placeholder={t('auth.usernamePlaceholder')} value={username} onChange={(e) => setUsername(e.target.value)} />
+          <Input
+            id="username"
+            autoComplete="username"
+            placeholder={t('auth.usernamePlaceholder')}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="password">{t('auth.password')}</Label>
-          <Input id="password" type="password" autoComplete="current-password" placeholder="••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            placeholder="••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
         </div>
-        <div className="text-right text-sm"><Link to="/recover" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">{t('auth.forgotPassword')}</Link></div>
+        <div className="text-right text-sm">
+          <Link
+            to="/recover"
+            className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {t('auth.forgotPassword')}
+          </Link>
+        </div>
         <Button type="submit" className="w-full" disabled={submitting}>
           {submitting ? t('auth.loggingIn') : t('auth.login')}
         </Button>
@@ -78,7 +104,10 @@ function LoginPage() {
       {registrationOpen && (
         <div className="mt-6 text-center text-sm text-muted-foreground">
           {t('auth.noAccount')}
-          <Link to="/register" className="ml-1 font-medium text-foreground underline-offset-4 hover:underline">
+          <Link
+            to="/register"
+            className="ml-1 font-medium text-foreground underline-offset-4 hover:underline"
+          >
             {t('auth.register')}
           </Link>
         </div>
@@ -86,7 +115,11 @@ function LoginPage() {
       {registrationStatusError && (
         <p className="mt-6 text-center text-sm text-muted-foreground">
           {t('auth.registrationStatusUnavailable')}{' '}
-          <button type="button" onClick={() => window.location.reload()} className="font-medium underline underline-offset-4">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="font-medium underline underline-offset-4"
+          >
             {t('auth.retry')}
           </button>
         </p>

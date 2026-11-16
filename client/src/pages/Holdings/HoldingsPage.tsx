@@ -28,13 +28,16 @@ import type {
   LatestRating,
   AgentRun,
 } from '@shared/api.interface';
-import { fetchHoldings, fetchGroups, fetchCashAccounts, fetchDashboard, getLatestRatings, getAgentRuns } from '@/api';
-import { useMarketQuotes } from '@/hooks/use-market-quotes';
 import {
-  formatCurrencyWithCode,
-  plClass,
-  cn,
-} from '@/utils/format';
+  fetchHoldings,
+  fetchGroups,
+  fetchCashAccounts,
+  fetchDashboard,
+  getLatestRatings,
+  getAgentRuns,
+} from '@/api';
+import { useMarketQuotes } from '@/hooks/use-market-quotes';
+import { formatCurrencyWithCode, plClass, cn } from '@/utils/format';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { MarketStatusBadges } from '@/components/MarketStatusBadges';
@@ -51,11 +54,7 @@ import AddHoldingDialog from './AddHoldingDialog';
 import HoldingsMobileList from './HoldingsMobileList';
 import HoldingsTable from './HoldingsTable';
 import AgentRunDetailModal from '@/components/MultiAgent/AgentRunDetailModal';
-import {
-  Alert,
-  AlertTitle,
-  AlertDescription,
-} from '@/components/ui/alert';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
@@ -116,9 +115,7 @@ export default function HoldingsPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<Holding | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [selectedMarkets, setSelectedMarkets] = useState<Set<Market>>(
-    new Set(['US', 'HK', 'CN'])
-  );
+  const [selectedMarkets, setSelectedMarkets] = useState<Set<Market>>(new Set(['US', 'HK', 'CN']));
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [aiRatings, setAiRatings] = useState<Record<string, LatestRating>>({});
@@ -127,12 +124,15 @@ export default function HoldingsPage() {
   const [aiDetailRunId, setAiDetailRunId] = useState<string | null>(null);
   const [aiDetailOpen, setAiDetailOpen] = useState(false);
 
-  const tickers = useMemo(
-    () => holdings.map((h) => h.ticker),
-    [holdings]
-  );
+  const tickers = useMemo(() => holdings.map((h) => h.ticker), [holdings]);
 
-  const { quotes, marketStatus, marketErrors, lastUpdated, refresh: refreshQuotes } = useMarketQuotes(tickers);
+  const {
+    quotes,
+    marketStatus,
+    marketErrors,
+    lastUpdated,
+    refresh: refreshQuotes,
+  } = useMarketQuotes(tickers);
 
   /**
    * Load the latest published AI ratings for all tickers. Failures are silent
@@ -259,9 +259,7 @@ export default function HoldingsPage() {
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter(
-        (h) =>
-          h.ticker.toLowerCase().includes(q) ||
-          (h.company ?? '').toLowerCase().includes(q)
+        (h) => h.ticker.toLowerCase().includes(q) || (h.company ?? '').toLowerCase().includes(q),
       );
     }
     if (groupId) {
@@ -321,12 +319,7 @@ export default function HoldingsPage() {
               {formatCurrencyWithCode(totalMv, displayCurrency)}
             </span>{' '}
             · {t('ui.holdings.floatingPl')}{' '}
-            <span
-              className={cn(
-                'font-mono-nums font-medium',
-                plClass(totalPl)
-              )}
-            >
+            <span className={cn('font-mono-nums font-medium', plClass(totalPl))}>
               {formatCurrencyWithCode(totalPl, displayCurrency)}
             </span>
           </div>
@@ -341,9 +334,7 @@ export default function HoldingsPage() {
             }}
             disabled={loading}
           >
-            <RefreshCw
-              className={cn('size-4', loading && 'animate-spin')}
-            />
+            <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
             {t('ui.tx.refresh')}
           </Button>
           <Button size="sm" onClick={() => setAddOpen(true)}>
@@ -359,9 +350,7 @@ export default function HoldingsPage() {
           <AlertTriangle className="size-4 text-warning" />
           <AlertTitle className="font-medium">{t('ui.holdings.riskAlert')}</AlertTitle>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-3 text-muted-foreground">
-            <span>
-              {t('ui.holdings.riskMessage', { count: awaitingHumanCount })}
-            </span>
+            <span>{t('ui.holdings.riskMessage', { count: awaitingHumanCount })}</span>
             <Button
               asChild
               variant="outline"
@@ -392,9 +381,7 @@ export default function HoldingsPage() {
               variant={active ? 'default' : 'outline'}
               className={cn(
                 'cursor-pointer select-none gap-1.5 h-7 px-3',
-                active
-                  ? 'bg-primary text-primary-foreground'
-                  : 'hover:bg-muted'
+                active ? 'bg-primary text-primary-foreground' : 'hover:bg-muted',
               )}
               onClick={() => {
                 setSelectedMarkets((prev) => {
@@ -478,7 +465,7 @@ export default function HoldingsPage() {
         groups={groups}
         onUpdated={loadData}
         onDeleted={loadData}
-        aiRating={selected ? aiRatings[selected.ticker] ?? null : null}
+        aiRating={selected ? (aiRatings[selected.ticker] ?? null) : null}
         onViewFullAnalysis={handleViewFullAnalysis}
       />
 

@@ -124,50 +124,53 @@
   background: var(--background);
 }
 
-[data-design-theme="arcade"] .auth-shell {
+[data-design-theme='arcade'] .auth-shell {
   border-width: 2px;
   border-radius: 4px;
   box-shadow: 7px 7px 0 color-mix(in srgb, var(--chart-1) 25%, var(--background));
 }
 
-[data-design-theme="arcade"] .auth-intro {
+[data-design-theme='arcade'] .auth-intro {
   background-image:
     linear-gradient(color-mix(in srgb, var(--border) 45%, transparent) 1px, transparent 1px),
     linear-gradient(90deg, color-mix(in srgb, var(--border) 45%, transparent) 1px, transparent 1px);
   background-size: 24px 24px;
 }
 
-[data-design-theme="arcade"] .auth-intro-title,
-[data-design-theme="arcade"] .auth-form-heading h1 {
+[data-design-theme='arcade'] .auth-intro-title,
+[data-design-theme='arcade'] .auth-form-heading h1 {
   font-family: var(--display-font, var(--font-mono));
   font-weight: 700;
 }
 
-[data-design-theme="arcade"] .auth-scene-orbit {
+[data-design-theme='arcade'] .auth-scene-orbit {
   border: 2px dashed var(--chart-1);
   border-radius: 4px;
   transform: rotate(-8deg);
 }
 
-[data-design-theme="comic"] .auth-shell {
+[data-design-theme='comic'] .auth-shell {
   border: 2px solid var(--foreground);
   border-radius: 22px;
   box-shadow: 7px 7px 0 var(--foreground);
 }
 
-[data-design-theme="comic"] .auth-intro {
+[data-design-theme='comic'] .auth-intro {
   border-right: 2px solid var(--foreground);
-  background-image: radial-gradient(color-mix(in srgb, var(--chart-1) 18%, transparent) 1px, transparent 1px);
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--chart-1) 18%, transparent) 1px,
+    transparent 1px
+  );
   background-size: 9px 9px;
 }
 
-[data-design-theme="comic"] .auth-intro-title {
+[data-design-theme='comic'] .auth-intro-title {
   font-family: var(--font-sans);
   font-weight: 800;
   letter-spacing: -0.04em;
 }
 
-[data-design-theme="comic"] .auth-scene-orbit {
+[data-design-theme='comic'] .auth-scene-orbit {
   width: 230px;
   height: 190px;
   border: 2px solid var(--foreground);
@@ -176,21 +179,29 @@
   transform: rotate(-8deg);
 }
 
-[data-design-theme="orbit"] .auth-page {
-  background-image: radial-gradient(ellipse at 25% 30%, color-mix(in srgb, var(--chart-1) 10%, transparent), transparent 55%);
+[data-design-theme='orbit'] .auth-page {
+  background-image: radial-gradient(
+    ellipse at 25% 30%,
+    color-mix(in srgb, var(--chart-1) 10%, transparent),
+    transparent 55%
+  );
 }
 
-[data-design-theme="orbit"] .auth-intro {
-  background: radial-gradient(ellipse at 50% 30%, color-mix(in srgb, var(--chart-1) 14%, var(--card)), var(--card) 75%);
+[data-design-theme='orbit'] .auth-intro {
+  background: radial-gradient(
+    ellipse at 50% 30%,
+    color-mix(in srgb, var(--chart-1) 14%, var(--card)),
+    var(--card) 75%
+  );
 }
 
-[data-design-theme="orbit"] .auth-intro-title {
+[data-design-theme='orbit'] .auth-intro-title {
   font-family: var(--font-sans);
   font-weight: 600;
   letter-spacing: -0.04em;
 }
 
-[data-design-theme="orbit"] .auth-scene-orbit {
+[data-design-theme='orbit'] .auth-scene-orbit {
   width: 285px;
   height: 150px;
   border-color: color-mix(in srgb, var(--chart-1) 45%, transparent);
@@ -198,12 +209,12 @@
   transform: rotate(-25deg);
 }
 
-[data-design-theme="orbit"] .auth-scene-orbit::after {
+[data-design-theme='orbit'] .auth-scene-orbit::after {
   position: absolute;
   inset: -28px 24px;
   border: 1px solid color-mix(in srgb, var(--chart-2) 28%, transparent);
   border-radius: 50%;
-  content: "";
+  content: '';
   transform: rotate(60deg);
 }
 
@@ -263,7 +274,7 @@
     padding: 0 6px;
   }
 
-  [data-design-theme="comic"] .auth-intro {
+  [data-design-theme='comic'] .auth-intro {
     border-right: 0;
     border-bottom: 2px solid var(--foreground);
   }

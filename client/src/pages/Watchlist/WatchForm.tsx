@@ -53,14 +53,15 @@ function WatchForm({ data, onChange, includeTicker }: WatchFormProps) {
   const { t } = useTranslation();
   const localizedSignal = (signal: string) => {
     const keys: Record<string, string> = {
-      '强烈买入': 'analysis.strongBuy', '买入': 'analysis.buy',
-      '观望': 'analysis.watch', '回避': 'analysis.avoid',
+      强烈买入: 'analysis.strongBuy',
+      买入: 'analysis.buy',
+      观望: 'analysis.watch',
+      回避: 'analysis.avoid',
     };
     return keys[signal] ? t(keys[signal]) : signal;
   };
   /** Merge a single field update into the controlled form state. */
-  const update = (k: keyof WatchFormData, v: string) =>
-    onChange({ ...data, [k]: v });
+  const update = (k: keyof WatchFormData, v: string) => onChange({ ...data, [k]: v });
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -71,9 +72,7 @@ function WatchForm({ data, onChange, includeTicker }: WatchFormProps) {
           </label>
           <Input
             value={data.ticker}
-            onChange={(e) =>
-              update('ticker', e.target.value.toUpperCase())
-            }
+            onChange={(e) => update('ticker', e.target.value.toUpperCase())}
             placeholder={t('ui.holdings.tickerExample')}
             className="font-mono-nums"
           />
@@ -149,13 +148,8 @@ function WatchForm({ data, onChange, includeTicker }: WatchFormProps) {
         />
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">
-          {t('watchlist.rating')}
-        </label>
-        <Select
-          value={data.rating}
-          onValueChange={(v) => update('rating', v)}
-        >
+        <label className="text-xs font-medium text-muted-foreground">{t('watchlist.rating')}</label>
+        <Select value={data.rating} onValueChange={(v) => update('rating', v)}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder={t('ui.holdings.chooseRating')} />
           </SelectTrigger>
@@ -169,13 +163,8 @@ function WatchForm({ data, onChange, includeTicker }: WatchFormProps) {
         </Select>
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">
-          {t('watchlist.signal')}
-        </label>
-        <Select
-          value={data.signal}
-          onValueChange={(v) => update('signal', v)}
-        >
+        <label className="text-xs font-medium text-muted-foreground">{t('watchlist.signal')}</label>
+        <Select value={data.signal} onValueChange={(v) => update('signal', v)}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder={t('ui.watchlist.signalFilter')} />
           </SelectTrigger>

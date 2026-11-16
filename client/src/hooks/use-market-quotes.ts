@@ -23,9 +23,9 @@ import type { QuoteResponse, Market } from '@shared/api.interface';
 export type MarketPhase = 'trading' | 'pre' | 'post' | 'closed';
 
 // Poll intervals per phase (ms).
-const TRADING_INTERVAL = 60 * 1000;         // 60s during trading
-const PRE_POST_INTERVAL = 5 * 60 * 1000;    // 5min pre/post
-const IDLE_INTERVAL = 10 * 60 * 1000;       // 10min closed
+const TRADING_INTERVAL = 60 * 1000; // 60s during trading
+const PRE_POST_INTERVAL = 5 * 60 * 1000; // 5min pre/post
+const IDLE_INTERVAL = 10 * 60 * 1000; // 10min closed
 
 /** IANA time zones used to convert UTC into each market's local wall clock. */
 const MARKET_TIMEZONES: Record<Market, string> = {
@@ -80,17 +80,30 @@ export function inferMarket(ticker: string): Market {
  * @param date - UTC Date to convert.
  * @returns Local weekday (0=Sun), 24h hour and minute.
  */
-function getMarketLocalTime(market: Market, date: Date): {
-  weekday: number; hour: number; minute: number;
+function getMarketLocalTime(
+  market: Market,
+  date: Date,
+): {
+  weekday: number;
+  hour: number;
+  minute: number;
 } {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: MARKET_TIMEZONES[market],
-    weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
   }).formatToParts(date);
-  const get = (type: string): string =>
-    parts.find((p) => p.type === type)?.value ?? '';
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
   const weekdayMap: Record<string, number> = {
-    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
   };
   return {
     weekday: weekdayMap[get('weekday')] ?? 0,
@@ -152,13 +165,19 @@ class QuoteScheduler {
   private subscribers = new Map<SubscribeCallback, string[]>();
   private quotes: Record<string, QuoteResponse> = {};
   private marketStatus: Record<Market, MarketPhase> = {
-    US: 'closed', HK: 'closed', CN: 'closed',
+    US: 'closed',
+    HK: 'closed',
+    CN: 'closed',
   };
   private marketErrors: Record<Market, boolean> = {
-    US: false, HK: false, CN: false,
+    US: false,
+    HK: false,
+    CN: false,
   };
   private marketLastUpdated: Record<Market, Date | null> = {
-    US: null, HK: null, CN: null,
+    US: null,
+    HK: null,
+    CN: null,
   };
   private lastUpdated: Date | null = null;
   private marketTimers: Record<Market, number | null> = { US: null, HK: null, CN: null };
@@ -434,19 +453,35 @@ class QuoteScheduler {
    */
   getMarketStatus(): {
     utcNow: string;
-    markets: Record<Market, {
-      phase: MarketPhase; timezone: string; localTime: string;
-      weekday: number; nextRefresh: number;
-      lastUpdated: Date | null; error: boolean; tickerCount: number;
-    }>;
+    markets: Record<
+      Market,
+      {
+        phase: MarketPhase;
+        timezone: string;
+        localTime: string;
+        weekday: number;
+        nextRefresh: number;
+        lastUpdated: Date | null;
+        error: boolean;
+        tickerCount: number;
+      }
+    >;
   } {
     const now = new Date();
     const grouped = this.groupTickersByMarket();
-    const markets = {} as Record<Market, {
-      phase: MarketPhase; timezone: string; localTime: string;
-      weekday: number; nextRefresh: number;
-      lastUpdated: Date | null; error: boolean; tickerCount: number;
-    }>;
+    const markets = {} as Record<
+      Market,
+      {
+        phase: MarketPhase;
+        timezone: string;
+        localTime: string;
+        weekday: number;
+        nextRefresh: number;
+        lastUpdated: Date | null;
+        error: boolean;
+        tickerCount: number;
+      }
+    >;
     for (const m of ALL_MARKETS) {
       const local = getMarketLocalTime(m, now);
       const hh = local.hour < 10 ? `0${local.hour}` : String(local.hour);
@@ -531,10 +566,14 @@ export function useMarketQuotes(tickers: string[]): {
 } {
   const [quotes, setQuotes] = useState<Record<string, QuoteResponse>>({});
   const [marketStatus, setMarketStatus] = useState<Record<Market, MarketPhase>>({
-    US: 'closed', HK: 'closed', CN: 'closed',
+    US: 'closed',
+    HK: 'closed',
+    CN: 'closed',
   });
   const [marketErrors, setMarketErrors] = useState<Record<Market, boolean>>({
-    US: false, HK: false, CN: false,
+    US: false,
+    HK: false,
+    CN: false,
   });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const tickersRef = useRef<string[]>([]);

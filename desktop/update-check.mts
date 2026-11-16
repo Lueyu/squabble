@@ -25,8 +25,15 @@ function trustedUrl(value: unknown, expectedPath: string): string | null {
   if (typeof value !== 'string') return null;
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && url.hostname === 'github.com' && !url.username && !url.password
-      && !url.search && !url.hash && url.pathname === expectedPath ? url.toString() : null;
+    return url.protocol === 'https:' &&
+      url.hostname === 'github.com' &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      url.pathname === expectedPath
+      ? url.toString()
+      : null;
   } catch {
     return null;
   }
@@ -49,18 +56,32 @@ export async function checkForUpdate(
   if (typeof release.tag_name !== 'string' || !Array.isArray(release.assets)) {
     throw new Error('Invalid GitHub release response');
   }
-  if (release.draft || release.prerelease || !isNewerVersion(release.tag_name, currentVersion)) return null;
-  const releaseUrl = trustedUrl(release.html_url, `/Lueyu/squabble/releases/tag/${release.tag_name}`);
+  if (release.draft || release.prerelease || !isNewerVersion(release.tag_name, currentVersion))
+    return null;
+  const releaseUrl = trustedUrl(
+    release.html_url,
+    `/Lueyu/squabble/releases/tag/${release.tag_name}`,
+  );
   if (!releaseUrl) throw new Error('Invalid GitHub release URL');
   const version = release.tag_name.replace(/^v/u, '');
-  const filename = platform === 'win32' && arch === 'x64'
-    ? `Squabble-${version}-win-x64-Setup.exe`
-    : platform === 'darwin' && (arch === 'x64' || arch === 'arm64')
-      ? `Squabble-${version}-mac-${arch}.dmg` : null;
-  const asset = filename ? release.assets.find((item: unknown) =>
-    item && typeof item === 'object' && (item as Record<string, unknown>).name === filename) as Record<string, unknown> | undefined : undefined;
-  const assetUrl = filename ? trustedUrl(asset?.browser_download_url,
-    `/Lueyu/squabble/releases/download/${release.tag_name}/${filename}`) : null;
+  const filename =
+    platform === 'win32' && arch === 'x64'
+      ? `Squabble-${version}-win-x64-Setup.exe`
+      : platform === 'darwin' && (arch === 'x64' || arch === 'arm64')
+        ? `Squabble-${version}-mac-${arch}.dmg`
+        : null;
+  const asset = filename
+    ? (release.assets.find(
+        (item: unknown) =>
+          item && typeof item === 'object' && (item as Record<string, unknown>).name === filename,
+      ) as Record<string, unknown> | undefined)
+    : undefined;
+  const assetUrl = filename
+    ? trustedUrl(
+        asset?.browser_download_url,
+        `/Lueyu/squabble/releases/download/${release.tag_name}/${filename}`,
+      )
+    : null;
   return {
     version,
     notes: typeof release.body === 'string' ? release.body.slice(0, 2_000) : '',

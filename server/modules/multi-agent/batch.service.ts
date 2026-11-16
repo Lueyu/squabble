@@ -18,7 +18,14 @@
  *  - createDailyBatch: convenience that runs all holdings + buy-signal watchlist
  *    items in tiered mode.
  */
-import { Injectable, Inject, Logger, OnApplicationBootstrap, OnModuleInit, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Logger,
+  OnApplicationBootstrap,
+  OnModuleInit,
+  BadRequestException,
+} from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { holdings, watchlist, agentRuns } from '@server/database/schema';
@@ -84,12 +91,22 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
 
   /** In-memory queues disappear on process restart. Make orphaned runs retryable. */
   async onApplicationBootstrap(): Promise<void> {
-    const interrupted = ['pending', 'fetching', 'debating', 'critiquing', 'risk_check'] as AgentRunStatus[];
-    const rows = await this.db.update(agentRuns).set({
-      status: 'failed',
-      errorMessage: sql`CASE WHEN ${agentRuns.language} = 'en' THEN 'Server restarted before analysis finished. Please start a new analysis.' ELSE '服务重启前分析未完成，请重新启动分析。' END`,
-      completedAt: new Date(),
-    }).where(inArray(agentRuns.status, interrupted)).returning({ id: agentRuns.id });
+    const interrupted = [
+      'pending',
+      'fetching',
+      'debating',
+      'critiquing',
+      'risk_check',
+    ] as AgentRunStatus[];
+    const rows = await this.db
+      .update(agentRuns)
+      .set({
+        status: 'failed',
+        errorMessage: sql`CASE WHEN ${agentRuns.language} = 'en' THEN 'Server restarted before analysis finished. Please start a new analysis.' ELSE '服务重启前分析未完成，请重新启动分析。' END`,
+        completedAt: new Date(),
+      })
+      .where(inArray(agentRuns.status, interrupted))
+      .returning({ id: agentRuns.id });
     if (rows.length) this.logger.warn(`Marked ${rows.length} interrupted analyses as retryable`);
   }
 
@@ -116,15 +133,23 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
     if (!req || !['holdings', 'watchlist', 'all', 'custom'].includes(req.scope)) {
       throw new BadRequestException('Select a valid analysis scope');
     }
-    if (req.tickers !== undefined && (!Array.isArray(req.tickers) || req.tickers.length > 100
-      || req.tickers.some((ticker) => typeof ticker !== 'string' || !/^[A-Za-z0-9.^_-]{1,20}$/u.test(ticker)))) {
+    if (
+      req.tickers !== undefined &&
+      (!Array.isArray(req.tickers) ||
+        req.tickers.length > 100 ||
+        req.tickers.some(
+          (ticker) => typeof ticker !== 'string' || !/^[A-Za-z0-9.^_-]{1,20}$/u.test(ticker),
+        ))
+    ) {
       throw new BadRequestException('Provide up to 100 valid ticker symbols');
     }
     let language: AnalysisLanguage;
     try {
       language = normalizeAnalysisLanguage(req.language);
     } catch (error) {
-      throw new BadRequestException(error instanceof Error ? error.message : 'Invalid analysis language');
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Invalid analysis language',
+      );
     }
     const targets = await this.resolveTargets(userId, req);
     const result: BatchRunResult = {
@@ -138,7 +163,10 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
     for (const target of targets) {
       const targetKey = `${userId}:${target.ticker.toUpperCase()}`;
       if (this.activeTargets.has(targetKey)) {
-        result.errors.push({ ticker: target.ticker, error: 'Analysis is already running for this ticker' });
+        result.errors.push({
+          ticker: target.ticker,
+          error: 'Analysis is already running for this ticker',
+        });
         continue;
       }
       this.activeTargets.add(targetKey);
@@ -195,7 +223,10 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
    * Daily routine: tiered run over all holdings, plus a tiered run over
    * watchlist tickers that carry a buy/strong-buy signal.
    */
-  async createDailyBatch(userId: string, language?: AnalysisLanguage): Promise<{
+  async createDailyBatch(
+    userId: string,
+    language?: AnalysisLanguage,
+  ): Promise<{
     holdingsRuns: BatchRunItem[];
     watchlistRuns: BatchRunItem[];
     totalCreated: number;
@@ -266,16 +297,22 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
   private async resolveTargets(
     userId: string,
     req: BatchRunRequest,
-  ): Promise<Array<{ ticker: string; company: string | null; market: string | null; runMode: AgentRunMode }>> {
-    const portfolio = req.tiered ? await this.portfolioContextService.getPortfolioContext(userId) : null;
+  ): Promise<
+    Array<{ ticker: string; company: string | null; market: string | null; runMode: AgentRunMode }>
+  > {
+    const portfolio = req.tiered
+      ? await this.portfolioContextService.getPortfolioContext(userId)
+      : null;
 
-    const targets: Array<{ ticker: string; company: string | null; market: string | null; runMode: AgentRunMode }> = [];
+    const targets: Array<{
+      ticker: string;
+      company: string | null;
+      market: string | null;
+      runMode: AgentRunMode;
+    }> = [];
 
     if (req.scope === 'holdings' || req.scope === 'all') {
-      const holdingRows = await this.db
-        .select()
-        .from(holdings)
-        .where(eq(holdings.owner, userId));
+      const holdingRows = await this.db.select().from(holdings).where(eq(holdings.owner, userId));
 
       for (const h of holdingRows) {
         let runMode: AgentRunMode = 'full';
@@ -295,10 +332,7 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     if (req.scope === 'watchlist' || req.scope === 'all') {
-      const watchRows = await this.db
-        .select()
-        .from(watchlist)
-        .where(eq(watchlist.owner, userId));
+      const watchRows = await this.db.select().from(watchlist).where(eq(watchlist.owner, userId));
 
       for (const w of watchRows) {
         let runMode: AgentRunMode = 'full';
@@ -334,9 +368,7 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
           company = h.company;
           market = h.market;
           if (req.tiered && portfolio) {
-            const ph = portfolio.holdings.find(
-              (p) => p.ticker.toUpperCase() === upper,
-            );
+            const ph = portfolio.holdings.find((p) => p.ticker.toUpperCase() === upper);
             runMode = ph && ph.weightPct > 5 ? 'full' : 'summary';
           }
         } else if (w) {
@@ -370,7 +402,9 @@ export class BatchService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   /** Fetch just ticker+signal for the caller's watchlist. */
-  private async getWatchlistTargets(userId: string): Promise<Array<{ ticker: string; signal: string | null }>> {
+  private async getWatchlistTargets(
+    userId: string,
+  ): Promise<Array<{ ticker: string; signal: string | null }>> {
     const rows = await this.db
       .select({ ticker: watchlist.ticker, signal: watchlist.signal })
       .from(watchlist)

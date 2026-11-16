@@ -21,11 +21,7 @@ import ConfidenceBadge from './ConfidenceBadge';
 import RunProgressBar from './RunProgressBar';
 import RiskAlertBadge from './RiskAlertBadge';
 import { useTranslation } from 'react-i18next';
-import type {
-  AgentRunWithRating,
-  AgentRunStatus,
-  RiskGateResult,
-} from '@shared/api.interface';
+import type { AgentRunWithRating, AgentRunStatus, RiskGateResult } from '@shared/api.interface';
 
 interface AgentRunCardProps {
   /** The run record (with its rating, if any) to render */
@@ -118,13 +114,9 @@ function AgentRunCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-baseline gap-2">
-              <h3 className="text-lg font-bold tracking-tight truncate">
-                {run.ticker}
-              </h3>
+              <h3 className="text-lg font-bold tracking-tight truncate">{run.ticker}</h3>
               {run.tickerName && (
-                <span className="text-sm text-muted-foreground truncate">
-                  {run.tickerName}
-                </span>
+                <span className="text-sm text-muted-foreground truncate">{run.tickerName}</span>
               )}
             </div>
             {isDeep && (
@@ -137,10 +129,7 @@ function AgentRunCard({
               </Badge>
             )}
           </div>
-          <Badge
-            variant="outline"
-            className={`${statusStyles[run.status]} shrink-0 font-medium`}
-          >
+          <Badge variant="outline" className={`${statusStyles[run.status]} shrink-0 font-medium`}>
             {t(statusLabelKeys[run.status])}
           </Badge>
         </div>
@@ -171,11 +160,14 @@ function AgentRunCard({
             {/* Deep analysis: three-scenario target prices */}
             {isDeep && hasTargets && (
               <div className="text-xs text-muted-foreground">
-                {t('ui.agent.scenarioBear')} <span className="font-mono-nums text-rose-500">${targetBear ?? '—'}</span>
+                {t('ui.agent.scenarioBear')}{' '}
+                <span className="font-mono-nums text-rose-500">${targetBear ?? '—'}</span>
                 {' / '}
-                {t('ui.agent.scenarioBase')} <span className="font-mono-nums text-foreground">${targetBase ?? '—'}</span>
+                {t('ui.agent.scenarioBase')}{' '}
+                <span className="font-mono-nums text-foreground">${targetBase ?? '—'}</span>
                 {' / '}
-                {t('ui.agent.scenarioBull')} <span className="font-mono-nums text-emerald-500">${targetBull ?? '—'}</span>
+                {t('ui.agent.scenarioBull')}{' '}
+                <span className="font-mono-nums text-emerald-500">${targetBull ?? '—'}</span>
               </div>
             )}
 
@@ -235,9 +227,7 @@ function AgentRunCard({
             <Clock size={12} />
             <span>{formatDate(run.createdAt, i18n.language)}</span>
           </div>
-          {riskGate && riskGate.length > 0 && (
-            <RiskAlertBadge results={riskGate} />
-          )}
+          {riskGate && riskGate.length > 0 && <RiskAlertBadge results={riskGate} />}
         </div>
 
         {/* Deep analysis CTA */}

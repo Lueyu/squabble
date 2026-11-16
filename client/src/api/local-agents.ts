@@ -1,4 +1,8 @@
-import type { LocalAgentConnection, LocalAgentPairing, LocalAgentsStatus } from '@shared/local-agents.interface';
+import type {
+  LocalAgentConnection,
+  LocalAgentPairing,
+  LocalAgentsStatus,
+} from '@shared/local-agents.interface';
 import http from './http';
 
 export type { LocalAgentConnection } from '@shared/local-agents.interface';
@@ -21,7 +25,9 @@ export async function connectLocalAgent(id: string): Promise<{ ok: true }> {
 }
 
 export async function disconnectLocalAgent(id: string): Promise<{ ok: true }> {
-  const response = await http.post<{ ok: true }>(`${BASE_URL}/${encodeURIComponent(id)}/disconnect`);
+  const response = await http.post<{ ok: true }>(
+    `${BASE_URL}/${encodeURIComponent(id)}/disconnect`,
+  );
   return response.data;
 }
 

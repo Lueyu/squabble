@@ -5,24 +5,11 @@
  * portfolio summary, actions, plan, lessons) under
  * `/api/portfolio/journal`. Requires login on every route.
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Delete,
-  Body,
-  Param,
-  Query,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 import { JournalService } from './journal.service';
-import type {
-  JournalEntry,
-  CreateJournalDto,
-  ListResponse,
-} from '@shared/api.interface';
+import type { JournalEntry, CreateJournalDto, ListResponse } from '@shared/api.interface';
 
 /**
  * REST controller for the trading journal. Delegates to `JournalService`.
@@ -65,10 +52,7 @@ export class JournalController {
    * @param dto Journal payload (keyed by `journalDate`).
    */
   @Post()
-  async upsert(
-    @Req() req: Request,
-    @Body() dto: CreateJournalDto,
-  ): Promise<JournalEntry> {
+  async upsert(@Req() req: Request, @Body() dto: CreateJournalDto): Promise<JournalEntry> {
     const { userId } = req.userContext;
     return this.journalService.upsert(userId, dto);
   }
@@ -80,10 +64,7 @@ export class JournalController {
    * @param id  Journal entry primary key.
    */
   @Delete(':id')
-  async remove(
-    @Req() req: Request,
-    @Param('id') id: string,
-  ): Promise<{ success: boolean }> {
+  async remove(@Req() req: Request, @Param('id') id: string): Promise<{ success: boolean }> {
     const { userId } = req.userContext;
     return this.journalService.remove(userId, id);
   }

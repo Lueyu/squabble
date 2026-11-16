@@ -26,16 +26,32 @@ function providerTime(raw: string): string | null {
     : raw.replaceAll('/', '-');
   if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(normalized)) return null;
   const date = new Date(`${normalized.replace(' ', 'T')}Z`);
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 19) !== normalized.replace(' ', 'T')) return null;
+  if (
+    !Number.isFinite(date.getTime()) ||
+    date.toISOString().slice(0, 19) !== normalized.replace(' ', 'T')
+  )
+    return null;
   return normalized;
 }
 
-export function parseIndexQuote(body: string, definition: IndexDefinition, now: Date): MarketIndexQuote {
+export function parseIndexQuote(
+  body: string,
+  definition: IndexDefinition,
+  now: Date,
+): MarketIndexQuote {
   const missing: MarketIndexQuote = {
-    id: definition.id, market: definition.market, value: null, change: null,
-    changePercent: null, quoteTime: null, sessionDate: null,
-    timeZone: definition.timeZone, retrievedAt: null, source: 'Tencent',
-    status: 'unavailable', issue: 'invalid_quote',
+    id: definition.id,
+    market: definition.market,
+    value: null,
+    change: null,
+    changePercent: null,
+    quoteTime: null,
+    sessionDate: null,
+    timeZone: definition.timeZone,
+    retrievedAt: null,
+    source: 'Tencent',
+    status: 'unavailable',
+    issue: 'invalid_quote',
   };
   const escaped = definition.symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const matched = new RegExp(`v_${escaped}="([^"]*)"`).exec(body);
@@ -44,31 +60,58 @@ export function parseIndexQuote(body: string, definition: IndexDefinition, now: 
   const value = Number(fields[3]);
   const previous = Number(fields[4]);
   const quoteTime = providerTime(fields[30] ?? '');
-  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(previous) || previous <= 0 || !quoteTime) return missing;
+  if (
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    !Number.isFinite(previous) ||
+    previous <= 0 ||
+    !quoteTime
+  )
+    return missing;
   const sessionDate = quoteTime.slice(0, 10);
   const dateAge = now.getTime() - Date.parse(`${sessionDate}T00:00:00Z`);
   // Long holidays/closed sessions still show the provider's actual date. Do not
   // call an old snapshot live or let it drive the current sentiment estimate.
   const outdated = dateAge > 7 * 86_400_000 || dateAge < -86_400_000;
   return {
-    ...missing, value, change: Number((value - previous).toFixed(4)),
+    ...missing,
+    value,
+    change: Number((value - previous).toFixed(4)),
     changePercent: Number(((value / previous - 1) * 100).toFixed(4)),
-    quoteTime, sessionDate, retrievedAt: now.toISOString(),
-    status: outdated ? 'stale' : 'available', issue: outdated ? 'outdated_quote' : null,
+    quoteTime,
+    sessionDate,
+    retrievedAt: now.toISOString(),
+    status: outdated ? 'stale' : 'available',
+    issue: outdated ? 'outdated_quote' : null,
   };
 }
 
 export function calculateMarketMood(market: Market, quotes: MarketIndexQuote[]): MarketMood {
-  const available = quotes.filter(quote => quote.market === market && quote.status === 'available'
-    && quote.changePercent !== null && Number.isFinite(quote.changePercent) && quote.sessionDate);
-  const sessionDate = available.map(quote => quote.sessionDate as string).sort().at(-1) ?? null;
-  const current = available.filter(quote => quote.sessionDate === sessionDate);
-  const total = INDEX_DEFINITIONS.filter(definition => definition.market === market).length;
-  const average = current.length >= 2
-    ? current.reduce((sum, quote) => sum + (quote.changePercent ?? 0), 0) / current.length
-    : null;
+  const available = quotes.filter(
+    (quote) =>
+      quote.market === market &&
+      quote.status === 'available' &&
+      quote.changePercent !== null &&
+      Number.isFinite(quote.changePercent) &&
+      quote.sessionDate,
+  );
+  const sessionDate =
+    available
+      .map((quote) => quote.sessionDate as string)
+      .sort()
+      .at(-1) ?? null;
+  const current = available.filter((quote) => quote.sessionDate === sessionDate);
+  const total = INDEX_DEFINITIONS.filter((definition) => definition.market === market).length;
+  const average =
+    current.length >= 2
+      ? current.reduce((sum, quote) => sum + (quote.changePercent ?? 0), 0) / current.length
+      : null;
   return {
-    market, sessionDate, total, covered: current.length, method: 'index_daily_change_v1',
+    market,
+    sessionDate,
+    total,
+    covered: current.length,
+    method: 'index_daily_change_v1',
     averageChangePercent: average === null ? null : Number(average.toFixed(4)),
     score: average === null ? null : Math.round(Math.max(0, Math.min(100, 50 + 20 * average))),
   };

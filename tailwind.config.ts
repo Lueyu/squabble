@@ -9,8 +9,6 @@
  * `@plugin`, so this file only sets the content globs.
  */
 export default {
-  content: [
-    './client/**/*.{ts,tsx,html}',
-  ],
+  content: ['./client/**/*.{ts,tsx,html}'],
   plugins: [],
-}
+};

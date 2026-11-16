@@ -6,10 +6,10 @@
  * backed by a `matchMedia` listener so it updates live on resize. Used to
  * swap between table layouts and touch-friendly mobile lists.
  */
-import * as React from "react"
+import * as React from 'react';
 
 /** Tailwind `md` breakpoint width in px. */
-const MOBILE_BREAKPOINT = 768
+const MOBILE_BREAKPOINT = 768;
 
 /**
  * Track whether the current viewport is in the mobile range.
@@ -17,18 +17,18 @@ const MOBILE_BREAKPOINT = 768
  *          effect runs on the client.
  */
 export function useIsMobile() {
-  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
+  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined);
 
   React.useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
     const onChange = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    }
-    mql.addEventListener("change", onChange)
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    };
+    mql.addEventListener('change', onChange);
     // Synchronize initial value after mount.
-    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    return () => mql.removeEventListener("change", onChange)
-  }, [])
+    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
 
-  return !!isMobile
+  return !!isMobile;
 }

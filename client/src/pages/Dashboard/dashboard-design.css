@@ -206,21 +206,22 @@
   overflow-wrap: anywhere;
 }
 
-[data-design-theme="arcade"] .dashboard-mascot-frame {
+[data-design-theme='arcade'] .dashboard-mascot-frame {
   border-style: dashed;
   border-radius: 0;
-  background-image: linear-gradient(var(--brand-soft) 1px, transparent 1px),
+  background-image:
+    linear-gradient(var(--brand-soft) 1px, transparent 1px),
     linear-gradient(90deg, var(--brand-soft) 1px, transparent 1px);
   background-size: 12px 12px;
 }
 
-[data-design-theme="comic"] .dashboard-mascot-frame {
+[data-design-theme='comic'] .dashboard-mascot-frame {
   border: 2px solid var(--foreground);
   box-shadow: 3px 3px 0 var(--foreground);
   transform: rotate(-3deg);
 }
 
-[data-design-theme="orbit"] .dashboard-mascot-frame {
+[data-design-theme='orbit'] .dashboard-mascot-frame {
   border-radius: 50%;
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--brand) 7%, transparent);
 }

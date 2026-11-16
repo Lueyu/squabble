@@ -10,11 +10,7 @@ import type {
   UpdateFinancialIntegrationRequest,
   UpdateLlmIntegrationRequest,
 } from '@shared/api.interface';
-import {
-  decryptSecret,
-  encryptSecret,
-  normalizePublicLlmBaseUrl,
-} from './settings-security';
+import { decryptSecret, encryptSecret, normalizePublicLlmBaseUrl } from './settings-security';
 import { ModelConnectionsService } from './model-connections.service';
 
 export interface ResolvedLlmConfig {
@@ -56,8 +52,10 @@ function cleanApiKey(value: unknown, required: boolean): string | null {
 
 function cleanModel(value: unknown): string {
   if (
-    typeof value !== 'string' || value.trim().length < 1
-    || value.trim().length > 120 || /[\r\n\u0000-\u001f]/u.test(value)
+    typeof value !== 'string' ||
+    value.trim().length < 1 ||
+    value.trim().length > 120 ||
+    /[\r\n\u0000-\u001f]/u.test(value)
   ) {
     throw new BadRequestException('Enter a valid model identifier');
   }
@@ -84,7 +82,9 @@ export class SettingsService {
   }
 
   private async rowFor(userId: string): Promise<SettingsRow | null> {
-    const [row] = await this.db.select().from(userApiSettings)
+    const [row] = await this.db
+      .select()
+      .from(userApiSettings)
       .where(eq(userApiSettings.owner, userId));
     return row ?? null;
   }
@@ -104,33 +104,37 @@ export class SettingsService {
     const serverLlmKey = process.env.DOUBAO_API_KEY || null;
     const finnhubKey = this.tryDecrypt(row?.finnhubApiKeyEnc);
     return {
-      llm: userLlmKey ? {
-        source: 'user',
-        engine: 'llm',
-        available: true,
-        baseUrl: row?.llmBaseUrl || DEFAULT_LLM_BASE_URL,
-        fastModel: row?.llmFastModel || DEFAULT_FAST_MODEL,
-        slowModel: row?.llmSlowModel || DEFAULT_SLOW_MODEL,
-        hasApiKey: true,
-        maskedApiKey: maskedKey(userLlmKey),
-      } : row?.llmApiKeyEnc ? {
-        source: 'user',
-        engine: 'llm',
-        available: false,
-        baseUrl: row.llmBaseUrl || DEFAULT_LLM_BASE_URL,
-        fastModel: row.llmFastModel || DEFAULT_FAST_MODEL,
-        slowModel: row.llmSlowModel || DEFAULT_SLOW_MODEL,
-        hasApiKey: false,
-        needsReentry: true,
-      } : {
-        source: serverLlmKey ? 'server' : 'builtin',
-        engine: serverLlmKey ? 'llm' : 'basic',
-        available: true,
-        baseUrl: serverLlmKey ? process.env.DOUBAO_BASE_URL || DEFAULT_LLM_BASE_URL : '',
-        fastModel: serverLlmKey ? process.env.DOUBAO_MODEL_FAST || DEFAULT_FAST_MODEL : '',
-        slowModel: serverLlmKey ? process.env.DOUBAO_MODEL_SLOW || DEFAULT_SLOW_MODEL : '',
-        hasApiKey: Boolean(serverLlmKey),
-      },
+      llm: userLlmKey
+        ? {
+            source: 'user',
+            engine: 'llm',
+            available: true,
+            baseUrl: row?.llmBaseUrl || DEFAULT_LLM_BASE_URL,
+            fastModel: row?.llmFastModel || DEFAULT_FAST_MODEL,
+            slowModel: row?.llmSlowModel || DEFAULT_SLOW_MODEL,
+            hasApiKey: true,
+            maskedApiKey: maskedKey(userLlmKey),
+          }
+        : row?.llmApiKeyEnc
+          ? {
+              source: 'user',
+              engine: 'llm',
+              available: false,
+              baseUrl: row.llmBaseUrl || DEFAULT_LLM_BASE_URL,
+              fastModel: row.llmFastModel || DEFAULT_FAST_MODEL,
+              slowModel: row.llmSlowModel || DEFAULT_SLOW_MODEL,
+              hasApiKey: false,
+              needsReentry: true,
+            }
+          : {
+              source: serverLlmKey ? 'server' : 'builtin',
+              engine: serverLlmKey ? 'llm' : 'basic',
+              available: true,
+              baseUrl: serverLlmKey ? process.env.DOUBAO_BASE_URL || DEFAULT_LLM_BASE_URL : '',
+              fastModel: serverLlmKey ? process.env.DOUBAO_MODEL_FAST || DEFAULT_FAST_MODEL : '',
+              slowModel: serverLlmKey ? process.env.DOUBAO_MODEL_SLOW || DEFAULT_SLOW_MODEL : '',
+              hasApiKey: Boolean(serverLlmKey),
+            },
       financial: {
         source: row?.finnhubApiKeyEnc ? 'user' : 'builtin',
         provider: row?.finnhubApiKeyEnc ? 'finnhub' : 'public',
@@ -178,12 +182,18 @@ export class SettingsService {
   async getResearchSearchConfig(userId: string): Promise<ResolvedLlmConfig | null> {
     const current = await this.getLlmConfig(userId);
     const supportsSearch = (url: string): boolean => {
-      try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === 'api.deepseek.com'; }
-      catch { return false; }
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'https:' && parsed.hostname === 'api.deepseek.com';
+      } catch {
+        return false;
+      }
     };
     if (current && supportsSearch(current.baseUrl)) return current;
     if (!this.connections) return null;
-    const available = (await this.connections.list(userId)).find(item => item.available && supportsSearch(item.baseUrl));
+    const available = (await this.connections.list(userId)).find(
+      (item) => item.available && supportsSearch(item.baseUrl),
+    );
     return available ? this.connections.resolve(userId, available.id) : null;
   }
 
@@ -202,13 +212,18 @@ export class SettingsService {
     const row = await this.rowFor(userId);
     const retainedKey = this.tryDecrypt(row?.llmApiKeyEnc);
     const apiKey = cleanApiKey(input.apiKey, !retainedKey);
-    if (!apiKey && retainedKey && row?.llmBaseUrl
-      && baseUrl !== row.llmBaseUrl.replace(/\/+$/u, '')) {
+    if (
+      !apiKey &&
+      retainedKey &&
+      row?.llmBaseUrl &&
+      baseUrl !== row.llmBaseUrl.replace(/\/+$/u, '')
+    ) {
       throw new BadRequestException('Enter a new API key when changing the model endpoint');
     }
     const encrypted = apiKey ? encryptSecret(apiKey, this.encryptionSecret()) : row?.llmApiKeyEnc;
     if (!encrypted) throw new BadRequestException('Enter an API key');
-    await this.db.insert(userApiSettings)
+    await this.db
+      .insert(userApiSettings)
       .values({
         owner: userId,
         llmBaseUrl: baseUrl,
@@ -230,7 +245,8 @@ export class SettingsService {
   }
 
   async clearLlm(userId: string): Promise<IntegrationSettings> {
-    await this.db.update(userApiSettings)
+    await this.db
+      .update(userApiSettings)
       .set({
         llmBaseUrl: null,
         llmFastModel: null,
@@ -252,9 +268,12 @@ export class SettingsService {
     const row = await this.rowFor(userId);
     const retainedKey = this.tryDecrypt(row?.finnhubApiKeyEnc);
     const apiKey = cleanApiKey(input.apiKey, !retainedKey);
-    const encrypted = apiKey ? encryptSecret(apiKey, this.encryptionSecret()) : row?.finnhubApiKeyEnc;
+    const encrypted = apiKey
+      ? encryptSecret(apiKey, this.encryptionSecret())
+      : row?.finnhubApiKeyEnc;
     if (!encrypted) throw new BadRequestException('Enter an API key');
-    await this.db.insert(userApiSettings)
+    await this.db
+      .insert(userApiSettings)
       .values({ owner: userId, finnhubApiKeyEnc: encrypted })
       .onConflictDoUpdate({
         target: userApiSettings.owner,
@@ -264,7 +283,8 @@ export class SettingsService {
   }
 
   async clearFinancial(userId: string): Promise<IntegrationSettings> {
-    await this.db.update(userApiSettings)
+    await this.db
+      .update(userApiSettings)
       .set({ finnhubApiKeyEnc: null, updatedAt: new Date() })
       .where(eq(userApiSettings.owner, userId));
     return this.getSettings(userId);
@@ -276,15 +296,28 @@ export class SettingsService {
       try {
         const quote = await this.quotes.getQuote('AAPL');
         if (quote && Number.isFinite(Number(quote.price)) && Number(quote.price) > 0) {
-          return { ok: true, code: 'public_ready', message: 'Public market data returned an AAPL quote. No API key is required.' };
+          return {
+            ok: true,
+            code: 'public_ready',
+            message: 'Public market data returned an AAPL quote. No API key is required.',
+          };
         }
       } catch {
         // A failed provider must never be reported as a successful connection.
       }
-      return { ok: false, code: 'public_unavailable', message: 'Public quote providers are unavailable. Retry when the server network recovers.' };
+      return {
+        ok: false,
+        code: 'public_unavailable',
+        message: 'Public quote providers are unavailable. Retry when the server network recovers.',
+      };
     }
     const key = await this.getFinnhubKey(userId);
-    if (!key) return { ok: false, code: 'credential_unreadable', message: 'The saved API key cannot be read. Re-enter or remove it.' };
+    if (!key)
+      return {
+        ok: false,
+        code: 'credential_unreadable',
+        message: 'The saved API key cannot be read. Re-enter or remove it.',
+      };
     const url = new URL(FINNHUB_PROFILE_URL);
     url.searchParams.set('symbol', 'AAPL');
     url.searchParams.set('token', key);
@@ -297,8 +330,12 @@ export class SettingsService {
         return { ok: false, message: `Finnhub rejected the request (HTTP ${response.status}).` };
       }
       const profile: unknown = await response.json();
-      if (!profile || typeof profile !== 'object' || Array.isArray(profile)
-        || typeof (profile as Record<string, unknown>).ticker !== 'string') {
+      if (
+        !profile ||
+        typeof profile !== 'object' ||
+        Array.isArray(profile) ||
+        typeof (profile as Record<string, unknown>).ticker !== 'string'
+      ) {
         return { ok: false, message: 'Finnhub returned no AAPL profile. Check key access.' };
       }
       return { ok: true, message: 'Finnhub returned the AAPL company profile.' };

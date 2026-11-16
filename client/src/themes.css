@@ -57,7 +57,9 @@
   --panel-shadow: 3px 3px 0 #778b6738;
   --display-font: 'Consolas', 'SFMono-Regular', 'Microsoft YaHei', monospace;
   --font-serif: var(--display-font);
-  --shell-pattern: linear-gradient(#75865c09 1px, transparent 1px), linear-gradient(90deg, #75865c09 1px, transparent 1px);
+  --shell-pattern:
+    linear-gradient(#75865c09 1px, transparent 1px),
+    linear-gradient(90deg, #75865c09 1px, transparent 1px);
 }
 
 :root[data-design-theme='arcade'].dark {
@@ -93,7 +95,9 @@
   --chart-5: #b2d9d1;
   --panel-border: #4c6347;
   --panel-shadow: 3px 3px 0 #090f0c;
-  --shell-pattern: linear-gradient(#c4ed7805 1px, transparent 1px), linear-gradient(90deg, #c4ed7805 1px, transparent 1px);
+  --shell-pattern:
+    linear-gradient(#c4ed7805 1px, transparent 1px),
+    linear-gradient(90deg, #c4ed7805 1px, transparent 1px);
 }
 
 :root[data-design-theme='comic'] {
@@ -260,27 +264,27 @@ html {
 
 html.dark {
   color-scheme: dark;
-
 }
 
 body {
   margin: 0;
-
 }
 
 @layer base {
-  *, ::before, ::after { border-color: var(--border); }
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
 }
 
 ::selection {
   background: var(--brand-soft);
   color: var(--foreground);
-
 }
 
 :focus-visible {
   outline-offset: 3px;
-
 }
 
 @layer components {
@@ -293,8 +297,10 @@ body {
 }
 
 [data-slot='button'] {
-  transition: background-color 150ms, box-shadow 150ms, transform 150ms;
-
+  transition:
+    background-color 150ms,
+    box-shadow 150ms,
+    transform 150ms;
 }
 
 [data-slot='button']:focus-visible {
@@ -306,7 +312,6 @@ body {
   display: inline-flex;
   position: relative;
   flex: none;
-
 }
 
 .squabble-mascot img {
@@ -318,7 +323,6 @@ body {
 
 .app-shell {
   height: 100dvh;
-
 }
 
 .app-sidebar {
@@ -669,7 +673,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;

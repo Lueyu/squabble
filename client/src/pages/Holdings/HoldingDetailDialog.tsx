@@ -12,7 +12,18 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { Pencil, Trash2, FolderOpen, X, Check, Sparkles, TrendingUp, TrendingDown, ShieldAlert, ExternalLink } from 'lucide-react';
+import {
+  Pencil,
+  Trash2,
+  FolderOpen,
+  X,
+  Check,
+  Sparkles,
+  TrendingUp,
+  TrendingDown,
+  ShieldAlert,
+  ExternalLink,
+} from 'lucide-react';
 import type { Holding, Group, AgentRating, AgentConfidence } from '@shared/api.interface';
 import { updateHolding, deleteHolding } from '@/api';
 import {
@@ -33,12 +44,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -163,19 +169,13 @@ export default function HoldingDetailDialog({
       if (form.shares !== undefined)
         payload.shares = form.shares ? parseFloat(form.shares) : undefined;
       if (form.currentPrice !== undefined)
-        payload.currentPrice = form.currentPrice
-          ? parseFloat(form.currentPrice)
-          : undefined;
+        payload.currentPrice = form.currentPrice ? parseFloat(form.currentPrice) : undefined;
       if (form.rating !== undefined) payload.rating = form.rating || undefined;
       if (form.action !== undefined) payload.action = form.action || undefined;
       if (form.targetPrice !== undefined)
-        payload.targetPrice = form.targetPrice
-          ? parseFloat(form.targetPrice)
-          : undefined;
-      if (form.analysis !== undefined)
-        payload.analysis = form.analysis || undefined;
-      if (form.groupId !== undefined)
-        payload.groupId = form.groupId || undefined;
+        payload.targetPrice = form.targetPrice ? parseFloat(form.targetPrice) : undefined;
+      if (form.analysis !== undefined) payload.analysis = form.analysis || undefined;
+      if (form.groupId !== undefined) payload.groupId = form.groupId || undefined;
 
       await updateHolding(holding.id, payload);
       toast.success(t('holdings.editSaved'));
@@ -224,12 +224,18 @@ export default function HoldingDetailDialog({
     groups.find((g: Group) => g.id === holding.groupId)?.name ?? t('holdings.noGroup');
   const actionLabel = (value: string) => {
     const keys: Record<string, string> = {
-      '加仓': 'analysis.add', Add: 'analysis.add',
-      '买入': 'analysis.buy', Buy: 'analysis.buy',
-      '持有': 'analysis.hold', Hold: 'analysis.hold',
-      '减仓': 'analysis.reduce', Reduce: 'analysis.reduce',
-      '卖出': 'analysis.sell', Sell: 'analysis.sell',
-      '观望': 'analysis.watch', Watch: 'analysis.watch',
+      加仓: 'analysis.add',
+      Add: 'analysis.add',
+      买入: 'analysis.buy',
+      Buy: 'analysis.buy',
+      持有: 'analysis.hold',
+      Hold: 'analysis.hold',
+      减仓: 'analysis.reduce',
+      Reduce: 'analysis.reduce',
+      卖出: 'analysis.sell',
+      Sell: 'analysis.sell',
+      观望: 'analysis.watch',
+      Watch: 'analysis.watch',
     };
     return keys[value] ? t(keys[value]) : value;
   };
@@ -240,17 +246,10 @@ export default function HoldingDetailDialog({
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-serif text-xl flex items-center gap-3">
-              <span className="font-mono-nums text-primary">
-                {holding.ticker}
-              </span>
-              <span className="text-base font-normal text-muted-foreground">
-                {holding.company}
-              </span>
+              <span className="font-mono-nums text-primary">{holding.ticker}</span>
+              <span className="text-base font-normal text-muted-foreground">{holding.company}</span>
               {holding.rating && (
-                <Badge
-                  className={cn(ratingColor(holding.rating), 'ml-auto')}
-                  variant="outline"
-                >
+                <Badge className={cn(ratingColor(holding.rating), 'ml-auto')} variant="outline">
                   {holding.rating}
                 </Badge>
               )}
@@ -263,18 +262,14 @@ export default function HoldingDetailDialog({
                 <Label>{t('holdings.company')}</Label>
                 <Input
                   value={form.company}
-                  onChange={(e) =>
-                    setForm({ ...form, company: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, company: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
                 <Label>{t('ui.holdings.sector')}</Label>
                 <Input
                   value={form.sector}
-                  onChange={(e) =>
-                    setForm({ ...form, sector: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, sector: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
@@ -282,9 +277,7 @@ export default function HoldingDetailDialog({
                 <Input
                   type="date"
                   value={form.buyDate}
-                  onChange={(e) =>
-                    setForm({ ...form, buyDate: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, buyDate: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
@@ -293,9 +286,7 @@ export default function HoldingDetailDialog({
                   type="number"
                   step="0.01"
                   value={form.buyPrice}
-                  onChange={(e) =>
-                    setForm({ ...form, buyPrice: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, buyPrice: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
@@ -304,9 +295,7 @@ export default function HoldingDetailDialog({
                   type="number"
                   step="0.0001"
                   value={form.shares}
-                  onChange={(e) =>
-                    setForm({ ...form, shares: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, shares: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
@@ -315,30 +304,17 @@ export default function HoldingDetailDialog({
                   type="number"
                   step="0.01"
                   value={form.currentPrice}
-                  onChange={(e) =>
-                    setForm({ ...form, currentPrice: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, currentPrice: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
                 <Label>{t('ui.holdings.rating')}</Label>
-                <Select
-                  value={form.rating}
-                  onValueChange={(v) =>
-                    setForm({ ...form, rating: v })
-                  }
-                >
+                <Select value={form.rating} onValueChange={(v) => setForm({ ...form, rating: v })}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder={t('ui.holdings.chooseRating')} />
                   </SelectTrigger>
                   <SelectContent>
-                    {[
-                      'Strong Buy',
-                      'Buy',
-                      'Hold',
-                      'Sell',
-                      'Strong Sell',
-                    ].map((r) => (
+                    {['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell'].map((r) => (
                       <SelectItem key={r} value={r}>
                         {r}
                       </SelectItem>
@@ -348,12 +324,7 @@ export default function HoldingDetailDialog({
               </div>
               <div className="space-y-1.5">
                 <Label>{t('ui.holdings.actions')}</Label>
-                <Select
-                  value={form.action}
-                  onValueChange={(v) =>
-                    setForm({ ...form, action: v })
-                  }
-                >
+                <Select value={form.action} onValueChange={(v) => setForm({ ...form, action: v })}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder={t('ui.holdings.chooseAction')} />
                   </SelectTrigger>
@@ -366,10 +337,10 @@ export default function HoldingDetailDialog({
                       ['卖出', 'analysis.sell'],
                       ['观望', 'analysis.watch'],
                     ].map(([value, label]) => (
-                        <SelectItem key={value} value={value}>
-                          {t(label)}
-                        </SelectItem>
-                      ))}
+                      <SelectItem key={value} value={value}>
+                        {t(label)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -379,18 +350,14 @@ export default function HoldingDetailDialog({
                   type="number"
                   step="0.01"
                   value={form.targetPrice}
-                  onChange={(e) =>
-                    setForm({ ...form, targetPrice: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, targetPrice: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
                 <Label>{t('ui.holdings.groupName')}</Label>
                 <Select
                   value={form.groupId}
-                  onValueChange={(v) =>
-                    setForm({ ...form, groupId: v })
-                  }
+                  onValueChange={(v) => setForm({ ...form, groupId: v })}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder={t('holdings.noGroup')} />
@@ -409,241 +376,213 @@ export default function HoldingDetailDialog({
                 <Textarea
                   rows={4}
                   value={form.analysis}
-                  onChange={(e) =>
-                    setForm({ ...form, analysis: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, analysis: e.target.value })}
                 />
               </div>
             </div>
-           ) : (
-             <Tabs defaultValue="detail" className="w-full">
-               <TabsList className="w-full">
-                 <TabsTrigger value="detail" className="flex-1">{t('holdings.detail')}</TabsTrigger>
-                 <TabsTrigger value="ai" className="flex-1">
-                   <Sparkles className="size-3.5" />
-                   {t('ui.holdings.aiReasoning')}
-                 </TabsTrigger>
-               </TabsList>
-               <TabsContent value="detail" className="pt-3 space-y-5">
-                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    {t('ui.holdings.currentPrice')}
-                  </div>
-                  <div className="font-mono-nums text-lg font-semibold">
-                    {formatPrice(holding.currentPrice)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    {t('ui.holdings.returnPct')}
-                  </div>
-                  <div
-                    className={cn(
-                      'font-mono-nums text-lg font-semibold',
-                      plClass(returnPct)
-                    )}
-                  >
-                    {formatPercent(returnPct)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    {t('ui.holdings.pl')}
-                  </div>
-                  <div
-                    className={cn(
-                      'font-mono-nums text-lg font-semibold',
-                      plClass(pl)
-                    )}
-                  >
-                    {formatCurrency(pl)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
-                    {t('ui.holdings.actions')}
+          ) : (
+            <Tabs defaultValue="detail" className="w-full">
+              <TabsList className="w-full">
+                <TabsTrigger value="detail" className="flex-1">
+                  {t('holdings.detail')}
+                </TabsTrigger>
+                <TabsTrigger value="ai" className="flex-1">
+                  <Sparkles className="size-3.5" />
+                  {t('ui.holdings.aiReasoning')}
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="detail" className="pt-3 space-y-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">
+                      {t('ui.holdings.currentPrice')}
+                    </div>
+                    <div className="font-mono-nums text-lg font-semibold">
+                      {formatPrice(holding.currentPrice)}
+                    </div>
                   </div>
                   <div>
-                    {holding.action ? (
-                      <Badge
-                        className={cn(actionColor(holding.action))}
-                        variant="outline"
-                      >
-                        {actionLabel(holding.action)}
-                      </Badge>
-                    ) : (
-                      '—'
-                    )}
+                    <div className="text-xs text-muted-foreground mb-1">
+                      {t('ui.holdings.returnPct')}
+                    </div>
+                    <div className={cn('font-mono-nums text-lg font-semibold', plClass(returnPct))}>
+                      {formatPercent(returnPct)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">{t('ui.holdings.pl')}</div>
+                    <div className={cn('font-mono-nums text-lg font-semibold', plClass(pl))}>
+                      {formatCurrency(pl)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">
+                      {t('ui.holdings.actions')}
+                    </div>
+                    <div>
+                      {holding.action ? (
+                        <Badge className={cn(actionColor(holding.action))} variant="outline">
+                          {actionLabel(holding.action)}
+                        </Badge>
+                      ) : (
+                        '—'
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <Separator />
+                <Separator />
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('ui.holdings.sector')}</span>
-                  <span>{holding.sector ?? '—'}</span>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('ui.holdings.sector')}</span>
+                    <span>{holding.sector ?? '—'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('holdings.buyDate')}</span>
+                    <span className="font-mono-nums">{formatDate(holding.buyDate)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('holdings.buyPrice')}</span>
+                    <span className="font-mono-nums">{formatPrice(holding.buyPrice)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('holdings.shares')}</span>
+                    <span className="font-mono-nums">{formatShares(holding.shares)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('ui.holdings.marketValue')}</span>
+                    <span className="font-mono-nums">{formatCurrency(marketValue)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('ui.holdings.cost')}</span>
+                    <span className="font-mono-nums">{formatCurrency(cost)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('ui.holdings.targetPrice')}</span>
+                    <span className="font-mono-nums">{formatPrice(holding.targetPrice)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">{t('ui.holdings.groupName')}</span>
+                    <span className="flex items-center gap-1.5">
+                      <FolderOpen className="size-3.5 text-primary" />
+                      {groupName}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('holdings.buyDate')}</span>
-                  <span className="font-mono-nums">
-                    {formatDate(holding.buyDate)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('holdings.buyPrice')}</span>
-                  <span className="font-mono-nums">
-                    {formatPrice(holding.buyPrice)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('holdings.shares')}</span>
-                  <span className="font-mono-nums">
-                    {formatShares(holding.shares)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('ui.holdings.marketValue')}</span>
-                  <span className="font-mono-nums">
-                    {formatCurrency(marketValue)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('ui.holdings.cost')}</span>
-                  <span className="font-mono-nums">
-                    {formatCurrency(cost)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('ui.holdings.targetPrice')}</span>
-                  <span className="font-mono-nums">
-                    {formatPrice(holding.targetPrice)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">{t('ui.holdings.groupName')}</span>
-                  <span className="flex items-center gap-1.5">
-                    <FolderOpen className="size-3.5 text-primary" />
-                    {groupName}
-                  </span>
-                </div>
-              </div>
 
-              <Separator />
+                <Separator />
 
-              <div>
-                <div className="text-xs text-muted-foreground mb-1.5">
-                  {t('ui.holdings.analysis')}
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1.5">
+                    {t('ui.holdings.analysis')}
+                  </div>
+                  <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground/90">
+                    {holding.analysis ?? t('ui.holdings.noAnalysis')}
+                  </div>
                 </div>
-                <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground/90">
-                  {holding.analysis ?? t('ui.holdings.noAnalysis')}
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs text-muted-foreground">
+                      {t('ui.holdings.moveGroup')}
+                    </Label>
+                    <Select value={holding.groupId ?? ''} onValueChange={handleGroupChange}>
+                      <SelectTrigger className="w-40 h-8 text-xs" size="sm">
+                        <SelectValue placeholder={t('holdings.noGroup')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {groups.map((g: Group) => (
+                          <SelectItem key={g.id} value={g.id}>
+                            {g.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-              </div>
+              </TabsContent>
+              <TabsContent value="ai" className="pt-3 space-y-5">
+                {aiRating ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <RatingBadge rating={aiRating.rating} size="md" />
+                      <ConfidenceBadge confidence={aiRating.confidence} size="md" />
+                      {aiRating.targetPrice && (
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <span className="text-muted-foreground">
+                            {t('ui.holdings.targetPrice')}
+                          </span>
+                          <span className="font-mono-nums font-semibold">
+                            {formatPrice(aiRating.targetPrice)}
+                          </span>
+                        </div>
+                      )}
+                      <Badge variant="outline" className={cn(actionColor(aiRating.action))}>
+                        {aiRating.action}
+                      </Badge>
+                    </div>
 
-              <Separator />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Card>
+                        <CardContent className="p-4">
+                          <div className="flex items-center gap-2 text-emerald-600 mb-2">
+                            <TrendingUp className="size-4" />
+                            <span className="font-medium text-sm">{t('ui.holdings.bullView')}</span>
+                          </div>
+                          <div className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">
+                            {aiRating.bullSummary ?? t('holdings.noBullSummary')}
+                          </div>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4">
+                          <div className="flex items-center gap-2 text-rose-600 mb-2">
+                            <TrendingDown className="size-4" />
+                            <span className="font-medium text-sm">{t('ui.holdings.bearView')}</span>
+                          </div>
+                          <div className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">
+                            {aiRating.bearSummary ?? t('holdings.bearSummary')}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
 
-                 <div className="flex items-center justify-between">
-                   <div className="flex items-center gap-2">
-                     <Label className="text-xs text-muted-foreground">
-                       {t('ui.holdings.moveGroup')}
-                     </Label>
-                     <Select
-                       value={holding.groupId ?? ''}
-                       onValueChange={handleGroupChange}
-                     >
-                       <SelectTrigger className="w-40 h-8 text-xs" size="sm">
-                         <SelectValue placeholder={t('holdings.noGroup')} />
-                       </SelectTrigger>
-                       <SelectContent>
-                         {groups.map((g: Group) => (
-                           <SelectItem key={g.id} value={g.id}>
-                             {g.name}
-                           </SelectItem>
-                         ))}
-                       </SelectContent>
-                     </Select>
-                   </div>
-                 </div>
-               </TabsContent>
-               <TabsContent value="ai" className="pt-3 space-y-5">
-                 {aiRating ? (
-                   <>
-                     <div className="flex flex-wrap items-center gap-3">
-                       <RatingBadge rating={aiRating.rating} size="md" />
-                       <ConfidenceBadge confidence={aiRating.confidence} size="md" />
-                       {aiRating.targetPrice && (
-                         <div className="flex items-center gap-1.5 text-sm">
-                           <span className="text-muted-foreground">{t('ui.holdings.targetPrice')}</span>
-                           <span className="font-mono-nums font-semibold">
-                             {formatPrice(aiRating.targetPrice)}
-                           </span>
-                         </div>
-                       )}
-                       <Badge variant="outline" className={cn(actionColor(aiRating.action))}>
-                         {aiRating.action}
-                       </Badge>
-                     </div>
+                    <div className="flex items-center gap-2 pt-2 border-t">
+                      <ShieldAlert className="size-4 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground flex-1">
+                        {t('ui.holdings.riskPassed')}
+                      </span>
+                    </div>
 
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       <Card>
-                         <CardContent className="p-4">
-                           <div className="flex items-center gap-2 text-emerald-600 mb-2">
-                             <TrendingUp className="size-4" />
-                             <span className="font-medium text-sm">{t('ui.holdings.bullView')}</span>
-                           </div>
-                           <div className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">
-                             {aiRating.bullSummary ?? t('holdings.noBullSummary')}
-                           </div>
-                         </CardContent>
-                       </Card>
-                       <Card>
-                         <CardContent className="p-4">
-                           <div className="flex items-center gap-2 text-rose-600 mb-2">
-                             <TrendingDown className="size-4" />
-                             <span className="font-medium text-sm">{t('ui.holdings.bearView')}</span>
-                           </div>
-                           <div className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">
-                             {aiRating.bearSummary ?? t('holdings.bearSummary')}
-                           </div>
-                         </CardContent>
-                       </Card>
-                     </div>
-
-                     <div className="flex items-center gap-2 pt-2 border-t">
-                       <ShieldAlert className="size-4 text-muted-foreground" />
-                       <span className="text-sm text-muted-foreground flex-1">
-                         {t('ui.holdings.riskPassed')}
-                       </span>
-                     </div>
-
-                     <Button
-                       variant="outline"
-                       size="sm"
-                       className="w-full"
-                       onClick={() => onViewFullAnalysis?.(aiRating.runId)}
-                     >
-                       <ExternalLink className="size-4" />
-                       {t('ui.holdings.viewReasoning')}
-                     </Button>
-                   </>
-                 ) : (
-                   <div className="py-12 text-center space-y-3">
-                     <div className="flex justify-center">
-                       <Sparkles className="size-10 text-muted-foreground/40" />
-                     </div>
-                     <div className="text-sm font-medium text-foreground">
-                       {t('ui.holdings.noAiAnalysis')}
-                     </div>
-                     <div className="text-xs text-muted-foreground">
-                       {t('ui.holdings.runDeepAnalysis')}
-                     </div>
-                   </div>
-                 )}
-               </TabsContent>
-             </Tabs>
-           )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => onViewFullAnalysis?.(aiRating.runId)}
+                    >
+                      <ExternalLink className="size-4" />
+                      {t('ui.holdings.viewReasoning')}
+                    </Button>
+                  </>
+                ) : (
+                  <div className="py-12 text-center space-y-3">
+                    <div className="flex justify-center">
+                      <Sparkles className="size-10 text-muted-foreground/40" />
+                    </div>
+                    <div className="text-sm font-medium text-foreground">
+                      {t('ui.holdings.noAiAnalysis')}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {t('ui.holdings.runDeepAnalysis')}
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          )}
 
           <DialogFooter className="flex-row gap-2 sm:gap-2">
             <Button

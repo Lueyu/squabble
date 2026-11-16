@@ -10,11 +10,7 @@ import { eq, desc, and } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 
 import { alphaPicks } from '@server/database/schema';
-import type {
-  AlphaPick,
-  CreateAlphaPickDto,
-  ListResponse,
-} from '@shared/api.interface';
+import type { AlphaPick, CreateAlphaPickDto, ListResponse } from '@shared/api.interface';
 
 /** Partial update payload for an alpha pick (all fields optional). */
 export interface UpdateAlphaPickDto {
@@ -31,9 +27,7 @@ export interface UpdateAlphaPickDto {
  */
 @Injectable()
 export class AlphaPicksService {
-  constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-  ) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
   /**
    * Lists all alpha picks for a user, newest pick first.

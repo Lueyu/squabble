@@ -130,7 +130,9 @@ export default function AddTransactionDialog({
    * current balance, required amount, and shortfall. Returns null when the
    * message does not match the expected format.
    */
-  const parseCashShortfall = (msg: string): {
+  const parseCashShortfall = (
+    msg: string,
+  ): {
     currency: Currency;
     currentBalance: number;
     required: number;
@@ -329,9 +331,7 @@ export default function AddTransactionDialog({
                   invalid={tickerInvalid}
                 />
                 {tickerInvalid && (
-                  <p className="text-xs text-destructive">
-                    {t('ui.tx.selectStockHint')}
-                  </p>
+                  <p className="text-xs text-destructive">{t('ui.tx.selectStockHint')}</p>
                 )}
               </div>
             )}
@@ -409,9 +409,17 @@ export default function AddTransactionDialog({
                   })}
                 </p>
                 <div className="rounded-lg bg-muted/50 p-3 space-y-1 text-xs text-muted-foreground">
-                  <div>{t('ui.tx.tradeAmount')}: {form.shares} × {form.price} = {(parseFloat(form.shares) * parseFloat(form.price)).toFixed(2)}</div>
-                  <div>{t('ui.tx.fees')}: {form.fees || '0.00'}</div>
-                  <div className="font-semibold text-foreground pt-1">{t('ui.tx.totalRequired')}: {requiredAmount.toFixed(2)} {shortfallInfo?.currency}</div>
+                  <div>
+                    {t('ui.tx.tradeAmount')}: {form.shares} × {form.price} ={' '}
+                    {(parseFloat(form.shares) * parseFloat(form.price)).toFixed(2)}
+                  </div>
+                  <div>
+                    {t('ui.tx.fees')}: {form.fees || '0.00'}
+                  </div>
+                  <div className="font-semibold text-foreground pt-1">
+                    {t('ui.tx.totalRequired')}: {requiredAmount.toFixed(2)}{' '}
+                    {shortfallInfo?.currency}
+                  </div>
                 </div>
               </div>
             </AlertDialogDescription>

@@ -76,7 +76,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         error: {
           code: HTTP_STATUS_TO_RESPONSE_CODE_MAP[httpStatus],
           message: typeof exceptionResponse === 'string' ? exceptionResponse : exception.message,
-          details: typeof exceptionResponse === 'object' ? JSON.stringify(exceptionResponse) : undefined,
+          details:
+            typeof exceptionResponse === 'object' ? JSON.stringify(exceptionResponse) : undefined,
           timestamp: Date.now(),
         },
       };

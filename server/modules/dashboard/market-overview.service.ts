@@ -16,7 +16,9 @@ export class MarketOverviewService {
   getOverview(): Promise<MarketOverviewResponse> {
     if (this.cached && Date.now() < this.expiresAt) return Promise.resolve(this.cached);
     if (this.inFlight) return this.inFlight;
-    this.inFlight = this.fetchOverview().finally(() => { this.inFlight = null; });
+    this.inFlight = this.fetchOverview().finally(() => {
+      this.inFlight = null;
+    });
     return this.inFlight;
   }
 
@@ -24,29 +26,41 @@ export class MarketOverviewService {
     let body = '';
     let failed = false;
     try {
-      const response = await fetch(`https://qt.gtimg.cn/q=${INDEX_DEFINITIONS.map(item => item.symbol).join(',')}`, {
-        signal: AbortSignal.timeout(8000),
-        headers: { 'User-Agent': 'Squabble/2.0', Accept: 'text/plain' },
-      });
+      const response = await fetch(
+        `https://qt.gtimg.cn/q=${INDEX_DEFINITIONS.map((item) => item.symbol).join(',')}`,
+        {
+          signal: AbortSignal.timeout(8000),
+          headers: { 'User-Agent': 'Squabble/2.0', Accept: 'text/plain' },
+        },
+      );
       if (!response.ok) throw new Error('Index source unavailable');
       body = new TextDecoder('gbk').decode(await response.arrayBuffer());
     } catch {
       failed = true;
     }
     const now = new Date();
-    const indices = INDEX_DEFINITIONS.map(definition => {
+    const indices = INDEX_DEFINITIONS.map((definition) => {
       const quote = parseIndexQuote(body, definition, now);
       if (quote.status !== 'unavailable') return quote;
-      const previous = this.cached?.indices.find(item => item.id === definition.id);
-      if (previous?.retrievedAt && previous.value !== null
-        && now.getTime() - Date.parse(previous.retrievedAt) <= STALE_MAX_MS) {
-        return { ...previous, status: 'stale', issue: failed ? 'fetch_failed' : 'invalid_quote' } as MarketIndexQuote;
+      const previous = this.cached?.indices.find((item) => item.id === definition.id);
+      if (
+        previous?.retrievedAt &&
+        previous.value !== null &&
+        now.getTime() - Date.parse(previous.retrievedAt) <= STALE_MAX_MS
+      ) {
+        return {
+          ...previous,
+          status: 'stale',
+          issue: failed ? 'fetch_failed' : 'invalid_quote',
+        } as MarketIndexQuote;
       }
       return { ...quote, issue: failed ? 'fetch_failed' : quote.issue } as MarketIndexQuote;
     });
     const overview: MarketOverviewResponse = {
-      checkedAt: now.toISOString(), refreshAfterSeconds: CACHE_MS / 1000, indices,
-      moods: MARKETS.map(market => calculateMarketMood(market, indices)),
+      checkedAt: now.toISOString(),
+      refreshAfterSeconds: CACHE_MS / 1000,
+      indices,
+      moods: MARKETS.map((market) => calculateMarketMood(market, indices)),
     };
     this.cached = overview;
     this.expiresAt = Date.now() + CACHE_MS;

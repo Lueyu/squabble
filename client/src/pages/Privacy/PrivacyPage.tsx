@@ -29,7 +29,12 @@ export default function PrivacyPage() {
           <p className="leading-relaxed text-muted-foreground">{t('privacy.browser')}</p>
         </section>
         <nav className="flex flex-wrap gap-4 text-sm" aria-label={t('privacy.title')}>
-          <a href={guideUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline underline-offset-4">
+          <a
+            href={guideUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-primary underline underline-offset-4"
+          >
             {t('privacy.fullGuide')}
           </a>
           <Link to="/login" className="font-medium text-primary underline underline-offset-4">

@@ -63,9 +63,7 @@ async function runTasksSerially(taskSpecs) {
 }
 
 function normalizeProjectFile(filePath) {
-  const absolutePath = path.isAbsolute(filePath)
-    ? filePath
-    : path.resolve(cwd, filePath);
+  const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
 
   if (!fs.existsSync(absolutePath)) {
     console.warn(`[lint] Skip missing file: ${filePath}`);
@@ -130,7 +128,7 @@ function canRunStylelint() {
 
   if (!pkg.scripts || !pkg.scripts.stylelint) return false;
 
-  return STYLELINT_CONFIG_FILES.some(file => fs.existsSync(path.join(cwd, file)));
+  return STYLELINT_CONFIG_FILES.some((file) => fs.existsSync(path.join(cwd, file)));
 }
 
 async function runDefaultLint() {
@@ -149,9 +147,7 @@ async function runDefaultLint() {
 }
 
 async function runSelectiveLint(inputFiles) {
-  const normalizedFiles = Array.from(
-    new Set(inputFiles.map(normalizeProjectFile).filter(Boolean)),
-  );
+  const normalizedFiles = Array.from(new Set(inputFiles.map(normalizeProjectFile).filter(Boolean)));
 
   if (normalizedFiles.length === 0) {
     console.log('[lint] No supported project files found');

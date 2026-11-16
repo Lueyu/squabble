@@ -56,10 +56,7 @@ export function formatPrice(value: string | number | null | undefined): string {
  * @param digits - Decimal places; defaults to 2.
  * @returns e.g. `+2.15%`, `-0.80%`, `0.00%` for empty input.
  */
-export function formatPercent(
-  value: string | number | null | undefined,
-  digits = 2
-): string {
+export function formatPercent(value: string | number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || value === '') return '0.00%';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return '0.00%';
@@ -73,10 +70,7 @@ export function formatPercent(
  * @param digits - Decimal places; defaults to 2.
  * @returns Localized number string, or `0` for empty/invalid input.
  */
-export function formatNumber(
-  value: string | number | null | undefined,
-  digits = 2
-): string {
+export function formatNumber(value: string | number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || value === '') return '0';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return '0';
@@ -107,9 +101,7 @@ export function formatShares(value: string | number | null | undefined): string 
  * @param value - ISO string or Date instance.
  * @returns A valid Date, or null when missing/invalid.
  */
-export function toDate(
-  value: string | Date | null | undefined
-): Date | null {
+export function toDate(value: string | Date | null | undefined): Date | null {
   if (!value) return null;
   if (value instanceof Date) {
     return isNaN(value.getTime()) ? null : value;
@@ -126,9 +118,7 @@ export function toDate(
  * @param value - Date to format.
  * @returns e.g. `2026/10/10`, or `—` for invalid input.
  */
-export function formatDate(
-  value: string | Date | null | undefined
-): string {
+export function formatDate(value: string | Date | null | undefined): string {
   const date = toDate(value);
   if (!date) return '—';
   return date.toLocaleDateString('zh-CN', {
@@ -143,9 +133,7 @@ export function formatDate(
  * @param value - Date to format.
  * @returns e.g. `2026/10/10 14:30`, or `—` for invalid input.
  */
-export function formatDateTime(
-  value: string | Date | null | undefined
-): string {
+export function formatDateTime(value: string | Date | null | undefined): string {
   const date = toDate(value);
   if (!date) return '—';
   const dateStr = date.toLocaleDateString('zh-CN', {
@@ -262,7 +250,8 @@ export function formatCurrencyWithCode(
   value: string | number | null | undefined,
   currency: string = 'USD',
 ): string {
-  if (value === null || value === undefined || value === '') return formatCurrencyWithCode('0', currency);
+  if (value === null || value === undefined || value === '')
+    return formatCurrencyWithCode('0', currency);
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return formatCurrencyWithCode('0', currency);
   const abs = Math.abs(num);

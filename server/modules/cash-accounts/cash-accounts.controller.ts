@@ -6,14 +6,7 @@
  * deposit/withdrawal operations per currency; withdrawals are rejected if they
  * would drive the balance below zero.
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Req,
-  BadRequestException,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Req, BadRequestException } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 

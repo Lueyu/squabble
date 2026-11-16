@@ -2,16 +2,7 @@
  * @file server/modules/notifications/notification.controller.ts
  * @description CRUD + test endpoints for notification channels.
  */
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-  Put,
-  Req,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { NeedLogin } from '../../common/platform/need-login.decorator';
 import { NotificationService } from './notification.service';
@@ -31,10 +22,7 @@ export class NotificationController {
   /** Add a channel (webhook/bark/serverchan/smtp/telegram). */
   @NeedLogin()
   @Post('channels')
-  async create(
-    @Req() req: Request,
-    @Body() dto: CreateNotificationChannelDto,
-  ) {
+  async create(@Req() req: Request, @Body() dto: CreateNotificationChannelDto) {
     return this.notifications.createChannel(req.userContext.userId, dto);
   }
 

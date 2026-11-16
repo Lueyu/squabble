@@ -56,12 +56,7 @@ import {
   plClass,
   cn,
 } from '@/utils/format';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -71,12 +66,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-} from '@/components/ui/empty';
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty';
 import {
   Select,
   SelectContent,
@@ -135,7 +125,7 @@ function RealtimeBadge({ marketStatus, holdings }: RealtimeBadgeProps) {
   const { t } = useTranslation();
   const heldMarkets = new Set(holdings.map((h: Holding) => h.market));
   const heldActive = Array.from(heldMarkets).filter(
-    (m) => marketStatus[m] === 'trading' || marketStatus[m] === 'pre' || marketStatus[m] === 'post'
+    (m) => marketStatus[m] === 'trading' || marketStatus[m] === 'pre' || marketStatus[m] === 'post',
   );
   const isRealtime = heldActive.length > 0;
   return (
@@ -145,13 +135,15 @@ function RealtimeBadge({ marketStatus, holdings }: RealtimeBadgeProps) {
         'h-5 px-2 text-[11px] font-medium',
         isRealtime
           ? 'bg-success/15 text-success border-transparent'
-          : 'bg-muted text-muted-foreground border-transparent'
+          : 'bg-muted text-muted-foreground border-transparent',
       )}
     >
-      <span className={cn(
-        'mr-1 inline-block size-1.5 rounded-full',
-        isRealtime ? 'bg-success animate-pulse' : 'bg-muted-foreground/50'
-      )} />
+      <span
+        className={cn(
+          'mr-1 inline-block size-1.5 rounded-full',
+          isRealtime ? 'bg-success animate-pulse' : 'bg-muted-foreground/50',
+        )}
+      />
       {isRealtime ? t('dash.realtime') : t('layout.closed')}
     </Badge>
   );
@@ -184,10 +176,7 @@ export default function DashboardPage() {
   const [hardRuleFailures, setHardRuleFailures] = useState<number>(0);
   const [riskGateLoading, setRiskGateLoading] = useState(true);
 
-  const tickers = useMemo(
-    () => holdings.map((h) => h.ticker),
-    [holdings]
-  );
+  const tickers = useMemo(() => holdings.map((h) => h.ticker), [holdings]);
 
   const { quotes, marketStatus, marketErrors, lastUpdated } = useMarketQuotes(tickers);
 
@@ -277,15 +266,13 @@ export default function DashboardPage() {
         percent: true,
       },
     ],
-    [t]
+    [t],
   );
 
   /** Group-level summaries sorted by market value (desc) for the market table. */
   const sortedMarkets = useMemo<GroupSummary[]>(() => {
     if (!dashboard?.groups) return [];
-    return [...dashboard.groups].sort(
-      (a, b) => Number(b.marketValue) - Number(a.marketValue)
-    );
+    return [...dashboard.groups].sort((a, b) => Number(b.marketValue) - Number(a.marketValue));
   }, [dashboard]);
 
   /** Most recent day's P/L and percent from the daily series. */
@@ -335,7 +322,7 @@ export default function DashboardPage() {
   /** Pick the first completed run that has a rating, for the "latest" card. */
   const latestCompletedRun = useMemo(() => {
     const completed = agentRuns.filter(
-      (r: AgentRunWithRating) => r.status === 'completed' && r.rating
+      (r: AgentRunWithRating) => r.status === 'completed' && r.rating,
     );
     return completed.length > 0 ? completed[0] : null;
   }, [agentRuns]);
@@ -343,19 +330,19 @@ export default function DashboardPage() {
   // Load today's agent runs and tally hard-rule risk-gate failures.
   useEffect(() => {
     let mounted = true;
-  const now = new Date();
-  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const now = new Date();
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 
-  const loadRuns = async () => {
-    try {
-      setAgentRunsLoading(true);
-      setRiskGateLoading(true);
-      const data = await getAgentRuns({
-        from: dayStart.toISOString(),
-        to: dayEnd.toISOString(),
-        limit: 20,
-      });
+    const loadRuns = async () => {
+      try {
+        setAgentRunsLoading(true);
+        setRiskGateLoading(true);
+        const data = await getAgentRuns({
+          from: dayStart.toISOString(),
+          to: dayEnd.toISOString(),
+          limit: 20,
+        });
         if (!mounted) return;
         const items: AgentRunWithRating[] = data?.items ?? [];
         setAgentRuns(items);
@@ -381,7 +368,7 @@ export default function DashboardPage() {
             } catch {
               return [] as RiskGateResult[];
             }
-          })
+          }),
         );
         if (!mounted) return;
 
@@ -411,8 +398,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-
-
   return (
     <div className="dashboard-page space-y-5">
       <section className="dashboard-hero" aria-labelledby="dashboard-title">
@@ -422,12 +407,13 @@ export default function DashboardPage() {
           </div>
           <div className="dashboard-hero-copy">
             <span className="dashboard-eyebrow">{t('auth.welcomeBack')}</span>
-            <h1 id="dashboard-title" className="font-serif text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            <h1
+              id="dashboard-title"
+              className="font-serif text-2xl font-semibold tracking-tight text-foreground sm:text-3xl"
+            >
               {t('dash.title')}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t('dash.subtitle')}
-            </p>
+            <p className="mt-1 text-sm text-muted-foreground">{t('dash.subtitle')}</p>
             <div className="dashboard-market-status">
               <MarketStatusBadges
                 marketStatus={marketStatus}
@@ -441,10 +427,7 @@ export default function DashboardPage() {
           <label htmlFor="dashboard-base-currency" className="text-xs text-muted-foreground">
             {t('ui.dashboard.baseCurrency')}
           </label>
-          <Select
-            value={baseCurrency}
-            onValueChange={(v) => setBaseCurrency(v as Currency)}
-          >
+          <Select value={baseCurrency} onValueChange={(v) => setBaseCurrency(v as Currency)}>
             <SelectTrigger id="dashboard-base-currency" className="w-[160px] bg-card">
               <SelectValue placeholder={t('ui.dashboard.baseCurrency')} />
             </SelectTrigger>
@@ -486,7 +469,7 @@ export default function DashboardPage() {
                       className={cn(
                         'metric-value font-mono font-semibold tabular-nums',
                         displayValue.length > 12 && 'metric-value-compact',
-                        colorCls
+                        colorCls,
                       )}
                       title={displayValue}
                     >
@@ -500,119 +483,132 @@ export default function DashboardPage() {
 
       <div className="dashboard-analysis-grid">
         <div className="min-w-0 space-y-5">
-        <Card className="dashboard-panel dashboard-ai-card">
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <Sparkles size={16} className="dashboard-brand-icon shrink-0" />
-                <CardTitle className="font-serif text-base">{t('dash.aiStatus')}</CardTitle>
-              </div>
-              <Link
-                to="/analysis"
-                className="dashboard-detail-link flex shrink-0 items-center gap-0.5 text-xs hover:underline"
-              >
-                {t('dash.viewAll')}
-                <ChevronDown size={12} className="-rotate-90" />
-              </Link>
-            </div>
-          </CardHeader>
-          <CardContent className="dashboard-ai-content space-y-4">
-            {agentRunsLoading ? (
-              <div className="space-y-3">
-                <div className="flex gap-3">
-                  <Skeleton className="h-10 flex-1" />
-                  <Skeleton className="h-10 flex-1" />
-                  <Skeleton className="h-10 flex-1" />
+          <Card className="dashboard-panel dashboard-ai-card">
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Sparkles size={16} className="dashboard-brand-icon shrink-0" />
+                  <CardTitle className="font-serif text-base">{t('dash.aiStatus')}</CardTitle>
                 </div>
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-9 w-full" />
+                <Link
+                  to="/analysis"
+                  className="dashboard-detail-link flex shrink-0 items-center gap-0.5 text-xs hover:underline"
+                >
+                  {t('dash.viewAll')}
+                  <ChevronDown size={12} className="-rotate-90" />
+                </Link>
               </div>
-            ) : (
-              <>
-                <div className="dashboard-ai-stats">
-                  <div className="dashboard-ai-stat">
-                    <div className="dashboard-ai-stat-label">
-                      <Loader2 size={12} className={cn('dashboard-brand-icon shrink-0', runStats.running > 0 && 'animate-spin')} />
-                      {t('dash.inProgress')}
-                    </div>
-                    <div className="mt-0.5 font-mono text-lg font-semibold tabular-nums text-foreground">
-                      {runStats.running}
-                    </div>
+            </CardHeader>
+            <CardContent className="dashboard-ai-content space-y-4">
+              {agentRunsLoading ? (
+                <div className="space-y-3">
+                  <div className="flex gap-3">
+                    <Skeleton className="h-10 flex-1" />
+                    <Skeleton className="h-10 flex-1" />
+                    <Skeleton className="h-10 flex-1" />
                   </div>
-                  <div className="dashboard-ai-stat">
-                    <div className="dashboard-ai-stat-label">
-                      <Eye size={12} className="shrink-0 text-warning" />
-                      {t('dash.awaitingDecision')}
-                    </div>
-                    <div className="mt-0.5 font-mono text-lg font-semibold tabular-nums text-warning">
-                      {runStats.awaiting}
-                    </div>
-                  </div>
-                  <div className="dashboard-ai-stat">
-                    <div className="dashboard-ai-stat-label">
-                      <CheckCircle2 size={12} className="shrink-0 text-success" />
-                      {t('dash.completed')}
-                    </div>
-                    <div className="mt-0.5 font-mono text-lg font-semibold tabular-nums text-success">
-                      {runStats.completed}
-                    </div>
-                  </div>
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-9 w-full" />
                 </div>
-
-                <div className="dashboard-ai-result">
-                  <div className="mb-1.5 text-xs text-muted-foreground">{t('dash.recentCompleted')}</div>
-                  {latestCompletedRun?.rating ? (
-                    <div className="dashboard-latest-result">
-                      <div className="dashboard-latest-company font-medium text-foreground">
-                        {latestCompletedRun.ticker}
-                        {latestCompletedRun.tickerName && (
-                          <span className="block text-xs font-normal text-muted-foreground">
-                            {displayCompanyName(latestCompletedRun.tickerName, latestCompletedRun.ticker, language)}
-                          </span>
-                        )}
+              ) : (
+                <>
+                  <div className="dashboard-ai-stats">
+                    <div className="dashboard-ai-stat">
+                      <div className="dashboard-ai-stat-label">
+                        <Loader2
+                          size={12}
+                          className={cn(
+                            'dashboard-brand-icon shrink-0',
+                            runStats.running > 0 && 'animate-spin',
+                          )}
+                        />
+                        {t('dash.inProgress')}
                       </div>
-                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        <RatingBadge
-                          rating={latestCompletedRun.rating.rating}
-                          size="sm"
-                        />
-                        <ConfidenceBadge
-                          confidence={latestCompletedRun.rating.confidence}
-                          size="sm"
-                        />
+                      <div className="mt-0.5 font-mono text-lg font-semibold tabular-nums text-foreground">
+                        {runStats.running}
                       </div>
                     </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">{t('ui.dashboard.noCompletedToday')}</div>
-                  )}
-                </div>
+                    <div className="dashboard-ai-stat">
+                      <div className="dashboard-ai-stat-label">
+                        <Eye size={12} className="shrink-0 text-warning" />
+                        {t('dash.awaitingDecision')}
+                      </div>
+                      <div className="mt-0.5 font-mono text-lg font-semibold tabular-nums text-warning">
+                        {runStats.awaiting}
+                      </div>
+                    </div>
+                    <div className="dashboard-ai-stat">
+                      <div className="dashboard-ai-stat-label">
+                        <CheckCircle2 size={12} className="shrink-0 text-success" />
+                        {t('dash.completed')}
+                      </div>
+                      <div className="mt-0.5 font-mono text-lg font-semibold tabular-nums text-success">
+                        {runStats.completed}
+                      </div>
+                    </div>
+                  </div>
 
-                <div className="dashboard-ai-risk">
-                  <div className="mb-1.5 text-xs text-muted-foreground">{t('dash.riskAlerts')}</div>
-                  {riskGateLoading ? (
-                    <div className="flex items-center gap-2">
-                      <Skeleton className="h-4 w-32" />
+                  <div className="dashboard-ai-result">
+                    <div className="mb-1.5 text-xs text-muted-foreground">
+                      {t('dash.recentCompleted')}
                     </div>
-                  ) : hardRuleFailures > 0 ? (
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" />
-                      <span className="text-sm font-medium text-warning">
-                        {t('ui.dashboard.hardRulesFailed', { count: hardRuleFailures })}
-                      </span>
+                    {latestCompletedRun?.rating ? (
+                      <div className="dashboard-latest-result">
+                        <div className="dashboard-latest-company font-medium text-foreground">
+                          {latestCompletedRun.ticker}
+                          {latestCompletedRun.tickerName && (
+                            <span className="block text-xs font-normal text-muted-foreground">
+                              {displayCompanyName(
+                                latestCompletedRun.tickerName,
+                                latestCompletedRun.ticker,
+                                language,
+                              )}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <RatingBadge rating={latestCompletedRun.rating.rating} size="sm" />
+                          <ConfidenceBadge
+                            confidence={latestCompletedRun.rating.confidence}
+                            size="sm"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-muted-foreground">
+                        {t('ui.dashboard.noCompletedToday')}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="dashboard-ai-risk">
+                    <div className="mb-1.5 text-xs text-muted-foreground">
+                      {t('dash.riskAlerts')}
                     </div>
-                  ) : (
-                    <div className="flex items-start gap-2">
-                      <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-success" />
-                      <span className="text-sm font-medium text-success">
-                        {t('dash.allPassed')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
+                    {riskGateLoading ? (
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-4 w-32" />
+                      </div>
+                    ) : hardRuleFailures > 0 ? (
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" />
+                        <span className="text-sm font-medium text-warning">
+                          {t('ui.dashboard.hardRulesFailed', { count: hardRuleFailures })}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2">
+                        <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-success" />
+                        <span className="text-sm font-medium text-success">
+                          {t('dash.allPassed')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
           <MarketOverview />
         </div>
@@ -621,99 +617,104 @@ export default function DashboardPage() {
             <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
               <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                 <CardTitle className="font-serif text-lg">{t('dash.dailyPlOverview')}</CardTitle>
-              {lastUpdated && (
-                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Clock size={12} />
-                  {t('dash.lastUpdate', { time: formatTime(lastUpdated) })}
-                </span>
-              )}
-              <RealtimeBadge marketStatus={marketStatus} holdings={holdings} />
-            </div>
-            <Select value={String(plRange)} onValueChange={(v) => setPlRange(parseInt(v, 10))}>
-              <SelectTrigger className="w-auto min-w-[140px] shrink-0">
-                <SelectValue placeholder={t('ui.dashboard.timeRange')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7">{t('ui.dashboard.lastDays', { count: 7 })}</SelectItem>
-                <SelectItem value="30">{t('dash.last30d')}</SelectItem>
-                <SelectItem value="90">{t('ui.dashboard.lastDays', { count: 90 })}</SelectItem>
-                <SelectItem value="180">{t('ui.dashboard.lastDays', { count: 180 })}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="space-y-4">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-[280px] w-full" />
-            </div>
-          ) : (
-            <div className="space-y-5">
-              <div className="dashboard-performance-summary grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-                <div>
-                  <div className="text-xs text-muted-foreground">{t('ui.dashboard.dailyPlForCurrency', { currency: baseCurrency })}</div>
-                  <div
-                    className={cn(
-                      'mt-1 font-mono text-2xl font-semibold tabular-nums',
-                      plClass(dailyPlTotal.pl)
-                    )}
-                  >
-                    {formatCurrencyWithCode(dailyPlTotal.pl, baseCurrency)}
-                  </div>
-                  <div
-                    className={cn(
-                      'mt-0.5 font-mono text-xs tabular-nums',
-                      plClass(dailyPlTotal.pct)
-                    )}
-                  >
-                    {formatPercent(dailyPlTotal.pct)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">{t('dash.latestNav')}</div>
-                  <div className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
-                    {dailyPl.length > 0
-                      ? formatCurrencyWithCode(dailyPl[dailyPl.length - 1].accountValue, baseCurrency)
-                      : '—'}
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {t('dash.accountValue')}
-                  </div>
-                </div>
-                <div className="hidden md:block">
-                  <div className="text-xs text-muted-foreground">{t('dash.dailyReturn')}</div>
-                  <div
-                    className={cn(
-                      'mt-1 font-mono text-2xl font-semibold tabular-nums',
-                      plClass(dailyPlTotal.pct)
-                    )}
-                  >
-                    {formatPercent(dailyPlTotal.pct)}
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {t('dash.vsPrevDay')}
-                  </div>
-                </div>
-              </div>
-              <DailyPlChart data={dailyPl} baseCurrency={baseCurrency} />
-              <div className="border-t border-border pt-4">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-medium">{t('dash.plBreakdown')}</h3>
-                  <span className="text-xs text-muted-foreground">
-                    {t('dash.sortedByPl', { count: holdings.length })}
+                {lastUpdated && (
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Clock size={12} />
+                    {t('dash.lastUpdate', { time: formatTime(lastUpdated) })}
                   </span>
-                </div>
-                <DailyPnLBreakdown
-                  holdings={holdings}
-                  quotes={quotes}
-                  baseCurrency={baseCurrency}
-                  loading={loading || (holdings.length > 0 && Object.keys(quotes).length === 0)}
-                />
+                )}
+                <RealtimeBadge marketStatus={marketStatus} holdings={holdings} />
               </div>
+              <Select value={String(plRange)} onValueChange={(v) => setPlRange(parseInt(v, 10))}>
+                <SelectTrigger className="w-auto min-w-[140px] shrink-0">
+                  <SelectValue placeholder={t('ui.dashboard.timeRange')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7">{t('ui.dashboard.lastDays', { count: 7 })}</SelectItem>
+                  <SelectItem value="30">{t('dash.last30d')}</SelectItem>
+                  <SelectItem value="90">{t('ui.dashboard.lastDays', { count: 90 })}</SelectItem>
+                  <SelectItem value="180">{t('ui.dashboard.lastDays', { count: 180 })}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          )}
-        </CardContent>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="space-y-4">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-[280px] w-full" />
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div className="dashboard-performance-summary grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+                  <div>
+                    <div className="text-xs text-muted-foreground">
+                      {t('ui.dashboard.dailyPlForCurrency', { currency: baseCurrency })}
+                    </div>
+                    <div
+                      className={cn(
+                        'mt-1 font-mono text-2xl font-semibold tabular-nums',
+                        plClass(dailyPlTotal.pl),
+                      )}
+                    >
+                      {formatCurrencyWithCode(dailyPlTotal.pl, baseCurrency)}
+                    </div>
+                    <div
+                      className={cn(
+                        'mt-0.5 font-mono text-xs tabular-nums',
+                        plClass(dailyPlTotal.pct),
+                      )}
+                    >
+                      {formatPercent(dailyPlTotal.pct)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">{t('dash.latestNav')}</div>
+                    <div className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
+                      {dailyPl.length > 0
+                        ? formatCurrencyWithCode(
+                            dailyPl[dailyPl.length - 1].accountValue,
+                            baseCurrency,
+                          )
+                        : '—'}
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {t('dash.accountValue')}
+                    </div>
+                  </div>
+                  <div className="hidden md:block">
+                    <div className="text-xs text-muted-foreground">{t('dash.dailyReturn')}</div>
+                    <div
+                      className={cn(
+                        'mt-1 font-mono text-2xl font-semibold tabular-nums',
+                        plClass(dailyPlTotal.pct),
+                      )}
+                    >
+                      {formatPercent(dailyPlTotal.pct)}
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {t('dash.vsPrevDay')}
+                    </div>
+                  </div>
+                </div>
+                <DailyPlChart data={dailyPl} baseCurrency={baseCurrency} />
+                <div className="border-t border-border pt-4">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-medium">{t('dash.plBreakdown')}</h3>
+                    <span className="text-xs text-muted-foreground">
+                      {t('dash.sortedByPl', { count: holdings.length })}
+                    </span>
+                  </div>
+                  <DailyPnLBreakdown
+                    holdings={holdings}
+                    quotes={quotes}
+                    baseCurrency={baseCurrency}
+                    loading={loading || (holdings.length > 0 && Object.keys(quotes).length === 0)}
+                  />
+                </div>
+              </div>
+            )}
+          </CardContent>
         </Card>
       </div>
 
@@ -774,10 +775,7 @@ export default function DashboardPage() {
                           {formatCurrencyWithCode(g.pl, baseCurrency)}
                         </TableCell>
                         <TableCell
-                          className={cn(
-                            'text-right font-mono tabular-nums',
-                            plClass(g.returnPct)
-                          )}
+                          className={cn('text-right font-mono tabular-nums', plClass(g.returnPct))}
                         >
                           {formatPercent(g.returnPct)}
                         </TableCell>
@@ -806,12 +804,7 @@ export default function DashboardPage() {
                         <div className="font-mono text-sm font-semibold tabular-nums">
                           {formatCurrencyWithCode(g.marketValue, baseCurrency)}
                         </div>
-                        <div
-                          className={cn(
-                            'font-mono text-xs tabular-nums',
-                            plClass(g.returnPct)
-                          )}
-                        >
+                        <div className={cn('font-mono text-xs tabular-nums', plClass(g.returnPct))}>
                           {formatPercent(g.returnPct)}
                         </div>
                       </div>
@@ -830,19 +823,20 @@ export default function DashboardPage() {
                                 <div>
                                   <div className="font-medium">{h.ticker}</div>
                                   <div className="text-xs text-muted-foreground">
-                                    {company ?? (
-                                      <span className="text-muted-foreground/60">—</span>
-                                    )}
+                                    {company ?? <span className="text-muted-foreground/60">—</span>}
                                   </div>
                                 </div>
                                 <div className="text-right">
                                   <div className="font-mono tabular-nums">
-                                    {formatCurrencyWithCode(h.currentPrice || '0', h.currency || 'USD')}
+                                    {formatCurrencyWithCode(
+                                      h.currentPrice || '0',
+                                      h.currency || 'USD',
+                                    )}
                                   </div>
                                   <div
                                     className={cn(
                                       'font-mono text-xs tabular-nums',
-                                      plClass(String(pct))
+                                      plClass(String(pct)),
                                     )}
                                   >
                                     {formatPercent(pct)}
@@ -865,7 +859,11 @@ export default function DashboardPage() {
       <Card className="dashboard-panel">
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 pb-3">
           <CardTitle className="font-serif text-lg">{t('dash.cashDetail')}</CardTitle>
-          <span className="text-xs text-muted-foreground">{t('dash.currencies', { count: dashboard?.cashByCurrency ? Object.keys(dashboard.cashByCurrency).length : 0 })}</span>
+          <span className="text-xs text-muted-foreground">
+            {t('dash.currencies', {
+              count: dashboard?.cashByCurrency ? Object.keys(dashboard.cashByCurrency).length : 0,
+            })}
+          </span>
         </CardHeader>
         <CardContent>
           {loading ? (

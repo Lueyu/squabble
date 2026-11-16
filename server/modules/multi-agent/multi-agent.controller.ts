@@ -145,10 +145,7 @@ export class MultiAgentController {
    */
   @Post('runs/batch')
   @NeedLogin()
-  async createBatch(
-    @Req() req: Request,
-    @Body() dto: BatchRunRequest,
-  ): Promise<BatchRunResult> {
+  async createBatch(@Req() req: Request, @Body() dto: BatchRunRequest): Promise<BatchRunResult> {
     const { userId } = req.userContext;
     return this.batchService.createBatch(userId, dto);
   }
@@ -160,7 +157,10 @@ export class MultiAgentController {
    */
   @Post('daily-batch')
   @NeedLogin()
-  async createDailyBatch(@Req() req: Request, @Body() dto?: { language?: AnalysisLanguage }): Promise<DailyBatchResult> {
+  async createDailyBatch(
+    @Req() req: Request,
+    @Body() dto?: { language?: AnalysisLanguage },
+  ): Promise<DailyBatchResult> {
     const { userId } = req.userContext;
     return this.batchService.createDailyBatch(userId, dto?.language);
   }
@@ -177,7 +177,12 @@ export class MultiAgentController {
     @Query('tickers') tickers?: string,
   ): Promise<LatestRating[]> {
     const { userId } = req.userContext;
-    const tickerList = tickers ? tickers.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+    const tickerList = tickers
+      ? tickers
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : undefined;
     return this.multiAgentService.getLatestRatings(userId, tickerList);
   }
 
@@ -193,10 +198,7 @@ export class MultiAgentController {
 
   /** POST /runs — create a new run row in `pending` status. Does not start it. */
   @Post('runs')
-  async createRun(
-    @Req() req: Request,
-    @Body() dto: CreateAgentRunDto,
-  ): Promise<AgentRun> {
+  async createRun(@Req() req: Request, @Body() dto: CreateAgentRunDto): Promise<AgentRun> {
     const { userId } = req.userContext;
     return this.multiAgentService.createRun(userId, dto);
   }
@@ -215,10 +217,7 @@ export class MultiAgentController {
   /** POST /runs/:id/cancel — mark a run as cancelled. The pipeline checks
    *  cancellation between phases and stops early. */
   @Post('runs/:id/cancel')
-  async cancelRun(
-    @Req() req: Request,
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<AgentRun> {
+  async cancelRun(@Req() req: Request, @Param('id', ParseUUIDPipe) id: string): Promise<AgentRun> {
     const { userId } = req.userContext;
     const cancelled = await this.multiAgentService.cancelRun(userId, id);
     this.batchService.cancelQueuedRun(id, userId);
@@ -497,10 +496,7 @@ export class MultiAgentController {
     if (!Array.isArray(body.items) || body.items.length === 0) {
       throw new BadRequestException('items 不能为空');
     }
-    const count = await this.multiAgentService.reorderStrategyRules(
-      userId,
-      body.items,
-    );
+    const count = await this.multiAgentService.reorderStrategyRules(userId, body.items);
     return { updated: count };
   }
 

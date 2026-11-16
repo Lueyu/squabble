@@ -8,7 +8,13 @@ const readline = require('node:readline');
 const { randomUUID } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { parse } = require('dotenv');
-const { processSnapshot, sameProcess, terminateTree, stopOwnedChild, reclaimPorts } = require('./dev-processes.cjs');
+const {
+  processSnapshot,
+  sameProcess,
+  terminateTree,
+  stopOwnedChild,
+  reclaimPorts,
+} = require('./dev-processes.cjs');
 
 function loadDevelopmentEnv(projectRoot, parentEnv = process.env) {
   const env = { ...parentEnv };
@@ -28,7 +34,8 @@ function cleanServerBuild(projectRoot) {
     const target = path.join(root, 'dist', name);
     if (!fs.existsSync(target)) continue;
     const relative = path.relative(root, fs.realpathSync(target));
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(`Build path escapes project: ${target}`);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
+      throw new Error(`Build path escapes project: ${target}`);
     fs.rmSync(target, { recursive: true, force: true });
   }
 }
@@ -36,22 +43,37 @@ function cleanServerBuild(projectRoot) {
 function port(value, fallback, name) {
   const text = String(value || fallback);
   const number = Number(text);
-  if (!/^\d+$/.test(text) || !Number.isInteger(number) || number < 1 || number > 65535) throw new Error(`Invalid ${name} port: ${text}`);
+  if (!/^\d+$/.test(text) || !Number.isInteger(number) || number < 1 || number > 65535)
+    throw new Error(`Invalid ${name} port: ${text}`);
   return number;
 }
 
-function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env: parentEnv = process.env } = {}) {
+function createDevSupervisor({
+  projectRoot = path.resolve(__dirname, '..'),
+  env: parentEnv = process.env,
+} = {}) {
   const root = path.resolve(projectRoot);
   const env = loadDevelopmentEnv(root, parentEnv);
   const serverPort = port(env.SERVER_PORT, 3000, 'SERVER_PORT');
   const clientPort = port(env.CLIENT_DEV_PORT, 8080, 'CLIENT_DEV_PORT');
-  if (serverPort === clientPort) throw new Error('SERVER_PORT and CLIENT_DEV_PORT must be different.');
-  Object.assign(env, { NODE_ENV: 'development', SERVER_PORT: String(serverPort), CLIENT_DEV_PORT: String(clientPort) });
+  if (serverPort === clientPort)
+    throw new Error('SERVER_PORT and CLIENT_DEV_PORT must be different.');
+  Object.assign(env, {
+    NODE_ENV: 'development',
+    SERVER_PORT: String(serverPort),
+    CLIENT_DEV_PORT: String(clientPort),
+  });
   const readyTimeout = Number(env.DEV_READY_TIMEOUT || 120000);
   const restartLimit = Number(env.MAX_RESTART_COUNT || 5);
   const restartDelay = Number(env.RESTART_DELAY || 2) * 1000;
-  if (![readyTimeout, restartLimit, restartDelay].every(value => Number.isFinite(value) && value > 0)) {
-    throw new Error('DEV_READY_TIMEOUT, MAX_RESTART_COUNT and RESTART_DELAY must be positive numbers.');
+  if (
+    ![readyTimeout, restartLimit, restartDelay].every(
+      (value) => Number.isFinite(value) && value > 0,
+    )
+  ) {
+    throw new Error(
+      'DEV_READY_TIMEOUT, MAX_RESTART_COUNT and RESTART_DELAY must be positive numbers.',
+    );
   }
   const sessionPath = path.join(root, 'node_modules', '.cache', 'squabble-dev.json');
   const lockPath = `${sessionPath}.lock`;
@@ -73,13 +95,21 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
     }
     if (pendingWrites < 1000) {
       pendingWrites++;
-      try { fs.write(1, line, () => pendingWrites--); } catch { pendingWrites--; }
+      try {
+        fs.write(1, line, () => pendingWrites--);
+      } catch {
+        pendingWrites--;
+      }
     }
   }
 
   function readSession(file = sessionPath) {
-    try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
-    catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return null; throw error; }
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (error) {
+      if (error.code === 'ENOENT' || error instanceof SyntaxError) return null;
+      throw error;
+    }
   }
   async function lockStartup(identity) {
     fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
@@ -91,20 +121,34 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
       while (!stopping) {
         try {
           fs.linkSync(candidate, lockPath);
-          return () => { if (readSession(lockPath)?.token === token) fs.unlinkSync(lockPath); };
-        } catch (error) { if (error.code !== 'EEXIST') throw error; }
+          return () => {
+            if (readSession(lockPath)?.token === token) fs.unlinkSync(lockPath);
+          };
+        } catch (error) {
+          if (error.code !== 'EEXIST') throw error;
+        }
         const owner = readSession(lockPath);
-        if (owner && !sameProcess(owner, await processSnapshot()) && readSession(lockPath)?.token === owner.token) {
+        if (
+          owner &&
+          !sameProcess(owner, await processSnapshot()) &&
+          readSession(lockPath)?.token === owner.token
+        ) {
           fs.unlinkSync(lockPath);
           continue;
         }
-        if (Date.now() > deadline) throw new Error('Another development startup is still running. Retry when it finishes.');
-        await delay(200, undefined, { signal: abort.signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+        if (Date.now() > deadline)
+          throw new Error('Another development startup is still running. Retry when it finishes.');
+        await delay(200, undefined, { signal: abort.signal }).catch((error) => {
+          if (error.name !== 'AbortError') throw error;
+        });
       }
-    } finally { fs.unlinkSync(candidate); }
+    } finally {
+      fs.unlinkSync(candidate);
+    }
   }
   function saveSession() {
-    if (readSession()?.token !== token) throw new Error('This development session was replaced by another startup.');
+    if (readSession()?.token !== token)
+      throw new Error('This development session was replaced by another startup.');
     writeSession();
   }
   function writeSession() {
@@ -115,10 +159,11 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
   async function recordChildren() {
     const rows = await processSnapshot();
     for (const child of children.values()) {
-      const record = rows.find(row => row.pid === child.pid);
-      if (record && !child.identity) child.identity = { pid: record.pid, startedAt: record.startedAt };
+      const record = rows.find((row) => row.pid === child.pid);
+      if (record && !child.identity)
+        child.identity = { pid: record.pid, startedAt: record.startedAt };
     }
-    session.children = [...children.values()].map(child => child.identity).filter(Boolean);
+    session.children = [...children.values()].map((child) => child.identity).filter(Boolean);
     if (!stopping) saveSession();
   }
 
@@ -145,14 +190,25 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
     let failures = 0;
     while (!stopping) {
       const started = Date.now();
-      const child = spawn(process.execPath, args, { cwd: root, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(process.execPath, args, {
+        cwd: root,
+        env,
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       children.set(name, child);
-      const exited = new Promise(resolve => {
-        child.once('exit', code => resolve(code ?? 1));
-        child.once('error', error => { log(error.message, name); resolve(1); });
+      const exited = new Promise((resolve) => {
+        child.once('exit', (code) => resolve(code ?? 1));
+        child.once('error', (error) => {
+          log(error.message, name);
+          resolve(1);
+        });
       });
       for (const stream of [child.stdout, child.stderr]) {
-        readline.createInterface({ input: stream, crlfDelay: Infinity }).on('line', line => log(line, name));
+        readline
+          .createInterface({ input: stream, crlfDelay: Infinity })
+          .on('line', (line) => log(line, name));
       }
       log(`Started PID ${child.pid}`, name);
       await recordChildren();
@@ -162,10 +218,15 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
       await stopOwnedChild(child);
       children.delete(name);
       failures = Date.now() - started > 60000 ? 1 : failures + 1;
-      if (failures >= restartLimit) throw new Error(`${name} exited with code ${code}; restart limit reached. See logs/${name}.std.log.`);
+      if (failures >= restartLimit)
+        throw new Error(
+          `${name} exited with code ${code}; restart limit reached. See logs/${name}.std.log.`,
+        );
       const wait = Math.min(restartDelay * 2 ** (failures - 1), 8000);
       log(`Exited (${code}); restarting in ${wait / 1000}s`, name);
-      await delay(wait, undefined, { signal: abort.signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+      await delay(wait, undefined, { signal: abort.signal }).catch((error) => {
+        if (error.name !== 'AbortError') throw error;
+      });
     }
   }
 
@@ -179,23 +240,35 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
         const frontend = await fetch(`http://127.0.0.1:${clientPort}/`, { signal });
         await frontend.arrayBuffer();
         if (health?.status === 'ok' && frontend.ok) return;
-      } catch { if (stopping) return; }
-      await delay(300, undefined, { signal: abort.signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+      } catch {
+        if (stopping) return;
+      }
+      await delay(300, undefined, { signal: abort.signal }).catch((error) => {
+        if (error.name !== 'AbortError') throw error;
+      });
     }
-    if (!stopping) throw new Error('Development startup timed out. Check server/client logs and DATABASE_URL before retrying.');
+    if (!stopping)
+      throw new Error(
+        'Development startup timed out. Check server/client logs and DATABASE_URL before retrying.',
+      );
   }
 
   async function start() {
     try {
       const logDir = path.resolve(root, env.LOG_DIR || 'logs');
       fs.mkdirSync(logDir, { recursive: true });
-      for (const name of ['dev.std', 'dev', 'server.std', 'client.std']) logs.set(name, fs.openSync(path.join(logDir, `${name}.log`), 'a'));
+      for (const name of ['dev.std', 'dev', 'server.std', 'client.std'])
+        logs.set(name, fs.openSync(path.join(logDir, `${name}.log`), 'a'));
       log(`Starting Squabble from ${root}`);
       const rows = await processSnapshot();
-      const identity = rows.find(row => row.pid === process.pid);
-      if (!identity?.startedAt) throw new Error('Cannot identify the development supervisor process.');
+      const identity = rows.find((row) => row.pid === process.pid);
+      if (!identity?.startedAt)
+        throw new Error('Cannot identify the development supervisor process.');
       releaseLock = await lockStartup({ pid: identity.pid, startedAt: identity.startedAt });
-      if (stopping) { releaseLock?.(); return; }
+      if (stopping) {
+        releaseLock?.();
+        return;
+      }
       const previous = readSession();
       if (previous?.root === root) {
         for (const record of [previous, ...(previous.children || [])]) {
@@ -216,8 +289,17 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
       cleanServerBuild(root);
       log('Cleared server build output; Vite will refresh its dependency cache.');
       const jobs = Promise.all([
-        supervise('server', [path.join(root, 'node_modules/@nestjs/cli/bin/nest.js'), 'start', '--watch']),
-        supervise('client', [path.join(root, 'node_modules/vite/bin/vite.js'), '--config', path.join(root, 'vite.config.ts'), '--force']),
+        supervise('server', [
+          path.join(root, 'node_modules/@nestjs/cli/bin/nest.js'),
+          'start',
+          '--watch',
+        ]),
+        supervise('client', [
+          path.join(root, 'node_modules/vite/bin/vite.js'),
+          '--config',
+          path.join(root, 'vite.config.ts'),
+          '--force',
+        ]),
       ]);
       // Finish recording spawned children while holding the startup lock. A
       // second launch can now replace this whole session, even before readiness.
@@ -226,7 +308,9 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
       releaseLock();
       await Promise.race([waitUntilReady(), jobs]);
       if (!stopping) {
-        log(`Ready: http://127.0.0.1:${clientPort} (development UI; API: http://127.0.0.1:${serverPort}/api)`);
+        log(
+          `Ready: http://127.0.0.1:${clientPort} (development UI; API: http://127.0.0.1:${serverPort}/api)`,
+        );
         log(`Press Ctrl+C to stop. Logs: ${path.join(logDir, 'dev.std.log')}`);
       }
       await jobs;
@@ -241,9 +325,17 @@ function createDevSupervisor({ projectRoot = path.resolve(__dirname, '..'), env:
 if (require.main === module) {
   const supervisor = createDevSupervisor();
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.on(signal, () => supervisor.stop().catch(error => { console.error(error); process.exitCode = 1; }));
+    process.on(signal, () =>
+      supervisor.stop().catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
+      }),
+    );
   }
-  supervisor.start().catch(error => { console.error(error.message); process.exitCode = 1; });
+  supervisor.start().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
 }
 
 module.exports = { createDevSupervisor, loadDevelopmentEnv, cleanServerBuild };

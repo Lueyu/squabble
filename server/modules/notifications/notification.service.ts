@@ -57,7 +57,12 @@ export class NotificationService {
   /** Create a channel. */
   async createChannel(
     userId: string,
-    input: { channelType: NotificationChannelType; label?: string; config: Record<string, string>; enabled?: boolean },
+    input: {
+      channelType: NotificationChannelType;
+      label?: string;
+      config: Record<string, string>;
+      enabled?: boolean;
+    },
   ): Promise<NotificationChannel> {
     const [row] = await this.db
       .insert(notificationChannels)
@@ -96,11 +101,15 @@ export class NotificationService {
     const row = rows[0];
     if (!row) return { ok: false, error: '渠道不存在' };
     try {
-      await this.deliver(row.channelType as NotificationChannelType, (row.config as Record<string, unknown>) ?? {}, {
-        event: 'test',
-        title: '吵股测试通知',
-        body: '如果你看到这条消息，说明该通知渠道配置正确。',
-      });
+      await this.deliver(
+        row.channelType as NotificationChannelType,
+        (row.config as Record<string, unknown>) ?? {},
+        {
+          event: 'test',
+          title: '吵股测试通知',
+          body: '如果你看到这条消息，说明该通知渠道配置正确。',
+        },
+      );
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -118,7 +127,11 @@ export class NotificationService {
       if (enabled.length === 0) return;
       await Promise.allSettled(
         enabled.map((r) =>
-          this.deliver(r.channelType as NotificationChannelType, (r.config as Record<string, unknown>) ?? {}, payload),
+          this.deliver(
+            r.channelType as NotificationChannelType,
+            (r.config as Record<string, unknown>) ?? {},
+            payload,
+          ),
         ),
       );
     } catch (error) {
@@ -149,16 +162,20 @@ export class NotificationService {
   }
 
   /** Generic JSON POST webhook. */
-  private async deliverWebhook(config: Record<string, unknown>, payload: NotificationPayload): Promise<void> {
+  private async deliverWebhook(
+    config: Record<string, unknown>,
+    payload: NotificationPayload,
+  ): Promise<void> {
     const url = String(config.url ?? '');
     if (!url) throw new Error('webhook 缺少 url');
-    await firstValueFrom(
-      this.httpService.post(url, payload, { timeout: HTTP_TIMEOUT_MS }),
-    );
+    await firstValueFrom(this.httpService.post(url, payload, { timeout: HTTP_TIMEOUT_MS }));
   }
 
   /** Bark (iOS push). */
-  private async deliverBark(config: Record<string, unknown>, payload: NotificationPayload): Promise<void> {
+  private async deliverBark(
+    config: Record<string, unknown>,
+    payload: NotificationPayload,
+  ): Promise<void> {
     const key = String(config.key ?? '');
     if (!key) throw new Error('bark 缺少 key');
     const base = String(config.server ?? 'https://api.day.app').replace(/\/+$/, '');
@@ -175,7 +192,10 @@ export class NotificationService {
   }
 
   /** ServerChan (WeChat ecosystem). */
-  private async deliverServerChan(config: Record<string, unknown>, payload: NotificationPayload): Promise<void> {
+  private async deliverServerChan(
+    config: Record<string, unknown>,
+    payload: NotificationPayload,
+  ): Promise<void> {
     const key = String(config.key ?? '');
     if (!key) throw new Error('serverchan 缺少 sendkey');
     const base = String(config.server ?? 'https://sctapi.ftqq.com').replace(/\/+$/, '');
@@ -189,7 +209,10 @@ export class NotificationService {
   }
 
   /** SMTP email via nodemailer. */
-  private async deliverSmtp(config: Record<string, unknown>, payload: NotificationPayload): Promise<void> {
+  private async deliverSmtp(
+    config: Record<string, unknown>,
+    payload: NotificationPayload,
+  ): Promise<void> {
     const host = String(config.host ?? '');
     const to = String(config.to ?? '');
     if (!host || !to) throw new Error('smtp 缺少 host 或 to');
@@ -198,7 +221,9 @@ export class NotificationService {
       host,
       port,
       secure: port === 465,
-      auth: config.user ? { user: String(config.user), pass: String(config.pass ?? '') } : undefined,
+      auth: config.user
+        ? { user: String(config.user), pass: String(config.pass ?? '') }
+        : undefined,
     });
     await transporter.sendMail({
       from: String(config.from ?? config.user ?? 'squabble@localhost'),
@@ -209,7 +234,10 @@ export class NotificationService {
   }
 
   /** Telegram bot message. */
-  private async deliverTelegram(config: Record<string, unknown>, payload: NotificationPayload): Promise<void> {
+  private async deliverTelegram(
+    config: Record<string, unknown>,
+    payload: NotificationPayload,
+  ): Promise<void> {
     const token = String(config.token ?? '');
     const chatId = String(config.chatId ?? '');
     if (!token || !chatId) throw new Error('telegram 缺少 token 或 chatId');

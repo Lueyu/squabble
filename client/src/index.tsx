@@ -46,7 +46,13 @@ const queryClient = new QueryClient({
 });
 
 /** Root-level crash fallback: brand mark, the error, and a reload button. */
-function CrashFallback({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) {
+function CrashFallback({
+  error,
+  resetErrorBoundary,
+}: {
+  error: Error;
+  resetErrorBoundary: () => void;
+}) {
   const { t } = useTranslation();
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-6">

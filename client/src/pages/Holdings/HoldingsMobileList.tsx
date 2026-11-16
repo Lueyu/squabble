@@ -96,12 +96,18 @@ export default function HoldingsMobileList({
     groups.find((g) => g.id === id)?.name ?? t('holdings.noGroup');
   const actionLabel = (value: string) => {
     const keys: Record<string, string> = {
-      '加仓': 'analysis.add', Add: 'analysis.add',
-      '买入': 'analysis.buy', Buy: 'analysis.buy',
-      '持有': 'analysis.hold', Hold: 'analysis.hold',
-      '减仓': 'analysis.reduce', Reduce: 'analysis.reduce',
-      '卖出': 'analysis.sell', Sell: 'analysis.sell',
-      '观望': 'analysis.watch', Watch: 'analysis.watch',
+      加仓: 'analysis.add',
+      Add: 'analysis.add',
+      买入: 'analysis.buy',
+      Buy: 'analysis.buy',
+      持有: 'analysis.hold',
+      Hold: 'analysis.hold',
+      减仓: 'analysis.reduce',
+      Reduce: 'analysis.reduce',
+      卖出: 'analysis.sell',
+      Sell: 'analysis.sell',
+      观望: 'analysis.watch',
+      Watch: 'analysis.watch',
     };
     return keys[value] ? t(keys[value]) : value;
   };
@@ -130,11 +136,7 @@ export default function HoldingsMobileList({
   }
 
   if (error) {
-    return (
-      <div className="p-8 text-center text-destructive text-sm md:hidden">
-        {error}
-      </div>
-    );
+    return <div className="p-8 text-center text-destructive text-sm md:hidden">{error}</div>;
   }
 
   if (holdings.length === 0) {
@@ -146,9 +148,7 @@ export default function HoldingsMobileList({
           </EmptyMedia>
           <EmptyHeader>
             <EmptyTitle>{t('holdings.noHoldings')}</EmptyTitle>
-            <EmptyDescription>
-              {t('ui.holdings.emptyMobileHint')}
-            </EmptyDescription>
+            <EmptyDescription>{t('ui.holdings.emptyMobileHint')}</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             <Button size="sm" onClick={onAdd}>
@@ -186,7 +186,7 @@ export default function HoldingsMobileList({
                         className={cn(
                           badgeVariants({ variant: 'outline' }),
                           ratingColor(h.rating),
-                          'text-[10px]'
+                          'text-[10px]',
                         )}
                       >
                         {h.rating}
@@ -202,10 +202,7 @@ export default function HoldingsMobileList({
                     {formatPriceWithCurrency(h.currentPrice, h.currency)}
                   </span>
                   <span
-                    className={cn(
-                      'block font-mono-nums text-sm font-medium',
-                      plClass(h.returnPct)
-                    )}
+                    className={cn('block font-mono-nums text-sm font-medium', plClass(h.returnPct))}
                   >
                     {formatPercent(h.returnPct)}
                   </span>
@@ -213,112 +210,98 @@ export default function HoldingsMobileList({
               </span>
             </button>
 
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3 text-sm">
-                <div className="flex min-w-0 flex-col gap-1">
-                    <span className="text-muted-foreground">{t('holdings.shares')}</span>
-                  <span className="break-all font-mono-nums">
-                    {formatShares(h.shares)}
-                  </span>
-                </div>
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="text-muted-foreground">{t('ui.holdings.marketValue')}</span>
-                    <span className="break-all font-mono-nums">
-                      {formatCurrencyWithCurrency(h.marketValue, h.currency)}
-                    </span>
-                  </div>
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="text-muted-foreground">{t('ui.holdings.cost')}</span>
-                    <span className="break-all font-mono-nums">
-                      {formatCurrencyWithCurrency(h.cost, h.currency)}
-                    </span>
-                  </div>
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="text-muted-foreground">{t('ui.holdings.pl')}</span>
-                    <span
-                      className={cn(
-                        'break-all font-mono-nums font-medium',
-                        plClass(h.pl)
-                      )}
-                    >
-                      {formatCurrencyWithCurrency(h.pl, h.currency)}
-                    </span>
-                  </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3 text-sm">
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-muted-foreground">{t('holdings.shares')}</span>
+                <span className="break-all font-mono-nums">{formatShares(h.shares)}</span>
               </div>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-muted-foreground">{t('ui.holdings.marketValue')}</span>
+                <span className="break-all font-mono-nums">
+                  {formatCurrencyWithCurrency(h.marketValue, h.currency)}
+                </span>
+              </div>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-muted-foreground">{t('ui.holdings.cost')}</span>
+                <span className="break-all font-mono-nums">
+                  {formatCurrencyWithCurrency(h.cost, h.currency)}
+                </span>
+              </div>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-muted-foreground">{t('ui.holdings.pl')}</span>
+                <span className={cn('break-all font-mono-nums font-medium', plClass(h.pl))}>
+                  {formatCurrencyWithCurrency(h.pl, h.currency)}
+                </span>
+              </div>
+            </div>
 
-                <div
-                  id={`holding-details-${h.id}`}
-                  role="region"
-                  aria-labelledby={`holding-trigger-${h.id}`}
-                  hidden={expanded !== h.id}
-                  className="mt-3 pt-3 border-t space-y-2 text-sm"
-                >
-                  <div className="flex flex-wrap justify-between gap-2">
-                    <span className="text-muted-foreground">{t('holdings.buyPrice')}</span>
-                    <span className="font-mono-nums">
-                      {formatPriceWithCurrency(h.buyPrice, h.currency)}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap justify-between gap-2">
-                    <span className="text-muted-foreground">{t('ui.holdings.actions')}</span>
-                    <span>
-                      {h.action ? (
-                        <Badge
-                          className={cn(actionColor(h.action))}
-                          variant="outline"
-                        >
-                          {actionLabel(h.action)}
-                        </Badge>
-                      ) : (
-                        '—'
-                      )}
-                    </span>
-                  </div>
-                  {hasAnyAiRating && (
-                  <div className="flex flex-wrap justify-between items-center gap-2">
-                    <span className="text-muted-foreground">{t('ui.holdings.aiRating')}</span>
-                    {aiRatings?.[h.ticker] ? (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <RatingBadge
-                          rating={aiRatings[h.ticker].rating}
-                          size="sm"
-                        />
-                        <ConfidenceBadge
-                          confidence={aiRatings[h.ticker].confidence}
-                          size="sm"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-6"
-                          aria-label={`${t('ui.holdings.aiRating')} · ${h.ticker}`}
-                          onClick={() => {
-                            onViewAiAnalysis?.(h.ticker, aiRatings[h.ticker].runId);
-                          }}
-                        >
-                          <Eye className="size-3.5 text-muted-foreground" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground/70">{t('ui.holdings.notRated')}</span>
-                    )}
-                  </div>
+            <div
+              id={`holding-details-${h.id}`}
+              role="region"
+              aria-labelledby={`holding-trigger-${h.id}`}
+              hidden={expanded !== h.id}
+              className="mt-3 pt-3 border-t space-y-2 text-sm"
+            >
+              <div className="flex flex-wrap justify-between gap-2">
+                <span className="text-muted-foreground">{t('holdings.buyPrice')}</span>
+                <span className="font-mono-nums">
+                  {formatPriceWithCurrency(h.buyPrice, h.currency)}
+                </span>
+              </div>
+              <div className="flex flex-wrap justify-between gap-2">
+                <span className="text-muted-foreground">{t('ui.holdings.actions')}</span>
+                <span>
+                  {h.action ? (
+                    <Badge className={cn(actionColor(h.action))} variant="outline">
+                      {actionLabel(h.action)}
+                    </Badge>
+                  ) : (
+                    '—'
                   )}
-                  <div className="flex flex-wrap justify-between gap-2">
-                    <span className="text-muted-foreground">{t('ui.holdings.group')}</span>
-                    <span className="min-w-0 break-words text-xs">{groupName(h.groupId)}</span>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full mt-2"
-                    onClick={() => {
-                      onDetail(h);
-                    }}
-                  >
-                    {t('ui.holdings.viewDetails')}
-                    <ChevronRight className="size-4" />
-                  </Button>
+                </span>
+              </div>
+              {hasAnyAiRating && (
+                <div className="flex flex-wrap justify-between items-center gap-2">
+                  <span className="text-muted-foreground">{t('ui.holdings.aiRating')}</span>
+                  {aiRatings?.[h.ticker] ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <RatingBadge rating={aiRatings[h.ticker].rating} size="sm" />
+                      <ConfidenceBadge confidence={aiRatings[h.ticker].confidence} size="sm" />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-6"
+                        aria-label={`${t('ui.holdings.aiRating')} · ${h.ticker}`}
+                        onClick={() => {
+                          onViewAiAnalysis?.(h.ticker, aiRatings[h.ticker].runId);
+                        }}
+                      >
+                        <Eye className="size-3.5 text-muted-foreground" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted-foreground/70">
+                      {t('ui.holdings.notRated')}
+                    </span>
+                  )}
                 </div>
+              )}
+              <div className="flex flex-wrap justify-between gap-2">
+                <span className="text-muted-foreground">{t('ui.holdings.group')}</span>
+                <span className="min-w-0 break-words text-xs">{groupName(h.groupId)}</span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full mt-2"
+                onClick={() => {
+                  onDetail(h);
+                }}
+              >
+                {t('ui.holdings.viewDetails')}
+                <ChevronRight className="size-4" />
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ))}

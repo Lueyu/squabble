@@ -3,15 +3,7 @@
  * @description Paper-trading API: overview, manual orders, bot control,
  * guardrail settings, account lifecycle.
  */
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Put,
-  Req,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { NeedLogin } from '../../common/platform/need-login.decorator';
 import { PaperTradingService } from './paper-trading.service';

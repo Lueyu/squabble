@@ -45,14 +45,21 @@ export class FxService {
    * @returns Rate string, or null if none is stored.
    */
   async getLatestRate(base: string, quote: string): Promise<string | null> {
-    if (typeof base !== 'string' || typeof quote !== 'string'
-      || !/^[A-Za-z]{3}$/.test(base) || !/^[A-Za-z]{3}$/.test(quote)) return null;
+    if (
+      typeof base !== 'string' ||
+      typeof quote !== 'string' ||
+      !/^[A-Za-z]{3}$/.test(base) ||
+      !/^[A-Za-z]{3}$/.test(quote)
+    )
+      return null;
     const baseUpper = base.toUpperCase();
     const quoteUpper = quote.toUpperCase();
 
     if (baseUpper === quoteUpper) return '1';
     if (Date.now() >= this.refreshAfter) {
-      this.refreshInFlight ??= this.refreshRates().finally(() => { this.refreshInFlight = null; });
+      this.refreshInFlight ??= this.refreshRates().finally(() => {
+        this.refreshInFlight = null;
+      });
       await this.refreshInFlight;
     }
 
@@ -64,8 +71,12 @@ export class FxService {
       .orderBy(desc(fxRates.rateDate))
       .limit(1);
 
-    if (directRow.length > 0 && this.recentRateDate(directRow[0].date)
-      && directRow[0].rate !== null && directRow[0].rate !== undefined) {
+    if (
+      directRow.length > 0 &&
+      this.recentRateDate(directRow[0].date) &&
+      directRow[0].rate !== null &&
+      directRow[0].rate !== undefined
+    ) {
       return String(directRow[0].rate);
     }
 
@@ -77,8 +88,12 @@ export class FxService {
       .orderBy(desc(fxRates.rateDate))
       .limit(1);
 
-    if (reverseRow.length > 0 && this.recentRateDate(reverseRow[0].date)
-      && reverseRow[0].rate !== null && reverseRow[0].rate !== undefined) {
+    if (
+      reverseRow.length > 0 &&
+      this.recentRateDate(reverseRow[0].date) &&
+      reverseRow[0].rate !== null &&
+      reverseRow[0].rate !== undefined
+    ) {
       const rate = parseFloat(String(reverseRow[0].rate));
       if (rate > 0) {
         return (1 / rate).toString();
@@ -124,19 +139,26 @@ export class FxService {
     this.refreshAfter = Date.now() + 5 * 60 * 1000;
     try {
       const url = 'https://api.frankfurter.dev/v1/latest?base=USD&symbols=HKD,CNY';
-      const response = await firstValueFrom(
-        this.httpService.get(url, { timeout: 8000 }),
-      );
+      const response = await firstValueFrom(this.httpService.get(url, { timeout: 8000 }));
 
       const data = response.data;
-      if (!data || !/^\d{4}-\d{2}-\d{2}$/.test(data.date)
-        || !data.rates || typeof data.rates !== 'object') {
+      if (
+        !data ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(data.date) ||
+        !data.rates ||
+        typeof data.rates !== 'object'
+      ) {
         this.logger.warn('refreshRates: invalid response from Frankfurter');
         return 0;
       }
       const providerDate = data.date as string;
       const providerAge = Date.now() - Date.parse(`${providerDate}T00:00:00Z`);
-      if (!Number.isFinite(providerAge) || providerAge < -86_400_000 || providerAge > 7 * 86_400_000) return 0;
+      if (
+        !Number.isFinite(providerAge) ||
+        providerAge < -86_400_000 ||
+        providerAge > 7 * 86_400_000
+      )
+        return 0;
       const rates: Array<{ base: string; quote: string; rate: string }> = [];
 
       const hkdRate = data.rates.HKD;
@@ -178,7 +200,9 @@ export class FxService {
       if (updated > 0) this.refreshAfter = Date.now() + 60 * 60 * 1000;
       return updated;
     } catch (error) {
-      this.logger.warn(`refreshRates failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `refreshRates failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return 0;
     }
   }

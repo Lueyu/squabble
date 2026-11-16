@@ -2,9 +2,13 @@ import type { LocalAgentProvider } from '../../shared/local-agents.interface';
 import type { ResearchActivity } from '../../shared/research-events.interface';
 import { NativeActivityCollector } from './activity';
 
-interface JsonObject { [key: string]: unknown }
+interface JsonObject {
+  [key: string]: unknown;
+}
 function object(value: unknown): JsonObject {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as JsonObject)
+    : {};
 }
 function checkedTokenSum(usage: JsonObject, optional: string[] = []): number | null {
   let total: number = 0;
@@ -19,7 +23,8 @@ function checkedTokenSum(usage: JsonObject, optional: string[] = []): number | n
 }
 
 function redactCredentials(text: string): string {
-  return text.replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
+  return text
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, '[REDACTED]')
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g, '[REDACTED]');
 }
@@ -31,12 +36,21 @@ export class NativeEventCollector {
   private usageTokens: number | null = null;
   private lastProgress: string = '';
   private readonly activity: NativeActivityCollector;
-  constructor(private readonly provider: LocalAgentProvider, private readonly onProgress: (text: string) => void,
-    onEvent?: (event: ResearchActivity) => void) { this.activity = new NativeActivityCollector(provider, onEvent); }
+  constructor(
+    private readonly provider: LocalAgentProvider,
+    private readonly onProgress: (text: string) => void,
+    onEvent?: (event: ResearchActivity) => void,
+  ) {
+    this.activity = new NativeActivityCollector(provider, onEvent);
+  }
 
   read(line: string): void {
     let parsed: unknown;
-    try { parsed = JSON.parse(line); } catch { return; }
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return;
+    }
     const event: JsonObject = object(parsed);
     this.activity.read(event);
     if (this.provider === 'codex') this.codex(event);
@@ -55,10 +69,16 @@ export class NativeEventCollector {
   }
 
   private codex(event: JsonObject): void {
-    if (event.type === 'turn.failed' || event.type === 'error') throw new Error('NATIVE_AGENT_FAILED');
+    if (event.type === 'turn.failed' || event.type === 'error')
+      throw new Error('NATIVE_AGENT_FAILED');
     const item: JsonObject = object(event.item);
-    if (event.type === 'item.started') this.progress(item.type === 'web_search' ? 'Searching sources…' : 'Analyzing sources…');
-    if (event.type === 'item.completed' && item.type === 'agent_message' && typeof item.text === 'string') {
+    if (event.type === 'item.started')
+      this.progress(item.type === 'web_search' ? 'Searching sources…' : 'Analyzing sources…');
+    if (
+      event.type === 'item.completed' &&
+      item.type === 'agent_message' &&
+      typeof item.text === 'string'
+    ) {
       if (item.phase !== 'commentary') this.text = item.text;
       this.progress('Preparing research results…');
     }
@@ -75,24 +95,34 @@ export class NativeEventCollector {
       if (Array.isArray(message.content)) {
         for (const value of message.content) {
           const block: JsonObject = object(value);
-          if (block.type === 'tool_use') this.progress(block.name === 'WebSearch' ? 'Searching sources…' : 'Analyzing sources…');
+          if (block.type === 'tool_use')
+            this.progress(block.name === 'WebSearch' ? 'Searching sources…' : 'Analyzing sources…');
           if (block.type === 'text' && typeof block.text === 'string') this.text += block.text;
         }
       }
     }
     if (event.type === 'result') {
-      if (event.is_error === true || event.subtype !== 'success') throw new Error('NATIVE_AGENT_FAILED');
+      if (event.is_error === true || event.subtype !== 'success')
+        throw new Error('NATIVE_AGENT_FAILED');
       this.terminal = true;
       if (typeof event.result === 'string') this.text = event.result;
       const usage: JsonObject = object(event.usage);
-      this.usageTokens = checkedTokenSum(usage, ['cache_creation_input_tokens', 'cache_read_input_tokens']);
+      this.usageTokens = checkedTokenSum(usage, [
+        'cache_creation_input_tokens',
+        'cache_read_input_tokens',
+      ]);
     }
   }
 
   private gemini(event: JsonObject): void {
-    if (event.type === 'error' && event.severity === 'error') throw new Error('NATIVE_AGENT_FAILED');
+    if (event.type === 'error' && event.severity === 'error')
+      throw new Error('NATIVE_AGENT_FAILED');
     if (event.type === 'tool_use') this.progress('Searching sources…');
-    if (event.type === 'message' && event.role === 'assistant' && typeof event.content === 'string') {
+    if (
+      event.type === 'message' &&
+      event.role === 'assistant' &&
+      typeof event.content === 'string'
+    ) {
       this.text = event.delta === true ? this.text + event.content : event.content;
       this.progress('Preparing research results…');
     }
@@ -120,12 +150,21 @@ export class NativeEventCollector {
   private opencode(event: JsonObject): void {
     if (event.type === 'error') throw new Error('NATIVE_AGENT_FAILED');
     const part: JsonObject = object(event.part);
-    if (event.type === 'tool_use') { this.terminal = false; this.progress('Searching sources…'); }
-    if (event.type === 'text' && typeof part.text === 'string') { this.text = part.text; this.progress('Preparing research results…'); }
+    if (event.type === 'tool_use') {
+      this.terminal = false;
+      this.progress('Searching sources…');
+    }
+    if (event.type === 'text' && typeof part.text === 'string') {
+      this.text = part.text;
+      this.progress('Preparing research results…');
+    }
     if (event.type === 'step_finish') {
       this.terminal = part.reason === 'stop';
       const tokens: JsonObject = object(part.tokens);
-      const usage: number | null = checkedTokenSum({ input_tokens: tokens.input, output_tokens: tokens.output });
+      const usage: number | null = checkedTokenSum({
+        input_tokens: tokens.input,
+        output_tokens: tokens.output,
+      });
       if (usage !== null) this.usageTokens = (this.usageTokens ?? 0) + usage;
     }
   }
@@ -135,13 +174,18 @@ export class NativeEventCollector {
     if (event.role !== 'assistant') return;
     this.terminal = false;
     if (Array.isArray(event.tool_calls) && event.tool_calls.length) {
-      this.text = ''; this.progress('Searching sources…'); return;
+      this.text = '';
+      this.progress('Searching sources…');
+      return;
     }
     if (typeof event.content === 'string') this.text = event.content;
-    else if (Array.isArray(event.content)) this.text = event.content.map((value: unknown) => {
-      const block: JsonObject = object(value);
-      return block.type === 'text' && typeof block.text === 'string' ? block.text : '';
-    }).join('');
+    else if (Array.isArray(event.content))
+      this.text = event.content
+        .map((value: unknown) => {
+          const block: JsonObject = object(value);
+          return block.type === 'text' && typeof block.text === 'string' ? block.text : '';
+        })
+        .join('');
     this.usageTokens = checkedTokenSum(object(event.usage));
     this.progress('Preparing research results…');
   }
@@ -150,8 +194,10 @@ export class NativeEventCollector {
     if (event.status === 'running') return;
     if (event.status !== 'completed') throw new Error('NATIVE_AGENT_INCOMPLETE');
     const reply: JsonObject = object(event.reply);
-    if (reply.role !== 'assistant' || typeof reply.text !== 'string') throw new Error('NATIVE_AGENT_INCOMPLETE');
-    this.text = reply.text; this.terminal = true;
+    if (reply.role !== 'assistant' || typeof reply.text !== 'string')
+      throw new Error('NATIVE_AGENT_INCOMPLETE');
+    this.text = reply.text;
+    this.terminal = true;
   }
 
   /** Kimi's print protocol has no terminal event: zero exit plus a final non-tool assistant message is its completion contract. */

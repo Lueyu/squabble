@@ -20,22 +20,11 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Analysis as AnalysisType } from '@shared/api.interface';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import {
-  formatPriceWithCurrency,
-  ratingColor,
-  actionColor,
-  cn,
-} from '@/utils/format';
+import { formatPriceWithCurrency, ratingColor, actionColor, cn } from '@/utils/format';
 import { inferMarket } from '@/hooks/use-market-quotes';
 import { useTranslation } from 'react-i18next';
 
@@ -43,9 +32,7 @@ import { useTranslation } from 'react-i18next';
  * Split a semicolon/newline-delimited string into a clean list, stripping
  * leading "1." / "1)" / "1、" numbering. Returns null when empty.
  */
-export function parseNumberedList(
-  text: string | null
-): string[] | null {
+export function parseNumberedList(text: string | null): string[] | null {
   if (!text || !text.trim()) return null;
   const parts = text
     .split(/[；;]/)
@@ -84,10 +71,14 @@ function ratingTextColor(rating: string | null | undefined): string {
 function actionShortLabel(action: string | null | undefined): string {
   if (!action) return '—';
   const text = String(action);
-  const stripped = text.replace(/(不|勿|别|无需|无须|不再|停止|暂停|暂缓|暂不)\s*(加仓|买入|增仓|增持|增加仓位|增加|追|加|买)/g, '');
+  const stripped = text.replace(
+    /(不|勿|别|无需|无须|不再|停止|暂停|暂缓|暂不)\s*(加仓|买入|增仓|增持|增加仓位|增加|追|加|买)/g,
+    '',
+  );
   if (/清仓|清空|全部卖|全部出|离场|止损出局/.test(stripped)) return '卖出';
   if (/减仓|减持|降低仓位|减至|再减|卖出|卖掉|售出|减/.test(stripped)) return '减仓';
-  if (/买入|买进|建仓|低吸|吸筹|分批加|分批买|加仓|增持|增仓|可以加|可加|首批/.test(stripped)) return '买入';
+  if (/买入|买进|建仓|低吸|吸筹|分批加|分批买|加仓|增持|增仓|可以加|可加|首批/.test(stripped))
+    return '买入';
   if (/观望|等待|等回|不追|再看|观察|暂不/.test(text)) return '观望';
   if (/持有|维持|继续持有|定投|拿好/.test(text)) return '持有';
   return text.length > 5 ? text.slice(0, 5) + '…' : text;
@@ -113,21 +104,31 @@ function actionTextColor(action: string | null | undefined): string {
   }
 }
 
-function localizedActionLabel(action: string | null | undefined, t: (key: string) => string): string {
+function localizedActionLabel(
+  action: string | null | undefined,
+  t: (key: string) => string,
+): string {
   const label = actionShortLabel(action);
   const keys: Record<string, string> = {
-    '加仓': 'analysis.add', '买入': 'analysis.buy', '持有': 'analysis.hold',
-    '减仓': 'analysis.reduce', '卖出': 'analysis.sell', '观望': 'analysis.watch',
+    加仓: 'analysis.add',
+    买入: 'analysis.buy',
+    持有: 'analysis.hold',
+    减仓: 'analysis.reduce',
+    卖出: 'analysis.sell',
+    观望: 'analysis.watch',
   };
   return keys[label] ? t(keys[label]) : label;
 }
 
 function localizedRating(value: string | null, t: (key: string) => string): string {
   const keys: Record<string, string> = {
-    'Strong Buy': 'analysis.strongBuy', Buy: 'analysis.buy', Hold: 'analysis.hold',
-    Sell: 'analysis.sell', 'Strong Sell': 'analysis.strongSell',
+    'Strong Buy': 'analysis.strongBuy',
+    Buy: 'analysis.buy',
+    Hold: 'analysis.hold',
+    Sell: 'analysis.sell',
+    'Strong Sell': 'analysis.strongSell',
   };
-  return value && keys[value] ? t(keys[value]) : value ?? '';
+  return value && keys[value] ? t(keys[value]) : (value ?? '');
 }
 
 /** Props for {@link AnalysisCard}. */
@@ -153,12 +154,8 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
   const market = isPortfolio ? 'US' : inferMarket(analysis.ticker);
   const targetCurrency = market === 'HK' ? 'HKD' : market === 'CN' ? 'CNY' : 'USD';
 
-  const displayCatalysts = catalysts && hasDeepReport
-    ? catalysts.slice(0, 3)
-    : catalysts;
-  const displayRisks = risks && hasDeepReport
-    ? risks.slice(0, 3)
-    : risks;
+  const displayCatalysts = catalysts && hasDeepReport ? catalysts.slice(0, 3) : catalysts;
+  const displayRisks = risks && hasDeepReport ? risks.slice(0, 3) : risks;
 
   const isCollapsed = !isPortfolio && !expanded;
 
@@ -186,9 +183,7 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
                 {t('ui.analysis.portfolioReview')}
               </CardTitle>
             </div>
-            <CardDescription>
-              {t('ui.analysis.portfolioDescription')}
-            </CardDescription>
+            <CardDescription>{t('ui.analysis.portfolioDescription')}</CardDescription>
           </div>
         ) : (
           <div className="flex items-start justify-between gap-3">
@@ -203,7 +198,8 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
                 )}
                 {analysis.targetPrice && (
                   <span className="font-mono-nums text-xs shrink-0">
-                    {t('ui.analysis.targetPrice')} {formatPriceWithCurrency(analysis.targetPrice, targetCurrency)}
+                    {t('ui.analysis.targetPrice')}{' '}
+                    {formatPriceWithCurrency(analysis.targetPrice, targetCurrency)}
                   </span>
                 )}
               </CardDescription>
@@ -214,17 +210,14 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
                   variant="outline"
                   className={cn(
                     'border-transparent text-[11px] font-medium rounded-md',
-                    ratingColor(analysis.rating)
+                    ratingColor(analysis.rating),
                   )}
                 >
                   {localizedRating(analysis.rating, t)}
                 </Badge>
               )}
               {deepReportRunId && (
-                <button
-                  onClick={handleDeepReportClick}
-                  className="inline-flex"
-                >
+                <button onClick={handleDeepReportClick} className="inline-flex">
                   <Badge
                     variant="outline"
                     title={t('ui.analysis.deepReportTooltip')}
@@ -251,7 +244,9 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
               {t('ui.analysis.targetPrice')}
             </span>
             <span className="mt-0.5 font-serif text-3xl font-bold text-foreground sm:text-2xl">
-              {analysis.targetPrice ? formatPriceWithCurrency(analysis.targetPrice, targetCurrency) : '—'}
+              {analysis.targetPrice
+                ? formatPriceWithCurrency(analysis.targetPrice, targetCurrency)
+                : '—'}
             </span>
           </div>
           {/* Action - short label */}
@@ -291,10 +286,12 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
               <Target className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
               {t('ui.analysis.actionAdvice')}
             </div>
-            <p className={cn(
-              'whitespace-pre-wrap break-words text-sm font-medium leading-relaxed',
-              actionTextColor(analysis.action),
-            )}>
+            <p
+              className={cn(
+                'whitespace-pre-wrap break-words text-sm font-medium leading-relaxed',
+                actionTextColor(analysis.action),
+              )}
+            >
               {analysis.action}
             </p>
           </div>
@@ -321,83 +318,83 @@ function AnalysisCard({ analysis, companyName, deepReportRunId }: AnalysisCardPr
         {/* Catalysts + Risks section */}
         {!isCollapsed &&
           (catalysts || risks || analysis.catalysts?.trim() || analysis.risks?.trim()) && (
-          <>
-            <Separator className="my-1" />
-            <div className="grid gap-4 md:grid-cols-2">
-              {displayCatalysts ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                    <TrendingUp className="h-3.5 w-3.5 text-success" />
-                    {t('ui.analysis.keyCatalysts')}
+            <>
+              <Separator className="my-1" />
+              <div className="grid gap-4 md:grid-cols-2">
+                {displayCatalysts ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <TrendingUp className="h-3.5 w-3.5 text-success" />
+                      {t('ui.analysis.keyCatalysts')}
+                    </div>
+                    <ul className="space-y-1 text-sm">
+                      {displayCatalysts.map((c, i) => (
+                        <li key={i} className="flex gap-2 text-foreground/75">
+                          <span className="font-mono-nums text-xs text-success shrink-0">
+                            {i + 1}.
+                          </span>
+                          <span>{c}</span>
+                        </li>
+                      ))}
+                      {hasDeepReport && catalysts && catalysts.length > 3 && (
+                        <li className="text-xs text-muted-foreground">
+                          {t('ui.analysis.moreCatalysts', { count: catalysts.length - 3 })}
+                        </li>
+                      )}
+                    </ul>
                   </div>
-                  <ul className="space-y-1 text-sm">
-                    {displayCatalysts.map((c, i) => (
-                      <li key={i} className="flex gap-2 text-foreground/75">
-                        <span className="font-mono-nums text-xs text-success shrink-0">
-                          {i + 1}.
-                        </span>
-                        <span>{c}</span>
-                      </li>
-                    ))}
-                    {hasDeepReport && catalysts && catalysts.length > 3 && (
-                      <li className="text-xs text-muted-foreground">
-                        {t('ui.analysis.moreCatalysts', { count: catalysts.length - 3 })}
-                      </li>
-                    )}
-                  </ul>
-                </div>
-              ) : analysis.catalysts?.trim() ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                    <TrendingUp className="h-3.5 w-3.5 text-success" />
-                    {t('ui.analysis.keyCatalysts')}
+                ) : analysis.catalysts?.trim() ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <TrendingUp className="h-3.5 w-3.5 text-success" />
+                      {t('ui.analysis.keyCatalysts')}
+                    </div>
+                    <p className="text-sm text-foreground/75">
+                      {hasDeepReport && analysis.catalysts.length > 150
+                        ? analysis.catalysts.slice(0, 150) + '...'
+                        : analysis.catalysts}
+                    </p>
                   </div>
-                  <p className="text-sm text-foreground/75">
-                    {hasDeepReport && analysis.catalysts.length > 150
-                      ? analysis.catalysts.slice(0, 150) + '...'
-                      : analysis.catalysts}
-                  </p>
-                </div>
-              ) : null}
+                ) : null}
 
-              {displayRisks ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                    <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
-                    {t('ui.analysis.riskNotes')}
+                {displayRisks ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                      {t('ui.analysis.riskNotes')}
+                    </div>
+                    <ul className="space-y-1 text-sm">
+                      {displayRisks.map((r, i) => (
+                        <li key={i} className="flex gap-2 text-foreground/75">
+                          <span className="font-mono-nums text-xs text-destructive shrink-0">
+                            {i + 1}.
+                          </span>
+                          <span>{r}</span>
+                        </li>
+                      ))}
+                      {hasDeepReport && risks && risks.length > 3 && (
+                        <li className="text-xs text-muted-foreground">
+                          {t('ui.analysis.moreRisks', { count: risks.length - 3 })}
+                        </li>
+                      )}
+                    </ul>
                   </div>
-                  <ul className="space-y-1 text-sm">
-                    {displayRisks.map((r, i) => (
-                      <li key={i} className="flex gap-2 text-foreground/75">
-                        <span className="font-mono-nums text-xs text-destructive shrink-0">
-                          {i + 1}.
-                        </span>
-                        <span>{r}</span>
-                      </li>
-                    ))}
-                    {hasDeepReport && risks && risks.length > 3 && (
-                      <li className="text-xs text-muted-foreground">
-                        {t('ui.analysis.moreRisks', { count: risks.length - 3 })}
-                      </li>
-                    )}
-                  </ul>
-                </div>
-              ) : analysis.risks?.trim() ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                    <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
-                    {t('ui.analysis.riskNotes')}
+                ) : analysis.risks?.trim() ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                      {t('ui.analysis.riskNotes')}
+                    </div>
+                    <p className="text-sm text-foreground/75">
+                      {hasDeepReport && analysis.risks.length > 150
+                        ? analysis.risks.slice(0, 150) + '...'
+                        : analysis.risks}
+                    </p>
                   </div>
-                  <p className="text-sm text-foreground/75">
-                    {hasDeepReport && analysis.risks.length > 150
-                      ? analysis.risks.slice(0, 150) + '...'
-                      : analysis.risks}
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          </>
-        )}
+                ) : null}
+              </div>
+            </>
+          )}
       </CardContent>
 
       {!isPortfolio && (

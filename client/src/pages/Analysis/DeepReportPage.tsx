@@ -70,7 +70,11 @@ function DeepReportPage() {
               className="gap-1 border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
             >
               <Sparkles size={12} />
-              {t(report.analysisTrace?.engine === 'basic' ? 'analysisFlow.basic' : 'analysisFlow.report')}
+              {t(
+                report.analysisTrace?.engine === 'basic'
+                  ? 'analysisFlow.basic'
+                  : 'analysisFlow.report',
+              )}
             </Badge>
           )}
         </div>
@@ -95,9 +99,7 @@ function DeepReportPage() {
               <EmptyTitle className="font-serif text-foreground">
                 {t('ui.analysis.contentLoadFailed')}
               </EmptyTitle>
-              <EmptyDescription className="text-muted-foreground">
-                {error}
-              </EmptyDescription>
+              <EmptyDescription className="text-muted-foreground">{error}</EmptyDescription>
               <div className="mt-4">
                 <Button onClick={() => window.location.reload()}>{t('common.retry')}</Button>
               </div>
@@ -128,11 +130,7 @@ function DeepReportPage() {
       {/* Report content */}
       {!loading && !error && report && (
         <div className="px-2 sm:px-4 pb-16">
-          <DeepReportView
-            report={report}
-            runId={runId}
-            onBack={() => navigate(-1)}
-          />
+          <DeepReportView report={report} runId={runId} onBack={() => navigate(-1)} />
         </div>
       )}
     </div>

@@ -4,27 +4,19 @@
  * plan, lessons). Switches between a read-only card and an editable textarea
  * based on the page's editing flag.
  */
-import {
-  Globe,
-  Target,
-  ClipboardList,
-  BookOpen,
-  Lightbulb,
-} from 'lucide-react';
+import { Globe, Target, ClipboardList, BookOpen, Lightbulb } from 'lucide-react';
 import type { JournalEntry } from '@shared/api.interface';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { useTranslation } from 'react-i18next';
 
 /** Metadata describing one journal section. */
 export interface JournalSection {
   /** Which JournalEntry field this section maps to. */
-  key: keyof Pick<JournalEntry, 'marketSummary' | 'portfolioSummary' | 'actions' | 'plan' | 'lessons'>;
+  key: keyof Pick<
+    JournalEntry,
+    'marketSummary' | 'portfolioSummary' | 'actions' | 'plan' | 'lessons'
+  >;
   /** Translation key suffix. */
   labelKey: string;
   /** Lucide icon component. */

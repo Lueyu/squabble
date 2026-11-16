@@ -5,13 +5,7 @@
  * currency pair, rates for a given date, and a manual refresh from the upstream
  * provider. Routes require a signed-in user to avoid anonymous provider abuse.
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Query,
-  NotFoundException,
-} from '@nestjs/common';
+import { Controller, Get, Post, Query, NotFoundException } from '@nestjs/common';
 
 import { FxService } from './fx.service';
 import { NeedLogin } from '../../common/platform/need-login.decorator';

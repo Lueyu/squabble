@@ -32,7 +32,9 @@ export async function removeLlmIntegration(): Promise<IntegrationSettings> {
   return response.data;
 }
 
-export async function testLlmIntegration(language?: 'zh-CN' | 'en'): Promise<IntegrationTestResult> {
+export async function testLlmIntegration(
+  language?: 'zh-CN' | 'en',
+): Promise<IntegrationTestResult> {
   const response = await http.post<IntegrationTestResult>(`${BASE_URL}/llm/test`, { language });
   return response.data;
 }

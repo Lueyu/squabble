@@ -12,7 +12,12 @@ import { Injectable, Inject, Logger, NotFoundException, BadRequestException } fr
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and, desc, inArray } from 'drizzle-orm';
 import { closed, transactions } from '@server/database/schema';
-import type { ClosedPosition, CreateClosedDto, RealizedPlSummary, RealizedPlItem } from '@shared/api.interface';
+import type {
+  ClosedPosition,
+  CreateClosedDto,
+  RealizedPlSummary,
+  RealizedPlItem,
+} from '@shared/api.interface';
 
 /** Partial-update variant of the create DTO. */
 type UpdateClosedDto = Partial<CreateClosedDto>;
@@ -206,12 +211,7 @@ export class ClosedService {
         currency: transactions.currency,
       })
       .from(transactions)
-      .where(
-        and(
-          eq(transactions.owner, userId),
-          inArray(transactions.ticker, tickers),
-        ),
-      )
+      .where(and(eq(transactions.owner, userId), inArray(transactions.ticker, tickers)))
       .groupBy(transactions.ticker, transactions.currency);
 
     const currencyMap = new Map<string, string>();
@@ -222,24 +222,26 @@ export class ClosedService {
     }
 
     // Aggregate closed rows by ticker.
-    const byTicker = new Map<string, {
-      company: string | null;
-      totalPl: number;
-      totalCost: number;
-      totalShares: number;
-      closeCount: number;
-      lastCloseDate: string | null;
-      currency: string;
-    }>();
+    const byTicker = new Map<
+      string,
+      {
+        company: string | null;
+        totalPl: number;
+        totalCost: number;
+        totalShares: number;
+        closeCount: number;
+        lastCloseDate: string | null;
+        currency: string;
+      }
+    >();
 
     for (const row of closedRows) {
       const existing = byTicker.get(row.ticker);
       const pl = row.realizedPl != null ? Number(row.realizedPl) : 0;
       const shares = row.shares != null ? Number(row.shares) : 0;
       // Cost basis for this closed lot = buyPrice * shares.
-      const cost = row.buyPrice != null && row.shares != null
-        ? Number(row.buyPrice) * Number(row.shares)
-        : 0;
+      const cost =
+        row.buyPrice != null && row.shares != null ? Number(row.buyPrice) * Number(row.shares) : 0;
 
       if (existing) {
         existing.totalPl += pl;
@@ -269,9 +271,8 @@ export class ClosedService {
     let totalLosers = 0;
 
     for (const [ticker, data] of byTicker) {
-      const returnPct = data.totalCost > 0
-        ? ((data.totalPl / data.totalCost) * 100).toFixed(2)
-        : null;
+      const returnPct =
+        data.totalCost > 0 ? ((data.totalPl / data.totalCost) * 100).toFixed(2) : null;
 
       items.push({
         ticker,

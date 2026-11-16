@@ -24,7 +24,10 @@ import { eq } from 'drizzle-orm';
 
 @Injectable()
 export class AuthGlobalGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector, @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
+  constructor(
+    private readonly reflector: Reflector,
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const needLogin = this.reflector.getAllAndOverride<boolean>(NEED_LOGIN_KEY, [
@@ -42,8 +45,10 @@ export class AuthGlobalGuard implements CanActivate {
     if (!payload) {
       throw new UnauthorizedException('登录已过期，请重新登录');
     }
-    const [user] = await this.db.select({ sessionVersion: users.sessionVersion })
-      .from(users).where(eq(users.id, payload.sub));
+    const [user] = await this.db
+      .select({ sessionVersion: users.sessionVersion })
+      .from(users)
+      .where(eq(users.id, payload.sub));
     if (!user || user.sessionVersion !== (payload.ver ?? 0)) {
       throw new UnauthorizedException('Session revoked; please sign in again');
     }

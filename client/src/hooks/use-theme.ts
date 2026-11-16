@@ -72,7 +72,7 @@ function setTheme(value: SetStateAction<Theme>): void {
 }
 
 function toggleTheme(): void {
-  setTheme((previous: Theme) => previous === 'dark' ? 'light' : 'dark');
+  setTheme((previous: Theme) => (previous === 'dark' ? 'light' : 'dark'));
 }
 
 function setDesignTheme(designTheme: DesignTheme): void {

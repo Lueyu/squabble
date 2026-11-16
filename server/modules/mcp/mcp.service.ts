@@ -28,11 +28,7 @@ import {
 import { and, desc, eq } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import {
-  agentSessions,
-  deepReport,
-  paperOrders,
-} from '../../database/schema';
+import { agentSessions, deepReport, paperOrders } from '../../database/schema';
 import { PaperTradingService } from '../paper-trading/paper-trading.service';
 import { QuoteService } from '../quote/quote.service';
 import { ImportService } from '../import/import.service';
@@ -113,7 +109,11 @@ export class McpService {
   async updateSession(
     userId: string,
     id: string,
-    patch: { dailyLimitUsd?: number; permission?: AgentPermission; approvalMode?: AgentApprovalMode },
+    patch: {
+      dailyLimitUsd?: number;
+      permission?: AgentPermission;
+      approvalMode?: AgentApprovalMode;
+    },
   ): Promise<AgentSession> {
     const values: Record<string, unknown> = { updatedAt: new Date() };
     if (patch.dailyLimitUsd != null && patch.dailyLimitUsd > 0) {
@@ -145,12 +145,10 @@ export class McpService {
   /** Validate the Bearer token against an active agent session. */
   async authenticate(token: string): Promise<McpSessionContext> {
     if (!token) throw new UnauthorizedException('Missing MCP token');
-    const [row] = await this.db
-      .select()
-      .from(agentSessions)
-      .where(eq(agentSessions.token, token));
+    const [row] = await this.db.select().from(agentSessions).where(eq(agentSessions.token, token));
     if (!row) throw new UnauthorizedException('Invalid MCP token');
-    if (row.status !== 'active') throw new ForbiddenException('This agent session has been revoked');
+    if (row.status !== 'active')
+      throw new ForbiddenException('This agent session has been revoked');
     // Track usage.
     await this.db
       .update(agentSessions)
@@ -171,7 +169,8 @@ export class McpService {
     return [
       {
         name: 'get_portfolio',
-        description: '获取模拟盘账户概览：现金、净值、持仓（含现价和浮盈亏）、今日盈亏、AI 盯盘状态。Get the paper trading account overview: cash, equity, positions with live prices and unrealized P&L, today\'s P&L, and bot status.',
+        description:
+          "获取模拟盘账户概览：现金、净值、持仓（含现价和浮盈亏）、今日盈亏、AI 盯盘状态。Get the paper trading account overview: cash, equity, positions with live prices and unrealized P&L, today's P&L, and bot status.",
         inputSchema: {
           type: 'object',
           properties: {},
@@ -179,7 +178,8 @@ export class McpService {
       },
       {
         name: 'get_quotes',
-        description: '获取股票实时行情。支持美股（如 AAPL）、港股（如 0700）、A股（如 600519）。Get live stock quotes. Supports US (AAPL), HK (0700), and CN (600519) markets.',
+        description:
+          '获取股票实时行情。支持美股（如 AAPL）、港股（如 0700）、A股（如 600519）。Get live stock quotes. Supports US (AAPL), HK (0700), and CN (600519) markets.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -194,7 +194,8 @@ export class McpService {
       },
       {
         name: 'get_research_report',
-        description: '获取指定股票的最新 AI 深度研究报告（多空辩论、批评者审视、风控检查、评级）。Get the latest AI deep research report for a stock (bull/bear debate, critic review, risk gates, rating).',
+        description:
+          '获取指定股票的最新 AI 深度研究报告（多空辩论、批评者审视、风控检查、评级）。Get the latest AI deep research report for a stock (bull/bear debate, critic review, risk gates, rating).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -208,7 +209,8 @@ export class McpService {
       },
       {
         name: 'place_paper_order',
-        description: '在模拟盘下单（买入或卖出）。订单会经过风控检查（日亏损熔断、单笔上限、频次上限）。如果代理会话设置了"需要审批"模式，订单将进入待审批状态。Place a paper trading order (buy or sell). Orders go through risk gates. If the session requires approval, the order will be pending until the user approves it.',
+        description:
+          '在模拟盘下单（买入或卖出）。订单会经过风控检查（日亏损熔断、单笔上限、频次上限）。如果代理会话设置了"需要审批"模式，订单将进入待审批状态。Place a paper trading order (buy or sell). Orders go through risk gates. If the session requires approval, the order will be pending until the user approves it.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -222,7 +224,8 @@ export class McpService {
       },
       {
         name: 'list_orders',
-        description: '获取最近的模拟盘订单（含状态：已成交/待审批/被风控拦截）。Get recent paper trading orders (including status: filled/pending_approval/rejected).',
+        description:
+          '获取最近的模拟盘订单（含状态：已成交/待审批/被风控拦截）。Get recent paper trading orders (including status: filled/pending_approval/rejected).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -232,7 +235,8 @@ export class McpService {
       },
       {
         name: 'import_holdings',
-        description: '将持仓数据导入吵股（创建真实的持仓记录）。输入为股票代码、股数、成本价的列表。Import holdings into Squabble (creates real holding records). Input is a list of ticker, shares, and cost basis.',
+        description:
+          '将持仓数据导入吵股（创建真实的持仓记录）。输入为股票代码、股数、成本价的列表。Import holdings into Squabble (creates real holding records). Input is a list of ticker, shares, and cost basis.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -259,7 +263,11 @@ export class McpService {
   }
 
   /** Dispatch a tools/call request. */
-  async callTool(ctx: McpSessionContext, name: string, args: Record<string, unknown>): Promise<unknown> {
+  async callTool(
+    ctx: McpSessionContext,
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
     this.logger.log(`tool=${name} session=${ctx.name}`);
     switch (name) {
       case 'get_portfolio':
@@ -322,7 +330,9 @@ export class McpService {
   }
 
   private async toolGetResearchReport(ctx: McpSessionContext, args: Record<string, unknown>) {
-    const ticker = String(args.ticker ?? '').trim().toUpperCase();
+    const ticker = String(args.ticker ?? '')
+      .trim()
+      .toUpperCase();
     if (!ticker) throw new BadRequestException('ticker cannot be empty');
     const [report] = await this.db
       .select()
@@ -331,7 +341,10 @@ export class McpService {
       .orderBy(desc(deepReport.createdAt))
       .limit(1);
     if (!report) {
-      return { found: false, message: `没有 ${ticker} 的研究报告。请先在吵股中对该股票运行多智能体分析。` };
+      return {
+        found: false,
+        message: `没有 ${ticker} 的研究报告。请先在吵股中对该股票运行多智能体分析。`,
+      };
     }
     return {
       found: true,
@@ -359,8 +372,10 @@ export class McpService {
     const side = String(args.side ?? '').trim();
     const quantity = Math.floor(Number(args.quantity));
     if (!ticker) throw new BadRequestException('ticker cannot be empty');
-    if (side !== 'buy' && side !== 'sell') throw new BadRequestException('side must be buy or sell');
-    if (!Number.isFinite(quantity) || quantity <= 0) throw new BadRequestException('quantity must be a positive integer');
+    if (side !== 'buy' && side !== 'sell')
+      throw new BadRequestException('side must be buy or sell');
+    if (!Number.isFinite(quantity) || quantity <= 0)
+      throw new BadRequestException('quantity must be a positive integer');
 
     // Check the session's daily spending limit for today.
     const todaySpend = await this.todaySessionSpend(ctx.sessionId);
@@ -462,10 +477,7 @@ export class McpService {
       }, 0);
   }
 
-  private mapSession(
-    row: typeof agentSessions.$inferSelect,
-    token?: string,
-  ): AgentSession {
+  private mapSession(row: typeof agentSessions.$inferSelect, token?: string): AgentSession {
     return {
       id: row.id,
       name: row.name,

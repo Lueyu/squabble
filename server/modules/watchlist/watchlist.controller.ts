@@ -6,16 +6,7 @@
  * derives the owning `userId` from `req.userContext` so all access is scoped to
  * the current user. Business logic lives in `WatchlistService`.
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Delete,
-  Param,
-  Body,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 
@@ -54,10 +45,7 @@ export class WatchlistController {
    * @param req Authenticated request.
    */
   @Get(':id')
-  async findOne(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ): Promise<WatchItem> {
+  async findOne(@Param('id') id: string, @Req() req: Request): Promise<WatchItem> {
     const { userId } = req.userContext;
     return this.watchlistService.findOne(id, userId);
   }
@@ -70,10 +58,7 @@ export class WatchlistController {
    * @param req Authenticated request.
    */
   @Post()
-  async create(
-    @Body() dto: CreateWatchItemDto,
-    @Req() req: Request,
-  ): Promise<WatchItem> {
+  async create(@Body() dto: CreateWatchItemDto, @Req() req: Request): Promise<WatchItem> {
     const { userId } = req.userContext;
     return this.watchlistService.create(dto, userId);
   }
@@ -118,10 +103,7 @@ export class WatchlistController {
    * @param req Authenticated request.
    */
   @Delete(':id')
-  async remove(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ): Promise<{ success: true }> {
+  async remove(@Param('id') id: string, @Req() req: Request): Promise<{ success: true }> {
     const { userId } = req.userContext;
     return this.watchlistService.remove(id, userId);
   }

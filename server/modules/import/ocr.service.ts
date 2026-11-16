@@ -44,7 +44,9 @@ export class OcrService {
    */
   async extract(dto: OcrExtractDto): Promise<OcrExtractResult> {
     const apiKey = (dto.apiKey ?? '').trim();
-    const baseUrl = (dto.baseUrl ?? 'https://ark.cn-beijing.volces.com/api/v3').trim().replace(/\/+$/, '');
+    const baseUrl = (dto.baseUrl ?? 'https://ark.cn-beijing.volces.com/api/v3')
+      .trim()
+      .replace(/\/+$/, '');
     const model = (dto.model ?? '').trim();
     if (!apiKey) throw new BadRequestException('缺少大模型 API Key');
     if (!model) throw new BadRequestException('缺少模型名称');
@@ -84,8 +86,10 @@ export class OcrService {
       );
       content = response.data?.choices?.[0]?.message?.content;
     } catch (error) {
-      const status = (error as { response?: { status?: number; data?: unknown } })?.response?.status;
-      const detail = (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
+      const status = (error as { response?: { status?: number; data?: unknown } })?.response
+        ?.status;
+      const detail = (error as { response?: { data?: { error?: { message?: string } } } })?.response
+        ?.data?.error?.message;
       this.logger.warn(`ocr upstream failed (status=${status ?? 'n/a'})`);
       throw new BadRequestException(
         `识别请求失败${status ? `（HTTP ${status}）` : ''}${detail ? `：${detail}` : '，请检查 Key、模型与接口地址'}`,

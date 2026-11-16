@@ -72,7 +72,12 @@ export class DashboardService {
    * @param to     Target currency.
    * @param date   Optional rate date.
    */
-  private async safeConvert(amount: number, from: string, to: string, date?: string): Promise<number> {
+  private async safeConvert(
+    amount: number,
+    from: string,
+    to: string,
+    date?: string,
+  ): Promise<number> {
     if (from.toUpperCase() === to.toUpperCase()) return amount;
     try {
       return await this.fxService.convert(amount, from, to, date);
@@ -350,12 +355,7 @@ export class DashboardService {
         dailyPct: snapshots.dailyPct,
       })
       .from(snapshots)
-      .where(
-        and(
-          sql`${snapshots.owner} = ${userId}`,
-          gte(snapshots.snapshotDate, startStr),
-        ),
-      )
+      .where(and(sql`${snapshots.owner} = ${userId}`, gte(snapshots.snapshotDate, startStr)))
       .orderBy(snapshots.snapshotDate);
 
     // Snapshot currency: assumed USD historically (single-currency era).
@@ -382,9 +382,7 @@ export class DashboardService {
           avBase = await this.fxService.convert(av, 'USD', base, dateStr);
           dpBase = await this.fxService.convert(dp, 'USD', base, dateStr);
         } catch (err) {
-          this.logger.warn(
-            `fx convert failed for snapshot ${dateStr} USD->${base}, fallback to 1`,
-          );
+          this.logger.warn(`fx convert failed for snapshot ${dateStr} USD->${base}, fallback to 1`);
         }
       }
 

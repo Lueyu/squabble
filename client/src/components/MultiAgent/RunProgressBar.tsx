@@ -69,7 +69,13 @@ function getStepState(
   if (status === 'failed' || status === 'cancelled') {
     // all steps up to current are done-ish, the failing step shows failed
     // find which step was running when it failed — approximate: use prior step index
-    const stepKeys: AgentRunStatus[] = ['fetching', 'debating', 'critiquing', 'risk_check', 'completed'];
+    const stepKeys: AgentRunStatus[] = [
+      'fetching',
+      'debating',
+      'critiquing',
+      'risk_check',
+      'completed',
+    ];
     // Without a failed-step field, show first step as failed approximation
     if (stepIndex === 0) return 'failed';
     return 'pending';
@@ -153,15 +159,15 @@ function RunProgressBar({ status }: RunProgressBarProps) {
         {steps.slice(0, -1).map((_step, idx) => {
           const state = getStepState(idx, status);
           const nextState = getStepState(idx + 1, status);
-          const done = state === 'done' && (nextState === 'done' || nextState === 'active' || nextState === 'awaiting');
+          const done =
+            state === 'done' &&
+            (nextState === 'done' || nextState === 'active' || nextState === 'awaiting');
           return (
             <div
               key={`line-${idx}`}
               className={[
                 'mt-0 flex-1 border-t-2',
-                done
-                  ? 'border-emerald-500'
-                  : 'border-slate-200 dark:border-slate-700',
+                done ? 'border-emerald-500' : 'border-slate-200 dark:border-slate-700',
               ].join(' ')}
               style={{ marginLeft: '1.25rem', marginRight: '1.25rem' }}
             />

@@ -21,5 +21,5 @@ export function resolveSettingsSection(pathname: string, hash = ''): SettingsSec
     if (hash === '#local-agents') return 'agents';
     return 'models';
   }
-  return SETTINGS_SECTIONS.find(section => path === `/settings/${section.id}`)?.id ?? null;
+  return SETTINGS_SECTIONS.find((section) => path === `/settings/${section.id}`)?.id ?? null;
 }

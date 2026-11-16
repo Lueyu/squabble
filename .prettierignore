@@ -1,0 +1,27 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-server/
+output/
+logs/
+
+# 数据与部署脚本（非格式化目标）
+db/
+deploy/
+
+# 生成代码与第三方 vendored 组件（保持上游原样，便于升级对比）
+client/src/api/gen/
+client/src/components/ui/
+
+# 翻译资源为扁平 key-value，重排只会制造噪音
+client/src/i18n/*.json
+
+# 测试文件暂不参与格式化（降低 diff 噪音，保持用例可对照）
+**/*.spec.ts
+**/*.spec.cjs
+**/*.spec.mts
+**/*.test.cjs
+
+# 锁文件与文档
+package-lock.json
+*.md

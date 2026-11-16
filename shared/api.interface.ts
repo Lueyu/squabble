@@ -397,13 +397,7 @@ export type AgentConfidence = 'high' | 'medium' | 'low';
 
 export type EvidenceRole = 'fundamental' | 'news' | 'technical' | 'macro';
 
-export type EvidenceType =
-  | 'financial'
-  | 'news'
-  | 'price'
-  | 'indicator'
-  | 'rating'
-  | 'other';
+export type EvidenceType = 'financial' | 'news' | 'price' | 'indicator' | 'rating' | 'other';
 
 export type DebateSide = 'bull' | 'bear';
 
@@ -985,7 +979,8 @@ export interface RegisterDto {
  * Paper trading (AI 模拟盘) — fully isolated from real records.
  */
 export type PaperSide = 'buy' | 'sell';
-export type PaperOrderStatus = 'pending' | 'pending_approval' | 'filled' | 'rejected_risk' | 'cancelled' | 'failed';
+export type PaperOrderStatus =
+  'pending' | 'pending_approval' | 'filled' | 'rejected_risk' | 'cancelled' | 'failed';
 export type PaperOrderSource = 'agent' | 'manual';
 export type PaperEventType =
   | 'bot_started'
@@ -1080,7 +1075,14 @@ export interface PaperSnapshotPoint {
 
 export interface PaperOverview {
   account: PaperAccount;
-  positions: Array<PaperPosition & { lastPrice: string | null; marketValue: string | null; unrealizedPl: string | null; unrealizedPct: string | null }>;
+  positions: Array<
+    PaperPosition & {
+      lastPrice: string | null;
+      marketValue: string | null;
+      unrealizedPl: string | null;
+      unrealizedPct: string | null;
+    }
+  >;
   equity: string;
   positionsValue: string;
   todayPl: string | null;

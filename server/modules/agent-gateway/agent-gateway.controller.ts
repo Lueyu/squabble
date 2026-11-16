@@ -14,10 +14,7 @@
  */
 import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 
-import {
-  AgentGatewayGuard,
-  AgentGatewayRequest,
-} from '../../common/guards/agent-gateway.guard';
+import { AgentGatewayGuard, AgentGatewayRequest } from '../../common/guards/agent-gateway.guard';
 import { HoldingsService } from '../holdings/holdings.service';
 import type { Holding, ListResponse } from '@shared/api.interface';
 
@@ -35,9 +32,7 @@ export class AgentGatewayController {
    * @param req Gateway-authenticated request carrying `agentContext.userId`.
    */
   @Get('holdings')
-  async listHoldings(
-    @Req() req: AgentGatewayRequest,
-  ): Promise<ListResponse<Holding>> {
+  async listHoldings(@Req() req: AgentGatewayRequest): Promise<ListResponse<Holding>> {
     const { userId } = req.agentContext!;
     return this.holdingsService.findAll(userId);
   }

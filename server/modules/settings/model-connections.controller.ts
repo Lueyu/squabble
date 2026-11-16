@@ -10,7 +10,10 @@ import { BudgetExceededException } from '../llm-budget/llm-budget.rules';
 @NeedLogin()
 @Controller('api/settings/model-connections')
 export class ModelConnectionsController {
-  constructor(private readonly connections: ModelConnectionsService, private readonly llm: LlmService) {}
+  constructor(
+    private readonly connections: ModelConnectionsService,
+    private readonly llm: LlmService,
+  ) {}
 
   @Get()
   async list(@Req() request: Request) {
@@ -33,16 +36,29 @@ export class ModelConnectionsController {
   }
 
   @Post(':id/test')
-  async test(@Req() request: Request, @Param('id') id: string, @Body() body?: { language?: string }) {
+  async test(
+    @Req() request: Request,
+    @Param('id') id: string,
+    @Body() body?: { language?: string },
+  ) {
     // Fail owner resolution before the transport/budget test, never silently use another credential.
     await this.connections.resolve(request.userContext.userId, id);
     try {
-      await this.llm.chatFast([{ role: 'user', content: 'Reply with OK only.' }], request.userContext.userId,
-        { connectionId: id, purpose: 'connection-test', maxOutputTokens: 16 });
-      return { ok: true, message: body?.language === 'zh-CN' ? '模型连接正常。' : 'The model connection is working.' };
+      await this.llm.chatFast(
+        [{ role: 'user', content: 'Reply with OK only.' }],
+        request.userContext.userId,
+        { connectionId: id, purpose: 'connection-test', maxOutputTokens: 16 },
+      );
+      return {
+        ok: true,
+        message: body?.language === 'zh-CN' ? '模型连接正常。' : 'The model connection is working.',
+      };
     } catch (error) {
       if (error instanceof BudgetExceededException) throw error;
-      return { ok: false, message: safeAnalysisError(error, body?.language === 'zh-CN' ? 'zh-CN' : 'en') };
+      return {
+        ok: false,
+        message: safeAnalysisError(error, body?.language === 'zh-CN' ? 'zh-CN' : 'en'),
+      };
     }
   }
 }

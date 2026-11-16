@@ -23,9 +23,15 @@ export interface LlmBudgetUsage {
   reservedTokens: number;
   estimatedCostUsd: number | null;
   recent: Array<{
-    id: string; purpose: string; model: string; taskId: string;
-    inputTokens: number; outputTokens: number; chargedTokens: number;
-    status: string; createdAt: string;
+    id: string;
+    purpose: string;
+    model: string;
+    taskId: string;
+    inputTokens: number;
+    outputTokens: number;
+    chargedTokens: number;
+    status: string;
+    createdAt: string;
   }>;
 }
 
@@ -57,7 +63,11 @@ export interface CouncilMember {
   speakingStyle?: CouncilSpeakingStyle;
   avatar?: 'value' | 'growth' | 'risk' | 'technical' | 'news' | 'macro' | 'moderator';
 }
-export interface CouncilConfig { enabled: boolean; members: CouncilMember[]; webResearch?: boolean }
+export interface CouncilConfig {
+  enabled: boolean;
+  members: CouncilMember[];
+  webResearch?: boolean;
+}
 export interface CreateCouncilSession {
   profileId?: string;
   ticker: string;
@@ -106,7 +116,13 @@ export interface CouncilReport {
   summary: string;
   dissent: string[];
   nextReviewCondition: string;
-  evidence: Array<{ id: string; title: string; content: string; sourceUrl: string | null; fetchedAt: string }>;
+  evidence: Array<{
+    id: string;
+    title: string;
+    content: string;
+    sourceUrl: string | null;
+    fetchedAt: string;
+  }>;
   sourceRunId: string | null;
   candidate: CouncilCandidate | null;
   paperOrderId: string | null;
@@ -134,7 +150,12 @@ export interface CouncilSession {
   updatedAt: string;
   members?: CouncilMember[];
   webResearch?: boolean;
-  progress?: { phase: CouncilPhase; memberId: string | null; turn: number; totalTurns: number } | null;
+  progress?: {
+    phase: CouncilPhase;
+    memberId: string | null;
+    turn: number;
+    totalTurns: number;
+  } | null;
 }
 export interface CouncilReviewResult {
   approved: boolean;

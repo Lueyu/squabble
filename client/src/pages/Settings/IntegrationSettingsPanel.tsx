@@ -17,13 +17,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -81,8 +75,12 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-export default function IntegrationSettingsPanel({ section, active = true }: {
-  section: 'models' | 'data'; active?: boolean;
+export default function IntegrationSettingsPanel({
+  section,
+  active = true,
+}: {
+  section: 'models' | 'data';
+  active?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -95,7 +93,9 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
   const [llmError, setLlmError] = useState<string | null>(null);
   const [financialError, setFinancialError] = useState<string | null>(null);
   const [llmTestResult, setLlmTestResult] = useState<IntegrationTestResult | null>(null);
-  const [financialTestResult, setFinancialTestResult] = useState<IntegrationTestResult | null>(null);
+  const [financialTestResult, setFinancialTestResult] = useState<IntegrationTestResult | null>(
+    null,
+  );
   const [deleteTarget, setDeleteTarget] = useState<'llm' | 'financial' | null>(null);
 
   const settingsQuery = useQuery<IntegrationSettings>({
@@ -141,11 +141,18 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
     },
     onError: (error: Error) => {
       const message = getErrorMessage(error, t('ui.settings.saveFailed'));
-      setLlmError(message.startsWith('API base URL must use HTTPS')
-        ? t('ui.settings.llm.invalidUrl') : message);
+      setLlmError(
+        message.startsWith('API base URL must use HTTPS')
+          ? t('ui.settings.llm.invalidUrl')
+          : message,
+      );
     },
   });
-  const saveFinancial = useMutation<IntegrationSettings, Error, { provider: 'finnhub'; apiKey?: string }>({
+  const saveFinancial = useMutation<
+    IntegrationSettings,
+    Error,
+    { provider: 'finnhub'; apiKey?: string }
+  >({
     mutationFn: saveFinancialIntegration,
     retry: false,
     onSuccess: (saved: IntegrationSettings) => {
@@ -157,25 +164,28 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
       setFinancialTestResult(null);
       toast.success(t('ui.settings.saved'));
     },
-    onError: (error: Error) => setFinancialError(getErrorMessage(error, t('ui.settings.saveFailed'))),
+    onError: (error: Error) =>
+      setFinancialError(getErrorMessage(error, t('ui.settings.saveFailed'))),
   });
   const testLlm = useMutation<IntegrationTestResult, Error, void>({
     mutationFn: () => testLlmIntegration(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
     retry: false,
     onSuccess: setLlmTestResult,
-    onError: (error: Error) => setLlmTestResult({
-      ok: false,
-      message: getErrorMessage(error, t('ui.settings.testFailed')),
-    }),
+    onError: (error: Error) =>
+      setLlmTestResult({
+        ok: false,
+        message: getErrorMessage(error, t('ui.settings.testFailed')),
+      }),
   });
   const testFinancial = useMutation<IntegrationTestResult, Error, void>({
     mutationFn: testFinancialIntegration,
     retry: false,
     onSuccess: setFinancialTestResult,
-    onError: (error: Error) => setFinancialTestResult({
-      ok: false,
-      message: getErrorMessage(error, t('ui.settings.testFailed')),
-    }),
+    onError: (error: Error) =>
+      setFinancialTestResult({
+        ok: false,
+        message: getErrorMessage(error, t('ui.settings.testFailed')),
+      }),
   });
   const deleteLlm = useMutation<IntegrationSettings, Error, void>({
     mutationFn: removeLlmIntegration,
@@ -237,12 +247,16 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
       return;
     }
     if (!apiKey && (llm?.source !== 'user' || llm.needsReentry)) {
-      setLlmError(t(llm?.needsReentry
-        ? 'ui.settings.reentryRequired' : 'ui.settings.llm.keyRequired'));
+      setLlmError(
+        t(llm?.needsReentry ? 'ui.settings.reentryRequired' : 'ui.settings.llm.keyRequired'),
+      );
       return;
     }
-    if (!apiKey && llm?.source === 'user'
-      && baseUrl.replace(/\/+$/u, '') !== llm.baseUrl.replace(/\/+$/u, '')) {
+    if (
+      !apiKey &&
+      llm?.source === 'user' &&
+      baseUrl.replace(/\/+$/u, '') !== llm.baseUrl.replace(/\/+$/u, '')
+    ) {
       setLlmError(t('integrations.providerChanged'));
       return;
     }
@@ -258,8 +272,13 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
   function handleSaveFinancial(): void {
     const apiKey = financialKey.trim();
     if (!apiKey && (financial?.source !== 'user' || financial.needsReentry)) {
-      setFinancialError(t(financial?.needsReentry
-        ? 'ui.settings.reentryRequired' : 'ui.settings.financial.keyRequired'));
+      setFinancialError(
+        t(
+          financial?.needsReentry
+            ? 'ui.settings.reentryRequired'
+            : 'ui.settings.financial.keyRequired',
+        ),
+      );
       return;
     }
     saveFinancial.mutate({ provider: 'finnhub', ...(apiKey ? { apiKey } : {}) });
@@ -272,15 +291,22 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
           <CardContent className="flex flex-col items-start gap-4 pt-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0 flex-1 space-y-1">
               <h2 className="font-semibold">{t('integrations.readyTitle')}</h2>
-              <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('integrations.readyBody')}</p>
+              <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+                {t('integrations.readyBody')}
+              </p>
             </div>
-            <Button asChild><Link to="/analysis">{t('integrations.runAnalysis')}</Link></Button>
+            <Button asChild>
+              <Link to="/analysis">{t('integrations.runAnalysis')}</Link>
+            </Button>
           </CardContent>
         </Card>
       )}
 
       {settingsQuery.isLoading ? (
-        <div className="flex min-h-56 items-center justify-center gap-2 text-muted-foreground" role="status">
+        <div
+          className="flex min-h-56 items-center justify-center gap-2 text-muted-foreground"
+          role="status"
+        >
           <LoaderCircle className="size-4 animate-spin" /> {t('ui.settings.loading')}
         </div>
       ) : settingsQuery.isError || !settingsQuery.data ? (
@@ -294,243 +320,369 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
         </Card>
       ) : (
         <>
-          {section === 'models' && <Card className="min-w-0">
-            <CardHeader className="gap-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-lg bg-primary/10 p-2 text-primary"><Sparkles size={19} /></div>
-                  <div>
-                    <CardTitle className="text-lg leading-snug">{t('ui.settings.llm.title')}</CardTitle>
-                    <CardDescription className="mt-1">{t('ui.settings.llm.subtitle')}</CardDescription>
+          {section === 'models' && (
+            <Card className="min-w-0">
+              <CardHeader className="gap-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2 text-primary">
+                      <Sparkles size={19} />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg leading-snug">
+                        {t('ui.settings.llm.title')}
+                      </CardTitle>
+                      <CardDescription className="mt-1">
+                        {t('ui.settings.llm.subtitle')}
+                      </CardDescription>
+                    </div>
                   </div>
+                  <Badge variant={llm?.hasApiKey ? 'secondary' : 'outline'}>
+                    {t(
+                      llm?.needsReentry
+                        ? 'ui.settings.source.needsReentry'
+                        : llm?.source === 'builtin'
+                          ? 'integrations.basicBadge'
+                          : `ui.settings.source.${llm?.source ?? 'none'}`,
+                    )}
+                  </Badge>
                 </div>
-                <Badge variant={llm?.hasApiKey ? 'secondary' : 'outline'}>
-                  {t(llm?.needsReentry
-                    ? 'ui.settings.source.needsReentry'
-                    : llm?.source === 'builtin' ? 'integrations.basicBadge'
-                    : `ui.settings.source.${llm?.source ?? 'none'}`)}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <p className="text-sm leading-6 text-muted-foreground">
-                {t(llm?.engine === 'basic' ? 'integrations.basicScope' : 'integrations.llmScope')}
-              </p>
-              {llm?.needsReentry && (
-                <p role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm leading-6 text-foreground">
-                  {t('ui.settings.reentryWarning')}
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {t(llm?.engine === 'basic' ? 'integrations.basicScope' : 'integrations.llmScope')}
                 </p>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="llm-base-url">{t('ui.settings.llm.baseUrl')}</Label>
-                <Input id="llm-base-url" type="url" value={llmDraft.baseUrl}
-                  onChange={(event) => updateLlm('baseUrl', event.target.value)}
-                  placeholder="https://api.openai.com/v1" autoComplete="url" />
-                <p className="text-xs leading-5 text-muted-foreground">
-                  {t('ui.settings.llm.baseHint')}
-                </p>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button size="sm" variant="outline" type="button"
-                    onClick={() => {
-                      setLlmDraft({
-                        baseUrl: 'https://openrouter.ai/api/v1',
-                        fastModel: 'openrouter/free',
-                        slowModel: 'openrouter/free',
-                        apiKey: '',
-                      });
-                      setLlmDirty(true);
-                      setLlmError(null);
-                      setLlmTestResult(null);
-                    }}>
-                    {t('integrations.openRouterPreset')}
-                  </Button>
-                  <Button size="sm" variant="outline" type="button"
-                    onClick={() => updateLlm('baseUrl', 'https://api.openai.com/v1')}>
-                    OpenAI
-                  </Button>
-                  <Button size="sm" variant="outline" type="button"
-                    onClick={() => {
-                      setLlmDraft((current: LlmDraft) => ({ ...current,
-                        baseUrl: 'https://api.deepseek.com', fastModel: 'deepseek-flash', slowModel: 'deepseek-flash',
-                        apiKey: /^https:\/\/api\.deepseek\.com(?:\/|$)/iu.test(current.baseUrl.trim()) ? current.apiKey : '',
-                      }));
-                      setLlmDirty(true);
-                      setLlmError(null);
-                      setLlmTestResult(null);
-                    }}>
-                    DeepSeek
-                  </Button>
-                  <Button size="sm" variant="outline" type="button"
-                    onClick={() => updateLlm('baseUrl', 'https://ark.cn-beijing.volces.com/api/v3')}>
-                    {t('ui.settings.llm.doubao')}
-                  </Button>
-                </div>
-                <p className="text-xs leading-5 text-muted-foreground">{t('integrations.presetHint')}</p>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="llm-fast-model">{t('ui.settings.llm.fastModel')}</Label>
-                  <Input id="llm-fast-model" value={llmDraft.fastModel}
-                    onChange={(event) => updateLlm('fastModel', event.target.value)}
-                    placeholder={t('ui.settings.llm.modelPlaceholder')} autoComplete="off" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="llm-slow-model">{t('ui.settings.llm.slowModel')}</Label>
-                  <Input id="llm-slow-model" value={llmDraft.slowModel}
-                    onChange={(event) => updateLlm('slowModel', event.target.value)}
-                    placeholder={t('ui.settings.llm.modelPlaceholder')} autoComplete="off" />
-                </div>
-              </div>
-              <p className="text-xs leading-5 text-muted-foreground">
-                {t('ui.settings.llm.modelHint')}
-              </p>
-              {/^https:\/\/api\.deepseek\.com(?:\/|$)/iu.test(llmDraft.baseUrl.trim()) &&
-                <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs leading-6 text-muted-foreground">
-                  <p>{t('integrations.deepSeekModelHint')}</p>
-                  <p className="mt-1">{t('integrations.deepSeekModeHint')}</p>
-                </div>}
-              <div className="space-y-2">
-                <Label htmlFor="llm-api-key">{t('ui.settings.apiKey')}</Label>
-                <div className="flex gap-2">
-                  <Input id="llm-api-key" type={showLlmKey ? 'text' : 'password'}
-                    value={llmDraft.apiKey}
-                    onChange={(event) => updateLlm('apiKey', event.target.value)}
-                    placeholder={llm?.hasApiKey ? t('ui.settings.keepExisting') : t('ui.settings.enterKey')}
-                    autoComplete="new-password" spellCheck={false} />
-                  <Button type="button" variant="outline" size="icon"
-                    aria-label={t(showLlmKey ? 'ui.settings.hideKey' : 'ui.settings.showKey')}
-                    onClick={() => setShowLlmKey((current: boolean) => !current)}>
-                    {showLlmKey ? <EyeOff /> : <Eye />}
-                  </Button>
-                </div>
-                {llm?.hasApiKey && (
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <CheckCircle2 className="size-3.5 text-success" />
-                    {t('ui.settings.savedKey')}{llm.maskedApiKey ? ` · ${llm.maskedApiKey}` : ''}
+                {llm?.needsReentry && (
+                  <p
+                    role="alert"
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm leading-6 text-foreground"
+                  >
+                    {t('ui.settings.reentryWarning')}
                   </p>
                 )}
+                <div className="space-y-2">
+                  <Label htmlFor="llm-base-url">{t('ui.settings.llm.baseUrl')}</Label>
+                  <Input
+                    id="llm-base-url"
+                    type="url"
+                    value={llmDraft.baseUrl}
+                    onChange={(event) => updateLlm('baseUrl', event.target.value)}
+                    placeholder="https://api.openai.com/v1"
+                    autoComplete="url"
+                  />
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t('ui.settings.llm.baseHint')}
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() => {
+                        setLlmDraft({
+                          baseUrl: 'https://openrouter.ai/api/v1',
+                          fastModel: 'openrouter/free',
+                          slowModel: 'openrouter/free',
+                          apiKey: '',
+                        });
+                        setLlmDirty(true);
+                        setLlmError(null);
+                        setLlmTestResult(null);
+                      }}
+                    >
+                      {t('integrations.openRouterPreset')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() => updateLlm('baseUrl', 'https://api.openai.com/v1')}
+                    >
+                      OpenAI
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() => {
+                        setLlmDraft((current: LlmDraft) => ({
+                          ...current,
+                          baseUrl: 'https://api.deepseek.com',
+                          fastModel: 'deepseek-flash',
+                          slowModel: 'deepseek-flash',
+                          apiKey: /^https:\/\/api\.deepseek\.com(?:\/|$)/iu.test(
+                            current.baseUrl.trim(),
+                          )
+                            ? current.apiKey
+                            : '',
+                        }));
+                        setLlmDirty(true);
+                        setLlmError(null);
+                        setLlmTestResult(null);
+                      }}
+                    >
+                      DeepSeek
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() =>
+                        updateLlm('baseUrl', 'https://ark.cn-beijing.volces.com/api/v3')
+                      }
+                    >
+                      {t('ui.settings.llm.doubao')}
+                    </Button>
+                  </div>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t('integrations.presetHint')}
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="llm-fast-model">{t('ui.settings.llm.fastModel')}</Label>
+                    <Input
+                      id="llm-fast-model"
+                      value={llmDraft.fastModel}
+                      onChange={(event) => updateLlm('fastModel', event.target.value)}
+                      placeholder={t('ui.settings.llm.modelPlaceholder')}
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="llm-slow-model">{t('ui.settings.llm.slowModel')}</Label>
+                    <Input
+                      id="llm-slow-model"
+                      value={llmDraft.slowModel}
+                      onChange={(event) => updateLlm('slowModel', event.target.value)}
+                      placeholder={t('ui.settings.llm.modelPlaceholder')}
+                      autoComplete="off"
+                    />
+                  </div>
+                </div>
                 <p className="text-xs leading-5 text-muted-foreground">
-                  {t(llm?.needsReentry
-                    ? 'ui.settings.reentryRequired' : 'ui.settings.keyHint')}
+                  {t('ui.settings.llm.modelHint')}
                 </p>
-              </div>
-              {llmError && <p className="text-sm text-destructive" role="alert">{llmError}</p>}
-              {llmTestResult && <TestResult result={llmTestResult} />}
-              {llmDirty && (
-                <p className="text-xs text-muted-foreground">{t('ui.settings.saveBeforeTest')}</p>
-              )}
-              <div className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
-                <Button type="button" onClick={handleSaveLlm} disabled={saveLlm.isPending}>
-                  {saveLlm.isPending && <LoaderCircle className="animate-spin" />}
-                  {t('ui.settings.save')}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => testLlm.mutate()}
-                  disabled={!llm?.available || llmDirty || testLlm.isPending}>
-                  {testLlm.isPending ? <LoaderCircle className="animate-spin" /> : <RotateCw />}
-                  {t(llm?.engine === 'basic' ? 'integrations.checkBasic' : 'ui.settings.test')}
-                </Button>
-                {llm?.source === 'user' && (
-                  <Button type="button" variant="ghost" className="text-destructive"
-                    onClick={() => setDeleteTarget('llm')}>
-                    <Trash2 /> {t('ui.settings.remove')}
-                  </Button>
+                {/^https:\/\/api\.deepseek\.com(?:\/|$)/iu.test(llmDraft.baseUrl.trim()) && (
+                  <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs leading-6 text-muted-foreground">
+                    <p>{t('integrations.deepSeekModelHint')}</p>
+                    <p className="mt-1">{t('integrations.deepSeekModeHint')}</p>
+                  </div>
                 )}
-              </div>
-            </CardContent>
-          </Card>}
+                <div className="space-y-2">
+                  <Label htmlFor="llm-api-key">{t('ui.settings.apiKey')}</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="llm-api-key"
+                      type={showLlmKey ? 'text' : 'password'}
+                      value={llmDraft.apiKey}
+                      onChange={(event) => updateLlm('apiKey', event.target.value)}
+                      placeholder={
+                        llm?.hasApiKey ? t('ui.settings.keepExisting') : t('ui.settings.enterKey')
+                      }
+                      autoComplete="new-password"
+                      spellCheck={false}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={t(showLlmKey ? 'ui.settings.hideKey' : 'ui.settings.showKey')}
+                      onClick={() => setShowLlmKey((current: boolean) => !current)}
+                    >
+                      {showLlmKey ? <EyeOff /> : <Eye />}
+                    </Button>
+                  </div>
+                  {llm?.hasApiKey && (
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <CheckCircle2 className="size-3.5 text-success" />
+                      {t('ui.settings.savedKey')}
+                      {llm.maskedApiKey ? ` · ${llm.maskedApiKey}` : ''}
+                    </p>
+                  )}
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t(llm?.needsReentry ? 'ui.settings.reentryRequired' : 'ui.settings.keyHint')}
+                  </p>
+                </div>
+                {llmError && (
+                  <p className="text-sm text-destructive" role="alert">
+                    {llmError}
+                  </p>
+                )}
+                {llmTestResult && <TestResult result={llmTestResult} />}
+                {llmDirty && (
+                  <p className="text-xs text-muted-foreground">{t('ui.settings.saveBeforeTest')}</p>
+                )}
+                <div className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
+                  <Button type="button" onClick={handleSaveLlm} disabled={saveLlm.isPending}>
+                    {saveLlm.isPending && <LoaderCircle className="animate-spin" />}
+                    {t('ui.settings.save')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => testLlm.mutate()}
+                    disabled={!llm?.available || llmDirty || testLlm.isPending}
+                  >
+                    {testLlm.isPending ? <LoaderCircle className="animate-spin" /> : <RotateCw />}
+                    {t(llm?.engine === 'basic' ? 'integrations.checkBasic' : 'ui.settings.test')}
+                  </Button>
+                  {llm?.source === 'user' && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="text-destructive"
+                      onClick={() => setDeleteTarget('llm')}
+                    >
+                      <Trash2 /> {t('ui.settings.remove')}
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
-          {section === 'data' && <Card className="min-w-0">
-            <CardHeader className="gap-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-lg bg-primary/10 p-2 text-primary"><KeyRound size={19} /></div>
-                  <div>
-                    <CardTitle className="text-lg leading-snug">{t('ui.settings.financial.title')}</CardTitle>
-                    <CardDescription className="mt-1">{t('integrations.financialSubtitle')}</CardDescription>
+          {section === 'data' && (
+            <Card className="min-w-0">
+              <CardHeader className="gap-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2 text-primary">
+                      <KeyRound size={19} />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg leading-snug">
+                        {t('ui.settings.financial.title')}
+                      </CardTitle>
+                      <CardDescription className="mt-1">
+                        {t('integrations.financialSubtitle')}
+                      </CardDescription>
+                    </div>
                   </div>
+                  <Badge variant={financial?.hasApiKey ? 'secondary' : 'outline'}>
+                    {t(
+                      financial?.needsReentry
+                        ? 'ui.settings.source.needsReentry'
+                        : financial?.source === 'builtin'
+                          ? 'integrations.publicBadge'
+                          : `ui.settings.source.${financial?.source ?? 'none'}`,
+                    )}
+                  </Badge>
                 </div>
-                <Badge variant={financial?.hasApiKey ? 'secondary' : 'outline'}>
-                  {t(financial?.needsReentry
-                    ? 'ui.settings.source.needsReentry'
-                    : financial?.source === 'builtin' ? 'integrations.publicBadge'
-                    : `ui.settings.source.${financial?.source ?? 'none'}`)}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <p className="text-sm leading-6 text-muted-foreground">
-                {t('integrations.publicScope')}
-              </p>
-              {financial?.needsReentry && (
-                <p role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm leading-6 text-foreground">
-                  {t('ui.settings.reentryWarning')}
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {t('integrations.publicScope')}
                 </p>
-              )}
-              <div className="rounded-lg border border-border bg-secondary/40 p-4 text-sm leading-6">
-                <p className="font-medium">{t('ui.settings.financial.currentCoverage')}</p>
-                <p className="mt-1 text-muted-foreground">
-                  {t('integrations.financialUpgrade')}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="financial-api-key">{t('integrations.finnhubOptional')}</Label>
-                <div className="flex gap-2">
-                  <Input id="financial-api-key" type={showFinancialKey ? 'text' : 'password'}
-                    value={financialKey}
-                    onChange={(event) => {
-                      setFinancialKey(event.target.value);
-                      setFinancialDirty(true);
-                      setFinancialError(null);
-                      setFinancialTestResult(null);
-                    }}
-                    placeholder={financial?.hasApiKey
-                      ? t('ui.settings.keepExisting') : t('ui.settings.enterKey')}
-                    autoComplete="new-password" spellCheck={false} />
-                  <Button type="button" variant="outline" size="icon"
-                    aria-label={t(showFinancialKey ? 'ui.settings.hideKey' : 'ui.settings.showKey')}
-                    onClick={() => setShowFinancialKey((current: boolean) => !current)}>
-                    {showFinancialKey ? <EyeOff /> : <Eye />}
-                  </Button>
-                </div>
-                {financial?.hasApiKey && (
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <CheckCircle2 className="size-3.5 text-success" />
-                    {t('ui.settings.savedKey')}
-                    {financial.maskedApiKey ? ` · ${financial.maskedApiKey}` : ''}
+                {financial?.needsReentry && (
+                  <p
+                    role="alert"
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm leading-6 text-foreground"
+                  >
+                    {t('ui.settings.reentryWarning')}
                   </p>
                 )}
-                <p className="text-xs leading-5 text-muted-foreground">
-                  {t(financial?.needsReentry
-                    ? 'ui.settings.reentryRequired' : 'ui.settings.keyHint')}
-                </p>
-              </div>
-              {financialError && (
-                <p className="text-sm text-destructive" role="alert">{financialError}</p>
-              )}
-              {financialTestResult && <TestResult result={financialTestResult} />}
-              {financialDirty && (
-                <p className="text-xs text-muted-foreground">{t('ui.settings.saveBeforeTest')}</p>
-              )}
-              <div className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
-                <Button type="button" onClick={handleSaveFinancial} disabled={saveFinancial.isPending}>
-                  {saveFinancial.isPending && <LoaderCircle className="animate-spin" />}
-                  {t('ui.settings.save')}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => testFinancial.mutate()}
-                  disabled={!financial?.available || financialDirty || testFinancial.isPending}>
-                  {testFinancial.isPending
-                    ? <LoaderCircle className="animate-spin" /> : <RotateCw />}
-                  {t(financial?.provider === 'public' ? 'integrations.testPublic' : 'ui.settings.test')}
-                </Button>
-                {financial?.source === 'user' && (
-                  <Button type="button" variant="ghost" className="text-destructive"
-                    onClick={() => setDeleteTarget('financial')}>
-                    <Trash2 /> {t('ui.settings.remove')}
-                  </Button>
+                <div className="rounded-lg border border-border bg-secondary/40 p-4 text-sm leading-6">
+                  <p className="font-medium">{t('ui.settings.financial.currentCoverage')}</p>
+                  <p className="mt-1 text-muted-foreground">{t('integrations.financialUpgrade')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="financial-api-key">{t('integrations.finnhubOptional')}</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="financial-api-key"
+                      type={showFinancialKey ? 'text' : 'password'}
+                      value={financialKey}
+                      onChange={(event) => {
+                        setFinancialKey(event.target.value);
+                        setFinancialDirty(true);
+                        setFinancialError(null);
+                        setFinancialTestResult(null);
+                      }}
+                      placeholder={
+                        financial?.hasApiKey
+                          ? t('ui.settings.keepExisting')
+                          : t('ui.settings.enterKey')
+                      }
+                      autoComplete="new-password"
+                      spellCheck={false}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={t(
+                        showFinancialKey ? 'ui.settings.hideKey' : 'ui.settings.showKey',
+                      )}
+                      onClick={() => setShowFinancialKey((current: boolean) => !current)}
+                    >
+                      {showFinancialKey ? <EyeOff /> : <Eye />}
+                    </Button>
+                  </div>
+                  {financial?.hasApiKey && (
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <CheckCircle2 className="size-3.5 text-success" />
+                      {t('ui.settings.savedKey')}
+                      {financial.maskedApiKey ? ` · ${financial.maskedApiKey}` : ''}
+                    </p>
+                  )}
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t(
+                      financial?.needsReentry
+                        ? 'ui.settings.reentryRequired'
+                        : 'ui.settings.keyHint',
+                    )}
+                  </p>
+                </div>
+                {financialError && (
+                  <p className="text-sm text-destructive" role="alert">
+                    {financialError}
+                  </p>
                 )}
-              </div>
-            </CardContent>
-          </Card>}
+                {financialTestResult && <TestResult result={financialTestResult} />}
+                {financialDirty && (
+                  <p className="text-xs text-muted-foreground">{t('ui.settings.saveBeforeTest')}</p>
+                )}
+                <div className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
+                  <Button
+                    type="button"
+                    onClick={handleSaveFinancial}
+                    disabled={saveFinancial.isPending}
+                  >
+                    {saveFinancial.isPending && <LoaderCircle className="animate-spin" />}
+                    {t('ui.settings.save')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => testFinancial.mutate()}
+                    disabled={!financial?.available || financialDirty || testFinancial.isPending}
+                  >
+                    {testFinancial.isPending ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <RotateCw />
+                    )}
+                    {t(
+                      financial?.provider === 'public'
+                        ? 'integrations.testPublic'
+                        : 'ui.settings.test',
+                    )}
+                  </Button>
+                  {financial?.source === 'user' && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="text-destructive"
+                      onClick={() => setDeleteTarget('financial')}
+                    >
+                      <Trash2 /> {t('ui.settings.remove')}
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 
@@ -539,15 +691,19 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
         <p>{t('ui.settings.privacyNote')}</p>
       </div>
 
-      <AlertDialog open={active && deleteTarget !== null}
-        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+      <AlertDialog
+        open={active && deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('ui.settings.removeTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t(deleteTarget === 'llm'
-                ? 'integrations.removeLlm'
-                : 'integrations.removeFinancial')}
+              {t(
+                deleteTarget === 'llm' ? 'integrations.removeLlm' : 'integrations.removeFinancial',
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -571,14 +727,22 @@ export default function IntegrationSettingsPanel({ section, active = true }: {
 function TestResult({ result }: { result: IntegrationTestResult }) {
   const { t } = useTranslation();
   return (
-    <div role="status" className={`rounded-lg border px-3 py-2 text-sm leading-6 ${
-      result.ok
-        ? 'border-success/30 bg-success/10 text-success'
-        : 'border-destructive/30 bg-destructive/5 text-destructive'
-    }`}>
-      <span className="font-medium">{t(result.ok
-        ? 'ui.settings.testSucceeded' : 'ui.settings.testFailed')}</span>
-      {result.code ? ` · ${t(`integrations.test.${result.code}`)}` : result.message ? ` · ${result.message}` : ''}
+    <div
+      role="status"
+      className={`rounded-lg border px-3 py-2 text-sm leading-6 ${
+        result.ok
+          ? 'border-success/30 bg-success/10 text-success'
+          : 'border-destructive/30 bg-destructive/5 text-destructive'
+      }`}
+    >
+      <span className="font-medium">
+        {t(result.ok ? 'ui.settings.testSucceeded' : 'ui.settings.testFailed')}
+      </span>
+      {result.code
+        ? ` · ${t(`integrations.test.${result.code}`)}`
+        : result.message
+          ? ` · ${result.message}`
+          : ''}
     </div>
   );
 }

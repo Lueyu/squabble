@@ -199,27 +199,16 @@ export class SnapshotsService {
         cumulativeNetDeposit: snapshots.cumulativeNetDeposit,
       })
       .from(snapshots)
-      .where(
-        and(
-          eq(snapshots.owner, userId),
-          sql`${snapshots.snapshotDate} < ${dateStr}::date`,
-        ),
-      )
+      .where(and(eq(snapshots.owner, userId), sql`${snapshots.snapshotDate} < ${dateStr}::date`))
       .orderBy(desc(snapshots.snapshotDate))
       .limit(1);
 
     const prevAv = prevRows[0]?.accountValue != null ? Number(prevRows[0].accountValue) : null;
     const prevCumulativeNetDeposit =
-      prevRows[0]?.cumulativeNetDeposit != null
-        ? Number(prevRows[0].cumulativeNetDeposit)
-        : 0;
+      prevRows[0]?.cumulativeNetDeposit != null ? Number(prevRows[0].cumulativeNetDeposit) : 0;
 
     const netDepositByCurrency = await this.getNetDepositByCurrency(userId, dateStr);
-    const netDepositBase = await this.convertNetDepositToBase(
-      netDepositByCurrency,
-      base,
-      dateStr,
-    );
+    const netDepositBase = await this.convertNetDepositToBase(netDepositByCurrency, base, dateStr);
     const cumulativeNetDepositBase = prevCumulativeNetDeposit + netDepositBase;
 
     const accountValueNum = dto.accountValue ?? 0;

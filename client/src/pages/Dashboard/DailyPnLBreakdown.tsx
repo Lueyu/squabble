@@ -27,12 +27,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-} from '@/components/ui/empty';
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty';
 import { useTranslation } from 'react-i18next';
 import { displayCompanyName } from '@/utils/company-name';
 
@@ -77,9 +72,7 @@ export default function DailyPnLBreakdown({
         const quote = quotes[h.ticker];
         const shares = parseFloat(h.shares || '0');
         const change = quote && quote.change ? parseFloat(quote.change) : 0;
-        const changePercent = quote && quote.changePercent
-          ? parseFloat(quote.changePercent)
-          : 0;
+        const changePercent = quote && quote.changePercent ? parseFloat(quote.changePercent) : 0;
         const dailyPl = shares * change;
         return {
           ticker: h.ticker,
@@ -96,10 +89,7 @@ export default function DailyPnLBreakdown({
       .filter((r) => r.hasQuote)
       .sort((a, b) => b.dailyPl - a.dailyPl);
 
-    const totalAbs = result.reduce(
-      (sum: number, r) => sum + Math.abs(r.dailyPl),
-      0
-    );
+    const totalAbs = result.reduce((sum: number, r) => sum + Math.abs(r.dailyPl), 0);
 
     return result.map((r) => ({
       ...r,
@@ -157,9 +147,7 @@ export default function DailyPnLBreakdown({
                     {marketLabels(t)[r.market] || r.market}
                   </Badge>
                   <span className="truncate text-xs text-muted-foreground">
-                    {r.company || (
-                      <span className="text-muted-foreground/60">—</span>
-                    )}
+                    {r.company || <span className="text-muted-foreground/60">—</span>}
                   </span>
                 </div>
               </TableCell>
@@ -169,17 +157,14 @@ export default function DailyPnLBreakdown({
                 })}
               </TableCell>
               <TableCell
-                className={cn(
-                  'text-right font-mono tabular-nums text-sm',
-                  plClass(r.change)
-                )}
+                className={cn('text-right font-mono tabular-nums text-sm', plClass(r.change))}
               >
                 {formatPriceWithCurrency(r.change, r.currency)}
               </TableCell>
               <TableCell
                 className={cn(
                   'text-right font-mono tabular-nums text-sm',
-                  plClass(r.changePercent)
+                  plClass(r.changePercent),
                 )}
               >
                 {formatPercent(r.changePercent)}
@@ -187,7 +172,7 @@ export default function DailyPnLBreakdown({
               <TableCell
                 className={cn(
                   'text-right font-mono tabular-nums text-sm font-medium',
-                  plClass(r.dailyPl)
+                  plClass(r.dailyPl),
                 )}
               >
                 {formatCurrencyWithCurrency(r.dailyPl, r.currency)}
@@ -207,7 +192,9 @@ export default function DailyPnLBreakdown({
             onClick={() => setShowAll((v) => !v)}
             className="text-xs text-muted-foreground"
           >
-            {showAll ? t('ui.dashboard.collapse') : t('ui.dashboard.showMore', { count: rows.length - 10 })}
+            {showAll
+              ? t('ui.dashboard.collapse')
+              : t('ui.dashboard.showMore', { count: rows.length - 10 })}
             <ChevronDown
               size={14}
               className={cn('transition-transform', showAll && 'rotate-180')}

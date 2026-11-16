@@ -95,7 +95,9 @@ export default function JournalPage() {
       }
     };
     load();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [t]);
 
   useEffect(() => {
@@ -104,9 +106,7 @@ export default function JournalPage() {
 
   /** Find the snapshot matching the currently selected date. */
   const currentSnapshot = useMemo(() => {
-    return snapshots.find(
-      (s) => safeDateStr(s.snapshotDate) === dateStr
-    );
+    return snapshots.find((s) => safeDateStr(s.snapshotDate) === dateStr);
   }, [snapshots, dateStr]);
 
   /** Step the selected date back by one day. */
@@ -178,7 +178,10 @@ export default function JournalPage() {
         data: payload,
       });
       const saved = response.data as JournalEntry;
-      setJournalList((entries) => [saved, ...entries.filter((entry) => entry.journalDate !== saved.journalDate)]);
+      setJournalList((entries) => [
+        saved,
+        ...entries.filter((entry) => entry.journalDate !== saved.journalDate),
+      ]);
       setEditing(false);
       toast.success(t('journal.saved'));
       loadJournal();
@@ -211,13 +214,16 @@ export default function JournalPage() {
           <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
             {t('journal.title')}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t('ui.journal.subtitle')}
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{t('ui.journal.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
           {!editing ? (
-            <Button onClick={startEdit} disabled={!journalLoaded || loadingJournal || loadingSnap} size="sm" className="gap-1.5">
+            <Button
+              onClick={startEdit}
+              disabled={!journalLoaded || loadingJournal || loadingSnap}
+              size="sm"
+              className="gap-1.5"
+            >
               <Edit3 size={14} />
               {t('ui.journal.editJournal')}
             </Button>
@@ -270,9 +276,7 @@ export default function JournalPage() {
                   content={journal?.[s.key]}
                   editing={editing}
                   editValue={editValues[s.key] || ''}
-                  onEditChange={(val) =>
-                    setEditValues((prev) => ({ ...prev, [s.key]: val }))
-                  }
+                  onEditChange={(val) => setEditValues((prev) => ({ ...prev, [s.key]: val }))}
                 />
               ))}
             </div>
@@ -290,8 +294,7 @@ export default function JournalPage() {
               ) : (
                 <div className="max-h-[500px] space-y-0.5 overflow-y-auto">
                   {historyDates.map((date) => {
-                    const isActive =
-                      safeDateStr(date) === dateStr;
+                    const isActive = safeDateStr(date) === dateStr;
                     return (
                       <button
                         key={date}
@@ -300,7 +303,7 @@ export default function JournalPage() {
                           'w-full rounded-md px-3 py-2 text-left text-sm transition-colors',
                           isActive
                             ? 'bg-primary/10 font-medium text-primary'
-                            : 'hover:bg-muted text-foreground/80 hover:text-foreground'
+                            : 'hover:bg-muted text-foreground/80 hover:text-foreground',
                         )}
                       >
                         <div className="font-mono tabular-nums">{formatDate(date)}</div>

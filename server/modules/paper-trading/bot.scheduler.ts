@@ -38,10 +38,16 @@ export class BotScheduler implements OnModuleInit, OnModuleDestroy {
       this.logger.log('paper trading scheduler disabled (PAPER_TRADING_ENABLED=false)');
       return;
     }
-    const minutes = Math.max(1, Number(process.env.PAPER_TRADING_SCAN_MINUTES ?? DEFAULT_SCAN_MINUTES));
-    this.timer = setInterval(() => {
-      this.tick().catch((error) => this.logger.warn(`scan tick failed: ${String(error)}`));
-    }, minutes * 60 * 1000);
+    const minutes = Math.max(
+      1,
+      Number(process.env.PAPER_TRADING_SCAN_MINUTES ?? DEFAULT_SCAN_MINUTES),
+    );
+    this.timer = setInterval(
+      () => {
+        this.tick().catch((error) => this.logger.warn(`scan tick failed: ${String(error)}`));
+      },
+      minutes * 60 * 1000,
+    );
     // Unref so the timer never keeps the process alive on its own.
     if (typeof this.timer.unref === 'function') this.timer.unref();
     this.logger.log(`paper trading scheduler started (every ${minutes} min)`);

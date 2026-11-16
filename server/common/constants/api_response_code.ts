@@ -71,5 +71,8 @@ export const RESPONSE_CODE_TO_HTTP_STATUS_MAP: Record<ResponseCode, number> = {
  * a thrown `HttpStatus` back into a business `ResponseCode`.
  */
 export const HTTP_STATUS_TO_RESPONSE_CODE_MAP: Record<number, ResponseCode> = Object.fromEntries(
-  Object.entries(RESPONSE_CODE_TO_HTTP_STATUS_MAP).map(([code, status]) => [status, code as ResponseCode]),
+  Object.entries(RESPONSE_CODE_TO_HTTP_STATUS_MAP).map(([code, status]) => [
+    status,
+    code as ResponseCode,
+  ]),
 ) as Record<number, ResponseCode>;

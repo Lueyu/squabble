@@ -99,7 +99,10 @@
   color: var(--muted-foreground);
   font-size: 12px;
   cursor: pointer;
-  transition: color 150ms, background 150ms, box-shadow 150ms;
+  transition:
+    color 150ms,
+    background 150ms,
+    box-shadow 150ms;
 }
 
 .appearance-mode-option[data-state='checked'] {
@@ -125,7 +128,9 @@
   background: var(--card);
   text-align: left;
   cursor: pointer;
-  transition: border-color 150ms, box-shadow 150ms;
+  transition:
+    border-color 150ms,
+    box-shadow 150ms;
 }
 
 .appearance-theme-option:hover {
@@ -213,7 +218,8 @@
   --preview-brand: #515c24;
   --preview-radius: 0;
 
-  background-image: linear-gradient(var(--preview-line) 1px, transparent 1px),
+  background-image:
+    linear-gradient(var(--preview-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--preview-line) 1px, transparent 1px);
   background-size: 8px 8px;
 }
@@ -363,10 +369,21 @@
   opacity: 0.22;
 }
 
-.appearance-preview-signal > span:nth-child(2) { height: 21px; }
-.appearance-preview-signal > span:nth-child(3) { height: 17px; }
-.appearance-preview-signal > span:nth-child(4) { height: 26px; }
-.appearance-preview-signal > span:nth-child(5) { height: 32px; }
+.appearance-preview-signal > span:nth-child(2) {
+  height: 21px;
+}
+
+.appearance-preview-signal > span:nth-child(3) {
+  height: 17px;
+}
+
+.appearance-preview-signal > span:nth-child(4) {
+  height: 26px;
+}
+
+.appearance-preview-signal > span:nth-child(5) {
+  height: 32px;
+}
 
 .appearance-preview[data-preview-theme='arcade'] .appearance-preview-mascot {
   image-rendering: pixelated;

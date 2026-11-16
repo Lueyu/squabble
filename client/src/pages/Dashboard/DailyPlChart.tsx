@@ -61,11 +61,15 @@ export default function DailyPlChart({ data, baseCurrency = 'USD' }: DailyPlChar
           const parts = [`<strong>${params[0].name}</strong>`];
           for (const p of params) {
             if (p.seriesName === t('dash.accountNav')) {
-              parts.push(`${t('dash.accountNav')}: <strong>${symbol}${p.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>`);
+              parts.push(
+                `${t('dash.accountNav')}: <strong>${symbol}${p.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>`,
+              );
             } else {
               const sign = p.value >= 0 ? '+' : '';
               const color = p.value >= 0 ? '#16a34a' : '#dc2626';
-              parts.push(`${t('dash.dailyPlLabel')}: <strong style="color:${color}">${sign}${symbol}${p.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>`);
+              parts.push(
+                `${t('dash.dailyPlLabel')}: <strong style="color:${color}">${sign}${symbol}${p.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>`,
+              );
             }
           }
           return parts.join('<br/>');
@@ -164,11 +168,6 @@ export default function DailyPlChart({ data, baseCurrency = 'USD' }: DailyPlChar
   }
 
   return (
-    <ReactECharts
-      option={option}
-      style={{ height: 280, width: '100%' }}
-      notMerge
-      lazyUpdate
-    />
+    <ReactECharts option={option} style={{ height: 280, width: '100%' }} notMerge lazyUpdate />
   );
 }

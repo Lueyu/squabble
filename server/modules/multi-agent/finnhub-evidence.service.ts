@@ -1,11 +1,25 @@
 import { Injectable } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
 import type { EvidenceInput } from './evidence.service';
-import { finiteFinnhubNumber, parseFinnhubFinancials, type FinnhubFinancialsResult } from './finnhub-financials';
+import {
+  finiteFinnhubNumber,
+  parseFinnhubFinancials,
+  type FinnhubFinancialsResult,
+} from './finnhub-financials';
 
-type FinnhubFailureCode = 'missing_key' | 'unsupported_market' | 'unauthorized' | 'forbidden'
-  | 'rate_limited' | 'timeout' | 'network_error' | 'invalid_response' | 'provider_error'
-  | 'no_data' | 'stale_data' | 'incomplete_data';
+type FinnhubFailureCode =
+  | 'missing_key'
+  | 'unsupported_market'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'rate_limited'
+  | 'timeout'
+  | 'network_error'
+  | 'invalid_response'
+  | 'provider_error'
+  | 'no_data'
+  | 'stale_data'
+  | 'incomplete_data';
 
 /** Safe, actionable categories only: never preserve a raw provider error or URL. */
 export class FinnhubEvidenceError extends Error {
@@ -16,7 +30,8 @@ export class FinnhubEvidenceError extends Error {
 }
 
 export function finnhubGapReason(error: unknown): string {
-  const code: FinnhubFailureCode = error instanceof FinnhubEvidenceError ? error.code : 'provider_error';
+  const code: FinnhubFailureCode =
+    error instanceof FinnhubEvidenceError ? error.code : 'provider_error';
   const reasons: Record<FinnhubFailureCode, string> = {
     missing_key: '当前账户未配置 Finnhub 密钥；请在设置中保存密钥后刷新研究数据。',
     unsupported_market: '当前 Finnhub 证据接入仅支持美股代码，暂不支持该市场。',
@@ -53,13 +68,16 @@ const MAX_NEWS_ITEMS = 5;
 /** Only U.S. symbols are queried: Finnhub's company news covers North America. */
 function isSupportedSymbol(ticker: string): boolean {
   const upper = ticker.toUpperCase().trim();
-  return /^[A-Z][A-Z0-9.-]{0,19}$/.test(upper)
-    && !/\.(HK|SH|SS|SZ|BJ)$/.test(upper);
+  return /^[A-Z][A-Z0-9.-]{0,19}$/.test(upper) && !/\.(HK|SH|SS|SZ|BJ)$/.test(upper);
 }
 
 function cleanText(value: unknown, maxLength: number): string {
   if (typeof value !== 'string') return '';
-  return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
 }
 
 function safeArticleUrl(value: unknown): string | undefined {
@@ -98,20 +116,30 @@ export class FinnhubEvidenceService {
         signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) {
-        const code: FinnhubFailureCode = response.status === 401 ? 'unauthorized'
-          : response.status === 403 ? 'forbidden' : response.status === 429 ? 'rate_limited' : 'provider_error';
+        const code: FinnhubFailureCode =
+          response.status === 401
+            ? 'unauthorized'
+            : response.status === 403
+              ? 'forbidden'
+              : response.status === 429
+                ? 'rate_limited'
+                : 'provider_error';
         throw new FinnhubEvidenceError(code);
       }
       let payload: unknown;
-      try { payload = await response.json(); }
-      catch { throw new FinnhubEvidenceError('invalid_response'); }
+      try {
+        payload = await response.json();
+      } catch {
+        throw new FinnhubEvidenceError('invalid_response');
+      }
       if (payload && typeof payload === 'object' && 'error' in payload) {
         throw new FinnhubEvidenceError('provider_error');
       }
       return payload;
     } catch (error) {
       if (error instanceof FinnhubEvidenceError) throw error;
-      const timeout: boolean = error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name);
+      const timeout: boolean =
+        error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name);
       throw new FinnhubEvidenceError(timeout ? 'timeout' : 'network_error');
     }
   }
@@ -120,10 +148,10 @@ export class FinnhubEvidenceService {
     const token = await this.callerToken(userId, ticker);
 
     const raw = await this.request('/stock/metric', token, {
-      symbol: ticker.toUpperCase(), metric: 'all',
+      symbol: ticker.toUpperCase(),
+      metric: 'all',
     });
-    const metric = raw && typeof raw === 'object' && 'metric' in raw
-      ? raw.metric : null;
+    const metric = raw && typeof raw === 'object' && 'metric' in raw ? raw.metric : null;
     if (!metric || typeof metric !== 'object') {
       throw new FinnhubEvidenceError('invalid_response');
     }
@@ -144,15 +172,17 @@ export class FinnhubEvidenceService {
     if (values.length === 0) return { items: [], hasValuation: false };
     return {
       hasValuation: true,
-      items: [{
-        role: 'fundamental',
-        evidenceType: 'financial',
-        title: `${ticker.toUpperCase()} Finnhub valuation metrics`,
-        content: values.join('; '),
-        sourceName: 'Finnhub API',
-        sourceUrl: 'https://finnhub.io/docs/api/company-basic-financials',
-        relevanceScore: 0.8,
-      }],
+      items: [
+        {
+          role: 'fundamental',
+          evidenceType: 'financial',
+          title: `${ticker.toUpperCase()} Finnhub valuation metrics`,
+          content: values.join('; '),
+          sourceName: 'Finnhub API',
+          sourceUrl: 'https://finnhub.io/docs/api/company-basic-financials',
+          relevanceScore: 0.8,
+        },
+      ],
     };
   }
 
@@ -162,7 +192,10 @@ export class FinnhubEvidenceService {
     const from: string = new Date(now.getTime() - 550 * 86_400_000).toISOString().slice(0, 10);
     for (const frequency of ['quarterly', 'annual'] as const) {
       const raw: unknown = await this.request('/stock/financials-reported', token, {
-        symbol: ticker.toUpperCase().trim(), freq: frequency, from, to: now.toISOString().slice(0, 10),
+        symbol: ticker.toUpperCase().trim(),
+        freq: frequency,
+        from,
+        to: now.toISOString().slice(0, 10),
       });
       const result: FinnhubFinancialsResult = parseFinnhubFinancials(raw, ticker, frequency, now);
       if (result.issue === 'no_data' && frequency === 'quarterly') continue;
@@ -185,11 +218,14 @@ export class FinnhubEvidenceService {
     if (!Array.isArray(raw)) throw new FinnhubEvidenceError('invalid_response');
 
     return (raw as FinnhubArticle[])
-      .filter((article) => cleanText(article.headline, 300).length > 0
-        && typeof article.datetime === 'number'
-        && Number.isFinite(article.datetime)
-        && article.datetime * 1000 >= from.getTime()
-        && article.datetime * 1000 <= to.getTime())
+      .filter(
+        (article) =>
+          cleanText(article.headline, 300).length > 0 &&
+          typeof article.datetime === 'number' &&
+          Number.isFinite(article.datetime) &&
+          article.datetime * 1000 >= from.getTime() &&
+          article.datetime * 1000 <= to.getTime(),
+      )
       .slice(0, MAX_NEWS_ITEMS)
       .map((article) => {
         const headline = cleanText(article.headline, 300);

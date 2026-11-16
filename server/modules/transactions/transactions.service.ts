@@ -10,13 +10,7 @@
  * `createWithAutoDeposit` auto-deposits the shortfall and records a paired Deposit
  * row tagged `__AUTO_DEPOSIT_FOR_BUY__:<ticker>`.
  */
-import {
-  BadRequestException,
-  Inject,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and, desc, asc, inArray, sql } from 'drizzle-orm';
 import { transactions, holdings, closed, cashAccounts } from '@server/database/schema';
@@ -68,7 +62,12 @@ export class TransactionsService {
    * @param ticker  Optional ticker filter.
    * @param limit   Max rows (capped client-side by the caller; default 100).
    */
-  async list(userId: string, ticker?: string, limit: number = 100, offset = 0): Promise<Transaction[]> {
+  async list(
+    userId: string,
+    ticker?: string,
+    limit: number = 100,
+    offset = 0,
+  ): Promise<Transaction[]> {
     const conditions = [eq(transactions.owner, userId)];
     if (ticker) conditions.push(eq(transactions.ticker, ticker));
 
@@ -114,10 +113,7 @@ export class TransactionsService {
    * @param dto    Create payload (must be a Buy).
    * @throws BadRequestException on validation failures.
    */
-  async createWithAutoDeposit(
-    userId: string,
-    dto: CreateTransactionDto,
-  ): Promise<Transaction> {
+  async createWithAutoDeposit(userId: string, dto: CreateTransactionDto): Promise<Transaction> {
     if (dto.txType !== 'Buy') {
       // NOTE: Chinese user-facing message (existing behavior; not mojibake).
       throw new BadRequestException('自动充值仅支持买入交易');
@@ -149,9 +145,7 @@ export class TransactionsService {
       const existing = await tx
         .select()
         .from(cashAccounts)
-        .where(
-          and(eq(cashAccounts.owner, userId), eq(cashAccounts.currency, currency)),
-        );
+        .where(and(eq(cashAccounts.owner, userId), eq(cashAccounts.currency, currency)));
       const curBalance = existing.length > 0 ? Number(existing[0].balance) : 0;
       // How much extra cash is needed to afford this buy.
       const shortfall = costAmount - curBalance;
@@ -239,7 +233,7 @@ export class TransactionsService {
     const rawTxType = dto.txType;
 
     const validTypes = ['Buy', 'Sell', 'Deposit', 'Withdrawal', 'Opening'] as const;
-    if (!validTypes.includes(rawTxType as typeof validTypes[number]))
+    if (!validTypes.includes(rawTxType as (typeof validTypes)[number]))
       // NOTE: Chinese user-facing message (existing behavior; not mojibake).
       throw new BadRequestException('交易类型无效');
     const txType = rawTxType;
@@ -269,7 +263,12 @@ export class TransactionsService {
     }
 
     // Cash flows/opening use a blank or optional ticker; share trades require one.
-    const ticker = (isCashFlow || isOpening) ? (isOpening ? dto.ticker?.trim().toUpperCase() ?? '' : '') : dto.ticker.trim().toUpperCase();
+    const ticker =
+      isCashFlow || isOpening
+        ? isOpening
+          ? (dto.ticker?.trim().toUpperCase() ?? '')
+          : ''
+        : dto.ticker.trim().toUpperCase();
 
     if (isCashFlow) {
       // Deposit adds cash, Withdrawal removes it.
@@ -301,10 +300,14 @@ export class TransactionsService {
     // Share trade (Buy/Sell/Opening): compute cash sign first.
     const result = await this.db.transaction(async (tx) => {
       if (txType === 'Sell') {
-        await tx.select({ id: holdings.id }).from(holdings)
+        await tx
+          .select({ id: holdings.id })
+          .from(holdings)
           .where(and(eq(holdings.owner, userId), eq(holdings.ticker, ticker)))
           .for('update');
-        const prior = await tx.select().from(transactions)
+        const prior = await tx
+          .select()
+          .from(transactions)
           .where(and(eq(transactions.owner, userId), eq(transactions.ticker, ticker)))
           .orderBy(asc(transactions.txDate), asc(transactions.id));
         let available = 0;
@@ -317,31 +320,29 @@ export class TransactionsService {
         }
       }
       const cashDelta =
-        txType === 'Buy'
-          ? -(sharesNum * priceNum + feesNum)
-          : sharesNum * priceNum - feesNum;
+        txType === 'Buy' ? -(sharesNum * priceNum + feesNum) : sharesNum * priceNum - feesNum;
 
-    // Buy spends cash; an Opening position does not move cash (it sets the starting lot).
-    if (txType === 'Buy' || txType === 'Opening') {
-         await this.adjustCash(tx, userId, currency, txType === 'Buy' ? cashDelta : 0);
-       }
+      // Buy spends cash; an Opening position does not move cash (it sets the starting lot).
+      if (txType === 'Buy' || txType === 'Opening') {
+        await this.adjustCash(tx, userId, currency, txType === 'Buy' ? cashDelta : 0);
+      }
 
-       const insertRows = await tx
-         .insert(transactions)
-         .values({
-           txDate: dto.txDate,
-           ticker,
-           txType,
-           shares: String(sharesNum),
-           price: String(priceNum),
-           fees: String(feesNum),
-           notes: dto.notes,
-           currency,
-           owner: userId,
-           createdBy: userId,
-           updatedBy: userId,
-         })
-         .returning();
+      const insertRows = await tx
+        .insert(transactions)
+        .values({
+          txDate: dto.txDate,
+          ticker,
+          txType,
+          shares: String(sharesNum),
+          price: String(priceNum),
+          fees: String(feesNum),
+          notes: dto.notes,
+          currency,
+          owner: userId,
+          createdBy: userId,
+          updatedBy: userId,
+        })
+        .returning();
 
       if (txType === 'Sell') {
         // Sell proceeds (minus fees) add cash.
@@ -417,21 +418,23 @@ export class TransactionsService {
       const newCurrency = (dto.currency || oldRow.currency) as Currency;
 
       let newCashDelta = 0;
-        if (newType === 'Buy') {
-          newCashDelta = -(newShares * newPrice + newFees);
-        } else if (newType === 'Sell') {
-          newCashDelta = newShares * newPrice - newFees;
-        } else if (newType === 'Deposit') {
-          newCashDelta = newShares;
-        } else if (newType === 'Withdrawal') {
-          newCashDelta = -newShares;
-        } else if (newType === 'Opening') {
-          newCashDelta = 0;
-        }
+      if (newType === 'Buy') {
+        newCashDelta = -(newShares * newPrice + newFees);
+      } else if (newType === 'Sell') {
+        newCashDelta = newShares * newPrice - newFees;
+      } else if (newType === 'Deposit') {
+        newCashDelta = newShares;
+      } else if (newType === 'Withdrawal') {
+        newCashDelta = -newShares;
+      } else if (newType === 'Opening') {
+        newCashDelta = 0;
+      }
 
       if (newCurrency !== oldRow.currency) {
-        if (Math.abs(oldCashDelta) > 1e-9) await this.adjustCash(tx, userId, oldRow.currency, -oldCashDelta);
-        if (Math.abs(newCashDelta) > 1e-9) await this.adjustCash(tx, userId, newCurrency, newCashDelta);
+        if (Math.abs(oldCashDelta) > 1e-9)
+          await this.adjustCash(tx, userId, oldRow.currency, -oldCashDelta);
+        if (Math.abs(newCashDelta) > 1e-9)
+          await this.adjustCash(tx, userId, newCurrency, newCashDelta);
       } else {
         const cashDiff = newCashDelta - oldCashDelta;
         if (Math.abs(cashDiff) > 1e-9) await this.adjustCash(tx, userId, newCurrency, cashDiff);
@@ -461,7 +464,9 @@ export class TransactionsService {
         if (newTicker && (newType === 'Buy' || newType === 'Sell' || newType === 'Opening')) {
           tickersNew.push(newTicker);
         }
-        const tickersToRebuild = Array.from(new Set([...tickersOld, ...tickersNew].filter((t) => t && t.length > 0)));
+        const tickersToRebuild = Array.from(
+          new Set([...tickersOld, ...tickersNew].filter((t) => t && t.length > 0)),
+        );
         await this.rebuildTickersFromTransactions(tx, userId, tickersToRebuild);
       }
 
@@ -503,8 +508,7 @@ export class TransactionsService {
         oldRow.txType === 'Buy' &&
         (!oldRow.notes || !oldRow.notes.startsWith('__AUTO_DEPOSIT_FOR_BUY__:'))
       ) {
-        const costAmount =
-          Number(oldRow.shares) * Number(oldRow.price) + Number(oldRow.fees || 0);
+        const costAmount = Number(oldRow.shares) * Number(oldRow.price) + Number(oldRow.fees || 0);
         const autoNote = `__AUTO_DEPOSIT_FOR_BUY__:${oldRow.ticker}`;
         const matchingDeposits = await tx
           .select()
@@ -537,11 +541,12 @@ export class TransactionsService {
         await this.adjustCash(tx, userId, currency, cashDelta);
       }
 
-      await tx
-        .delete(transactions)
-        .where(inArray(transactions.id, idsToDelete));
+      await tx.delete(transactions).where(inArray(transactions.id, idsToDelete));
 
-      if (oldRow.ticker && (oldRow.txType === 'Buy' || oldRow.txType === 'Sell' || oldRow.txType === 'Opening')) {
+      if (
+        oldRow.ticker &&
+        (oldRow.txType === 'Buy' || oldRow.txType === 'Sell' || oldRow.txType === 'Opening')
+      ) {
         await this.rebuildTickersFromTransactions(tx, userId, [oldRow.ticker]);
       }
     });
@@ -765,10 +770,7 @@ export class TransactionsService {
       .where(eq(transactions.owner, userId))
       .orderBy(asc(transactions.txDate), asc(transactions.id));
 
-    const allHoldings = await this.db
-      .select()
-      .from(holdings)
-      .where(eq(holdings.owner, userId));
+    const allHoldings = await this.db.select().from(holdings).where(eq(holdings.owner, userId));
 
     if (allTx.length === 0) {
       return {
@@ -784,21 +786,21 @@ export class TransactionsService {
     const result = await this.db.transaction(async (tx) => {
       const txByTicker = new Map<string, typeof allTx>();
       for (const t of allTx) {
-         // Skip cash flows when grouping by ticker.
-         if (!t.ticker || t.txType === 'Deposit' || t.txType === 'Withdrawal') continue;
+        // Skip cash flows when grouping by ticker.
+        if (!t.ticker || t.txType === 'Deposit' || t.txType === 'Withdrawal') continue;
         const arr = txByTicker.get(t.ticker) ?? [];
         arr.push(t);
         txByTicker.set(t.ticker, arr);
       }
 
-      const holdingByTicker = new Map<string, typeof allHoldings[number]>();
+      const holdingByTicker = new Map<string, (typeof allHoldings)[number]>();
       for (const h of allHoldings) {
         holdingByTicker.set(h.ticker, h);
       }
 
       const rebuiltTickers: string[] = [];
       for (const [ticker, txs] of txByTicker) {
-       const hasBuyOrOpening = txs.some(
+        const hasBuyOrOpening = txs.some(
           (t: (typeof txs)[number]) => t.txType === 'Buy' || t.txType === 'Opening',
         );
         // Only tickers that ever opened a position produce a holding.
@@ -813,19 +815,19 @@ export class TransactionsService {
       const newHoldings: Array<typeof holdings.$inferInsert> = [];
       const closedRows: Array<typeof closed.$inferInsert> = [];
 
-       for (const ticker of rebuiltTickers) {
-         const txs = txByTicker.get(ticker) ?? [];
-         const existingH = holdingByTicker.get(ticker);
+      for (const ticker of rebuiltTickers) {
+        const txs = txByTicker.get(ticker) ?? [];
+        const existingH = holdingByTicker.get(ticker);
 
-         const cursor: TxCursor = {
-           ticker,
-           shares: 0,
-           costBasis: 0,
-           buyDate: null,
-           company: existingH?.company ?? ticker,
-         };
+        const cursor: TxCursor = {
+          ticker,
+          shares: 0,
+          costBasis: 0,
+          buyDate: null,
+          company: existingH?.company ?? ticker,
+        };
 
-         for (const t of txs) {
+        for (const t of txs) {
           const sharesNum = Number(t.shares);
           const priceNum = Number(t.price);
           const feesNum = t.fees ? Number(t.fees) : 0;
@@ -921,9 +923,9 @@ export class TransactionsService {
 
       // Rebuild closed positions for the affected tickers from scratch.
       if (rebuiltTickers.length > 0) {
-        await tx.delete(closed).where(
-          and(eq(closed.owner, userId), inArray(closed.ticker, rebuiltTickers)),
-        );
+        await tx
+          .delete(closed)
+          .where(and(eq(closed.owner, userId), inArray(closed.ticker, rebuiltTickers)));
       }
 
       if (closedRows.length > 0) {
@@ -945,9 +947,7 @@ export class TransactionsService {
         const existing = await tx
           .select()
           .from(cashAccounts)
-          .where(
-            and(eq(cashAccounts.owner, userId), eq(cashAccounts.currency, currency)),
-          );
+          .where(and(eq(cashAccounts.owner, userId), eq(cashAccounts.currency, currency)));
         if (existing.length === 0) {
           await tx.insert(cashAccounts).values({
             currency,
@@ -1096,22 +1096,15 @@ export class TransactionsService {
     const relevantTx = await tx
       .select()
       .from(transactions)
-      .where(
-        and(
-          eq(transactions.owner, userId),
-          inArray(transactions.ticker, validTickers),
-        ),
-      )
+      .where(and(eq(transactions.owner, userId), inArray(transactions.ticker, validTickers)))
       .orderBy(asc(transactions.txDate), asc(transactions.id));
 
     const existingHoldings = await tx
       .select()
       .from(holdings)
-      .where(
-        and(eq(holdings.owner, userId), inArray(holdings.ticker, validTickers)),
-      );
+      .where(and(eq(holdings.owner, userId), inArray(holdings.ticker, validTickers)));
 
-    const holdingByTicker = new Map<string, typeof existingHoldings[number]>();
+    const holdingByTicker = new Map<string, (typeof existingHoldings)[number]>();
     for (const h of existingHoldings) {
       holdingByTicker.set(h.ticker, h);
     }
@@ -1238,9 +1231,7 @@ export class TransactionsService {
     if (deleteHoldingTickers.length > 0) {
       await tx
         .delete(holdings)
-        .where(
-          and(eq(holdings.owner, userId), inArray(holdings.ticker, deleteHoldingTickers)),
-        );
+        .where(and(eq(holdings.owner, userId), inArray(holdings.ticker, deleteHoldingTickers)));
     }
 
     // Rebuild closed positions for these tickers from scratch.

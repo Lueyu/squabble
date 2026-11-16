@@ -80,7 +80,8 @@ function Layout() {
   const { t, i18n } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const inSettings = location.pathname === '/settings' || location.pathname.startsWith('/settings/');
+  const inSettings =
+    location.pathname === '/settings' || location.pathname.startsWith('/settings/');
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
   const navGroups = [
@@ -104,7 +105,9 @@ function Layout() {
   }
 
   return (
-    <div className={`app-shell flex w-screen overflow-hidden bg-background text-foreground ${inSettings ? 'app-shell-settings' : ''} ${location.pathname === '/council' ? 'h-dvh' : 'h-screen'}`}>
+    <div
+      className={`app-shell flex w-screen overflow-hidden bg-background text-foreground ${inSettings ? 'app-shell-settings' : ''} ${location.pathname === '/council' ? 'h-dvh' : 'h-screen'}`}
+    >
       {/* Sidebar */}
       <aside
         aria-label={zh ? '主导航' : 'Main navigation'}
@@ -117,7 +120,9 @@ function Layout() {
             <NavLink to="/" className="flex items-center gap-2.5" aria-label={t('layout.appName')}>
               <Mascot className="app-brand-mark" />
               <div className="app-brand-copy">
-                <div className="app-wordmark">Squabble<span className="text-[var(--brand)]">.</span></div>
+                <div className="app-wordmark">
+                  Squabble<span className="text-[var(--brand)]">.</span>
+                </div>
                 <div className="app-brand-caption">BULLS. BEARS. YOU.</div>
               </div>
             </NavLink>
@@ -135,23 +140,23 @@ function Layout() {
               <div key={group.label} className="app-nav-group">
                 <div className="app-nav-label">{group.label}</div>
                 {group.items.map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                end={item.end}
-                aria-label={t(item.label)}
-                title={t(item.label)}
-                className={({ isActive }) =>
-                  `app-nav-link flex items-center px-3 py-2 text-sm transition-colors ${
-                    isActive
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                      : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
-                  }`
-                }
-              >
-                <item.icon size={18} />
-                <span>{t(item.label)}</span>
-              </NavLink>
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    end={item.end}
+                    aria-label={t(item.label)}
+                    title={t(item.label)}
+                    className={({ isActive }) =>
+                      `app-nav-link flex items-center px-3 py-2 text-sm transition-colors ${
+                        isActive
+                          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                          : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
+                      }`
+                    }
+                  >
+                    <item.icon size={18} />
+                    <span>{t(item.label)}</span>
+                  </NavLink>
                 ))}
               </div>
             ))}
@@ -160,25 +165,31 @@ function Layout() {
           <div className="app-sidebar-footer border-t border-sidebar-border">
             <SidebarUserBlock />
             <div className="app-footer-actions">
-            <button
-              onClick={toggleTheme}
-              aria-label={zh ? (theme === 'dark' ? '浅色' : '深色') : (theme === 'dark' ? 'Light' : 'Dark')}
-              title={zh ? (theme === 'dark' ? '浅色' : '深色') : (theme === 'dark' ? 'Light' : 'Dark')}
-              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-            >
-              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-              <span>{zh ? (theme === 'dark' ? '浅色' : '深色') : (theme === 'dark' ? 'Light' : 'Dark')}</span>
-            </button>
-            <button
-              onClick={toggleLang}
-              aria-label={i18n.language === 'zh-CN' ? 'English' : '中文'}
-              title={i18n.language === 'zh-CN' ? 'English' : '中文'}
-              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-            >
-              <Languages size={18} />
-              <span>{i18n.language === 'zh-CN' ? 'English' : '中文'}</span>
-            </button>
-            <LogoutButton />
+              <button
+                onClick={toggleTheme}
+                aria-label={
+                  zh ? (theme === 'dark' ? '浅色' : '深色') : theme === 'dark' ? 'Light' : 'Dark'
+                }
+                title={
+                  zh ? (theme === 'dark' ? '浅色' : '深色') : theme === 'dark' ? 'Light' : 'Dark'
+                }
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+              >
+                {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                <span>
+                  {zh ? (theme === 'dark' ? '浅色' : '深色') : theme === 'dark' ? 'Light' : 'Dark'}
+                </span>
+              </button>
+              <button
+                onClick={toggleLang}
+                aria-label={i18n.language === 'zh-CN' ? 'English' : '中文'}
+                title={i18n.language === 'zh-CN' ? 'English' : '中文'}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+              >
+                <Languages size={18} />
+                <span>{i18n.language === 'zh-CN' ? 'English' : '中文'}</span>
+              </button>
+              <LogoutButton />
             </div>
           </div>
         </div>
@@ -216,17 +227,24 @@ function Layout() {
             </div>
           </div>
           <div className="app-topbar-actions">
-            <div className="app-market-status"><MarketStatusIndicator /></div>
+            <div className="app-market-status">
+              <MarketStatusIndicator />
+            </div>
             <AppearancePicker />
           </div>
         </header>
 
         {/* Page content */}
-        <main ref={pageScrollRef} className={inSettings
-          ? 'app-content app-settings-content flex min-h-0 flex-1 flex-col overflow-hidden'
-          : location.pathname === '/council'
-          ? 'app-content flex min-h-0 flex-1 flex-col overflow-hidden safe-bottom'
-          : 'app-content flex-1 overflow-y-auto safe-bottom'}>
+        <main
+          ref={pageScrollRef}
+          className={
+            inSettings
+              ? 'app-content app-settings-content flex min-h-0 flex-1 flex-col overflow-hidden'
+              : location.pathname === '/council'
+                ? 'app-content flex min-h-0 flex-1 flex-col overflow-hidden safe-bottom'
+                : 'app-content flex-1 overflow-y-auto safe-bottom'
+          }
+        >
           <Outlet />
         </main>
       </div>
@@ -262,14 +280,10 @@ function MarketStatusIndicator() {
         <TooltipTrigger asChild>
           <div className="flex cursor-help items-center gap-1.5">
             <Circle size={8} className={`fill-current ${statusColor}`} />
-            <span className={`${statusColor} text-xs font-medium`}>
-              {statusLabel}
-            </span>
+            <span className={`${statusColor} text-xs font-medium`}>{statusLabel}</span>
           </div>
         </TooltipTrigger>
-        <TooltipContent side="bottom">
-          {t('layout.marketHours')}
-        </TooltipContent>
+        <TooltipContent side="bottom">{t('layout.marketHours')}</TooltipContent>
       </Tooltip>
       <button
         className="rounded-md p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -295,9 +309,10 @@ function SidebarUserBlock() {
     retry: false,
   });
 
-  const name = profile?.username === 'demo' && profile.displayName === '演示用户'
-    ? t('layout.demoUser')
-    : profile?.displayName || profile?.username || '';
+  const name =
+    profile?.username === 'demo' && profile.displayName === '演示用户'
+      ? t('layout.demoUser')
+      : profile?.displayName || profile?.username || '';
   const initial = name ? name.charAt(0).toUpperCase() : '?';
 
   return (

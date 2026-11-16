@@ -1,13 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CouncilSession } from '@shared/council.interface';
 import {
-  createCouncilSession, fetchCouncilSession, fetchCouncilSessions, pauseCouncilSession,
-  postCouncilMessage, runCouncilSession,
+  createCouncilSession,
+  fetchCouncilSession,
+  fetchCouncilSessions,
+  pauseCouncilSession,
+  postCouncilMessage,
+  runCouncilSession,
 } from '@/api/council';
 
 export function useCouncilSessions() {
-  return useQuery({ queryKey: ['council', 'sessions'], queryFn: fetchCouncilSessions,
-    refetchInterval: 15_000 });
+  return useQuery({
+    queryKey: ['council', 'sessions'],
+    queryFn: fetchCouncilSessions,
+    refetchInterval: 15_000,
+  });
 }
 
 export function useCouncilSession(id: string | null) {
@@ -15,7 +22,7 @@ export function useCouncilSession(id: string | null) {
     queryKey: ['council', 'session', id],
     queryFn: () => fetchCouncilSession(id!),
     enabled: Boolean(id),
-    refetchInterval: (query) => query.state.data?.status === 'running' ? 2000 : 10_000,
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 2000 : 10_000),
   });
 }
 
@@ -28,8 +35,10 @@ export function useCouncilActions() {
   };
   const create = useMutation({ mutationFn: createCouncilSession, retry: false, onSuccess: update });
   const send = useMutation({
-    mutationFn: ({ id, content }: { id: string; content: string }) => postCouncilMessage(id, content),
-    retry: false, onSuccess: update,
+    mutationFn: ({ id, content }: { id: string; content: string }) =>
+      postCouncilMessage(id, content),
+    retry: false,
+    onSuccess: update,
   });
   const run = useMutation({ mutationFn: runCouncilSession, retry: false, onSuccess: update });
   const pause = useMutation({ mutationFn: pauseCouncilSession, retry: false, onSuccess: update });

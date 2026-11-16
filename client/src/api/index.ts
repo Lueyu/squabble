@@ -211,9 +211,7 @@ export async function deleteGroup(id: string) {
  * @returns The `items` array of analysis records.
  */
 export async function fetchAnalysis(date?: string) {
-  const url = date
-    ? `/api/portfolio/analysis?date=${date}`
-    : '/api/portfolio/analysis';
+  const url = date ? `/api/portfolio/analysis?date=${date}` : '/api/portfolio/analysis';
   const response = await http({ url, method: 'GET' });
   return response.data.items;
 }
@@ -238,7 +236,11 @@ export async function fetchAnalysisDates() {
  * @param params.limit - Maximum number of transactions to return.
  * @returns The `items` array of transaction records.
  */
-export async function fetchTransactions(params?: { ticker?: string; limit?: number; offset?: number }) {
+export async function fetchTransactions(params?: {
+  ticker?: string;
+  limit?: number;
+  offset?: number;
+}) {
   const query = new URLSearchParams();
   if (params?.ticker) query.set('ticker', params.ticker);
   if (params?.limit) query.set('limit', String(params.limit));
@@ -338,9 +340,7 @@ export async function createClosed(data: unknown) {
  * @returns The `items` array of journal records.
  */
 export async function fetchJournal(date?: string) {
-  const url = date
-    ? `/api/portfolio/journal?date=${date}`
-    : '/api/portfolio/journal';
+  const url = date ? `/api/portfolio/journal?date=${date}` : '/api/portfolio/journal';
   const response = await http({ url, method: 'GET' });
   return response.data.items;
 }
@@ -351,9 +351,7 @@ export async function fetchJournal(date?: string) {
  * @returns The `items` array of snapshot records.
  */
 export async function fetchSnapshots(limit?: number) {
-  const url = limit
-    ? `/api/portfolio/snapshots?limit=${limit}`
-    : '/api/portfolio/snapshots';
+  const url = limit ? `/api/portfolio/snapshots?limit=${limit}` : '/api/portfolio/snapshots';
   const response = await http({ url, method: 'GET' });
   return response.data.items;
 }
@@ -574,11 +572,7 @@ export async function submitHumanDecision(
  * @param data.tickers - Explicit ticker list when scope is `custom`.
  * @returns The batch enrollment result.
  */
-export async function batchAgentRuns(data: {
-  scope: string;
-  tiered: boolean;
-  tickers?: string[];
-}) {
+export async function batchAgentRuns(data: { scope: string; tiered: boolean; tickers?: string[] }) {
   const response = await http({
     url: '/api/multi-agent/runs/batch',
     method: 'POST',
@@ -806,13 +800,21 @@ export async function fetchRegistrationStatus(): Promise<RegistrationStatus> {
   return response.data;
 }
 
-export async function apiRecoverAccount(dto: { username: string; recoveryCode: string; newPassword: string }): Promise<AuthTokens> {
+export async function apiRecoverAccount(dto: {
+  username: string;
+  recoveryCode: string;
+  newPassword: string;
+}): Promise<AuthTokens> {
   const response = await http({ url: '/api/auth/recover', method: 'POST', data: dto });
   return response.data;
 }
 
 export async function apiRotateRecoveryCode(password: string): Promise<AuthTokens> {
-  const response = await http({ url: '/api/auth/recovery-code', method: 'POST', data: { password } });
+  const response = await http({
+    url: '/api/auth/recovery-code',
+    method: 'POST',
+    data: { password },
+  });
   return response.data;
 }
 
@@ -875,7 +877,11 @@ export async function updatePaperGuardrails(
  * Paper trading: reset the account (drops all paper data).
  */
 export async function resetPaperAccount(initialCash?: number): Promise<PaperAccount> {
-  const response = await http({ url: '/api/paper/account/reset', method: 'POST', data: { initialCash } });
+  const response = await http({
+    url: '/api/paper/account/reset',
+    method: 'POST',
+    data: { initialCash },
+  });
   return response.data;
 }
 
@@ -909,7 +915,11 @@ export async function createNotificationChannel(
  * Notifications: enable/disable a channel.
  */
 export async function setNotificationChannelEnabled(id: string, enabled: boolean): Promise<void> {
-  await http({ url: `/api/notifications/channels/${id}/enabled`, method: 'PUT', data: { enabled } });
+  await http({
+    url: `/api/notifications/channels/${id}/enabled`,
+    method: 'PUT',
+    data: { enabled },
+  });
 }
 
 /**
@@ -941,10 +951,13 @@ export async function commitImport(dto: ImportCommitDto): Promise<ImportCommitRe
  * Import: extract holdings from a broker screenshot via the user's own
  * multimodal LLM key (transient, server never persists it).
  */
-export async function extractScreenshot(
-  dto: OcrExtractDto,
-): Promise<OcrExtractResult> {
-  const response = await http({ url: '/api/import/ocr/extract', method: 'POST', data: dto, timeout: 120000 });
+export async function extractScreenshot(dto: OcrExtractDto): Promise<OcrExtractResult> {
+  const response = await http({
+    url: '/api/import/ocr/extract',
+    method: 'POST',
+    data: dto,
+    timeout: 120000,
+  });
   return response.data;
 }
 

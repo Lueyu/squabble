@@ -14,11 +14,7 @@
  *    silently merged — edit the holding instead)
  *  - every outcome is persisted to import_logs with per-row reasons
  */
-import {
-  BadRequestException,
-  Inject,
-  Injectable,
-} from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { desc, eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { holdings, importLogs } from '../../database/schema';
@@ -40,7 +36,10 @@ export class ImportService {
    * Existing tickers are skipped (with a reason) so an import never
    * silently duplicates or merges existing positions.
    */
-  async commit(userId: string, dto: ImportCommitDto): Promise<{
+  async commit(
+    userId: string,
+    dto: ImportCommitDto,
+  ): Promise<{
     logId: string;
     created: number;
     skipped: number;
@@ -49,7 +48,9 @@ export class ImportService {
     const rows = dto.rows ?? [];
     if (rows.length === 0) throw new BadRequestException('No rows to import');
     if (rows.length > MAX_ROWS_PER_IMPORT) {
-      throw new BadRequestException(`单次最多导入 ${MAX_ROWS_PER_IMPORT} 行（收到 ${rows.length} 行）`);
+      throw new BadRequestException(
+        `单次最多导入 ${MAX_ROWS_PER_IMPORT} 行（收到 ${rows.length} 行）`,
+      );
     }
     if (!['csv', 'robinhood', 'ocr'].includes(dto.source)) {
       throw new BadRequestException('Unknown import source');

@@ -34,8 +34,6 @@ export type IUserProfile = {
   status: IUserStatus;
 };
 
-
-
 /**
  * Reference to a file stored in the object-storage bucket.
  */

@@ -51,7 +51,8 @@ function isPublicIpv4(address: string): boolean {
   if (first === 169 && second === 254) return false;
   if (first === 172 && second >= 16 && second <= 31) return false;
   if (first === 192 && (second === 0 || second === 168)) return false;
-  if (first === 198 && (second === 18 || second === 19 || (second === 51 && third === 100))) return false;
+  if (first === 198 && (second === 18 || second === 19 || (second === 51 && third === 100)))
+    return false;
   if (first === 203 && second === 0 && third === 113) return false;
   return true;
 }
@@ -65,36 +66,42 @@ function isPublicIp(address: string): boolean {
     if (isIP(embedded) === 4) return isPublicIpv4(embedded);
   }
   return !(
-    normalized === '::' || normalized === '::1'
-    || normalized.startsWith('fc') || normalized.startsWith('fd')
-    || /^fe[89ab]/u.test(normalized)
-    || normalized.startsWith('2001:db8:')
-    || normalized.startsWith('::ffff:')
+    normalized === '::' ||
+    normalized === '::1' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    /^fe[89ab]/u.test(normalized) ||
+    normalized.startsWith('2001:db8:') ||
+    normalized.startsWith('::ffff:')
   );
 }
 
 /** Validate every DNS answer at connection time, then pin the socket to it. */
 export function makePublicLookup(
-  resolveAll: (hostname: string) => Promise<LookupAddress[]> =
-    (hostname) => lookup(hostname, { all: true }),
+  resolveAll: (hostname: string) => Promise<LookupAddress[]> = (hostname) =>
+    lookup(hostname, { all: true }),
 ): LookupFunction {
   return (hostname, options, callback) => {
-    void resolveAll(hostname).then((addresses) => {
-      if (addresses.length === 0 || addresses.some((item) => !isPublicIp(item.address))) {
-        callback(new Error('API base URL must use a public HTTPS host'), '');
-        return;
-      }
-      const family = options.family === 'IPv4' ? 4 : options.family === 'IPv6' ? 6 : options.family;
-      const eligible = family === 4 || family === 6
-        ? addresses.filter((item) => item.family === family)
-        : addresses;
-      if (eligible.length === 0) {
-        callback(new Error('API host has no public address for the requested family'), '');
-        return;
-      }
-      if (options.all) callback(null, eligible);
-      else callback(null, eligible[0].address, eligible[0].family);
-    }).catch(() => callback(new Error('Could not resolve a public API host'), ''));
+    void resolveAll(hostname)
+      .then((addresses) => {
+        if (addresses.length === 0 || addresses.some((item) => !isPublicIp(item.address))) {
+          callback(new Error('API base URL must use a public HTTPS host'), '');
+          return;
+        }
+        const family =
+          options.family === 'IPv4' ? 4 : options.family === 'IPv6' ? 6 : options.family;
+        const eligible =
+          family === 4 || family === 6
+            ? addresses.filter((item) => item.family === family)
+            : addresses;
+        if (eligible.length === 0) {
+          callback(new Error('API host has no public address for the requested family'), '');
+          return;
+        }
+        if (options.all) callback(null, eligible);
+        else callback(null, eligible[0].address, eligible[0].family);
+      })
+      .catch(() => callback(new Error('Could not resolve a public API host'), ''));
   };
 }
 
@@ -105,8 +112,8 @@ export function publicHttpsAgent(): HttpsAgent {
 /** Reject local/private endpoints before persisting or invoking a user URL. */
 export async function normalizePublicLlmBaseUrl(
   input: string,
-  resolveAll: (hostname: string) => Promise<LookupAddress[]> =
-    (hostname) => lookup(hostname, { all: true }),
+  resolveAll: (hostname: string) => Promise<LookupAddress[]> = (hostname) =>
+    lookup(hostname, { all: true }),
 ): Promise<string> {
   if (typeof input !== 'string' || input.length > 500) {
     throw new Error('Enter a valid HTTPS API base URL');
@@ -122,14 +129,13 @@ export async function normalizePublicLlmBaseUrl(
   }
   const hostname = url.hostname.toLowerCase().replace(/[.]$/u, '');
   if (
-    !hostname || !hostname.includes('.')
-    || /[.]((localhost)|(local)|(internal)|(test)|(invalid)|(example))$/u.test(hostname)
+    !hostname ||
+    !hostname.includes('.') ||
+    /[.]((localhost)|(local)|(internal)|(test)|(invalid)|(example))$/u.test(hostname)
   ) {
     throw new Error('API base URL must use a public HTTPS host');
   }
-  const addresses = isIP(hostname)
-    ? [{ address: hostname }]
-    : await resolveAll(hostname);
+  const addresses = isIP(hostname) ? [{ address: hostname }] : await resolveAll(hostname);
   if (addresses.length === 0 || addresses.some(({ address }) => !isPublicIp(address))) {
     throw new Error('API base URL must use a public HTTPS host');
   }

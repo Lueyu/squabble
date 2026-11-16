@@ -85,9 +85,7 @@ export class AgentController {
    * @param req Authenticated request.
    */
   @Get('history')
-  async getHistory(
-    @Req() req: Request,
-  ): Promise<{
+  async getHistory(@Req() req: Request): Promise<{
     analysis: Analysis[];
     transactions: Transaction[];
     snapshots: Snapshot[];
@@ -215,7 +213,10 @@ export class AgentController {
     @Body() body: Record<string, unknown>,
   ): Promise<{ ok: boolean; runId: string; deepReportId: string; reportDate: string }> {
     const { userId } = req.userContext;
-    return this.agentService.saveDeepReport(userId, body as Parameters<typeof this.agentService.saveDeepReport>[1]);
+    return this.agentService.saveDeepReport(
+      userId,
+      body as Parameters<typeof this.agentService.saveDeepReport>[1],
+    );
   }
 
   /**

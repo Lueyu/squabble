@@ -29,9 +29,7 @@ module.exports = tseslint.config(
   // Client configuration
   {
     files: ['client/**/*.{ts,tsx}', 'shared/**/*.{ts,tsx}'],
-    extends: [
-      ...tseslint.configs.recommended,
-    ],
+    extends: [...tseslint.configs.recommended],
     plugins: {
       'react-hooks': reactHooks,
     },
@@ -65,9 +63,7 @@ module.exports = tseslint.config(
   // Server configuration
   {
     files: ['server/**/*.{ts,tsx}', 'shared/**/*.{ts,tsx}'],
-    extends: [
-      ...tseslint.configs.recommended,
-    ],
+    extends: [...tseslint.configs.recommended],
     languageOptions: {
       parserOptions: {
         project: './tsconfig.node.json',
@@ -83,7 +79,10 @@ module.exports = tseslint.config(
     settings: {
       'import/resolver': {
         alias: {
-          map: [['@server', './server'], ['@shared', './shared']],
+          map: [
+            ['@server', './server'],
+            ['@shared', './shared'],
+          ],
           extensions: ['.js', '.jsx', '.ts', '.tsx'],
         },
       },

@@ -1,5 +1,10 @@
 import http from './http';
-import type { CouncilSession, CreateCouncilSession, LlmBudgetSettings, LlmBudgetUsage } from '@shared/council.interface';
+import type {
+  CouncilSession,
+  CreateCouncilSession,
+  LlmBudgetSettings,
+  LlmBudgetUsage,
+} from '@shared/council.interface';
 
 export async function fetchCouncilSessions(): Promise<CouncilSession[]> {
   const response = await http.get<{ items: CouncilSession[] }>('/api/council/sessions');
@@ -7,7 +12,9 @@ export async function fetchCouncilSessions(): Promise<CouncilSession[]> {
 }
 
 export async function fetchCouncilSession(id: string): Promise<CouncilSession> {
-  const response = await http.get<CouncilSession>(`/api/council/sessions/${encodeURIComponent(id)}`);
+  const response = await http.get<CouncilSession>(
+    `/api/council/sessions/${encodeURIComponent(id)}`,
+  );
   return response.data;
 }
 
@@ -18,18 +25,23 @@ export async function createCouncilSession(request: CreateCouncilSession): Promi
 
 export async function postCouncilMessage(id: string, content: string): Promise<CouncilSession> {
   const response = await http.post<CouncilSession>(
-    `/api/council/sessions/${encodeURIComponent(id)}/messages`, { content },
+    `/api/council/sessions/${encodeURIComponent(id)}/messages`,
+    { content },
   );
   return response.data;
 }
 
 export async function runCouncilSession(id: string): Promise<CouncilSession> {
-  const response = await http.post<CouncilSession>(`/api/council/sessions/${encodeURIComponent(id)}/run`);
+  const response = await http.post<CouncilSession>(
+    `/api/council/sessions/${encodeURIComponent(id)}/run`,
+  );
   return response.data;
 }
 
 export async function pauseCouncilSession(id: string): Promise<CouncilSession> {
-  const response = await http.post<CouncilSession>(`/api/council/sessions/${encodeURIComponent(id)}/pause`);
+  const response = await http.post<CouncilSession>(
+    `/api/council/sessions/${encodeURIComponent(id)}/pause`,
+  );
   return response.data;
 }
 

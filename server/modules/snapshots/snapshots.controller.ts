@@ -5,24 +5,11 @@
  * value, cost, cash, P&L, net deposits) under
  * `/api/portfolio/snapshots`. Requires login on every route.
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Delete,
-  Body,
-  Param,
-  Query,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 import { SnapshotsService } from './snapshots.service';
-import type {
-  Snapshot,
-  CreateSnapshotDto,
-  ListResponse,
-} from '@shared/api.interface';
+import type { Snapshot, CreateSnapshotDto, ListResponse } from '@shared/api.interface';
 
 /**
  * REST controller for daily portfolio snapshots. Delegates to `SnapshotsService`.
@@ -39,10 +26,7 @@ export class SnapshotsController {
    * @param limit   Optional max number of rows.
    */
   @Get()
-  async list(
-    @Req() req: Request,
-    @Query('limit') limit?: string,
-  ): Promise<ListResponse<Snapshot>> {
+  async list(@Req() req: Request, @Query('limit') limit?: string): Promise<ListResponse<Snapshot>> {
     const { userId } = req.userContext;
     const limitNum = limit ? parseInt(limit, 10) : 90;
     return this.snapshotsService.list(userId, limitNum);
@@ -67,10 +51,7 @@ export class SnapshotsController {
    * @param dto Snapshot payload keyed by `snapshotDate`.
    */
   @Post()
-  async upsert(
-    @Req() req: Request,
-    @Body() dto: CreateSnapshotDto,
-  ): Promise<Snapshot> {
+  async upsert(@Req() req: Request, @Body() dto: CreateSnapshotDto): Promise<Snapshot> {
     const { userId } = req.userContext;
     return this.snapshotsService.upsert(userId, dto);
   }
@@ -98,10 +79,7 @@ export class SnapshotsController {
    * @param id  Snapshot primary key.
    */
   @Delete(':id')
-  async remove(
-    @Req() req: Request,
-    @Param('id') id: string,
-  ): Promise<{ success: boolean }> {
+  async remove(@Req() req: Request, @Param('id') id: string): Promise<{ success: boolean }> {
     const { userId } = req.userContext;
     return this.snapshotsService.remove(userId, id);
   }

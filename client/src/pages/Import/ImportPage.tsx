@@ -48,7 +48,18 @@ type MapField = 'ticker' | 'shares' | 'avgCost' | 'company';
 const FIELD_ALIASES: Record<MapField, string[]> = {
   ticker: ['ticker', 'symbol', 'code', '股票代码', '证券代码', '代码', 'symbol(id)'],
   shares: ['shares', 'quantity', 'qty', '股数', '持仓数量', '数量', '持有数量', '持仓'],
-  avgCost: ['avgcost', 'averagecost', 'avgcostbasis', 'price', '成本价', '买入成本', '成本', '均价', '平均成本', '购买价'],
+  avgCost: [
+    'avgcost',
+    'averagecost',
+    'avgcostbasis',
+    'price',
+    '成本价',
+    '买入成本',
+    '成本',
+    '均价',
+    '平均成本',
+    '购买价',
+  ],
   company: ['company', 'name', 'description', '名称', '证券名称', '股票名称', '描述'],
 };
 
@@ -102,10 +113,12 @@ function suggestForPreset(headers: string[], presetKey: string): Partial<Record<
       if (used.has(i)) continue;
       const h = headers[i].toLowerCase().replace(/\s+/g, '');
       if (field === 'avgCost' && /^(totalcost|costbasis|总成本|成本总额)/.test(h)) continue;
-      if (aliases[field].some((a) => {
-        const normalized = a.toLowerCase().replace(/\s+/g, '');
-        return h === normalized || h.includes(normalized);
-      })) {
+      if (
+        aliases[field].some((a) => {
+          const normalized = a.toLowerCase().replace(/\s+/g, '');
+          return h === normalized || h.includes(normalized);
+        })
+      ) {
         out[field] = i;
         used.add(i);
         break;
@@ -116,7 +129,10 @@ function suggestForPreset(headers: string[], presetKey: string): Partial<Record<
 }
 
 /** Turn mapped CSV cells into import row candidates. */
-function rowsFromMatrix(matrix: string[][], mapping: Partial<Record<MapField, number>>): ImportRowCandidate[] {
+function rowsFromMatrix(
+  matrix: string[][],
+  mapping: Partial<Record<MapField, number>>,
+): ImportRowCandidate[] {
   const has = (v?: string) => v != null && v.trim() !== '';
   const num = (v?: string) => {
     if (!has(v)) return null;
@@ -126,7 +142,10 @@ function rowsFromMatrix(matrix: string[][], mapping: Partial<Record<MapField, nu
   return matrix
     .map((cells) => ({
       ticker: mapping.ticker != null ? String(cells[mapping.ticker] ?? '').trim() : '',
-      company: mapping.company != null && has(cells[mapping.company]) ? String(cells[mapping.company]).trim() : null,
+      company:
+        mapping.company != null && has(cells[mapping.company])
+          ? String(cells[mapping.company]).trim()
+          : null,
       shares: num(mapping.shares != null ? cells[mapping.shares] : undefined) ?? 0,
       avgCost: num(mapping.avgCost != null ? cells[mapping.avgCost] : undefined),
     }))
@@ -159,16 +178,22 @@ function ImportPage() {
           <Upload size={22} className="text-primary" />
           {t('import.title')}
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('import.subtitle')}
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">{t('import.subtitle')}</p>
       </div>
 
       <div className="flex gap-2">
-        <Button variant={mode === 'csv' ? 'default' : 'outline'} size="sm" onClick={() => setMode('csv')}>
+        <Button
+          variant={mode === 'csv' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setMode('csv')}
+        >
           <FileSpreadsheet size={14} className="mr-1" /> {t('import.csvFile')}
         </Button>
-        <Button variant={mode === 'ocr' ? 'default' : 'outline'} size="sm" onClick={() => setMode('ocr')}>
+        <Button
+          variant={mode === 'ocr' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setMode('ocr')}
+        >
           <Camera size={14} className="mr-1" /> {t('import.screenshot')}
         </Button>
       </div>
@@ -195,7 +220,11 @@ function CsvImport() {
   const [buyDate, setBuyDate] = useState('');
   const [source, setSource] = useState<string>('generic');
   const [committing, setCommitting] = useState(false);
-  const [result, setResult] = useState<{ created: number; skipped: number; failed: Array<{ ticker: string; reason: string }> } | null>(null);
+  const [result, setResult] = useState<{
+    created: number;
+    skipped: number;
+    failed: Array<{ ticker: string; reason: string }>;
+  } | null>(null);
 
   const readFile = (file: File) => {
     setFilename(file.name);
@@ -204,12 +233,16 @@ function CsvImport() {
     reader.onload = () => {
       const text = String(reader.result ?? '');
       const parsed = Papa.parse<string[]>(text, { header: false, skipEmptyLines: true });
-      const data = (parsed.data as string[][]).filter((r) => r.some((c) => String(c).trim() !== ''));
+      const data = (parsed.data as string[][]).filter((r) =>
+        r.some((c) => String(c).trim() !== ''),
+      );
       if (data.length === 0) {
         toast.warning(t('ui.import.noDataRows'));
         return;
       }
-      const hdrs = (data[0] ?? []).map((h, i) => String(h).trim() || t('ui.import.columnNumber', { number: i + 1 }));
+      const hdrs = (data[0] ?? []).map(
+        (h, i) => String(h).trim() || t('ui.import.columnNumber', { number: i + 1 }),
+      );
       const body = data.slice(1);
       setHeaders(hdrs);
       setMatrix(body);
@@ -241,7 +274,10 @@ function CsvImport() {
       queryClient.invalidateQueries({ queryKey: ['import'] });
       queryClient.invalidateQueries({ queryKey: ['holdings'] });
     } catch (error) {
-      toast.error((error as { response?: { data?: { message?: string } } })?.response?.data?.message ?? t('import.importFailed'));
+      toast.error(
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          t('import.importFailed'),
+      );
     } finally {
       setCommitting(false);
     }
@@ -262,7 +298,9 @@ function CsvImport() {
             }}
           >
             {Object.entries(BROKER_PRESETS).map(([k, v]) => (
-              <option key={k} value={k}>{t(v.labelKey)}</option>
+              <option key={k} value={k}>
+                {t(v.labelKey)}
+              </option>
             ))}
           </select>
           <select
@@ -273,7 +311,12 @@ function CsvImport() {
             <option value="utf-8">UTF-8</option>
             <option value="gbk">{t('import.gbkNote')}</option>
           </select>
-          <Button className="col-span-2 w-full sm:w-auto" size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
+          <Button
+            className="col-span-2 w-full sm:w-auto"
+            size="sm"
+            variant="outline"
+            onClick={() => fileRef.current?.click()}
+          >
             <Upload size={14} className="mr-1" /> {t('import.selectFile')}
           </Button>
           <input
@@ -293,24 +336,37 @@ function CsvImport() {
         ) : (
           <>
             <div className="text-xs text-muted-foreground">
-              {filename} · {matrix.length} {t('import.rowsData')} ({t('import.columns')}: {headers.length})
-              {source === 'robinhood' && ` · ${t('import.robinhoodApplied')}`}
+              {filename} · {matrix.length} {t('import.rowsData')} ({t('import.columns')}:{' '}
+              {headers.length}){source === 'robinhood' && ` · ${t('import.robinhoodApplied')}`}
             </div>
 
             <div className="grid gap-3 md:grid-cols-4">
               {(['ticker', 'shares', 'avgCost', 'company'] as MapField[]).map((field) => (
                 <div key={field} className="space-y-1.5">
                   <Label className="text-xs">
-                    {field === 'ticker' ? t('import.ticker') : field === 'shares' ? t('import.shares') : field === 'avgCost' ? t('import.avgCost') : t('import.company')}
+                    {field === 'ticker'
+                      ? t('import.ticker')
+                      : field === 'shares'
+                        ? t('import.shares')
+                        : field === 'avgCost'
+                          ? t('import.avgCost')
+                          : t('import.company')}
                   </Label>
                   <select
                     className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                     value={mapping[field] ?? ''}
-                    onChange={(e) => setMapping((prev) => ({ ...prev, [field]: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                    onChange={(e) =>
+                      setMapping((prev) => ({
+                        ...prev,
+                        [field]: e.target.value === '' ? undefined : Number(e.target.value),
+                      }))
+                    }
                   >
                     <option value="">{t('import.noMapping')}</option>
                     {headers.map((h, i) => (
-                      <option key={i} value={i}>{h}</option>
+                      <option key={i} value={i}>
+                        {h}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -331,7 +387,9 @@ function CsvImport() {
                   {previewRows.slice(0, 20).map((r, i) => (
                     <tr key={i} className="border-t">
                       <td className="px-3 py-1.5 font-medium">{r.ticker}</td>
-                      <td className="px-3 py-1.5 text-xs text-muted-foreground">{r.company ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-xs text-muted-foreground">
+                        {r.company ?? '—'}
+                      </td>
                       <td className="px-3 py-1.5 font-mono-nums">{r.shares}</td>
                       <td className="px-3 py-1.5 font-mono-nums">{r.avgCost ?? '—'}</td>
                     </tr>
@@ -340,16 +398,31 @@ function CsvImport() {
               </table>
             </div>
             {previewRows.length > 20 && (
-              <div className="text-xs text-muted-foreground">{t('import.preview20', { count: previewRows.length })}</div>
+              <div className="text-xs text-muted-foreground">
+                {t('import.preview20', { count: previewRows.length })}
+              </div>
             )}
 
             <div className="flex flex-wrap items-center gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">{t('import.buyDate')}</Label>
-                <Input type="date" className="h-9 w-40" value={buyDate} onChange={(e) => setBuyDate(e.target.value)} />
+                <Input
+                  type="date"
+                  className="h-9 w-40"
+                  value={buyDate}
+                  onChange={(e) => setBuyDate(e.target.value)}
+                />
               </div>
-              <Button className="mt-4" onClick={commit} disabled={committing || mapping.ticker == null || mapping.shares == null}>
-                {committing ? <Loader2 size={14} className="mr-1 animate-spin" /> : <CheckCircle2 size={14} className="mr-1" />}
+              <Button
+                className="mt-4"
+                onClick={commit}
+                disabled={committing || mapping.ticker == null || mapping.shares == null}
+              >
+                {committing ? (
+                  <Loader2 size={14} className="mr-1 animate-spin" />
+                ) : (
+                  <CheckCircle2 size={14} className="mr-1" />
+                )}
                 {t('import.confirmImport', { count: previewRows.length })}
               </Button>
             </div>
@@ -359,10 +432,16 @@ function CsvImport() {
         {result && (
           <div className="rounded-md border border-border p-3 text-sm">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+              <Badge
+                variant="outline"
+                className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+              >
                 {t('import.created')} {result.created}
               </Badge>
-              <Badge variant="outline" className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
+              <Badge
+                variant="outline"
+                className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+              >
                 {t('import.skipped')} {result.skipped}
               </Badge>
             </div>
@@ -371,10 +450,14 @@ function CsvImport() {
                 {result.failed.slice(0, 10).map((f, i) => (
                   <div key={i} className="flex items-center gap-1.5">
                     <XCircle size={12} className="shrink-0 text-amber-500" />
-                    <span>{f.ticker}：{f.reason}</span>
+                    <span>
+                      {f.ticker}：{f.reason}
+                    </span>
                   </div>
                 ))}
-                {result.failed.length > 10 && <div>{t('ui.import.moreFailed', { count: result.failed.length - 10 })}</div>}
+                {result.failed.length > 10 && (
+                  <div>{t('ui.import.moreFailed', { count: result.failed.length - 10 })}</div>
+                )}
               </div>
             )}
           </div>
@@ -430,9 +513,17 @@ function OcrImport() {
       });
       setOcrResult(r);
       setRows(r.rows);
-      toast.success(t('import.extractSuccess', { count: r.rows.length, broker: r.broker ? ` (${r.broker})` : '' }));
+      toast.success(
+        t('import.extractSuccess', {
+          count: r.rows.length,
+          broker: r.broker ? ` (${r.broker})` : '',
+        }),
+      );
     } catch (error) {
-      toast.error((error as { response?: { data?: { message?: string } } })?.response?.data?.message ?? t('import.extractFailed'));
+      toast.error(
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          t('import.extractFailed'),
+      );
     } finally {
       setExtracting(false);
     }
@@ -449,7 +540,10 @@ function OcrImport() {
       queryClient.invalidateQueries({ queryKey: ['import'] });
       queryClient.invalidateQueries({ queryKey: ['holdings'] });
     } catch (error) {
-      toast.error((error as { response?: { data?: { message?: string } } })?.response?.data?.message ?? t('import.importFailed'));
+      toast.error(
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          t('import.importFailed'),
+      );
     } finally {
       setCommitting(false);
     }
@@ -465,9 +559,7 @@ function OcrImport() {
         <CardTitle className="text-sm">{t('import.screenshotImport')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 p-4">
-        <p className="text-xs text-muted-foreground">
-          {t('import.ocrHint')}
-        </p>
+        <p className="text-xs text-muted-foreground">{t('import.ocrHint')}</p>
 
         <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1.5">
@@ -512,7 +604,11 @@ function OcrImport() {
             onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0])}
           />
           <Button size="sm" onClick={extract} disabled={extracting || !imageBase64}>
-            {extracting ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Wand2 size={14} className="mr-1" />}
+            {extracting ? (
+              <Loader2 size={14} className="mr-1 animate-spin" />
+            ) : (
+              <Wand2 size={14} className="mr-1" />
+            )}
             {extracting ? t('import.extracting') : t('import.extract')}
           </Button>
           {imageBase64 && (
@@ -539,17 +635,47 @@ function OcrImport() {
                 <tbody>
                   {rows.map((r, i) => (
                     <tr key={i} className="border-t">
-                      <td className="px-2 py-1"><Input className="h-8" value={r.ticker} onChange={(e) => updateRow(i, { ticker: e.target.value })} /></td>
-                      <td className="px-2 py-1 text-xs text-muted-foreground">{r.company ?? '—'}</td>
-                      <td className="w-28 px-2 py-1"><Input className="h-8 font-mono-nums" type="number" value={String(r.shares)} onChange={(e) => updateRow(i, { shares: Number(e.target.value) })} /></td>
-                      <td className="w-28 px-2 py-1"><Input className="h-8 font-mono-nums" type="number" value={r.avgCost == null ? '' : String(r.avgCost)} onChange={(e) => updateRow(i, { avgCost: e.target.value === '' ? null : Number(e.target.value) })} /></td>
+                      <td className="px-2 py-1">
+                        <Input
+                          className="h-8"
+                          value={r.ticker}
+                          onChange={(e) => updateRow(i, { ticker: e.target.value })}
+                        />
+                      </td>
+                      <td className="px-2 py-1 text-xs text-muted-foreground">
+                        {r.company ?? '—'}
+                      </td>
+                      <td className="w-28 px-2 py-1">
+                        <Input
+                          className="h-8 font-mono-nums"
+                          type="number"
+                          value={String(r.shares)}
+                          onChange={(e) => updateRow(i, { shares: Number(e.target.value) })}
+                        />
+                      </td>
+                      <td className="w-28 px-2 py-1">
+                        <Input
+                          className="h-8 font-mono-nums"
+                          type="number"
+                          value={r.avgCost == null ? '' : String(r.avgCost)}
+                          onChange={(e) =>
+                            updateRow(i, {
+                              avgCost: e.target.value === '' ? null : Number(e.target.value),
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <Button onClick={commit} disabled={committing}>
-              {committing ? <Loader2 size={14} className="mr-1 animate-spin" /> : <CheckCircle2 size={14} className="mr-1" />}
+              {committing ? (
+                <Loader2 size={14} className="mr-1 animate-spin" />
+              ) : (
+                <CheckCircle2 size={14} className="mr-1" />
+              )}
               {t('import.confirmImport', { count: rows.length })}
             </Button>
           </>
@@ -570,12 +696,18 @@ function ImportHistoryCard() {
     queryFn: fetchImportHistory,
   });
   const items = historyQuery.data ?? [];
-  const sourceLabel: Record<string, string> = { csv: 'CSV', robinhood: 'Robinhood CSV', ocr: t('import.screenshot') };
+  const sourceLabel: Record<string, string> = {
+    csv: 'CSV',
+    robinhood: 'Robinhood CSV',
+    ocr: t('import.screenshot'),
+  };
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-1.5 text-sm"><History size={14} /> {t('import.history')}</CardTitle>
+        <CardTitle className="flex items-center gap-1.5 text-sm">
+          <History size={14} /> {t('import.history')}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 p-4">
         {items.length === 0 && (
@@ -584,11 +716,19 @@ function ImportHistoryCard() {
           </div>
         )}
         {items.map((h) => (
-          <div key={h.id} className="flex items-center gap-3 rounded-md border border-border px-3 py-2 text-sm">
-            <Badge variant="outline" className="shrink-0 text-[10px]">{sourceLabel[h.source] ?? h.source}</Badge>
-            <span className="truncate text-foreground/90">{h.filename ?? t('import.noFilename')}</span>
+          <div
+            key={h.id}
+            className="flex items-center gap-3 rounded-md border border-border px-3 py-2 text-sm"
+          >
+            <Badge variant="outline" className="shrink-0 text-[10px]">
+              {sourceLabel[h.source] ?? h.source}
+            </Badge>
+            <span className="truncate text-foreground/90">
+              {h.filename ?? t('import.noFilename')}
+            </span>
             <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-              {t('import.created')} {h.rowsImported}/{h.rowsTotal} · {new Date(h.createdAt).toLocaleString(undefined, { hour12: false })}
+              {t('import.created')} {h.rowsImported}/{h.rowsTotal} ·{' '}
+              {new Date(h.createdAt).toLocaleString(undefined, { hour12: false })}
             </span>
           </div>
         ))}

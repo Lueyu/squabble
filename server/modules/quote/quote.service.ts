@@ -191,11 +191,12 @@ export class QuoteService {
         result = await this.fetchHkQuote(info.symbolNative);
       } else if (info.market === 'CN') {
         // CN provider endpoints need an sh/sz/bj prefix.
-        const prefix = info.displaySymbol.endsWith('.SH') || info.displaySymbol.endsWith('.SS')
-          ? 'sh'
-          : info.displaySymbol.endsWith('.SZ')
-            ? 'sz'
-            : 'bj';
+        const prefix =
+          info.displaySymbol.endsWith('.SH') || info.displaySymbol.endsWith('.SS')
+            ? 'sh'
+            : info.displaySymbol.endsWith('.SZ')
+              ? 'sz'
+              : 'bj';
         result = await this.fetchCnQuote(info.symbolNative, prefix);
       }
 
@@ -207,7 +208,9 @@ export class QuoteService {
       }
       return result;
     } catch (error) {
-      this.logger.warn(`getQuote failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `getQuote failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -220,7 +223,10 @@ export class QuoteService {
    * @returns Quotes that could be resolved (unresolved symbols are skipped).
    */
   async getBatchQuotes(symbols: string[]): Promise<QuoteResponse[]> {
-    const unique = Array.from(new Set(symbols.map((s: string) => s.trim()).filter(Boolean))).slice(0, MAX_BATCH_SIZE);
+    const unique = Array.from(new Set(symbols.map((s: string) => s.trim()).filter(Boolean))).slice(
+      0,
+      MAX_BATCH_SIZE,
+    );
     const results: QuoteResponse[] = [];
     const promises = unique.map(async (sym: string) => {
       const q = await this.getQuote(sym);
@@ -263,8 +269,16 @@ export class QuoteService {
       // Derive change/percent if the provider omits them.
       const changeVal = parseFloat(changeStr);
       const changePercentVal = parseFloat(changePercentStr);
-      const change = isNaN(changeVal) ? (isNaN(prevClose) || prevClose <= 0 ? 0 : currentPrice - prevClose) : changeVal;
-      const changePercent = isNaN(changePercentVal) ? (isNaN(prevClose) || prevClose <= 0 ? 0 : (change / prevClose) * 100) : changePercentVal;
+      const change = isNaN(changeVal)
+        ? isNaN(prevClose) || prevClose <= 0
+          ? 0
+          : currentPrice - prevClose
+        : changeVal;
+      const changePercent = isNaN(changePercentVal)
+        ? isNaN(prevClose) || prevClose <= 0
+          ? 0
+          : (change / prevClose) * 100
+        : changePercentVal;
 
       const openStr = fields[5];
       const highStr = fields[33];
@@ -288,7 +302,9 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
-      this.logger.warn(`fetchUsQuote tencent failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `fetchUsQuote tencent failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     // Fallback to Yahoo when the primary provider failed.
@@ -297,7 +313,9 @@ export class QuoteService {
         const yahooResult = await this.fetchUsQuoteYahoo(symbol);
         if (yahooResult) return yahooResult;
       } catch (error) {
-        this.logger.warn(`fetchUsQuote yahoo fallback failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+        this.logger.warn(
+          `fetchUsQuote yahoo fallback failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 
@@ -346,25 +364,40 @@ export class QuoteService {
 
       if (typeof price !== 'number' || isNaN(price) || price <= 0) return null;
 
-      const change = (typeof prevClose === 'number' && prevClose > 0) ? price - prevClose : 0;
-      const changePercent = (typeof prevClose === 'number' && prevClose > 0) ? (change / prevClose) * 100 : 0;
+      const change = typeof prevClose === 'number' && prevClose > 0 ? price - prevClose : 0;
+      const changePercent =
+        typeof prevClose === 'number' && prevClose > 0 ? (change / prevClose) * 100 : 0;
 
       return {
         symbol: (meta.symbol ?? symbol).toUpperCase(),
         price: price.toFixed(2),
         change: change.toFixed(2),
         changePercent: changePercent.toFixed(2),
-        open: typeof meta.regularMarketOpen === 'number' ? meta.regularMarketOpen.toFixed(2) : undefined,
-        high: typeof meta.regularMarketDayHigh === 'number' ? meta.regularMarketDayHigh.toFixed(2) : undefined,
-        low: typeof meta.regularMarketDayLow === 'number' ? meta.regularMarketDayLow.toFixed(2) : undefined,
-        volume: typeof meta.regularMarketVolume === 'number' ? String(meta.regularMarketVolume) : undefined,
+        open:
+          typeof meta.regularMarketOpen === 'number'
+            ? meta.regularMarketOpen.toFixed(2)
+            : undefined,
+        high:
+          typeof meta.regularMarketDayHigh === 'number'
+            ? meta.regularMarketDayHigh.toFixed(2)
+            : undefined,
+        low:
+          typeof meta.regularMarketDayLow === 'number'
+            ? meta.regularMarketDayLow.toFixed(2)
+            : undefined,
+        volume:
+          typeof meta.regularMarketVolume === 'number'
+            ? String(meta.regularMarketVolume)
+            : undefined,
         currency: 'USD',
         market: 'US',
         timestamp: Date.now(),
         delayed: true,
       };
     } catch (error) {
-      this.logger.warn(`fetchUsQuoteYahoo failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `fetchUsQuoteYahoo failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -401,8 +434,16 @@ export class QuoteService {
 
       const changeVal = parseFloat(changeStr);
       const changePercentVal = parseFloat(changePercentStr);
-      const change = isNaN(changeVal) ? (isNaN(prevClose) || prevClose <= 0 ? 0 : currentPrice - prevClose) : changeVal;
-      const changePercent = isNaN(changePercentVal) ? (isNaN(prevClose) || prevClose <= 0 ? 0 : (change / prevClose) * 100) : changePercentVal;
+      const change = isNaN(changeVal)
+        ? isNaN(prevClose) || prevClose <= 0
+          ? 0
+          : currentPrice - prevClose
+        : changeVal;
+      const changePercent = isNaN(changePercentVal)
+        ? isNaN(prevClose) || prevClose <= 0
+          ? 0
+          : (change / prevClose) * 100
+        : changePercentVal;
 
       const openStr = fields[5];
       const highStr = fields[33];
@@ -411,9 +452,7 @@ export class QuoteService {
       const name = fields[1] ?? '';
 
       // Display code drops a leading zero on 5-digit HK codes.
-      const displayCode = symbol.startsWith('0') && symbol.length === 5
-        ? symbol.slice(1)
-        : symbol;
+      const displayCode = symbol.startsWith('0') && symbol.length === 5 ? symbol.slice(1) : symbol;
 
       primary = {
         symbol: `${displayCode}.HK`,
@@ -431,7 +470,9 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
-      this.logger.warn(`fetchHkQuote tencent failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `fetchHkQuote tencent failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     // Fallback to Sina if primary failed.
@@ -439,7 +480,9 @@ export class QuoteService {
       try {
         primary = await this.fetchHkQuoteSina(symbol);
       } catch (error) {
-        this.logger.warn(`fetchHkQuote sina fallback failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+        this.logger.warn(
+          `fetchHkQuote sina fallback failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 
@@ -495,9 +538,7 @@ export class QuoteService {
       const change = isNaN(prevClose) || prevClose <= 0 ? 0 : currentPrice - prevClose;
       const changePercent = isNaN(prevClose) || prevClose <= 0 ? 0 : (change / prevClose) * 100;
 
-      const displayCode = symbol.startsWith('0') && symbol.length === 5
-        ? symbol.slice(1)
-        : symbol;
+      const displayCode = symbol.startsWith('0') && symbol.length === 5 ? symbol.slice(1) : symbol;
 
       return {
         symbol: `${displayCode}.HK`,
@@ -514,7 +555,9 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
-      this.logger.warn(`fetchHkQuoteSina failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `fetchHkQuoteSina failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -526,9 +569,7 @@ export class QuoteService {
   async fetchHkQuoteYahoo(symbol: string): Promise<QuoteResponse | null> {
     try {
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.HK?interval=1d&range=1d`;
-      const response = await firstValueFrom(
-        this.httpService.get(url, { timeout: 8000 }),
-      );
+      const response = await firstValueFrom(this.httpService.get(url, { timeout: 8000 }));
       const result = response.data?.chart?.result?.[0];
       if (!result?.meta) return null;
       const meta = result.meta;
@@ -548,7 +589,9 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
-      this.logger.warn(`fetchHkQuoteYahoo failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `fetchHkQuoteYahoo failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -610,7 +653,9 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
-      this.logger.warn(`fetchCnQuote tencent failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `fetchCnQuote tencent failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     // Fallback to Sina if primary failed.
@@ -618,7 +663,9 @@ export class QuoteService {
       try {
         primary = await this.fetchCnQuoteSina(symbol, prefix);
       } catch (error) {
-        this.logger.warn(`fetchCnQuote sina fallback failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+        this.logger.warn(
+          `fetchCnQuote sina fallback failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 
@@ -687,7 +734,9 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
-      this.logger.warn(`fetchCnQuoteSina failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `fetchCnQuoteSina failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -708,8 +757,7 @@ export class QuoteService {
     const q = query.trim().toLowerCase();
     if (!q) return [];
 
-    const results: Map<string, import('@shared/api.interface').StockSearchResult> =
-      new Map();
+    const results: Map<string, import('@shared/api.interface').StockSearchResult> = new Map();
 
     try {
       // Owner-scoped local lookups for holdings and watchlist.
@@ -954,9 +1002,7 @@ export class QuoteService {
               updatedAt: sql`CURRENT_TIMESTAMP`,
               updatedBy: userId,
             })
-            .where(
-              sql`${holdings.owner} = ${userId} AND ${holdings.ticker} = ${ticker}`,
-            ),
+            .where(sql`${holdings.owner} = ${userId} AND ${holdings.ticker} = ${ticker}`),
         );
         updatePromises.push(
           this.db
@@ -966,16 +1012,16 @@ export class QuoteService {
               updatedAt: sql`CURRENT_TIMESTAMP`,
               updatedBy: userId,
             })
-            .where(
-              sql`${watchlist.owner} = ${userId} AND ${watchlist.ticker} = ${ticker}`,
-            ),
+            .where(sql`${watchlist.owner} = ${userId} AND ${watchlist.ticker} = ${ticker}`),
         );
       }
 
       await Promise.all(updatePromises);
       return refreshed;
     } catch (error) {
-      this.logger.error(`batchRefreshPrices failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `batchRefreshPrices failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return 0;
     }
   }

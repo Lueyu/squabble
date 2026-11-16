@@ -21,8 +21,12 @@ interface RiskAlertBadgeProps {
 function RiskAlertBadge({ results }: RiskAlertBadgeProps) {
   const { t } = useTranslation();
   // Count blocking vs advisory rule failures separately
-  const failedHard = results.filter((r: RiskGateResult) => r.ruleType === 'hard' && !r.passed).length;
-  const failedSoft = results.filter((r: RiskGateResult) => r.ruleType === 'soft' && !r.passed).length;
+  const failedHard = results.filter(
+    (r: RiskGateResult) => r.ruleType === 'hard' && !r.passed,
+  ).length;
+  const failedSoft = results.filter(
+    (r: RiskGateResult) => r.ruleType === 'soft' && !r.passed,
+  ).length;
 
   if (failedHard > 0) {
     return (

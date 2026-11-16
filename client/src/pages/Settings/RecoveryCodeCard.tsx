@@ -29,14 +29,39 @@ export function RecoveryCodeCard() {
     }
   }
 
-  return <Card>
-    <CardHeader><CardTitle>{t('auth.recoverySettingsTitle')}</CardTitle><CardDescription>{t('auth.recoverySettingsSubtitle')}</CardDescription></CardHeader>
-    <CardContent className="space-y-4">
-      {code && <div className="space-y-2"><Label>{t('auth.recoveryCodeLabel')}</Label><div className="rounded-xl border border-border bg-muted p-4 font-mono text-sm break-all select-all">{code}</div><p className="text-xs text-muted-foreground">{t('auth.recoveryCodeWarning')}</p></div>}
-      <form className="flex flex-col gap-3 sm:flex-row sm:items-end" onSubmit={generate}>
-        <div className="flex-1 space-y-2"><Label htmlFor="current-password">{t('auth.password')}</Label><Input id="current-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} /></div>
-        <Button type="submit" disabled={loading}>{t('auth.generateRecoveryCode')}</Button>
-      </form>
-    </CardContent>
-  </Card>;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('auth.recoverySettingsTitle')}</CardTitle>
+        <CardDescription>{t('auth.recoverySettingsSubtitle')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {code && (
+          <div className="space-y-2">
+            <Label>{t('auth.recoveryCodeLabel')}</Label>
+            <div className="rounded-xl border border-border bg-muted p-4 font-mono text-sm break-all select-all">
+              {code}
+            </div>
+            <p className="text-xs text-muted-foreground">{t('auth.recoveryCodeWarning')}</p>
+          </div>
+        )}
+        <form className="flex flex-col gap-3 sm:flex-row sm:items-end" onSubmit={generate}>
+          <div className="flex-1 space-y-2">
+            <Label htmlFor="current-password">{t('auth.password')}</Label>
+            <Input
+              id="current-password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </div>
+          <Button type="submit" disabled={loading}>
+            {t('auth.generateRecoveryCode')}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
 }

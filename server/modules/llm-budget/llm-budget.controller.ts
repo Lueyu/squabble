@@ -9,7 +9,9 @@ export class LlmBudgetController {
   constructor(private readonly budgets: LlmBudgetService) {}
 
   @Get()
-  get(@Req() req: Request) { return this.budgets.getSettings(req.userContext.userId); }
+  get(@Req() req: Request) {
+    return this.budgets.getSettings(req.userContext.userId);
+  }
 
   @Put()
   save(@Req() req: Request, @Body() body: unknown) {
@@ -17,5 +19,7 @@ export class LlmBudgetController {
   }
 
   @Get('usage')
-  usage(@Req() req: Request) { return this.budgets.getUsage(req.userContext.userId); }
+  usage(@Req() req: Request) {
+    return this.budgets.getUsage(req.userContext.userId);
+  }
 }

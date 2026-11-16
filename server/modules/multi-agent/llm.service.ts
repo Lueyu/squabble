@@ -52,13 +52,23 @@ class ModelResponseError extends Error {
 function boundedDeepSeekMode(baseUrl: string, model: string) {
   // These documented IDs support an explicit mode switch. Do not guess the
   // capabilities of legacy aliases, custom gateways or similarly named hosts.
-  if (!['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'].includes(model)) return {};
+  if (
+    ![
+      'deepseek-flash',
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp',
+    ].includes(model)
+  )
+    return {};
   try {
     const url = new URL(baseUrl);
     if (url.protocol === 'https:' && url.hostname === 'api.deepseek.com') {
       return { thinking: { type: 'disabled' as const } };
     }
-  } catch { /* Invalid server configuration is handled by the safe transport error. */ }
+  } catch {
+    /* Invalid server configuration is handled by the safe transport error. */
+  }
   return {};
 }
 
@@ -115,22 +125,38 @@ export class LlmService {
   }
 
   /** Free-text chat on the fast (cheap) model. */
-  async chatFast(messages: ChatMessage[], userId: string, options?: LlmCallOptions): Promise<ChatResponse> {
+  async chatFast(
+    messages: ChatMessage[],
+    userId: string,
+    options?: LlmCallOptions,
+  ): Promise<ChatResponse> {
     return this.chat(messages, 'fast', userId, options);
   }
 
   /** Free-text chat on the slow (pro) model. */
-  async chatSlow(messages: ChatMessage[], userId: string, options?: LlmCallOptions): Promise<ChatResponse> {
+  async chatSlow(
+    messages: ChatMessage[],
+    userId: string,
+    options?: LlmCallOptions,
+  ): Promise<ChatResponse> {
     return this.chat(messages, 'slow', userId, options);
   }
 
   /** JSON-mode chat on the fast model; returns parsed object + token count. */
-  async chatFastJSON(messages: ChatMessage[], userId: string, options?: LlmCallOptions): Promise<{ data: unknown; tokens: number }> {
+  async chatFastJSON(
+    messages: ChatMessage[],
+    userId: string,
+    options?: LlmCallOptions,
+  ): Promise<{ data: unknown; tokens: number }> {
     return this.chatJSON(messages, 'fast', userId, options);
   }
 
   /** JSON-mode chat on the slow model; returns parsed object + token count. */
-  async chatSlowJSON(messages: ChatMessage[], userId: string, options?: LlmCallOptions): Promise<{ data: unknown; tokens: number }> {
+  async chatSlowJSON(
+    messages: ChatMessage[],
+    userId: string,
+    options?: LlmCallOptions,
+  ): Promise<{ data: unknown; tokens: number }> {
     return this.chatJSON(messages, 'slow', userId, options);
   }
 
@@ -147,24 +173,34 @@ export class LlmService {
   ): Promise<ChatResponse> {
     const config = await this.settings.getLlmConfig(userId, options.connectionId);
     if (!config) throw new Error('No LLM API key configured');
-    const baseUrl = config.source === 'user'
-      ? await normalizePublicLlmBaseUrl(config.baseUrl)
-      : config.baseUrl.replace(/\/+$/u, '');
+    const baseUrl =
+      config.source === 'user'
+        ? await normalizePublicLlmBaseUrl(config.baseUrl)
+        : config.baseUrl.replace(/\/+$/u, '');
     const model = tier === 'fast' ? config.fastModel : config.slowModel;
 
     // All retries share a task id, but every attempted HTTP request has its own reservation.
     const taskId = options.taskId ?? randomUUID();
     const maxRetries = options.retryPolicy === 'none' ? 0 : this.maxRetries;
     const timeoutMs = Number.isFinite(options.timeoutMs)
-      ? Math.max(1000, Math.min(120_000, Math.trunc(options.timeoutMs))) : this.timeoutMs;
+      ? Math.max(1000, Math.min(120_000, Math.trunc(options.timeoutMs)))
+      : this.timeoutMs;
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      if (options.shouldContinue && !(await options.shouldContinue())) throw new Error('LLM request cancelled');
+      if (options.shouldContinue && !(await options.shouldContinue()))
+        throw new Error('LLM request cancelled');
       // Deliberately outside the network catch: budget/DB failures must never retry or bypass accounting.
-      const reservation = await this.budgets.reserve(userId, { ...options, taskId, model, messages });
-      const outputLimit = reservation.omitOutputLimit ? {} : /^(?:o[1-9](?:-|$)|gpt-5(?:[.-]|$))/u.test(model)
-        ? { max_completion_tokens: reservation.maxOutputTokens }
-        : { max_tokens: reservation.maxOutputTokens };
+      const reservation = await this.budgets.reserve(userId, {
+        ...options,
+        taskId,
+        model,
+        messages,
+      });
+      const outputLimit = reservation.omitOutputLimit
+        ? {}
+        : /^(?:o[1-9](?:-|$)|gpt-5(?:[.-]|$))/u.test(model)
+          ? { max_completion_tokens: reservation.maxOutputTokens }
+          : { max_tokens: reservation.maxOutputTokens };
       const body = { model, messages, ...outputLimit, ...boundedDeepSeekMode(baseUrl, model) };
       let result: ProviderChatPayload;
       try {
@@ -172,15 +208,15 @@ export class LlmService {
           `${baseUrl}/chat/completions`,
           body,
           {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${config.apiKey}`,
-          },
-          timeout: timeoutMs,
-          maxRedirects: 0,
-          proxy: false,
-          httpsAgent: config.source === 'user' ? publicHttpsAgent() : undefined,
-          validateStatus: () => true,
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${config.apiKey}`,
+            },
+            timeout: timeoutMs,
+            maxRedirects: 0,
+            proxy: false,
+            httpsAgent: config.source === 'user' ? publicHttpsAgent() : undefined,
+            validateStatus: () => true,
           },
         );
         if (response.status < 200 || response.status >= 300) {
@@ -192,13 +228,15 @@ export class LlmService {
         // Timeouts/errors are ambiguous: keep the full charge, including on retries.
         // If settlement itself fails, the persisted reservation remains charged and execution stops.
         await this.budgets.settle(userId, reservation.id, undefined, true);
-        const safeError = error instanceof ProviderHttpError
-          ? error
-          : axios.isAxiosError(error) && ['ECONNABORTED', 'ETIMEDOUT'].includes(error.code ?? '')
-            ? new Error('LLM_REQUEST_TIMEOUT') : new Error('LLM request failed. Check provider URL and server network.');
+        const safeError =
+          error instanceof ProviderHttpError
+            ? error
+            : axios.isAxiosError(error) && ['ECONNABORTED', 'ETIMEDOUT'].includes(error.code ?? '')
+              ? new Error('LLM_REQUEST_TIMEOUT')
+              : new Error('LLM request failed. Check provider URL and server network.');
         if (
-          attempt === maxRetries
-          || (error instanceof ProviderHttpError && error.status < 500 && error.status !== 429)
+          attempt === maxRetries ||
+          (error instanceof ProviderHttpError && error.status < 500 && error.status !== 429)
         ) {
           throw safeError;
         }
@@ -214,7 +252,8 @@ export class LlmService {
       // substitute hidden reasoning for final content, and keep its usage.
       if (choice?.finish_reason === 'length') throw new ModelResponseError('LLM_OUTPUT_LIMIT');
       const content = choice?.message?.content;
-      if (typeof content !== 'string' || !content.trim()) throw new ModelResponseError('LLM_EMPTY_RESPONSE');
+      if (typeof content !== 'string' || !content.trim())
+        throw new ModelResponseError('LLM_EMPTY_RESPONSE');
       return {
         content,
         promptTokens: usage.inputTokens,
@@ -244,7 +283,8 @@ export class LlmService {
   ): Promise<{ data: unknown; tokens: number }> {
     const systemMsg: ChatMessage = {
       role: 'system',
-      content: '你必须严格按照用户要求的 JSON 格式输出，不要添加任何解释、说明或 markdown 格式。只输出合法的 JSON 字符串。',
+      content:
+        '你必须严格按照用户要求的 JSON 格式输出，不要添加任何解释、说明或 markdown 格式。只输出合法的 JSON 字符串。',
     };
 
     // Preserve any caller-supplied system messages, then append our strict-JSON

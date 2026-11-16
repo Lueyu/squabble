@@ -1,10 +1,25 @@
 import type { ResearchActivity } from './research-events.interface';
 import type { ResearchToolBundle, ResearchToolCapability } from './research-tools.interface';
 /** Native runtimes are selected from a fixed catalog; clients never supply executable paths. */
-export const LOCAL_AGENT_PROVIDERS = ['codex', 'claude', 'gemini', 'antigravity', 'opencode', 'kimi', 'doubao'] as const;
-export type LocalAgentProvider = typeof LOCAL_AGENT_PROVIDERS[number];
-export interface NativeAgentConfiguration { model?: string; reasoningEffort?: string }
-export interface NativeAgentModel { id: string; name: string; reasoningEfforts?: string[] }
+export const LOCAL_AGENT_PROVIDERS = [
+  'codex',
+  'claude',
+  'gemini',
+  'antigravity',
+  'opencode',
+  'kimi',
+  'doubao',
+] as const;
+export type LocalAgentProvider = (typeof LOCAL_AGENT_PROVIDERS)[number];
+export interface NativeAgentConfiguration {
+  model?: string;
+  reasoningEffort?: string;
+}
+export interface NativeAgentModel {
+  id: string;
+  name: string;
+  reasoningEfforts?: string[];
+}
 export type NativeAgentState = 'not_installed' | 'login_required' | 'ready' | 'error';
 export interface NativeAgentStatus {
   researchTools?: ResearchToolCapability;
@@ -30,7 +45,10 @@ export interface LocalAgentsStatus {
   items: LocalAgentConnection[];
   companion: { connected: boolean; name?: string };
 }
-export interface LocalAgentPairing { code: string; expiresAt: string }
+export interface LocalAgentPairing {
+  code: string;
+  expiresAt: string;
+}
 export interface CompanionCommand {
   researchTools?: ResearchToolBundle;
   id: string;
@@ -46,10 +64,19 @@ export interface CompanionUpdate {
   progress?: string;
   text?: string;
   usageTokens?: number | null;
-  error?: 'LOCAL_INVALID_CONFIGURATION' | 'LOCAL_CONFIGURATION_UNSUPPORTED' | 'LOCAL_VERSION_UNSUPPORTED' | 'LOCAL_LOGIN_REQUIRED' | 'LOCAL_DISPATCH_UNCERTAIN' | 'LOCAL_TOOL_ISOLATION_FAILED';
+  error?:
+    | 'LOCAL_INVALID_CONFIGURATION'
+    | 'LOCAL_CONFIGURATION_UNSUPPORTED'
+    | 'LOCAL_VERSION_UNSUPPORTED'
+    | 'LOCAL_LOGIN_REQUIRED'
+    | 'LOCAL_DISPATCH_UNCERTAIN'
+    | 'LOCAL_TOOL_ISOLATION_FAILED';
 }
 export interface CompanionPoll {
   agents: NativeAgentStatus[];
   updates: CompanionUpdate[];
 }
-export interface CompanionPollResult { commands: CompanionCommand[]; cancelTaskIds: string[] }
+export interface CompanionPollResult {
+  commands: CompanionCommand[];
+  cancelTaskIds: string[];
+}

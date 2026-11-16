@@ -15,8 +15,12 @@ export function displayCompanyName(
 
   if (language.startsWith('en')) {
     const bilingual = name.match(/^(.*?)\s*[(（]([^()（）]+)[)）]$/u);
-    if (bilingual && /\p{Script=Han}/u.test(bilingual[1])
-      && /[A-Za-z]/u.test(bilingual[2]) && !/\p{Script=Han}/u.test(bilingual[2])) {
+    if (
+      bilingual &&
+      /\p{Script=Han}/u.test(bilingual[1]) &&
+      /[A-Za-z]/u.test(bilingual[2]) &&
+      !/\p{Script=Han}/u.test(bilingual[2])
+    ) {
       return bilingual[2].trim();
     }
   }

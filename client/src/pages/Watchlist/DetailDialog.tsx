@@ -49,10 +49,14 @@ const RATING_OPTIONS = ['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell'];
 
 function localizedSignal(signal: string, t: (key: string) => string): string {
   const keys: Record<string, string> = {
-    '强烈买入': 'analysis.strongBuy', 'Strong Buy': 'analysis.strongBuy',
-    '买入': 'analysis.buy', Buy: 'analysis.buy',
-    '观望': 'analysis.watch', Watch: 'analysis.watch',
-    '回避': 'analysis.avoid', Avoid: 'analysis.avoid',
+    强烈买入: 'analysis.strongBuy',
+    'Strong Buy': 'analysis.strongBuy',
+    买入: 'analysis.buy',
+    Buy: 'analysis.buy',
+    观望: 'analysis.watch',
+    Watch: 'analysis.watch',
+    回避: 'analysis.avoid',
+    Avoid: 'analysis.avoid',
   };
   return keys[signal] ? t(keys[signal]) : signal;
 }
@@ -80,9 +84,7 @@ function toFormData(item: WatchItem | null): WatchFormData {
     ticker: item.ticker,
     company: item.company ?? '',
     sector: item.sector ?? '',
-    dateAdded: item.dateAdded
-      ? toDate(item.dateAdded)?.toISOString().split('T')[0] ?? ''
-      : '',
+    dateAdded: item.dateAdded ? (toDate(item.dateAdded)?.toISOString().split('T')[0] ?? '') : '',
     entryPrice: item.entryPrice ?? '',
     currentPrice: item.currentPrice ?? '',
     targetBuy: item.targetBuy ?? '',
@@ -103,10 +105,7 @@ function parseNumber(v: string): number | undefined {
  * positive percent. Returns null when the price is at/above target or inputs
  * are missing/invalid.
  */
-function belowTargetPct(
-  current: string | null,
-  target: string | null
-): number | null {
+function belowTargetPct(current: string | null, target: string | null): number | null {
   const c = parseFloat(current ?? '');
   const t = parseFloat(target ?? '');
   if (isNaN(c) || isNaN(t) || t <= 0) return null;
@@ -117,13 +116,7 @@ function belowTargetPct(
 /**
  * Render the watch-item detail dialog in either read-only or edit mode.
  */
-function DetailDialog({
-  open,
-  onOpenChange,
-  item,
-  onUpdated,
-  onDeleted,
-}: DetailDialogProps) {
+function DetailDialog({ open, onOpenChange, item, onUpdated, onDeleted }: DetailDialogProps) {
   const { t } = useTranslation();
   const [editMode, setEditMode] = useState(false);
   const [formData, setFormData] = useState<WatchFormData>(toFormData(item));
@@ -192,10 +185,7 @@ function DetailDialog({
     }
   };
 
-  const belowPct = belowTargetPct(
-    item?.currentPrice ?? null,
-    item?.targetBuy ?? null
-  );
+  const belowPct = belowTargetPct(item?.currentPrice ?? null, item?.targetBuy ?? null);
 
   return (
     <>
@@ -203,9 +193,7 @@ function DetailDialog({
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3 font-serif text-xl">
-              <span className="font-mono-nums text-2xl">
-                {item?.ticker}
-              </span>
+              <span className="font-mono-nums text-2xl">{item?.ticker}</span>
               <span className="text-base font-normal text-muted-foreground">
                 {item?.company ?? '—'}
               </span>
@@ -218,10 +206,7 @@ function DetailDialog({
                 {item?.signal && (
                   <Badge
                     variant="outline"
-                    className={cn(
-                      'border-transparent',
-                      signalColor(item.signal)
-                    )}
+                    className={cn('border-transparent', signalColor(item.signal))}
                   >
                     {localizedSignal(item.signal, t)}
                   </Badge>
@@ -229,24 +214,16 @@ function DetailDialog({
                 {item?.rating && (
                   <Badge
                     variant="outline"
-                    className={cn(
-                      'border-transparent',
-                      ratingColor(item.rating)
-                    )}
+                    className={cn('border-transparent', ratingColor(item.rating))}
                   >
                     {item.rating}
                   </Badge>
                 )}
-                {item?.sector && (
-                  <Badge variant="secondary">{item.sector}</Badge>
-                )}
+                {item?.sector && <Badge variant="secondary">{item.sector}</Badge>}
               </div>
 
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-                <Stat
-                  label={t('ui.watchlist.joinedDate')}
-                  value={formatDate(item?.dateAdded)}
-                />
+                <Stat label={t('ui.watchlist.joinedDate')} value={formatDate(item?.dateAdded)} />
                 <Stat
                   label={t('ui.watchlist.entryPrice')}
                   value={formatPrice(item?.entryPrice)}
@@ -284,17 +261,11 @@ function DetailDialog({
               )}
 
               <DialogFooter className="gap-2">
-                <Button
-                  variant="destructive"
-                  onClick={() => setConfirmDelete(true)}
-                >
+                <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
                   <Trash2 className="h-4 w-4" />
                   {t('common.delete')}
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setEditMode(true)}
-                >
+                <Button variant="outline" onClick={() => setEditMode(true)}>
                   <Pencil className="h-4 w-4" />
                   {t('common.edit')}
                 </Button>
@@ -304,10 +275,7 @@ function DetailDialog({
             <>
               <WatchForm data={formData} onChange={setFormData} />
               <DialogFooter className="gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setEditMode(false)}
-                >
+                <Button variant="outline" onClick={() => setEditMode(false)}>
                   {t('common.cancel')}
                 </Button>
                 <Button onClick={handleUpdate} disabled={submitting}>
@@ -329,17 +297,10 @@ function DetailDialog({
             {t('ui.watchlist.confirmRemoveText', { ticker: item?.ticker })}
           </p>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setConfirmDelete(false)}
-            >
+            <Button variant="outline" onClick={() => setConfirmDelete(false)}>
               {t('common.cancel')}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={submitting}
-            >
+            <Button variant="destructive" onClick={handleDelete} disabled={submitting}>
               {submitting ? t('watchlist.deleting') : t('common.confirm')}
             </Button>
           </DialogFooter>
@@ -350,26 +311,11 @@ function DetailDialog({
 }
 
 /** Small label/value stat block used in the read-only detail view. */
-function Stat({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="space-y-1">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div
-        className={cn(
-          'text-base font-medium',
-          mono ? 'font-mono-nums' : ''
-        )}
-      >
-        {value}
-      </div>
+      <div className={cn('text-base font-medium', mono ? 'font-mono-nums' : '')}>{value}</div>
     </div>
   );
 }

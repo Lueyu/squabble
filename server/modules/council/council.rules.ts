@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { BuilderConfig } from '@shared/api.interface';
-import type { CouncilCandidate, CouncilMember, CouncilRole, CouncilResearchKind } from '@shared/council.interface';
+import type {
+  CouncilCandidate,
+  CouncilMember,
+  CouncilRole,
+  CouncilResearchKind,
+} from '@shared/council.interface';
 
 export interface CouncilEvidence {
   id: string;
@@ -28,24 +33,43 @@ export const DEFAULT_MEMBERS: CouncilMember[] = [
 ];
 
 export function normalizeTicker(value: unknown): string {
-  if (typeof value !== 'string' || !/^[A-Z0-9][A-Z0-9.^-]{0,19}$/u.test(value.trim().toUpperCase())) {
+  if (
+    typeof value !== 'string' ||
+    !/^[A-Z0-9][A-Z0-9.^-]{0,19}$/u.test(value.trim().toUpperCase())
+  ) {
     throw new Error('Ticker must contain 1–20 letters, digits, dots, hyphens or carets');
   }
   return value.trim().toUpperCase();
 }
 
 export function normalizeCandidate(value: CouncilCandidate): CouncilCandidate {
-  if (!value || (value.side !== 'buy' && value.side !== 'sell')
-    || !Number.isFinite(value.quantity) || value.quantity <= 0 || value.quantity > 1e12
-    || !Number.isFinite(value.price) || value.price <= 0 || value.price > 1e12
-    || typeof value.reason !== 'string' || value.reason.length > 2000) {
+  if (
+    !value ||
+    (value.side !== 'buy' && value.side !== 'sell') ||
+    !Number.isFinite(value.quantity) ||
+    value.quantity <= 0 ||
+    value.quantity > 1e12 ||
+    !Number.isFinite(value.price) ||
+    value.price <= 0 ||
+    value.price > 1e12 ||
+    typeof value.reason !== 'string' ||
+    value.reason.length > 2000
+  ) {
     throw new Error('Invalid council candidate');
   }
-  return { ticker: normalizeTicker(value.ticker), side: value.side, quantity: value.quantity,
-    price: value.price, reason: value.reason };
+  return {
+    ticker: normalizeTicker(value.ticker),
+    side: value.side,
+    quantity: value.quantity,
+    price: value.price,
+    reason: value.reason,
+  };
 }
 
-export function isRuleCandidate(config: BuilderConfig, candidate: CouncilCandidate | null): boolean {
+export function isRuleCandidate(
+  config: BuilderConfig,
+  candidate: CouncilCandidate | null,
+): boolean {
   if (!candidate || !candidate.reason.startsWith('Investor price rule:')) return false;
   const rule = config.priceRules?.find((item) => item.ticker.toUpperCase() === candidate.ticker);
   return candidate.side === 'buy'
@@ -54,27 +78,67 @@ export function isRuleCandidate(config: BuilderConfig, candidate: CouncilCandida
 }
 
 export function criticalEvidenceGaps(evidence: CouncilEvidence[]): boolean {
-  const facts = evidence.filter((item) => item.sourceName !== 'Data Unavailable' && item.relevanceScore > 0);
-  return evidence.some((item) => item.sourceName === 'Data Unavailable' && item.role === 'fundamental')
-    || !facts.some((item) => item.evidenceType === 'price')
-    || !facts.some((item) => item.evidenceType === 'financial');
+  const facts = evidence.filter(
+    (item) => item.sourceName !== 'Data Unavailable' && item.relevanceScore > 0,
+  );
+  return (
+    evidence.some(
+      (item) => item.sourceName === 'Data Unavailable' && item.role === 'fundamental',
+    ) ||
+    !facts.some((item) => item.evidenceType === 'price') ||
+    !facts.some((item) => item.evidenceType === 'financial')
+  );
 }
 
-export function cacheKey(owner: string, profile: string, version: number,
-  candidate: CouncilCandidate, evidence: CouncilEvidence[], sourceRunId: string | null): string {
+export function cacheKey(
+  owner: string,
+  profile: string,
+  version: number,
+  candidate: CouncilCandidate,
+  evidence: CouncilEvidence[],
+  sourceRunId: string | null,
+): string {
   // The price regime absorbs ordinary quote noise for vetoes. Approvals still require exact candidates.
   const regime = Math.floor(Math.log(candidate.price) / Math.log(1.02));
-  const facts = evidence.filter((item) => item.evidenceType !== 'price').map((item) => ({
-    title: item.title, content: item.content, sourceName: item.sourceName,
-  })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-  return createHash('sha256').update(JSON.stringify({ owner, profile, version, ticker: candidate.ticker,
-    side: candidate.side, quantity: candidate.quantity, rule: candidate.reason.startsWith('Investor price rule:'),
-    regime, facts, sourceRunId })).digest('hex');
+  const facts = evidence
+    .filter((item) => item.evidenceType !== 'price')
+    .map((item) => ({
+      title: item.title,
+      content: item.content,
+      sourceName: item.sourceName,
+    }))
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        owner,
+        profile,
+        version,
+        ticker: candidate.ticker,
+        side: candidate.side,
+        quantity: candidate.quantity,
+        rule: candidate.reason.startsWith('Investor price rule:'),
+        regime,
+        facts,
+        sourceRunId,
+      }),
+    )
+    .digest('hex');
 }
 
-export function sameCandidate(left: CouncilCandidate | null, right: CouncilCandidate | null): boolean {
-  return Boolean(left && right && left.ticker === right.ticker && left.side === right.side
-    && left.quantity === right.quantity && left.price === right.price && left.reason === right.reason);
+export function sameCandidate(
+  left: CouncilCandidate | null,
+  right: CouncilCandidate | null,
+): boolean {
+  return Boolean(
+    left &&
+    right &&
+    left.ticker === right.ticker &&
+    left.side === right.side &&
+    left.quantity === right.quantity &&
+    left.price === right.price &&
+    left.reason === right.reason,
+  );
 }
 
 /** Bound excerpts by UTF-8 bytes because the budget reserves conservatively for unknown tokenizers. */
@@ -90,18 +154,36 @@ export function byteExcerpt(value: string, maxBytes: number): string {
 }
 
 export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
-  const priority = (item: CouncilEvidence): number => item.sourceName === 'Investor configuration' ? 0
-    : item.evidenceType === 'financial' && /statement|财报/iu.test(item.title) ? 1
-      : item.researchKind ? 2 : item.evidenceType === 'price' ? 3 : item.evidenceType === 'financial' ? 4
-        : item.evidenceType === 'news' ? 5 : 6;
+  const priority = (item: CouncilEvidence): number =>
+    item.sourceName === 'Investor configuration'
+      ? 0
+      : item.evidenceType === 'financial' && /statement|财报/iu.test(item.title)
+        ? 1
+        : item.researchKind
+          ? 2
+          : item.evidenceType === 'price'
+            ? 3
+            : item.evidenceType === 'financial'
+              ? 4
+              : item.evidenceType === 'news'
+                ? 5
+                : 6;
   let remaining = budget;
-  return evidence.filter((item) => item.sourceName !== 'Data Unavailable' && item.relevanceScore > 0)
-    .sort((left, right) => priority(left) - priority(right)).flatMap((item) => {
+  return evidence
+    .filter((item) => item.sourceName !== 'Data Unavailable' && item.relevanceScore > 0)
+    .sort((left, right) => priority(left) - priority(right))
+    .flatMap((item) => {
       const compact = budget <= 1300;
-      const excerpt = { id: item.id, title: byteExcerpt(item.title, compact ? 60 : 90),
-        content: byteExcerpt(item.content, item.evidenceType === 'financial' ? compact ? 350 : 600 : compact ? 160 : 300),
+      const excerpt = {
+        id: item.id,
+        title: byteExcerpt(item.title, compact ? 60 : 90),
+        content: byteExcerpt(
+          item.content,
+          item.evidenceType === 'financial' ? (compact ? 350 : 600) : compact ? 160 : 300,
+        ),
         source: byteExcerpt(item.sourceName ?? '', compact ? 32 : 50),
-        fetchedAt: item.fetchedAt };
+        fetchedAt: item.fetchedAt,
+      };
       const bytes = Buffer.byteLength(JSON.stringify(excerpt), 'utf8');
       if (bytes > remaining) return [];
       remaining -= bytes;
@@ -110,14 +192,24 @@ export function evidenceExcerpts(evidence: CouncilEvidence[], budget = 2100) {
 }
 
 export function eligibleApproval(input: {
-  status: string; revision: number; reportRevision: number; decision: string;
-  candidate: CouncilCandidate | null; reviewedCandidate: CouncilCandidate | null;
-  hasCriticalGaps: boolean; ruleOnly: boolean; paperOrderId: string | null;
+  status: string;
+  revision: number;
+  reportRevision: number;
+  decision: string;
+  candidate: CouncilCandidate | null;
+  reviewedCandidate: CouncilCandidate | null;
+  hasCriticalGaps: boolean;
+  ruleOnly: boolean;
+  paperOrderId: string | null;
 }): boolean {
-  return input.status === 'completed' && input.revision === input.reportRevision
-    && input.decision === 'approve' && !input.paperOrderId
-    && sameCandidate(input.candidate, input.reviewedCandidate)
-    && (!input.hasCriticalGaps || input.ruleOnly);
+  return (
+    input.status === 'completed' &&
+    input.revision === input.reportRevision &&
+    input.decision === 'approve' &&
+    !input.paperOrderId &&
+    sameCandidate(input.candidate, input.reviewedCandidate) &&
+    (!input.hasCriticalGaps || input.ruleOnly)
+  );
 }
 
 function boundedText(value: unknown, max: number, fallback = ''): string {
@@ -125,24 +217,46 @@ function boundedText(value: unknown, max: number, fallback = ''): string {
 }
 
 export function parseOpinion(value: unknown, validEvidenceIds: Set<string>): CouncilOpinion {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid council response');
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Invalid council response');
   const input = value as Record<string, unknown>;
-  if ('quantity' in input || 'side' in input || 'candidate' in input || 'price' in input || 'ticker' in input) {
+  if (
+    'quantity' in input ||
+    'side' in input ||
+    'candidate' in input ||
+    'price' in input ||
+    'ticker' in input
+  ) {
     throw new Error('Council members cannot change candidate direction, quantity or price');
   }
-  if (!['approve', 'wait', 'reject'].includes(String(input.decision))) throw new Error('Invalid council decision');
-  if (!Array.isArray(input.evidenceIds) || input.evidenceIds.length > 20
-    || input.evidenceIds.some((id) => typeof id !== 'string' || !validEvidenceIds.has(id))) {
+  if (!['approve', 'wait', 'reject'].includes(String(input.decision)))
+    throw new Error('Invalid council decision');
+  if (
+    !Array.isArray(input.evidenceIds) ||
+    input.evidenceIds.length > 20 ||
+    input.evidenceIds.some((id) => typeof id !== 'string' || !validEvidenceIds.has(id))
+  ) {
     throw new Error('Council response cites evidence outside the snapshot');
   }
   const summary = boundedText(input.summary, 3000);
   if (!summary || (input.decision === 'approve' && !input.evidenceIds.length)) {
     throw new Error('Council approval requires evidence');
   }
-  return { decision: input.decision as CouncilOpinion['decision'], summary,
+  return {
+    decision: input.decision as CouncilOpinion['decision'],
+    summary,
     evidenceIds: input.evidenceIds as string[],
-    dissent: Array.isArray(input.dissent) ? input.dissent.slice(0, 8).map((item) => boundedText(item, 800)).filter(Boolean) : [],
-    nextReviewCondition: boundedText(input.nextReviewCondition, 1000, 'Refresh evidence before the next review'),
+    dissent: Array.isArray(input.dissent)
+      ? input.dissent
+          .slice(0, 8)
+          .map((item) => boundedText(item, 800))
+          .filter(Boolean)
+      : [],
+    nextReviewCondition: boundedText(
+      input.nextReviewCondition,
+      1000,
+      'Refresh evidence before the next review',
+    ),
   };
 }
 
@@ -159,6 +273,8 @@ export function councilPrompt(role: CouncilRole, language: 'zh-CN' | 'en'): stri
     'Put machine evidence IDs only in evidenceIds; use readable prose without IDs in summary, dissent and nextReviewCondition.',
     'Return only JSON: {"decision":"approve|wait|reject","summary":"concise public rationale",',
     '"dissent":["material uncertainty or objection"],"nextReviewCondition":"specific condition","evidenceIds":["snapshot-id"]}.',
-    language === 'en' ? 'Write all reader-facing text in English.' : '所有面向用户的文字使用简体中文。',
+    language === 'en'
+      ? 'Write all reader-facing text in English.'
+      : '所有面向用户的文字使用简体中文。',
   ].join('\n');
 }

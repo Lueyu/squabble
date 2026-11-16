@@ -13,4 +13,4 @@ import { ViewController } from './view.controller';
   controllers: [ViewController],
   providers: [],
 })
-export class ViewModule{}
+export class ViewModule {}

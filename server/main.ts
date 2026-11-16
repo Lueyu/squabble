@@ -36,7 +36,7 @@ async function bootstrap() {
   if (process.env.SQUABBLE_DESKTOP_ORIGIN) {
     // The desktop shell serves the SPA on a private loopback origin. Reject
     // DNS-rebound hosts and cross-origin browser requests before any routes.
-    const { desktopRequestGuard } = await import('../desktop/loopback.cjs') as {
+    const { desktopRequestGuard } = (await import('../desktop/loopback.cjs')) as {
       desktopRequestGuard: (origin: string) => RequestHandler;
     };
     app.use(desktopRequestGuard(process.env.SQUABBLE_DESKTOP_ORIGIN));

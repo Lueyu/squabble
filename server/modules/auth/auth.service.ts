@@ -21,10 +21,7 @@ import {
 import bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import {
-  DRIZZLE_DATABASE,
-  type PostgresJsDatabase,
-} from '../../common/platform/database.provider';
+import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform/database.provider';
 import { agentSessions, users } from '../../database/schema';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from './jwt';
 import type { RegistrationStatus } from '@shared/api.interface';
@@ -62,7 +59,7 @@ const PASSWORD_HASH_VERSION = 'v2$';
 
 async function hashPassword(password: string): Promise<string> {
   const digest = createHash('sha256').update(password, 'utf8').digest('hex');
-  return PASSWORD_HASH_VERSION + await bcrypt.hash(digest, 10);
+  return PASSWORD_HASH_VERSION + (await bcrypt.hash(digest, 10));
 }
 
 async function comparePassword(password: string, stored: string): Promise<boolean> {
@@ -75,9 +72,7 @@ async function comparePassword(password: string, stored: string): Promise<boolea
 
 @Injectable()
 export class AuthService {
-  constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-  ) {}
+  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
   /** Public registration availability for the login and registration pages. */
   async getRegistrationStatus(): Promise<RegistrationStatus> {
@@ -119,16 +114,25 @@ export class AuthService {
       recoveryCodeHash: recoveryHash(recoveryCode),
       displayName: input.displayName?.trim() || username,
     };
-    const selection = { id: users.id, username: users.username, displayName: users.displayName, sessionVersion: users.sessionVersion };
-    const created = mode === 'first-user'
-      ? await this.db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('squabble-first-user-registration'))`);
-        const [existing] = await tx.select({ id: users.id }).from(users).limit(1);
-        if (existing) throw new BadRequestException('Registration is closed after the first account');
-        const [user] = await tx.insert(users).values(values).returning(selection);
-        return user;
-      })
-      : (await this.db.insert(users).values(values).returning(selection))[0];
+    const selection = {
+      id: users.id,
+      username: users.username,
+      displayName: users.displayName,
+      sessionVersion: users.sessionVersion,
+    };
+    const created =
+      mode === 'first-user'
+        ? await this.db.transaction(async (tx) => {
+            await tx.execute(
+              sql`SELECT pg_advisory_xact_lock(hashtext('squabble-first-user-registration'))`,
+            );
+            const [existing] = await tx.select({ id: users.id }).from(users).limit(1);
+            if (existing)
+              throw new BadRequestException('Registration is closed after the first account');
+            const [user] = await tx.insert(users).values(values).returning(selection);
+            return user;
+          })
+        : (await this.db.insert(users).values(values).returning(selection))[0];
 
     return { ...this.issueTokens(created), recoveryCode };
   }
@@ -136,10 +140,7 @@ export class AuthService {
   /** Verify credentials and issue tokens. */
   async login(input: { username: string; password: string }): Promise<AuthResult> {
     const username = normalizeUsername(input.username);
-    const [user] = await this.db
-      .select()
-      .from(users)
-      .where(eq(users.username, username));
+    const [user] = await this.db.select().from(users).where(eq(users.username, username));
     if (!user) {
       throw new UnauthorizedException('Invalid username or password');
     }
@@ -156,7 +157,11 @@ export class AuthService {
   }
 
   /** One-time offline recovery code replaces the password and all prior sessions. */
-  async recoverAccount(input: { username?: string; recoveryCode?: string; newPassword?: string }): Promise<AuthResult> {
+  async recoverAccount(input: {
+    username?: string;
+    recoveryCode?: string;
+    newPassword?: string;
+  }): Promise<AuthResult> {
     const code = input.recoveryCode?.trim() ?? '';
     if (!/^[a-fA-F0-9]{48}$/.test(code)) throw new UnauthorizedException('Invalid recovery code');
     validatePassword(input.newPassword ?? '');
@@ -168,15 +173,25 @@ export class AuthService {
     const passwordHash = await hashPassword(input.newPassword!);
     const nextCode = randomBytes(24).toString('hex');
     return this.db.transaction(async (tx) => {
-      const [updated] = await tx.update(users).set({
-        passwordHash,
-        recoveryCodeHash: recoveryHash(nextCode),
-        sessionVersion: user.sessionVersion + 1,
-        updatedAt: new Date(),
-      }).where(and(eq(users.id, user.id), eq(users.recoveryCodeHash, user.recoveryCodeHash)))
-        .returning({ id: users.id, username: users.username, displayName: users.displayName, sessionVersion: users.sessionVersion });
+      const [updated] = await tx
+        .update(users)
+        .set({
+          passwordHash,
+          recoveryCodeHash: recoveryHash(nextCode),
+          sessionVersion: user.sessionVersion + 1,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(users.id, user.id), eq(users.recoveryCodeHash, user.recoveryCodeHash)))
+        .returning({
+          id: users.id,
+          username: users.username,
+          displayName: users.displayName,
+          sessionVersion: users.sessionVersion,
+        });
       if (!updated) throw new UnauthorizedException('Invalid recovery code');
-      await tx.update(agentSessions).set({ status: 'revoked', updatedAt: new Date() })
+      await tx
+        .update(agentSessions)
+        .set({ status: 'revoked', updatedAt: new Date() })
         .where(eq(agentSessions.owner, user.id));
       return { ...this.issueTokens(updated), recoveryCode: nextCode };
     });
@@ -185,16 +200,24 @@ export class AuthService {
   /** Let an existing signed-in user create or rotate an offline recovery code. */
   async rotateRecoveryCode(userId: string, password: string): Promise<AuthResult> {
     const [user] = await this.db.select().from(users).where(eq(users.id, userId));
-    if (!user || !await comparePassword(password ?? '', user.passwordHash)) {
+    if (!user || !(await comparePassword(password ?? '', user.passwordHash))) {
       throw new UnauthorizedException('Invalid password');
     }
     const code = randomBytes(24).toString('hex');
-    const [updated] = await this.db.update(users).set({
-      recoveryCodeHash: recoveryHash(code),
-      sessionVersion: user.sessionVersion + 1,
-      updatedAt: new Date(),
-    }).where(and(eq(users.id, user.id), eq(users.sessionVersion, user.sessionVersion)))
-      .returning({ id: users.id, username: users.username, displayName: users.displayName, sessionVersion: users.sessionVersion });
+    const [updated] = await this.db
+      .update(users)
+      .set({
+        recoveryCodeHash: recoveryHash(code),
+        sessionVersion: user.sessionVersion + 1,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(users.id, user.id), eq(users.sessionVersion, user.sessionVersion)))
+      .returning({
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        sessionVersion: users.sessionVersion,
+      });
     if (!updated) throw new UnauthorizedException('Please sign in again');
     return { ...this.issueTokens(updated), recoveryCode: code };
   }
@@ -209,7 +232,12 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token is invalid or expired');
     }
     const [user] = await this.db
-      .select({ id: users.id, username: users.username, displayName: users.displayName, sessionVersion: users.sessionVersion })
+      .select({
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        sessionVersion: users.sessionVersion,
+      })
       .from(users)
       .where(and(eq(users.id, payload.sub), eq(users.username, payload.username)));
     if (!user || (payload.ver ?? 0) !== user.sessionVersion) {
@@ -248,8 +276,16 @@ export class AuthService {
   }): AuthResult {
     return {
       user: { id: user.id, username: user.username, displayName: user.displayName },
-      accessToken: signAccessToken({ id: user.id, username: user.username, sessionVersion: user.sessionVersion }),
-      refreshToken: signRefreshToken({ id: user.id, username: user.username, sessionVersion: user.sessionVersion }),
+      accessToken: signAccessToken({
+        id: user.id,
+        username: user.username,
+        sessionVersion: user.sessionVersion,
+      }),
+      refreshToken: signRefreshToken({
+        id: user.id,
+        username: user.username,
+        sessionVersion: user.sessionVersion,
+      }),
     };
   }
 }

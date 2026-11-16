@@ -7,13 +7,7 @@
  * A footer row shows market-value subtotals and cash balances per currency.
  * Mobile layout is delegated to `HoldingsMobileList`.
  */
-import {
-  ChevronDown,
-  ChevronUp,
-  Briefcase,
-  Plus,
-  Eye,
-} from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, Plus, Eye } from 'lucide-react';
 import {
   formatShares,
   formatPercent,
@@ -131,8 +125,7 @@ export default function HoldingsTable({
 }: HoldingsTableProps) {
   const { t } = useTranslation();
   const SortIcon = ({ column }: { column: SortKey }) => {
-    if (sortKey !== column)
-      return <ChevronDown className="size-3 opacity-30" />;
+    if (sortKey !== column) return <ChevronDown className="size-3 opacity-30" />;
     return sortDir === 'asc' ? (
       <ChevronUp className="size-3" />
     ) : (
@@ -144,12 +137,18 @@ export default function HoldingsTable({
     groups.find((g) => g.id === id)?.name ?? t('holdings.noGroup');
   const actionLabel = (value: string) => {
     const keys: Record<string, string> = {
-      '加仓': 'analysis.add', Add: 'analysis.add',
-      '买入': 'analysis.buy', Buy: 'analysis.buy',
-      '持有': 'analysis.hold', Hold: 'analysis.hold',
-      '减仓': 'analysis.reduce', Reduce: 'analysis.reduce',
-      '卖出': 'analysis.sell', Sell: 'analysis.sell',
-      '观望': 'analysis.watch', Watch: 'analysis.watch',
+      加仓: 'analysis.add',
+      Add: 'analysis.add',
+      买入: 'analysis.buy',
+      Buy: 'analysis.buy',
+      持有: 'analysis.hold',
+      Hold: 'analysis.hold',
+      减仓: 'analysis.reduce',
+      Reduce: 'analysis.reduce',
+      卖出: 'analysis.sell',
+      Sell: 'analysis.sell',
+      观望: 'analysis.watch',
+      Watch: 'analysis.watch',
     };
     return keys[value] ? t(keys[value]) : value;
   };
@@ -159,13 +158,10 @@ export default function HoldingsTable({
     return acc;
   }, {});
 
-  const cashByCurrency = cashAccounts.reduce<Record<string, number>>(
-    (acc, c) => {
-      acc[c.currency] = (acc[c.currency] ?? 0) + parseFloat(c.balance || '0');
-      return acc;
-    },
-    {}
-  );
+  const cashByCurrency = cashAccounts.reduce<Record<string, number>>((acc, c) => {
+    acc[c.currency] = (acc[c.currency] ?? 0) + parseFloat(c.balance || '0');
+    return acc;
+  }, {});
 
   const currencyLabel: Record<string, string> = {
     USD: t('dash.us'),
@@ -187,9 +183,7 @@ export default function HoldingsTable({
             ))}
           </div>
         ) : error ? (
-          <div className="p-12 text-center text-destructive text-sm">
-            {error}
-          </div>
+          <div className="p-12 text-center text-destructive text-sm">{error}</div>
         ) : holdings.length === 0 ? (
           <div className="p-12">
             <Empty>
@@ -198,9 +192,7 @@ export default function HoldingsTable({
               </EmptyMedia>
               <EmptyHeader>
                 <EmptyTitle>{t('holdings.noHoldings')}</EmptyTitle>
-                <EmptyDescription>
-                  {t('ui.holdings.emptyHint')}
-                </EmptyDescription>
+                <EmptyDescription>{t('ui.holdings.emptyHint')}</EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
                 <Button size="sm" onClick={onAdd}>
@@ -304,20 +296,13 @@ export default function HoldingsTable({
               </TableHeader>
               <TableBody>
                 {holdings.map((h) => (
-                  <TableRow
-                    key={h.id}
-                    className="cursor-pointer"
-                    onClick={() => onDetail(h)}
-                  >
+                  <TableRow key={h.id} className="cursor-pointer" onClick={() => onDetail(h)}>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <span className="font-mono-nums font-semibold text-primary">
                           {h.ticker}
                         </span>
-                        <Badge
-                          variant="outline"
-                          className="h-4 px-1 text-[10px] font-normal"
-                        >
+                        <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal">
                           {h.market || 'US'}
                         </Badge>
                       </div>
@@ -344,27 +329,18 @@ export default function HoldingsTable({
                       {formatCurrencyWithCurrency(h.cost, h.currency)}
                     </TableCell>
                     <TableCell
-                      className={cn(
-                        'text-right font-mono-nums font-medium',
-                        plClass(h.pl)
-                      )}
+                      className={cn('text-right font-mono-nums font-medium', plClass(h.pl))}
                     >
                       {formatCurrencyWithCurrency(h.pl, h.currency)}
                     </TableCell>
                     <TableCell
-                      className={cn(
-                        'text-right font-mono-nums font-medium',
-                        plClass(h.returnPct)
-                      )}
+                      className={cn('text-right font-mono-nums font-medium', plClass(h.returnPct))}
                     >
                       {formatPercent(h.returnPct)}
                     </TableCell>
                     <TableCell>
                       {h.rating ? (
-                        <Badge
-                          className={cn(ratingColor(h.rating))}
-                          variant="outline"
-                        >
+                        <Badge className={cn(ratingColor(h.rating))} variant="outline">
                           {h.rating}
                         </Badge>
                       ) : (
@@ -375,10 +351,7 @@ export default function HoldingsTable({
                       <TableCell>
                         {aiRatings?.[h.ticker] ? (
                           <div className="flex items-center gap-1.5">
-                            <RatingBadge
-                              rating={aiRatings[h.ticker].rating}
-                              size="sm"
-                            />
+                            <RatingBadge rating={aiRatings[h.ticker].rating} size="sm" />
                             <ConfidenceBadge
                               confidence={aiRatings[h.ticker].confidence}
                               size="sm"
@@ -396,16 +369,15 @@ export default function HoldingsTable({
                             </Button>
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground/70">{t('ui.holdings.notRated')}</span>
+                          <span className="text-xs text-muted-foreground/70">
+                            {t('ui.holdings.notRated')}
+                          </span>
                         )}
                       </TableCell>
                     )}
                     <TableCell>
                       {h.action ? (
-                        <Badge
-                          className={cn(actionColor(h.action))}
-                          variant="outline"
-                        >
+                        <Badge className={cn(actionColor(h.action))} variant="outline">
                           {actionLabel(h.action)}
                         </Badge>
                       ) : (

@@ -5,26 +5,12 @@
  * to organize holdings) under `/api/portfolio/groups`. Requires login
  * (`@NeedLogin()`) and derives the owning `userId` from `req.userContext`.
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Delete,
-  Param,
-  Body,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 
 import { GroupsService } from './groups.service';
-import type {
-  Group,
-  CreateGroupDto,
-  UpdateGroupDto,
-  ListResponse,
-} from '@shared/api.interface';
+import type { Group, CreateGroupDto, UpdateGroupDto, ListResponse } from '@shared/api.interface';
 
 /**
  * REST controller for managing portfolio groups. Delegates to `GroupsService`.
@@ -52,10 +38,7 @@ export class GroupsController {
    * @param req Authenticated request.
    */
   @Post()
-  async create(
-    @Body() dto: CreateGroupDto,
-    @Req() req: Request,
-  ): Promise<Group> {
+  async create(@Body() dto: CreateGroupDto, @Req() req: Request): Promise<Group> {
     const { userId } = req.userContext;
     return this.groupsService.create(dto, userId);
   }
@@ -84,10 +67,7 @@ export class GroupsController {
    * @param req Authenticated request.
    */
   @Delete(':id')
-  async remove(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ): Promise<{ success: true }> {
+  async remove(@Param('id') id: string, @Req() req: Request): Promise<{ success: true }> {
     const { userId } = req.userContext;
     return this.groupsService.remove(id, userId);
   }

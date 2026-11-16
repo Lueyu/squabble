@@ -22,12 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import {
-  formatCurrency,
-  formatPercent,
-  plClass,
-  cn,
-} from '@/utils/format';
+import { formatCurrency, formatPercent, plClass, cn } from '@/utils/format';
 
 /** Props for {@link AddClosedDialog}. */
 interface AddClosedDialogProps {
@@ -39,11 +34,7 @@ interface AddClosedDialogProps {
 /**
  * Render the add-closed-position dialog with live P/L preview.
  */
-export default function AddClosedDialog({
-  open,
-  onOpenChange,
-  onCreated,
-}: AddClosedDialogProps) {
+export default function AddClosedDialog({ open, onOpenChange, onCreated }: AddClosedDialogProps) {
   const { t } = useTranslation();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -63,8 +54,7 @@ export default function AddClosedDialog({
   const buyPrice = parseFloat(form.buyPrice || '0');
   const sellPrice = parseFloat(form.sellPrice || '0');
   const autoPl = shares * (sellPrice - buyPrice);
-  const autoReturn =
-    shares > 0 && buyPrice > 0 ? ((sellPrice - buyPrice) / buyPrice) * 100 : 0;
+  const autoReturn = shares > 0 && buyPrice > 0 ? ((sellPrice - buyPrice) / buyPrice) * 100 : 0;
 
   /** Reset the form to blank after a successful create. */
   const reset = () => {
@@ -102,14 +92,10 @@ export default function AddClosedDialog({
       if (form.buyPrice) payload.buyPrice = parseFloat(form.buyPrice);
       if (form.sellPrice) payload.sellPrice = parseFloat(form.sellPrice);
       if (form.shares) payload.shares = parseFloat(form.shares);
-      if (form.realizedPl)
-        payload.realizedPl = parseFloat(form.realizedPl);
-      else if (shares && buyPrice && sellPrice)
-        payload.realizedPl = autoPl;
-      if (form.returnPct)
-        payload.returnPct = parseFloat(form.returnPct);
-      else if (shares && buyPrice && sellPrice)
-        payload.returnPct = autoReturn;
+      if (form.realizedPl) payload.realizedPl = parseFloat(form.realizedPl);
+      else if (shares && buyPrice && sellPrice) payload.realizedPl = autoPl;
+      if (form.returnPct) payload.returnPct = parseFloat(form.returnPct);
+      else if (shares && buyPrice && sellPrice) payload.returnPct = autoReturn;
       if (form.notes) payload.notes = form.notes;
 
       await createClosed(payload);
@@ -128,12 +114,8 @@ export default function AddClosedDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-serif text-xl">
-            {t('ui.tx.addClosedTitle')}
-          </DialogTitle>
-          <DialogDescription>
-            {t('ui.tx.addClosedDesc')}
-          </DialogDescription>
+          <DialogTitle className="font-serif text-xl">{t('ui.tx.addClosedTitle')}</DialogTitle>
+          <DialogDescription>{t('ui.tx.addClosedDesc')}</DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-2 gap-4 py-2">
@@ -156,9 +138,7 @@ export default function AddClosedDialog({
             <Label>{t('ui.tx.companyName')}</Label>
             <Input
               value={form.company}
-              onChange={(e) =>
-                setForm({ ...form, company: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, company: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -166,9 +146,7 @@ export default function AddClosedDialog({
             <Input
               type="date"
               value={form.openDate}
-              onChange={(e) =>
-                setForm({ ...form, openDate: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, openDate: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -176,9 +154,7 @@ export default function AddClosedDialog({
             <Input
               type="date"
               value={form.closeDate}
-              onChange={(e) =>
-                setForm({ ...form, closeDate: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, closeDate: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -187,9 +163,7 @@ export default function AddClosedDialog({
               type="number"
               step="0.01"
               value={form.buyPrice}
-              onChange={(e) =>
-                setForm({ ...form, buyPrice: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, buyPrice: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -198,9 +172,7 @@ export default function AddClosedDialog({
               type="number"
               step="0.01"
               value={form.sellPrice}
-              onChange={(e) =>
-                setForm({ ...form, sellPrice: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, sellPrice: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -209,9 +181,7 @@ export default function AddClosedDialog({
               type="number"
               step="0.0001"
               value={form.shares}
-              onChange={(e) =>
-                setForm({ ...form, shares: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, shares: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
@@ -220,9 +190,7 @@ export default function AddClosedDialog({
               type="number"
               step="0.01"
               value={form.realizedPl}
-              onChange={(e) =>
-                setForm({ ...form, realizedPl: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, realizedPl: e.target.value })}
               placeholder={shares && buyPrice && sellPrice ? t('ui.tx.autoCalculate') : ''}
             />
           </div>
@@ -232,9 +200,7 @@ export default function AddClosedDialog({
               type="number"
               step="0.01"
               value={form.returnPct}
-              onChange={(e) =>
-                setForm({ ...form, returnPct: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, returnPct: e.target.value })}
               placeholder={shares && buyPrice && sellPrice ? t('ui.tx.autoCalculate') : ''}
             />
           </div>
@@ -243,20 +209,10 @@ export default function AddClosedDialog({
             <div className="col-span-2 p-3 bg-muted/50 rounded-md text-sm flex items-center justify-between">
               <span className="text-muted-foreground">{t('ui.tx.estimatedPl')}</span>
               <div className="text-right">
-                <div
-                  className={cn(
-                    'font-mono-nums font-semibold',
-                    plClass(autoPl)
-                  )}
-                >
+                <div className={cn('font-mono-nums font-semibold', plClass(autoPl))}>
                   {formatCurrency(autoPl)}
                 </div>
-                <div
-                  className={cn(
-                    'font-mono-nums text-xs',
-                    plClass(autoReturn)
-                  )}
-                >
+                <div className={cn('font-mono-nums text-xs', plClass(autoReturn))}>
                   {formatPercent(autoReturn)}
                 </div>
               </div>
@@ -274,11 +230,7 @@ export default function AddClosedDialog({
         </div>
 
         <DialogFooter>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-          >
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>
           <Button size="sm" onClick={handleSubmit} disabled={saving}>

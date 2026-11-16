@@ -21,7 +21,11 @@ interface CouncilConversationProps {
   profileChanged: boolean;
 }
 
-export default function CouncilConversation({ session, actions, profileChanged }: CouncilConversationProps) {
+export default function CouncilConversation({
+  session,
+  actions,
+  profileChanged,
+}: CouncilConversationProps) {
   const { t } = useTranslation();
   const [content, setContent] = useState('');
   const [unread, setUnread] = useState(false);
@@ -32,8 +36,11 @@ export default function CouncilConversation({ session, actions, profileChanged }
   const composing = useRef(false);
   const lastMessageId = session.messages.at(-1)?.id;
   const researchCursor = researchTimeline(session).cursor;
-  const hasCurrentResearchEvents = session.researchEvents?.some(event => event.revision === session.revision);
-  const messageLimitReached = session.messages.filter((message: CouncilMessage) => message.role === 'user').length >= 30;
+  const hasCurrentResearchEvents = session.researchEvents?.some(
+    (event) => event.revision === session.revision,
+  );
+  const messageLimitReached =
+    session.messages.filter((message: CouncilMessage) => message.role === 'user').length >= 30;
 
   useEffect(() => {
     const viewport = scrollRef.current;
@@ -56,7 +63,7 @@ export default function CouncilConversation({ session, actions, profileChanged }
     let saved: CouncilSession;
     try {
       saved = await actions.send.mutateAsync({ id: session.id, content: submittedDraft.trim() });
-      setContent((current: string) => current === submittedDraft ? '' : current);
+      setContent((current: string) => (current === submittedDraft ? '' : current));
       jumpToLatest();
     } catch (cause) {
       toast.error(errorMessage(cause, t('council.actionFailed')));
@@ -64,74 +71,195 @@ export default function CouncilConversation({ session, actions, profileChanged }
       return;
     }
     try {
-      if (shouldStartCouncilAfterMessage(previousStatus, saved.status)) await actions.run.mutateAsync(session.id);
+      if (shouldStartCouncilAfterMessage(previousStatus, saved.status))
+        await actions.run.mutateAsync(session.id);
     } catch (cause) {
-      toast.error(`${t('council.messageSavedRunFailed')} ${errorMessage(cause, t('council.actionFailed'))}`);
-    } finally { sending.current = false; }
+      toast.error(
+        `${t('council.messageSavedRunFailed')} ${errorMessage(cause, t('council.actionFailed'))}`,
+      );
+    } finally {
+      sending.current = false;
+    }
   };
 
-  return <>
-    <div className="relative flex min-h-0 flex-1 flex-col bg-muted/25">
-      <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions" aria-label={t('council.conversation')}
-        className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 py-5 sm:px-6"
-        onScroll={() => {
-          const viewport = scrollRef.current;
-          if (!viewport) return;
-          stickToBottom.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96;
-          if (stickToBottom.current) setUnread(false);
-        }}>
-        <p className="mx-auto max-w-md text-center text-[11px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">{session.members?.length
-          ? t('council.members.roomHint', { names: session.members.map((member) => member.name).join(' · ') }) : t('council.roomHint')}</p>
-        {profileChanged && <p className="mx-auto max-w-xl rounded-lg bg-card p-3 text-center text-xs leading-5 text-muted-foreground">{t('council.profileChanged')}</p>}
-        {session.messages.length === 0 && !session.researchEvents?.length && <div className="mx-auto flex max-w-sm flex-col items-center gap-3 py-12 text-center text-muted-foreground">
-          <MessageCircle className="size-8 text-primary/60" />
-          <p className="text-sm leading-6">{t(session.status === 'running' ? 'council.startingHint'
-            : session.reports.some((report) => report.engine === 'basic') ? 'council.noMessagesBasic' : 'council.noMessages')}</p>
-        </div>}
-        {session.messages.map((message: CouncilMessage) => <CouncilChatMessage key={message.id} message={message} session={session} onQuestion={(question: string) => {
-          setContent((current) => current ? `${current}\n${question}`.slice(0, 2000) : question.slice(0, 2000)); inputRef.current?.focus();
-        }} />)}
-        <CouncilResearchProgress session={session} />
-        {session.status === 'running' && !session.progress && !hasCurrentResearchEvents && <div role="status" className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card"><Loader2 className="size-4 animate-spin text-primary" /></span>
-          {t('council.runningHint')}
-        </div>}
-        {session.error && <div role="alert" className="mx-auto max-w-xl rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs leading-6">
-          <p className="whitespace-pre-wrap break-words text-destructive">{session.error}</p>
-          <div className="mt-1 flex flex-wrap gap-x-4 text-muted-foreground">
-            <Link to="/settings" className="hover:underline">{t('council.apiSettings')}</Link>
-            <Link to="/settings/budget" className="hover:underline">{t('council.budget.open')}</Link>
-          </div>
-        </div>}
-      </div>
-      {unread && <Button type="button" size="sm" variant="secondary" className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-md" onClick={jumpToLatest}>
-        <ArrowDown className="size-3.5" />{t('council.latestMessages')}</Button>}
-    </div>
-    <form className="shrink-0 border-t border-border bg-card p-3 sm:px-5 sm:py-4" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-      <Label htmlFor="council-message" className="sr-only">{t('council.composerLabel')}</Label>
-      <div className="flex items-end gap-2 rounded-xl border border-input bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring/20">
-        <Textarea ref={inputRef} id="council-message" value={content} onChange={(event) => setContent(event.target.value)}
-          rows={2} maxLength={2000} disabled={messageLimitReached} aria-describedby="council-composer-hint"
-          className="min-h-[52px] max-h-32 resize-none border-0 bg-transparent text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
-          placeholder={t('council.composerPlaceholder')} onCompositionStart={() => { composing.current = true; }}
-          onCompositionEnd={() => { composing.current = false; }} onKeyDown={(event) => {
-            if (shouldSendCouncilMessage({ key: event.key, shiftKey: event.shiftKey,
-              isComposing: composing.current || event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode })) {
-              event.preventDefault(); void submit();
-            }
-          }} />
-        <Tooltip><TooltipTrigger asChild>
-          <Button type="submit" size="icon" className="mb-1 shrink-0 rounded-lg" aria-label={t('council.send')}
-            disabled={!content.trim() || actions.send.isPending || messageLimitReached}>
-            {actions.send.isPending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+  return (
+    <>
+      <div className="relative flex min-h-0 flex-1 flex-col bg-muted/25">
+        <div
+          ref={scrollRef}
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-label={t('council.conversation')}
+          className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 py-5 sm:px-6"
+          onScroll={() => {
+            const viewport = scrollRef.current;
+            if (!viewport) return;
+            stickToBottom.current =
+              viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96;
+            if (stickToBottom.current) setUnread(false);
+          }}
+        >
+          <p className="mx-auto max-w-md text-center text-[11px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+            {session.members?.length
+              ? t('council.members.roomHint', {
+                  names: session.members.map((member) => member.name).join(' · '),
+                })
+              : t('council.roomHint')}
+          </p>
+          {profileChanged && (
+            <p className="mx-auto max-w-xl rounded-lg bg-card p-3 text-center text-xs leading-5 text-muted-foreground">
+              {t('council.profileChanged')}
+            </p>
+          )}
+          {session.messages.length === 0 && !session.researchEvents?.length && (
+            <div className="mx-auto flex max-w-sm flex-col items-center gap-3 py-12 text-center text-muted-foreground">
+              <MessageCircle className="size-8 text-primary/60" />
+              <p className="text-sm leading-6">
+                {t(
+                  session.status === 'running'
+                    ? 'council.startingHint'
+                    : session.reports.some((report) => report.engine === 'basic')
+                      ? 'council.noMessagesBasic'
+                      : 'council.noMessages',
+                )}
+              </p>
+            </div>
+          )}
+          {session.messages.map((message: CouncilMessage) => (
+            <CouncilChatMessage
+              key={message.id}
+              message={message}
+              session={session}
+              onQuestion={(question: string) => {
+                setContent((current) =>
+                  current ? `${current}\n${question}`.slice(0, 2000) : question.slice(0, 2000),
+                );
+                inputRef.current?.focus();
+              }}
+            />
+          ))}
+          <CouncilResearchProgress session={session} />
+          {session.status === 'running' && !session.progress && !hasCurrentResearchEvents && (
+            <div
+              role="status"
+              className="flex items-center gap-3 px-1 text-xs text-muted-foreground"
+            >
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
+                <Loader2 className="size-4 animate-spin text-primary" />
+              </span>
+              {t('council.runningHint')}
+            </div>
+          )}
+          {session.error && (
+            <div
+              role="alert"
+              className="mx-auto max-w-xl rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs leading-6"
+            >
+              <p className="whitespace-pre-wrap break-words text-destructive">{session.error}</p>
+              <div className="mt-1 flex flex-wrap gap-x-4 text-muted-foreground">
+                <Link to="/settings" className="hover:underline">
+                  {t('council.apiSettings')}
+                </Link>
+                <Link to="/settings/budget" className="hover:underline">
+                  {t('council.budget.open')}
+                </Link>
+              </div>
+            </div>
+          )}
+        </div>
+        {unread && (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-md"
+            onClick={jumpToLatest}
+          >
+            <ArrowDown className="size-3.5" />
+            {t('council.latestMessages')}
           </Button>
-        </TooltipTrigger><TooltipContent>{t('council.send')}</TooltipContent></Tooltip>
+        )}
       </div>
-      <div id="council-composer-hint" className="mt-2 flex items-center justify-between gap-2 text-[11px] leading-4 text-muted-foreground">
-        <p>{t(messageLimitReached ? 'council.messageLimit' : session.status === 'paused' ? 'council.pausedHint'
-          : session.status === 'failed' ? 'council.failedHint' : 'council.composerHint')}</p>
-        <span className="hidden shrink-0 sm:inline">{t('council.keyboardHint')}</span>
-      </div>
-    </form>
-  </>;
+      <form
+        className="shrink-0 border-t border-border bg-card p-3 sm:px-5 sm:py-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <Label htmlFor="council-message" className="sr-only">
+          {t('council.composerLabel')}
+        </Label>
+        <div className="flex items-end gap-2 rounded-xl border border-input bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring/20">
+          <Textarea
+            ref={inputRef}
+            id="council-message"
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            rows={2}
+            maxLength={2000}
+            disabled={messageLimitReached}
+            aria-describedby="council-composer-hint"
+            className="min-h-[52px] max-h-32 resize-none border-0 bg-transparent text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
+            placeholder={t('council.composerPlaceholder')}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            onKeyDown={(event) => {
+              if (
+                shouldSendCouncilMessage({
+                  key: event.key,
+                  shiftKey: event.shiftKey,
+                  isComposing: composing.current || event.nativeEvent.isComposing,
+                  keyCode: event.nativeEvent.keyCode,
+                })
+              ) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="submit"
+                size="icon"
+                className="mb-1 shrink-0 rounded-lg"
+                aria-label={t('council.send')}
+                disabled={!content.trim() || actions.send.isPending || messageLimitReached}
+              >
+                {actions.send.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Send className="size-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('council.send')}</TooltipContent>
+          </Tooltip>
+        </div>
+        <div
+          id="council-composer-hint"
+          className="mt-2 flex items-center justify-between gap-2 text-[11px] leading-4 text-muted-foreground"
+        >
+          <p>
+            {t(
+              messageLimitReached
+                ? 'council.messageLimit'
+                : session.status === 'paused'
+                  ? 'council.pausedHint'
+                  : session.status === 'failed'
+                    ? 'council.failedHint'
+                    : 'council.composerHint',
+            )}
+          </p>
+          <span className="hidden shrink-0 sm:inline">{t('council.keyboardHint')}</span>
+        </div>
+      </form>
+    </>
+  );
 }

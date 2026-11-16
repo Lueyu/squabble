@@ -59,8 +59,32 @@ export function setLanguage(lang: AppLang): void {
 
 i18n.use(initReactI18next).init({
   resources: {
-    'zh-CN': { translation: { ...zhCN, ui: uiZhCN, appearance: appearanceZhCN, analysisFlow: analysisFlowZhCN, integrations: integrationsZhCN, marketOverview: marketOverviewZhCN, council: councilZhCN, updates: updatesZhCN, settingsNav: settingsNavZhCN } },
-    en: { translation: { ...en, ui: uiEn, appearance: appearanceEn, analysisFlow: analysisFlowEn, integrations: integrationsEn, marketOverview: marketOverviewEn, council: councilEn, updates: updatesEn, settingsNav: settingsNavEn } },
+    'zh-CN': {
+      translation: {
+        ...zhCN,
+        ui: uiZhCN,
+        appearance: appearanceZhCN,
+        analysisFlow: analysisFlowZhCN,
+        integrations: integrationsZhCN,
+        marketOverview: marketOverviewZhCN,
+        council: councilZhCN,
+        updates: updatesZhCN,
+        settingsNav: settingsNavZhCN,
+      },
+    },
+    en: {
+      translation: {
+        ...en,
+        ui: uiEn,
+        appearance: appearanceEn,
+        analysisFlow: analysisFlowEn,
+        integrations: integrationsEn,
+        marketOverview: marketOverviewEn,
+        council: councilEn,
+        updates: updatesEn,
+        settingsNav: settingsNavEn,
+      },
+    },
   },
   lng: detectLang(),
   fallbackLng: 'zh-CN',

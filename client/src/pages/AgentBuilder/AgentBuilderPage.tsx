@@ -4,8 +4,19 @@ import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  ArrowRight, Bell, Bot, CirclePause, ClipboardCheck, FlaskConical,
-  Loader2, Pencil, Play, Plus, RefreshCw, ShieldCheck, Users,
+  ArrowRight,
+  Bell,
+  Bot,
+  CirclePause,
+  ClipboardCheck,
+  FlaskConical,
+  Loader2,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Users,
 } from 'lucide-react';
 
 import {
@@ -25,7 +36,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -122,8 +137,11 @@ export default function AgentBuilderPage() {
     onError: (error: Error) => toast.error(errorMessage(error, t('ui.builder.actionFailed'))),
     retry: false,
   });
-  const fillMutation = useMutation<BuilderProposal, Error,
-    { id: string; fill: RecordBuilderFillDto }>({
+  const fillMutation = useMutation<
+    BuilderProposal,
+    Error,
+    { id: string; fill: RecordBuilderFillDto }
+  >({
     mutationFn: ({ id, fill: request }) => fillBuilderProposal(id, request),
     onSuccess: () => {
       setSelected(null);
@@ -165,8 +183,12 @@ export default function AgentBuilderPage() {
   };
   const openFill = (proposal: BuilderProposal) => {
     setSelected(proposal);
-    setFill({ ...EMPTY_FILL, executedAt: localDateTimeNow(), quantity: proposal.quantity,
-      price: proposal.referencePrice });
+    setFill({
+      ...EMPTY_FILL,
+      executedAt: localDateTimeNow(),
+      quantity: proposal.quantity,
+      price: proposal.referencePrice,
+    });
     setFillError(null);
   };
   const submitFill = () => {
@@ -175,20 +197,30 @@ export default function AgentBuilderPage() {
     const price: number = Number(fill.price);
     const fees: number = Number(fill.fees);
     const date: Date = new Date(fill.executedAt);
-    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price)
-      || price <= 0 || !Number.isFinite(fees) || fees < 0
-      || Number.isNaN(date.getTime()) || date.getTime() > Date.now() + 300_000) {
+    if (
+      !Number.isFinite(quantity) ||
+      quantity <= 0 ||
+      !Number.isFinite(price) ||
+      price <= 0 ||
+      !Number.isFinite(fees) ||
+      fees < 0 ||
+      Number.isNaN(date.getTime()) ||
+      date.getTime() > Date.now() + 300_000
+    ) {
       setFillError(t('ui.builder.fillInvalid'));
       return;
     }
     setFillError(null);
-    fillMutation.mutate({ id: selected.id, fill: {
-      executedAt: date.toISOString(),
-      quantity,
-      price,
-      fees,
-      notes: fill.notes.trim(),
-    } });
+    fillMutation.mutate({
+      id: selected.id,
+      fill: {
+        executedAt: date.toISOString(),
+        quantity,
+        price,
+        fees,
+        notes: fill.notes.trim(),
+      },
+    });
   };
 
   if (params.get('tab') === 'budget') return <Navigate to="/settings/budget" replace />;
@@ -209,12 +241,17 @@ export default function AgentBuilderPage() {
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
-            <Button asChild variant="outline"><Link to="/council"><Users />{t('council.open')}</Link></Button>
-          {!wizardOpen && (
-            <Button type="button" onClick={openNew} className="shrink-0">
-              <Plus /> {t('ui.builder.createAgent')}
+            <Button asChild variant="outline">
+              <Link to="/council">
+                <Users />
+                {t('council.open')}
+              </Link>
             </Button>
-          )}
+            {!wizardOpen && (
+              <Button type="button" onClick={openNew} className="shrink-0">
+                <Plus /> {t('ui.builder.createAgent')}
+              </Button>
+            )}
           </div>
         </div>
         <div className="relative mt-6 flex flex-wrap gap-2 text-xs">
@@ -231,8 +268,12 @@ export default function AgentBuilderPage() {
       </section>
 
       {wizardOpen && (
-        <BuilderWizard key={editing?.id ?? 'new'} editing={editing}
-          onSaved={() => void refresh()} onClose={() => setWizardOpen(false)} />
+        <BuilderWizard
+          key={editing?.id ?? 'new'}
+          editing={editing}
+          onSaved={() => void refresh()}
+          onClose={() => setWizardOpen(false)}
+        />
       )}
 
       <section className="space-y-4" aria-labelledby="builder-profiles-title">
@@ -247,29 +288,39 @@ export default function AgentBuilderPage() {
             <RefreshCw /> {t('ui.builder.refresh')}
           </Button>
         </div>
-        {profilesQuery.isLoading && <p className="text-sm text-muted-foreground">{t('ui.builder.loading')}</p>}
-        {profilesQuery.isError && <p role="alert" className="text-sm text-destructive">
-          {errorMessage(profilesQuery.error, t('ui.builder.loadFailed'))}
-        </p>}
+        {profilesQuery.isLoading && (
+          <p className="text-sm text-muted-foreground">{t('ui.builder.loading')}</p>
+        )}
+        {profilesQuery.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage(profilesQuery.error, t('ui.builder.loadFailed'))}
+          </p>
+        )}
         {!profilesQuery.isLoading && !profilesQuery.isError && profiles.length === 0 && (
-          <Card><CardContent className="flex flex-col items-center gap-3 py-10 text-center">
-            <ShieldCheck className="size-8 text-muted-foreground" />
-            <p className="font-medium">{t('ui.builder.noAgents')}</p>
-            <p className="text-sm text-muted-foreground">{t('ui.builder.noAgentsHint')}</p>
-            <Button type="button" variant="outline" onClick={openNew}>
-              <Plus /> {t('ui.builder.createAgent')}
-            </Button>
-          </CardContent></Card>
+          <Card>
+            <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
+              <ShieldCheck className="size-8 text-muted-foreground" />
+              <p className="font-medium">{t('ui.builder.noAgents')}</p>
+              <p className="text-sm text-muted-foreground">{t('ui.builder.noAgentsHint')}</p>
+              <Button type="button" variant="outline" onClick={openNew}>
+                <Plus /> {t('ui.builder.createAgent')}
+              </Button>
+            </CardContent>
+          </Card>
         )}
         <div className="grid gap-4 md:grid-cols-2">
           {profiles.map((profile: BuilderProfile) => (
-            <Card key={profile.id} className={profile.status === 'active' ? 'border-primary/50' : ''}>
+            <Card
+              key={profile.id}
+              className={profile.status === 'active' ? 'border-primary/50' : ''}
+            >
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <CardTitle className="truncate text-lg">{profile.config.name}</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {t(`ui.builder.template.${profile.config.template}.title`)} · v{profile.version}
+                      {t(`ui.builder.template.${profile.config.template}.title`)} · v
+                      {profile.version}
                     </p>
                   </div>
                   <Badge variant={profile.status === 'active' ? 'default' : 'secondary'}>
@@ -279,23 +330,51 @@ export default function AgentBuilderPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/40 p-3 text-xs">
-                  <div><span className="text-muted-foreground">{t('ui.builder.minimumRating')}</span>
-                    <p className="mt-1 font-semibold">{t(profile.config.minimumRating === 'Buy'
-                      ? 'ui.builder.ratingBuy' : 'ui.builder.ratingStrongBuy')}</p></div>
-                  <div><span className="text-muted-foreground">{t('ui.builder.maxOrderPct')}</span>
-                    <p className="mt-1 font-semibold">{profile.config.maxOrderPct}%</p></div>
-                  <div><span className="text-muted-foreground">{t('ui.builder.maxOrdersPerDay')}</span>
-                    <p className="mt-1 font-semibold">{profile.config.maxOrdersPerDay}</p></div>
-                  <div className="min-w-0"><span className="text-muted-foreground">{t('ui.builder.tickers')}</span>
-                    <p className="mt-1 truncate font-semibold">{profile.config.tickers.length
-                      ? profile.config.tickers.join(', ') : t('ui.builder.allTracked')}</p></div>
+                  <div>
+                    <span className="text-muted-foreground">{t('ui.builder.minimumRating')}</span>
+                    <p className="mt-1 font-semibold">
+                      {t(
+                        profile.config.minimumRating === 'Buy'
+                          ? 'ui.builder.ratingBuy'
+                          : 'ui.builder.ratingStrongBuy',
+                      )}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">{t('ui.builder.maxOrderPct')}</span>
+                    <p className="mt-1 font-semibold">{profile.config.maxOrderPct}%</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">{t('ui.builder.maxOrdersPerDay')}</span>
+                    <p className="mt-1 font-semibold">{profile.config.maxOrdersPerDay}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-muted-foreground">{t('ui.builder.tickers')}</span>
+                    <p className="mt-1 truncate font-semibold">
+                      {profile.config.tickers.length
+                        ? profile.config.tickers.join(', ')
+                        : t('ui.builder.allTracked')}
+                    </p>
+                  </div>
                 </div>
                 <div className="rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">
-                  <p>{t('council.cadence.summary', {
-                    days: profile.config.cadence?.reviewEveryTradingDays ?? DEFAULT_CADENCE.reviewEveryTradingDays,
-                    orders: profile.config.cadence?.maxOrdersPerWeek ?? DEFAULT_CADENCE.maxOrdersPerWeek,
-                  })}</p>
-                  <p className="mt-1">{t(profile.config.council?.enabled ? 'council.team.enabledHint' : 'council.team.rulesOnly')}</p>
+                  <p>
+                    {t('council.cadence.summary', {
+                      days:
+                        profile.config.cadence?.reviewEveryTradingDays ??
+                        DEFAULT_CADENCE.reviewEveryTradingDays,
+                      orders:
+                        profile.config.cadence?.maxOrdersPerWeek ??
+                        DEFAULT_CADENCE.maxOrdersPerWeek,
+                    })}
+                  </p>
+                  <p className="mt-1">
+                    {t(
+                      profile.config.council?.enabled
+                        ? 'council.team.enabledHint'
+                        : 'council.team.rulesOnly',
+                    )}
+                  </p>
                 </div>
                 {(profile.config.priceRules?.length ?? 0) > 0 && (
                   <div className="space-y-2">
@@ -322,27 +401,48 @@ export default function AgentBuilderPage() {
                 )}
                 <div className="flex flex-wrap gap-2">
                   <Button asChild size="sm" variant="outline">
-                    <Link to={`/council?profileId=${encodeURIComponent(profile.id)}`}><Users />{t('council.nav')}</Link>
+                    <Link to={`/council?profileId=${encodeURIComponent(profile.id)}`}>
+                      <Users />
+                      {t('council.nav')}
+                    </Link>
                   </Button>
-                  <Button type="button" size="sm" variant="outline"
-                    disabled={profile.status === 'active'} onClick={() => openEdit(profile)}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={profile.status === 'active'}
+                    onClick={() => openEdit(profile)}
+                  >
                     <Pencil /> {t('ui.builder.edit')}
                   </Button>
                   {profile.status === 'active' ? (
                     <>
-                      <Button type="button" size="sm" variant="outline" disabled={busy}
-                        onClick={() => pauseMutation.mutate(profile.id)}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => pauseMutation.mutate(profile.id)}
+                      >
                         <CirclePause /> {t('ui.builder.pause')}
                       </Button>
-                      <Button type="button" size="sm" disabled={busy}
-                        onClick={() => runMutation.mutate(profile.id)}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => runMutation.mutate(profile.id)}
+                      >
                         {runMutation.isPending ? <Loader2 className="animate-spin" /> : <Play />}
                         {t('ui.builder.runNow')}
                       </Button>
                     </>
                   ) : (
-                    <Button type="button" size="sm" disabled={busy}
-                      onClick={() => activateMutation.mutate(profile.id)}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => activateMutation.mutate(profile.id)}
+                    >
                       <Play /> {t('ui.builder.activate')}
                     </Button>
                   )}
@@ -364,51 +464,80 @@ export default function AgentBuilderPage() {
       <section className="space-y-4" aria-labelledby="builder-inbox-title">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 id="builder-inbox-title" className="flex items-center gap-2 font-serif text-2xl font-semibold">
+            <h2
+              id="builder-inbox-title"
+              className="flex items-center gap-2 font-serif text-2xl font-semibold"
+            >
               <ClipboardCheck className="size-6 text-primary" /> {t('ui.builder.inbox')}
               {pending.length > 0 && <Badge>{pending.length}</Badge>}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">{t('ui.builder.inboxHint')}</p>
           </div>
-          <Link to="/paper" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
-            <FlaskConical className="size-4" /> {t('ui.builder.openPaper')} <ArrowRight className="size-4" />
+          <Link
+            to="/paper"
+            className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+          >
+            <FlaskConical className="size-4" /> {t('ui.builder.openPaper')}{' '}
+            <ArrowRight className="size-4" />
           </Link>
         </div>
-        {proposalsQuery.isLoading && <p className="text-sm text-muted-foreground">{t('ui.builder.loading')}</p>}
-        {proposalsQuery.isError && <p role="alert" className="text-sm text-destructive">
-          {errorMessage(proposalsQuery.error, t('ui.builder.loadFailed'))}
-        </p>}
+        {proposalsQuery.isLoading && (
+          <p className="text-sm text-muted-foreground">{t('ui.builder.loading')}</p>
+        )}
+        {proposalsQuery.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage(proposalsQuery.error, t('ui.builder.loadFailed'))}
+          </p>
+        )}
         {!proposalsQuery.isLoading && !proposalsQuery.isError && pending.length === 0 && (
-          <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">
-            {t('ui.builder.emptyInbox')}
-          </CardContent></Card>
+          <Card>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              {t('ui.builder.emptyInbox')}
+            </CardContent>
+          </Card>
         )}
         <div className="space-y-3">
           {pending.map((proposal: BuilderProposal) => (
-            <ProposalCard key={proposal.id} proposal={proposal} profiles={profiles}
-              formatDate={formatDate} onFill={() => openFill(proposal)}
+            <ProposalCard
+              key={proposal.id}
+              proposal={proposal}
+              profiles={profiles}
+              formatDate={formatDate}
+              onFill={() => openFill(proposal)}
               onSkip={() => skipMutation.mutate(proposal.id)}
-              busy={skipMutation.isPending || fillMutation.isPending} />
+              busy={skipMutation.isPending || fillMutation.isPending}
+            />
           ))}
         </div>
         {history.length > 0 && (
           <div className="space-y-2 pt-2">
             <h3 className="text-sm font-semibold">{t('ui.builder.recentHistory')}</h3>
             {history.slice(0, 10).map((proposal: BuilderProposal) => (
-              <div key={proposal.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm">
-                <span className="font-medium">{proposal.ticker} · {t(`ui.builder.side.${proposal.side}`)}</span>
+              <div
+                key={proposal.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm"
+              >
+                <span className="font-medium">
+                  {proposal.ticker} · {t(`ui.builder.side.${proposal.side}`)}
+                </span>
                 <span className="text-muted-foreground">{formatDate(proposal.createdAt)}</span>
-                <Badge variant="secondary">{t(`ui.builder.proposalStatus.${proposal.status}`)}</Badge>
+                <Badge variant="secondary">
+                  {t(`ui.builder.proposalStatus.${proposal.status}`)}
+                </Badge>
               </div>
             ))}
           </div>
         )}
       </section>
 
-      <Dialog open={selected !== null} onOpenChange={(open: boolean) => {
-        if (!open) setSelected(null);
-      }}>
-        {selected && <DialogContent showCloseButton={false} className="max-h-[90vh] overflow-y-auto">
+      <Dialog
+        open={selected !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) setSelected(null);
+        }}
+      >
+        {selected && (
+          <DialogContent showCloseButton={false} className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="font-serif text-xl">
                 {t('ui.builder.recordFillTitle')}
@@ -423,26 +552,62 @@ export default function AgentBuilderPage() {
               </p>
               <div className="space-y-2">
                 <Label htmlFor="builder-fill-date">{t('ui.builder.executedAt')}</Label>
-                <Input id="builder-fill-date" type="datetime-local" value={fill.executedAt}
-                  onChange={(event) => setFill({ ...fill, executedAt: event.target.value })} />
+                <Input
+                  id="builder-fill-date"
+                  type="datetime-local"
+                  value={fill.executedAt}
+                  onChange={(event) => setFill({ ...fill, executedAt: event.target.value })}
+                />
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2"><Label htmlFor="builder-fill-quantity">{t('ui.builder.quantity')}</Label>
-                  <Input id="builder-fill-quantity" type="number" min="0.000001" step="any"
+                <div className="space-y-2">
+                  <Label htmlFor="builder-fill-quantity">{t('ui.builder.quantity')}</Label>
+                  <Input
+                    id="builder-fill-quantity"
+                    type="number"
+                    min="0.000001"
+                    step="any"
                     value={fill.quantity}
-                    onChange={(event) => setFill({ ...fill, quantity: event.target.value })} /></div>
-                <div className="space-y-2"><Label htmlFor="builder-fill-price">{t('ui.builder.price')}</Label>
-                  <Input id="builder-fill-price" type="number" min="0.000001" step="any"
+                    onChange={(event) => setFill({ ...fill, quantity: event.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="builder-fill-price">{t('ui.builder.price')}</Label>
+                  <Input
+                    id="builder-fill-price"
+                    type="number"
+                    min="0.000001"
+                    step="any"
                     value={fill.price}
-                    onChange={(event) => setFill({ ...fill, price: event.target.value })} /></div>
+                    onChange={(event) => setFill({ ...fill, price: event.target.value })}
+                  />
+                </div>
               </div>
-              <div className="space-y-2"><Label htmlFor="builder-fill-fees">{t('ui.builder.fees')}</Label>
-                <Input id="builder-fill-fees" type="number" min="0" step="any" value={fill.fees}
-                  onChange={(event) => setFill({ ...fill, fees: event.target.value })} /></div>
-              <div className="space-y-2"><Label htmlFor="builder-fill-notes">{t('ui.builder.notes')}</Label>
-                <Textarea id="builder-fill-notes" value={fill.notes} maxLength={1000}
-                  onChange={(event) => setFill({ ...fill, notes: event.target.value })} /></div>
-              {fillError && <p role="alert" className="text-sm text-destructive">{fillError}</p>}
+              <div className="space-y-2">
+                <Label htmlFor="builder-fill-fees">{t('ui.builder.fees')}</Label>
+                <Input
+                  id="builder-fill-fees"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={fill.fees}
+                  onChange={(event) => setFill({ ...fill, fees: event.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="builder-fill-notes">{t('ui.builder.notes')}</Label>
+                <Textarea
+                  id="builder-fill-notes"
+                  value={fill.notes}
+                  maxLength={1000}
+                  onChange={(event) => setFill({ ...fill, notes: event.target.value })}
+                />
+              </div>
+              {fillError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {fillError}
+                </p>
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setSelected(null)}>
                   {t('ui.builder.cancel')}
@@ -453,7 +618,8 @@ export default function AgentBuilderPage() {
                 </Button>
               </div>
             </div>
-          </DialogContent>}
+          </DialogContent>
+        )}
       </Dialog>
     </div>
   );
@@ -484,32 +650,50 @@ function ProposalCard({ proposal, profiles, formatDate, onFill, onSkip, busy }: 
                 {t(`ui.builder.side.${proposal.side}`)}
               </Badge>
               <span className="text-lg font-semibold">{proposal.ticker}</span>
-              <span className="text-xs text-muted-foreground">{proposal.market} · {proposal.currency}</span>
+              <span className="text-xs text-muted-foreground">
+                {proposal.market} · {proposal.currency}
+              </span>
             </div>
             <p className="mt-2 break-words text-xs text-muted-foreground">
               {profile?.config.name ?? t('ui.builder.unknownAgent')} · v{proposal.profileVersion}
-              {' · '}{formatDate(proposal.createdAt)}
+              {' · '}
+              {formatDate(proposal.createdAt)}
             </p>
           </div>
           {expired && <Badge variant="destructive">{t('ui.builder.expired')}</Badge>}
         </div>
         <p className="break-words text-sm leading-6">{proposal.reason}</p>
         <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
-          <span>{t('ui.builder.suggestedQuantity')}: <strong className="text-foreground">{proposal.quantity}</strong></span>
-          <span>{t('ui.builder.referencePrice')}: <strong className="text-foreground">{proposal.referencePrice} {proposal.currency}</strong></span>
-          <span>{t('ui.builder.expires')}: {formatDate(proposal.expiresAt)}</span>
+          <span>
+            {t('ui.builder.suggestedQuantity')}:{' '}
+            <strong className="text-foreground">{proposal.quantity}</strong>
+          </span>
+          <span>
+            {t('ui.builder.referencePrice')}:{' '}
+            <strong className="text-foreground">
+              {proposal.referencePrice} {proposal.currency}
+            </strong>
+          </span>
+          <span>
+            {t('ui.builder.expires')}: {formatDate(proposal.expiresAt)}
+          </span>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
           <p className="flex items-center gap-1 text-xs text-muted-foreground">
-            {proposal.paperOrderId ? <FlaskConical className="size-3.5" /> : <Bell className="size-3.5" />}
-            {proposal.paperOrderId
-              ? t('ui.builder.paperLinked') : t('ui.builder.proposalOnly')}
+            {proposal.paperOrderId ? (
+              <FlaskConical className="size-3.5" />
+            ) : (
+              <Bell className="size-3.5" />
+            )}
+            {proposal.paperOrderId ? t('ui.builder.paperLinked') : t('ui.builder.proposalOnly')}
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" disabled={busy}
-              onClick={onSkip}>{t('ui.builder.skip')}</Button>
-            <Button type="button" size="sm" disabled={busy || expired}
-              onClick={onFill}>{t('ui.builder.recordRealFill')}</Button>
+            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onSkip}>
+              {t('ui.builder.skip')}
+            </Button>
+            <Button type="button" size="sm" disabled={busy || expired} onClick={onFill}>
+              {t('ui.builder.recordRealFill')}
+            </Button>
           </div>
         </div>
       </CardContent>

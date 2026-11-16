@@ -79,10 +79,14 @@ function signalFilters(t: (k: string) => string): Array<{ value: 'all' | string;
 
 function localizedSignal(signal: string, t: (k: string) => string): string {
   const keys: Record<string, string> = {
-    '强烈买入': 'analysis.strongBuy', 'Strong Buy': 'analysis.strongBuy',
-    '买入': 'analysis.buy', Buy: 'analysis.buy',
-    '观望': 'analysis.watch', Watch: 'analysis.watch',
-    '回避': 'analysis.avoid', Avoid: 'analysis.avoid',
+    强烈买入: 'analysis.strongBuy',
+    'Strong Buy': 'analysis.strongBuy',
+    买入: 'analysis.buy',
+    Buy: 'analysis.buy',
+    观望: 'analysis.watch',
+    Watch: 'analysis.watch',
+    回避: 'analysis.avoid',
+    Avoid: 'analysis.avoid',
   };
   return keys[signal] ? t(keys[signal]) : signal;
 }
@@ -112,10 +116,7 @@ function parseNumber(v: string): number | undefined {
  * positive percent. Returns null when the price is at/above target or inputs
  * are missing/invalid.
  */
-function belowTargetPct(
-  current: string | null,
-  target: string | null
-): number | null {
+function belowTargetPct(current: string | null, target: string | null): number | null {
   const c = parseFloat(current ?? '');
   const t = parseFloat(target ?? '');
   if (isNaN(c) || isNaN(t) || t <= 0) return null;
@@ -142,14 +143,9 @@ function WatchlistPage() {
   const [formData, setFormData] = useState<WatchFormData>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
 
-  const tickers = useMemo(
-    () => items.map((item) => item.ticker),
-    [items]
-  );
+  const tickers = useMemo(() => items.map((item) => item.ticker), [items]);
 
   const { quotes, marketStatus, marketErrors, lastUpdated } = useMarketQuotes(tickers);
-
-
 
   /** Fetch the watchlist and populate state. */
   const loadData = async () => {
@@ -178,8 +174,7 @@ function WatchlistPage() {
       if (signalFilter !== 'all' && item.signal !== signalFilter) return false;
       if (!q) return true;
       return (
-        item.ticker.toLowerCase().includes(q) ||
-        (item.company ?? '').toLowerCase().includes(q)
+        item.ticker.toLowerCase().includes(q) || (item.company ?? '').toLowerCase().includes(q)
       );
     });
   }, [items, search, signalFilter]);
@@ -263,10 +258,7 @@ function WatchlistPage() {
               className="pl-9"
             />
           </div>
-          <Select
-            value={signalFilter}
-            onValueChange={(v) => setSignalFilter(v as 'all' | Signal)}
-          >
+          <Select value={signalFilter} onValueChange={(v) => setSignalFilter(v as 'all' | Signal)}>
             <SelectTrigger className="w-full sm:w-40">
               <SelectValue placeholder={t('ui.watchlist.signalFilter')} />
             </SelectTrigger>
@@ -288,9 +280,7 @@ function WatchlistPage() {
           </DialogTrigger>
           <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
             <DialogHeader>
-              <DialogTitle className="font-serif text-xl">
-                {t('watchlist.addWatch')}
-              </DialogTitle>
+              <DialogTitle className="font-serif text-xl">{t('watchlist.addWatch')}</DialogTitle>
             </DialogHeader>
             <WatchForm data={formData} onChange={setFormData} includeTicker />
             <DialogFooter>
@@ -334,13 +324,13 @@ function WatchlistPage() {
                     <TableHead className="text-right font-serif">
                       {t('ui.watchlist.entryPrice')}
                     </TableHead>
-                     <TableHead className="text-right font-serif">
-                       {t('watchlist.currentPrice')}
-                     </TableHead>
-                     <TableHead className="text-right font-serif">
-                       {t('ui.watchlist.changePct')}
-                     </TableHead>
-                     <TableHead className="text-right font-serif">
+                    <TableHead className="text-right font-serif">
+                      {t('watchlist.currentPrice')}
+                    </TableHead>
+                    <TableHead className="text-right font-serif">
+                      {t('ui.watchlist.changePct')}
+                    </TableHead>
+                    <TableHead className="text-right font-serif">
                       {t('ui.watchlist.targetBuyPrice')}
                     </TableHead>
                     <TableHead className="font-serif">{t('watchlist.rating')}</TableHead>
@@ -349,10 +339,7 @@ function WatchlistPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredItems.map((item: WatchItem) => {
-                    const belowPct = belowTargetPct(
-                      item.currentPrice,
-                      item.targetBuy
-                    );
+                    const belowPct = belowTargetPct(item.currentPrice, item.targetBuy);
                     return (
                       <TableRow
                         key={item.id}
@@ -372,7 +359,7 @@ function WatchlistPage() {
                               variant="outline"
                               className={cn(
                                 'border-transparent font-medium',
-                                signalColor(item.signal)
+                                signalColor(item.signal),
                               )}
                             >
                               {localizedSignal(item.signal, t)}
@@ -384,35 +371,31 @@ function WatchlistPage() {
                         <TableCell className="text-right font-mono-nums">
                           {formatPrice(item.entryPrice)}
                         </TableCell>
-                         <TableCell className="text-right font-mono-nums">
-                           {formatPrice(getDisplayPrice(item))}
-                           {belowPct !== null && (
-                             <div className="text-xs text-success">
-                               {t('ui.watchlist.belowTarget')}{' '}
-                               {formatPercent(belowPct).replace('+', '')}
-                             </div>
-                           )}
-                         </TableCell>
-                         {quotes[item.ticker] ? (
-                           <TableCell
-                             className={cn(
-                               'text-right font-mono-nums font-medium',
-                               plClass(
-                                 quotes[item.ticker]?.changePercent ?? '0'
-                               )
-                             )}
-                           >
-                             {quotes[item.ticker]?.changePercent !== undefined
-                               ? formatPercent(quotes[item.ticker].changePercent)
-                               : '--'}
-                           </TableCell>
-                         ) : (
-                           <TableCell className="text-right">
-                             <span className="text-muted-foreground/60 font-mono-nums">
-                               --
-                             </span>
-                           </TableCell>
-                         )}
+                        <TableCell className="text-right font-mono-nums">
+                          {formatPrice(getDisplayPrice(item))}
+                          {belowPct !== null && (
+                            <div className="text-xs text-success">
+                              {t('ui.watchlist.belowTarget')}{' '}
+                              {formatPercent(belowPct).replace('+', '')}
+                            </div>
+                          )}
+                        </TableCell>
+                        {quotes[item.ticker] ? (
+                          <TableCell
+                            className={cn(
+                              'text-right font-mono-nums font-medium',
+                              plClass(quotes[item.ticker]?.changePercent ?? '0'),
+                            )}
+                          >
+                            {quotes[item.ticker]?.changePercent !== undefined
+                              ? formatPercent(quotes[item.ticker].changePercent)
+                              : '--'}
+                          </TableCell>
+                        ) : (
+                          <TableCell className="text-right">
+                            <span className="text-muted-foreground/60 font-mono-nums">--</span>
+                          </TableCell>
+                        )}
                         <TableCell className="text-right font-mono-nums">
                           {formatPrice(item.targetBuy)}
                         </TableCell>
@@ -420,10 +403,7 @@ function WatchlistPage() {
                           {item.rating ? (
                             <Badge
                               variant="outline"
-                              className={cn(
-                                'border-transparent text-xs',
-                                ratingColor(item.rating)
-                              )}
+                              className={cn('border-transparent text-xs', ratingColor(item.rating))}
                             >
                               {item.rating}
                             </Badge>
@@ -452,10 +432,7 @@ function WatchlistPage() {
       {!loading && !error && filteredItems.length > 0 && (
         <div className="grid gap-3 md:hidden">
           {filteredItems.map((item: WatchItem) => {
-            const belowPct = belowTargetPct(
-              item.currentPrice,
-              item.targetBuy
-            );
+            const belowPct = belowTargetPct(item.currentPrice, item.targetBuy);
             return (
               <Card
                 key={item.id}
@@ -466,16 +443,11 @@ function WatchlistPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono-nums text-lg font-bold">
-                          {item.ticker}
-                        </span>
+                        <span className="font-mono-nums text-lg font-bold">{item.ticker}</span>
                         {item.signal && (
                           <Badge
                             variant="outline"
-                            className={cn(
-                              'border-transparent text-xs',
-                              signalColor(item.signal)
-                            )}
+                            className={cn('border-transparent text-xs', signalColor(item.signal))}
                           >
                             {localizedSignal(item.signal, t)}
                           </Badge>
@@ -488,36 +460,36 @@ function WatchlistPage() {
                     <Eye className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                   </div>
                   <Separator className="my-3" />
-                   <div className="grid grid-cols-4 gap-2 text-sm">
-                     <div>
-                       <div className="text-xs text-muted-foreground">
-                          {t('watchlist.currentPrice')}
-                       </div>
-                       <div className="font-mono-nums font-medium">
-                         {formatPrice(getDisplayPrice(item))}
-                       </div>
-                     </div>
-                     <div>
-                       <div className="text-xs text-muted-foreground">
-                         {t('ui.watchlist.changePct')}
-                       </div>
-                        {quotes[item.ticker] ? (
-                          <div
-                            className={cn(
-                              'font-mono-nums font-medium',
-                              plClass(quotes[item.ticker]?.changePercent ?? '0')
-                            )}
-                          >
-                            {quotes[item.ticker]?.changePercent !== undefined
-                              ? formatPercent(quotes[item.ticker].changePercent)
-                              : '--'}
-                          </div>
-                        ) : (
-                          <div className="text-muted-foreground/60 font-mono-nums font-medium">
-                            --
-                          </div>
-                        )}
-                     </div>
+                  <div className="grid grid-cols-4 gap-2 text-sm">
+                    <div>
+                      <div className="text-xs text-muted-foreground">
+                        {t('watchlist.currentPrice')}
+                      </div>
+                      <div className="font-mono-nums font-medium">
+                        {formatPrice(getDisplayPrice(item))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground">
+                        {t('ui.watchlist.changePct')}
+                      </div>
+                      {quotes[item.ticker] ? (
+                        <div
+                          className={cn(
+                            'font-mono-nums font-medium',
+                            plClass(quotes[item.ticker]?.changePercent ?? '0'),
+                          )}
+                        >
+                          {quotes[item.ticker]?.changePercent !== undefined
+                            ? formatPercent(quotes[item.ticker].changePercent)
+                            : '--'}
+                        </div>
+                      ) : (
+                        <div className="text-muted-foreground/60 font-mono-nums font-medium">
+                          --
+                        </div>
+                      )}
+                    </div>
                     <div>
                       <div className="text-xs text-muted-foreground">
                         {t('watchlist.targetBuy')}
@@ -537,8 +509,7 @@ function WatchlistPage() {
                   </div>
                   {belowPct !== null && (
                     <div className="mt-2 text-xs text-success">
-                      {t('ui.watchlist.belowTarget')}{' '}
-                      {formatPercent(belowPct).replace('+', '')}
+                      {t('ui.watchlist.belowTarget')} {formatPercent(belowPct).replace('+', '')}
                     </div>
                   )}
                 </CardContent>

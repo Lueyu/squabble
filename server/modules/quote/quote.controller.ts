@@ -36,13 +36,14 @@ export class QuoteController {
    * @throws BadRequestException if the list is missing or empty.
    */
   @Get('batch')
-  async getBatchQuotes(
-    @Query('symbols') symbols: string,
-  ): Promise<{ items: QuoteResponse[] }> {
+  async getBatchQuotes(@Query('symbols') symbols: string): Promise<{ items: QuoteResponse[] }> {
     if (!symbols || typeof symbols !== 'string') {
       throw new BadRequestException('symbols query parameter is required');
     }
-    const symbolList = symbols.split(',').map((s: string) => s.trim()).filter(Boolean);
+    const symbolList = symbols
+      .split(',')
+      .map((s: string) => s.trim())
+      .filter(Boolean);
     if (symbolList.length === 0) {
       throw new BadRequestException('symbols query parameter cannot be empty');
     }
@@ -78,9 +79,7 @@ export class QuoteController {
    * @throws NotFoundException if no quote could be resolved.
    */
   @Get()
-  async getQuote(
-    @Query('symbol') symbol: string,
-  ): Promise<QuoteResponse> {
+  async getQuote(@Query('symbol') symbol: string): Promise<QuoteResponse> {
     const result = await this.quoteService.getQuote(symbol);
     if (!result) {
       throw new NotFoundException(`Quote not found for symbol: ${symbol}`);

@@ -21,7 +21,10 @@ import type { RegistrationStatus } from '@shared/api.interface';
 
 @Controller('api/auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService, private readonly limiter: AuthRateLimiter) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly limiter: AuthRateLimiter,
+  ) {}
 
   /** Whether this instance currently accepts another account. */
   @Get('registration-status')
@@ -94,7 +97,10 @@ export class AuthController {
 
   /** Replace a forgotten password using the offline code issued at registration. */
   @Post('recover')
-  async recover(@Req() request: Request, @Body() body: { username?: string; recoveryCode?: string; newPassword?: string }) {
+  async recover(
+    @Req() request: Request,
+    @Body() body: { username?: string; recoveryCode?: string; newPassword?: string },
+  ) {
     this.limiter.consume(request, 'recover');
     return this.authService.recoverAccount(body);
   }
