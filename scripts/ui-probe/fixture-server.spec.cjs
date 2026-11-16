@@ -18,7 +18,8 @@ test('fixture serves built SPA, fictional data and rejects unmapped API requests
   });
   assert.match(await (await fetch(running.url + '/friends')).text(), /fictional UI/);
   const agents = await (await fetch(running.url + '/api/agent-roster')).json();
-  assert.equal(agents.items.length, 5);
+  assert.equal(agents.items.length, 12);
+  assert.deepEqual(agents.items.map(agent => agent.currentVersion.config.templateId).sort(), require('./agent-templates.json').map(template => template.id).sort());
   assert.equal(agents.items[0].currentVersion.config.executor.executionMode, 'model');
   const missing = await fetch(running.url + '/api/never-forward-this');
   assert.equal(missing.status, 404);
