@@ -1,23 +1,30 @@
 /**
- * @file server/modules/paper-trading/paper-trading.service.ts
- * @description AI paper-trading engine.
+ * paper-trading.service.ts — AI 模拟交易引擎（paper trading 服务）。
  *
- * The paper book is fully isolated from real records: dedicated tables,
- * dedicated cash ledger, no code path touches holdings/transactions. The
- * broker adapter is paper-only by construction — there is no real-broker
- * implementation to misconfigure.
- *
- * Legacy manual fills use the server-side public quote service, with a
- * fallback to stored portfolio prices. Builder fills require a recently
- * fetched quote and an available FX rate; free quotes may be delayed.
- * No real-broker order is sent.
- *
- * Guardrails (bot orders only; manual orders still require sufficient
- * cash/shares but skip the bot caps, so a human always stays in control):
- *  - daily loss circuit breaker: stop trading for the day once equity has
- *    dropped `dailyLossLimitPct`% from the day-start equity
- *  - per-order cap: a single order may not exceed `maxOrderPct`% of equity
- *  - per-day cap: at most `maxOrdersPerDay` bot orders per day
+ * 职责边界：
+ *  - 模拟盘账本与真实记录完全隔离：独立的数据表、独立的现金台账，
+ *    任何代码路径都不会触碰 holdings/transactions（真实持仓与交易）。
+ *  - 券商适配器按设计仅支持模拟盘——不存在可被误配置的"真实券商"实现。
+ *  - 传统手动成交使用服务端公共报价服务，回退到组合中已存储的价格；
+ *    Builder（agent）成交要求"近期拉取的报价 + 可用汇率"，免费报价可能有延迟。
+ *    永远不会向真实券商发送订单。
+ *  - 护栏只约束 bot 订单；手动订单仍要求现金/持仓充足，但跳过 bot 上限
+ *    ——人始终保留最终控制权：
+ *      - 日亏损熔断：当日权益较开盘权益回撤超过 `dailyLossLimitPct`% 后停止当日交易
+ *      - 单笔上限：单笔订单不得超过权益的 `maxOrderPct`%
+ *      - 单日上限：每天至多 `maxOrdersPerDay` 笔 bot 订单
+ * 上下游：
+ *  - 上游（谁调用本服务）：PaperTradingController、AgentBuilderController、BotScheduler、
+ *    CouncilService 的候选执行链路。
+ *  - 下游（本文件调用谁）：Drizzle 数据库（paper* 与 builder*、holdings、watchlist、
+ *    councilSessions/councilReports）、QuoteService、FxService、NotificationService、
+ *    AgentBuilderService、BuilderCadenceService、CouncilService、market-clock 的 isMarketOpen。
+ * 关键约定：
+ *  - 金额/数量单位：DB 侧 numeric（存储为字符串），服务内计算用 number（美元 USD 或报价币种原值，
+ *    非分）；API 返回统一 String(...) 字符串数值。notionalUsd / equityUsd 一律为美元数值。
+ *  - 非 US 市场标的保留原大小写，US 市场标的统一转大写（见 placeOrder / executeFill 的 ticker 规范化）。
+ *  - 汇率 fxToUsd 表示"1 单位报价币种 = 多少 USD"。
+ *  - require_approval 模式的 agent 订单进入 pending_approval，由用户审批后成交或拒绝。
  */
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { and, desc, eq, gte, or } from 'drizzle-orm';
@@ -63,27 +70,27 @@ import type {
   PaperSide,
 } from '@shared/api.interface';
 
-/** Static FX fallback (units per USD) when the FX service is unavailable. */
+/** FX 服务不可用时的静态汇率兜底（值为"每 1 USD 兑换的当地币数量"）。 */
 const FX_FALLBACK_PER_USD: Record<string, number> = { USD: 1, HKD: 7.78, CNY: 7.1 };
 
-/** Default guardrails for new accounts. */
+/** 新账户的缺省护栏阈值。 */
 const DEFAULT_GUARDRAILS: PaperGuardrails = {
   dailyLossLimitPct: 3,
   maxOrderPct: 5,
   maxOrdersPerDay: 10,
 };
 
-/** A resolved price for a ticker (USD notional included). */
+/** 解析出的标的可交易价格（含币种、市场与折算美元所需信息）。 */
 interface ResolvedPrice {
   price: number;
   market: 'US' | 'HK' | 'CN';
   currency: 'USD' | 'HKD' | 'CNY';
   company: string | null;
-  /** Conversion rate from the quote currency to USD. */
+  /** 报价币种 → USD 的换算率（1 单位报价币种 = fxToUsd 美元）。 */
   fxToUsd: number;
 }
 
-/** Risk-gate evaluation snapshot stored on every order. */
+/** 每笔订单落库的风控判定快照（riskCheck JSON 列的结构）。 */
 interface RiskCheck {
   passed: boolean;
   side: PaperSide;
@@ -112,7 +119,14 @@ export class PaperTradingService {
     private readonly council: CouncilService,
   ) {}
 
-  /** Get (or lazily create) the caller's paper account. */
+  /**
+   * ensureAccount — 获取（或惰性创建）调用者的模拟盘账户。
+   *
+   * 新账户使用 DEFAULT_GUARDRAILS 护栏；初始资金为库表缺省值（无入金记录）。
+   *
+   * @param userId 用户 id。
+   * @returns 模拟盘账户 PaperAccount。
+   */
   async ensureAccount(userId: string): Promise<PaperAccount> {
     const rows = await this.db.select().from(paperAccounts).where(eq(paperAccounts.owner, userId));
     if (rows[0]) return this.mapAccount(rows[0]);
@@ -123,7 +137,19 @@ export class PaperTradingService {
     return this.mapAccount(created);
   }
 
-  /** Reset the paper account: drop all paper data, start a fresh ledger. */
+  /**
+   * resetAccount — 重置模拟盘账户：清空全部模拟盘数据，重新开账。
+   *
+   * 事务内完成：停用已激活的 agent 配置、解绑提案/委员会报告的订单引用、
+   * 清空成交/订单/事件/快照/持仓，最后重置现金并写入 account_reset 事件。
+   * 提案本身保留（参考价、理由、自报成交不丢），只剥离悬空的订单 ID。
+   *
+   * @param userId      用户 id。
+   * @param initialCash 可选新初始资金（正数，缺省 1,000,000）。
+   * @returns 重置后的 PaperAccount。
+   * @throws BadRequestException 当 initialCash 非正数（"初始资金必须为正数"）时。
+   * @throws NotFoundException   当账户不存在时。
+   */
   async resetAccount(userId: string, initialCash?: number): Promise<PaperAccount> {
     if (initialCash !== undefined && (!Number.isFinite(initialCash) || initialCash <= 0)) {
       throw new BadRequestException('初始资金必须为正数');
@@ -136,13 +162,12 @@ export class PaperTradingService {
         .for('update');
       if (!account) throw new NotFoundException('Paper account not found');
 
-      // A reset stops the configured agent and keeps its real-action history.
+      // 重置会停用已配置的 agent，但保留其真实动作历史（提案记录不删）。
       await tx
         .update(builderProfiles)
         .set({ status: 'paused', updatedAt: new Date() })
         .where(and(eq(builderProfiles.owner, userId), eq(builderProfiles.status, 'active')));
-      // Paper orders are cleared below; proposals retain their reference
-      // price, reason and self-reported execution without a dangling order ID.
+      // 模拟盘订单在下方清空；提案保留参考价、理由与自报成交，仅剥离悬空的订单 ID。
       await tx
         .update(builderProposals)
         .set({ paperOrderId: null })
@@ -177,7 +202,15 @@ export class PaperTradingService {
     return this.mapAccount(updated);
   }
 
-  /** Full overview for the paper page: account, positions, curve, feeds. */
+  /**
+   * getOverview — 模拟盘页面总览：账户、持仓、权益曲线、订单与事件流。
+   *
+   * 持仓逐个解析价格（实时报价 + 回退链），以美元计市值与浮动盈亏；
+   * 汇总权益、今日/累计盈亏、今日订单数与熔断状态。
+   *
+   * @param userId 用户 id。
+   * @returns PaperOverview（金额字段均为字符串数值，单位 USD）。
+   */
   async getOverview(userId: string): Promise<PaperOverview> {
     const account = await this.requireAccount(userId);
     const positions = await this.db
@@ -185,7 +218,7 @@ export class PaperTradingService {
       .from(paperPositions)
       .where(eq(paperPositions.accountId, account.id));
 
-    // Resolve prices (live with fallbacks) and market values in USD.
+    // 逐持仓解析价格（实时 + 回退链），按 USD 计算市值与浮动盈亏。
     const enriched = await Promise.all(
       positions.map(async (p) => {
         const price = await this.resolvePrice(userId, p.ticker);
@@ -279,7 +312,26 @@ export class PaperTradingService {
     };
   }
 
-  /** Place an order (market orders only in V1; limits are rejected early). */
+  /**
+   * placeOrder — 下单（V1 仅支持市价单，limit 单提前拒绝）。
+   *
+   * 流程：参数校验 → 价格解析（strictQuote 走"近期报价 + 汇率"，否则走回退链）→
+   * 锁外预取净值/开盘权益 → 账户行锁事务内：bot 资格与配置版本校验、
+   * 委员会审批消费、风控判定（bot 专属）、偿付能力判定（两类来源共用）→
+   * 写订单/事件，成交则更新现金、持仓与成交流水 → 事务外按需发送通知。
+   * rejected_risk / pending_approval / filled 三种终态在此决定。
+   *
+   * @param userId            用户 id。
+   * @param dto               下单载荷（ticker/side/quantity/orderType/reason）。
+   * @param source            订单来源（'manual' | 'agent'）。
+   * @param agentInfo         agent 订单的会话信息与审批模式（可选）。
+   * @param suppressNotification 是否抑制订单结果通知（可选，默认 false）。
+   * @param strictQuote       是否要求"近 5 分钟内的实时报价 + 可用汇率"（agent 成交用）。
+   * @param builderProfile    agent 配置档案（agent 来源时携带，用于版本/白名单/提案绑定）。
+   * @param councilApproval   委员会审批（会话/报告/候选），启用委员会时必须携带。
+   * @returns 落库后的 PaperOrder。
+   * @throws BadRequestException / NotFoundException 见各校验分支（错误文案保持既有语言）。
+   */
   async placeOrder(
     userId: string,
     dto: CreatePaperOrderDto,
@@ -333,8 +385,7 @@ export class PaperTradingService {
     if (!price) {
       throw new BadRequestException(`无法获取 ${dto.ticker} 的价格，订单未执行`);
     }
-    // Fetch expensive portfolio valuations before taking the account row lock.
-    // Solvency and order-count checks below use the locked, current ledger.
+    // 贵的组合估值在拿账户行锁之前完成；下面的偿付能力与订单数检查使用锁内的当前台账。
     const equityBeforeLock = await this.equityOf(userId, initialAccount);
     const dayStart = await this.dayStartEquity(
       userId,
@@ -380,7 +431,7 @@ export class PaperTradingService {
         throw new BadRequestException('A current council approval is required');
       }
       if (councilApproval) {
-        // Serialize with user steering/pause and consume approval with the fill.
+        // 与用户的干预/暂停操作串行化，并在成交时消费这份审批。
         const [session] = await tx
           .select()
           .from(councilSessions)
@@ -442,7 +493,7 @@ export class PaperTradingService {
       const todayBotCount = todayOrders.filter((o) => o.source === 'agent').length;
       const guardrails = this.parseGuardrails(account.guardrails);
 
-      // ---- Risk gate (bot orders; manual orders skip caps but keep solvency) ----
+      // ---- 风控闸门（仅 bot 订单；手动订单跳过上限但保留偿付能力检查）----
       let rejection: string | undefined;
       let circuitBreaker = false;
       if (source === 'agent') {
@@ -452,8 +503,7 @@ export class PaperTradingService {
           circuitBreaker = true;
           rejection = `日亏损熔断：当日权益回撤已超过 ${guardrails.dailyLossLimitPct}%，今日停止交易`;
         } else if (dto.side === 'buy' && notionalUsd > (equity * guardrails.maxOrderPct) / 100) {
-          // The per-order cap constrains exposure on the way in; closing a
-          // position must never be blocked by it.
+          // 单笔上限只约束建仓方向的风险敞口；平仓绝不能被它拦住。
           rejection = `单笔金额 ${((notionalUsd / equity) * 100).toFixed(1)}% 超过上限 ${guardrails.maxOrderPct}%`;
         } else if (todayBotCount >= guardrails.maxOrdersPerDay) {
           rejection = `今日 bot 订单已达 ${guardrails.maxOrdersPerDay} 笔上限`;
@@ -505,7 +555,7 @@ export class PaperTradingService {
         }
       }
 
-      // ---- Solvency checks (both sources) ----
+      // ---- 偿付能力检查（两类来源都执行）----
       const cash = Number(account.cashBalance);
       const [existing] = await tx
         .select()
@@ -542,8 +592,7 @@ export class PaperTradingService {
       };
 
       const ticker = price.market === 'US' ? dto.ticker.toUpperCase() : dto.ticker;
-      // Determine the final status: agent orders in require_approval mode go
-      // to pending_approval instead of filling immediately.
+      // 决定最终状态：require_approval 模式的 agent 订单进入 pending_approval，而非立即成交。
       const needsApproval = source === 'agent' && agentInfo?.approvalMode === 'require_approval';
       const finalStatus = rejection
         ? 'rejected_risk'
@@ -593,7 +642,7 @@ export class PaperTradingService {
         };
       }
 
-      // Agent order awaiting user approval: record event, notify, return.
+      // agent 订单等待用户审批：记录事件、发通知后直接返回（不成交）。
       if (needsApproval) {
         await tx.insert(paperEvents).values({
           owner: userId,
@@ -621,7 +670,7 @@ export class PaperTradingService {
         };
       }
 
-      // ---- Execute the fill ----
+      // ---- 执行成交 ----
       let cashAfter = cash;
       let realizedPl: number | null = null;
       if (dto.side === 'buy') {
@@ -697,9 +746,8 @@ export class PaperTradingService {
         },
       });
 
-      // The proposal is committed with the fill under the same account lock.
-      // A second replica hitting the daily unique key rolls back its entire
-      // paper order instead of leaving a duplicate fill without an inbox row.
+      // 提案与成交在同一个账户锁内提交；另一副本若撞上"每日唯一键"会整体回滚
+      // 该模拟盘订单，避免出现没有收件箱行的重复成交。
       if (builderProfile) {
         const now = new Date();
         const [proposal] = await tx
@@ -761,14 +809,23 @@ export class PaperTradingService {
     return this.mapOrder(committed.order);
   }
 
-  /** Enable/disable the bot for the caller's account. */
+  /**
+   * toggleBot — 启用/停用调用者账户的 bot。
+   *
+   * 停用时同步暂停激活中的 agent 配置；启用时先建立当日开盘权益快照，
+   * 避免调度器在无基准权益的情况下交易。
+   *
+   * @param userId  用户 id。
+   * @param enabled 目标开关状态。
+   * @returns 更新后的 PaperAccount。
+   */
   async toggleBot(userId: string, enabled: boolean): Promise<PaperAccount> {
     const account = await this.requireAccount(userId);
     if (!enabled) {
       const active = await this.builder.getActiveProfile(userId);
       if (active) await this.builder.pauseProfile(userId, active.id);
     } else {
-      // Establish the first day opening equity before the scheduler can trade.
+      // 在调度器可以交易之前，先建立首个交易日的开盘权益基准。
       await this.ensureDailySnapshot(userId, account.id);
     }
     const [updated] = await this.db
@@ -781,9 +838,16 @@ export class PaperTradingService {
   }
 
   /**
-   * Approve a pending agent order: fill it at the current price.
-   * Re-runs the solvency checks but skips the bot guardrails (the human
-   * has already made the decision — that IS the guardrail).
+   * approveOrder — 审批一笔待审批的 agent 订单：按当前价格成交。
+   *
+   * 重新执行偿付能力检查，但跳过 bot 护栏上限（人已经做出决策——
+   * 这本身就是护栏）。
+   *
+   * @param userId  用户 id。
+   * @param orderId 待审批订单 id。
+   * @returns 成交后的 PaperOrder。
+   * @throws NotFoundException   当订单不存在（"订单不存在"）时。
+   * @throws BadRequestException 当订单不在待审批态、账户不存在、现金/持仓不足时。
    */
   async approveOrder(userId: string, orderId: string): Promise<PaperOrder> {
     await this.requireAccount(userId);
@@ -816,8 +880,8 @@ export class PaperTradingService {
       if (!pending || pending.status !== 'pending_approval') {
         throw new BadRequestException('Order is no longer pending approval');
       }
-      // Human approval skips bot percentage caps, but the locked ledger must
-      // still have sufficient cash or shares at the actual fill time.
+      // 人工审批跳过 bot 的百分比上限，但锁定台账在真实成交时仍必须有
+      // 足够的现金或持仓。
       const cash = Number(account.cashBalance);
       if (pending.side === 'buy' && notionalUsd > cash) {
         throw new BadRequestException(
@@ -878,7 +942,15 @@ export class PaperTradingService {
     return this.mapOrder(updated);
   }
 
-  /** Reject a pending agent order. */
+  /**
+   * rejectOrder — 拒绝一笔待审批的 agent 订单（置为 cancelled 并记录事件）。
+   *
+   * @param userId  用户 id。
+   * @param orderId 待审批订单 id。
+   * @returns 取消后的 PaperOrder。
+   * @throws NotFoundException   当订单不存在（"订单不存在"）时。
+   * @throws BadRequestException 当订单已不在待审批态时。
+   */
   async rejectOrder(userId: string, orderId: string): Promise<PaperOrder> {
     const account = await this.requireAccount(userId);
     const [order] = await this.db
@@ -911,7 +983,21 @@ export class PaperTradingService {
     return this.mapOrder(updated);
   }
 
-  /** Apply a human-approved paper fill inside the caller's transaction. */
+  /**
+   * executeFill — 在调用者的事务内执行一笔已获人工批准的模拟盘成交。
+   *
+   * 买入：扣现金、加权平均成本更新（或新建持仓）；卖出：加现金、计算已实现盈亏、
+   * 减持（清零则删除持仓）。随后更新现金余额并写入成交流水（fee 固定为 '0'）。
+   *
+   * @param tx       当前数据库事务。
+   * @param userId   用户 id。
+   * @param accountId 模拟盘账户 id。
+   * @param orderId  触发成交的订单 id。
+   * @param ticker   标的代码（已规范化）。
+   * @param price    解析后的成交价格（含 fxToUsd）。
+   * @param side     买卖方向。
+   * @param quantity 成交数量（整数股）。
+   */
   private async executeFill(
     tx: PaperTransaction,
     userId: string,
@@ -992,7 +1078,15 @@ export class PaperTradingService {
     });
   }
 
-  /** Update guardrail thresholds. */
+  /**
+   * updateGuardrails — 更新护栏阈值。
+   *
+   * 仅接受 0 < 值 ≤ 100 的有限数值字段；非法或缺省的键保持原值/缺省值。
+   *
+   * @param userId 用户 id。
+   * @param patch  待更新的护栏字段（Partial）。
+   * @returns 更新后的 PaperAccount。
+   */
   async updateGuardrails(userId: string, patch: Partial<PaperGuardrails>): Promise<PaperAccount> {
     const account = await this.requireAccount(userId);
     const next: PaperGuardrails = { ...this.parseGuardrails(account.guardrails) };
@@ -1009,9 +1103,16 @@ export class PaperTradingService {
   }
 
   /**
-   * One bot scan: derive signals from the caller's own analysis ratings and
-   * targets, run them through the risk gate, place orders. Used by the
-   * scheduler and by the manual "scan now" button.
+   * runBotScan — 一次 bot 扫描：从用户自己的分析评级与目标价推导信号，
+   * 经风控闸门后下单。供调度器与手动"立即扫描"按钮使用。
+   *
+   * 有激活的 Builder 配置时走 runConfiguredScan（带租约 + 进程内去重）；
+   * 无配置时走传统路径：真实持仓 + 自选列表携带评级/目标价，逐标的
+   * 推导清仓/止盈/建仓信号并逐个下单。
+   *
+   * @param userId 用户 id。
+   * @returns `{ scanned, signals, placed, rejected }` 汇总。
+   * @throws BadRequestException 当 bot 未启用或扫描已在进行中时。
    */
   async runBotScan(userId: string): Promise<{
     scanned: number;
@@ -1040,8 +1141,7 @@ export class PaperTradingService {
       }
     }
 
-    // Universe: the caller's real holdings + watchlist carry the ratings and
-    // targets produced by the multi-agent research pipeline.
+    // 标的池：真实持仓 + 自选列表，它们携带多智能体研究流水线产出的评级与目标价。
     const realHoldings = await this.db.select().from(holdings).where(eq(holdings.owner, userId));
     const watchItems = await this.db.select().from(watchlist).where(eq(watchlist.owner, userId));
     const positions = await this.db
@@ -1175,7 +1275,22 @@ export class PaperTradingService {
     };
   }
 
-  /** Builder scans use recent completed research, fetched quotes and fixed limits. */
+  /**
+   * runConfiguredScan — Builder 配置扫描：使用近期已完成的研究、实时报价与固定限额。
+   *
+   * 顺序（尽量便宜的检查在前，模型调用最后）：
+   *  1. 汇总标的池（持仓 + 自选 + 白名单 + 价格规则标的，白名单非空时裁剪池子）；
+   *  2. 逐标的：有评级或价格规则 → 近 5 分钟报价 + 开市 + 汇率可用 →
+   *     decideBuilderSignal 出信号；
+   *  3. 台账级节律检查（cadenceRejection，含被拒的想法也要先走）→ claimReview 抢占；
+   *  4. 委员会复核或单模型复核（只能否决）→ placeOrder 成交。
+   * 失败的复核/订单记 'failed' 且当日不自动重试。
+   *
+   * @param userId  用户 id。
+   * @param account 模拟盘账户（已映射）。
+   * @param profile 激活的 BuilderProfile。
+   * @returns `{ scanned, signals, placed, rejected }` 汇总。
+   */
   private async runConfiguredScan(
     userId: string,
     account: PaperAccount,
@@ -1238,7 +1353,7 @@ export class PaperTradingService {
       });
     }
 
-    // A non-empty allowlist can include researched names outside the portfolio.
+    // 非空白名单允许纳入组合之外、但已有研究覆盖的标的。
     for (const ticker of profile.config.tickers) {
       if (!universe.has(ticker)) {
         universe.set(ticker, { source: 'watchlist', targetBuy: null });
@@ -1278,8 +1393,8 @@ export class PaperTradingService {
       if (!rating && !priceRule) continue;
       const quote = await this.quoteService.getQuote(ticker);
       if (!quote || Number(quote.price) <= 0 || !isMarketOpen(quote.market)) continue;
-      // QuoteService marks all free providers as delayed. The timestamp is
-      // retrieval time, not exchange time; a real order requires broker review.
+      // QuoteService 把所有免费数据源都标记为延迟。timestamp 是取回时间而非交易所时间；
+      // 若要真实下单必须经过券商侧复核。
       const fetchedRecently =
         Number.isFinite(quote.timestamp) && Math.abs(Date.now() - quote.timestamp) <= 5 * 60 * 1000;
       if (!fetchedRecently) continue;
@@ -1309,7 +1424,7 @@ export class PaperTradingService {
       });
       if (!signal || (await this.builder.hasDailyProposal(profile.id, ticker, signal.side)))
         continue;
-      // Cheap ledger gates precede every model call, including denied ideas.
+      // 便宜的台账闸门先于任何模型调用执行，包括最终被否决的想法。
       const recentOrders = await this.db
         .select()
         .from(paperOrders)
@@ -1442,7 +1557,15 @@ export class PaperTradingService {
     return result;
   }
 
-  /** Upsert today's equity snapshot (idempotent per account+date). */
+  /**
+   * ensureDailySnapshot — 写入/更新今日权益快照（按 账户+日期 幂等）。
+   *
+   * 已有今日快照则更新（equity/cash/positionsValue/dailyPl），
+   * 否则插入新行。dailyPl 相对 dayStartEquity 基准。
+   *
+   * @param userId    用户 id。
+   * @param accountId 模拟盘账户 id。
+   */
   async ensureDailySnapshot(userId: string, accountId: string): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
     const [existing] = await this.db
@@ -1484,10 +1607,16 @@ export class PaperTradingService {
   }
 
   // ------------------------------------------------------------------
-  // Internals
+  // 内部工具方法
   // ------------------------------------------------------------------
 
-  /** Throw 404 unless the caller has a paper account. */
+  /**
+   * requireAccount — 读取调用者的模拟盘账户；不存在则抛 404。
+   *
+   * @param userId 用户 id。
+   * @returns 账户 DB 行。
+   * @throws NotFoundException 当账户不存在（'Paper account not found'）时。
+   */
   private async requireAccount(userId: string) {
     const rows = await this.db.select().from(paperAccounts).where(eq(paperAccounts.owner, userId));
     if (!rows[0]) throw new NotFoundException('Paper account not found');
@@ -1495,9 +1624,14 @@ export class PaperTradingService {
   }
 
   /**
-   * Resolve a tradeable price for a ticker. Fallback chain: live quote ->
-   * the user's real holdings/watchlist stored price -> paper position avg
-   * cost -> null.
+   * resolvePrice — 解析标的的可交易价格。回退链：实时报价 →
+   * 用户真实持仓/自选列表的存储价 → 模拟持仓平均成本 → null。
+   * （待确认：当前实现实际只回退到 holdings/watchlist 存储价；
+   * paperPositions.avgCost 仅在 equityOf 的估值兜底分支中使用。）
+   *
+   * @param userId    用户 id。
+   * @param rawTicker 原始标的代码（trim 后使用）。
+   * @returns ResolvedPrice；全部回退失败返回 null。
    */
   private async resolvePrice(userId: string, rawTicker: string): Promise<ResolvedPrice | null> {
     const ticker = rawTicker.trim();
@@ -1513,7 +1647,7 @@ export class PaperTradingService {
         };
       }
     } catch {
-      // fall through to stored prices
+      // 报价失败则继续走存储价格回退链。
     }
 
     const [h] = await this.db
@@ -1545,7 +1679,12 @@ export class PaperTradingService {
     return null;
   }
 
-  /** Convert one unit of `currency` into USD (FX service with static fallback). */
+  /**
+   * fxToUsd — 把 1 单位 `currency` 折算成 USD（FX 服务 + 静态兜底）。
+   *
+   * @param currency 报价币种（USD/HKD/CNY）。
+   * @returns 1 单位该币种 = 多少 USD。
+   */
   private async fxToUsd(currency: 'USD' | 'HKD' | 'CNY'): Promise<number> {
     if (currency === 'USD') return 1;
     try {
@@ -1555,7 +1694,15 @@ export class PaperTradingService {
     }
   }
 
-  /** Current equity: cash + market value of paper positions (USD). */
+  /**
+   * equityOf — 当前权益：现金 + 模拟持仓市值（USD）。
+   *
+   * 持仓逐个解析价格；无可用价格时以平均成本 × 汇率兜底估值。
+   *
+   * @param userId  用户 id。
+   * @param account 账户（至少含 id；cashBalance 作为读取失败时的兜底）。
+   * @returns 权益（USD 数值）。
+   */
   private async equityOf(
     userId: string,
     account: { id: string; cashBalance?: string },
@@ -1582,7 +1729,15 @@ export class PaperTradingService {
     return cash + value;
   }
 
-  /** Day-start equity: prior closing snapshot, today's opening, or current equity. */
+  /**
+   * dayStartEquity — 当日开盘权益基准：取上一个收盘快照；无则用今日快照
+   * 的开盘值（equity - dailyPl）；再无则用当前权益。
+   *
+   * @param userId       用户 id。
+   * @param accountId    模拟盘账户 id。
+   * @param _initialCash 未使用（保留参数形状以兼容既有调用）。
+   * @returns 开盘权益（USD 数值）。
+   */
   private async dayStartEquity(
     userId: string,
     accountId: string,
@@ -1596,15 +1751,14 @@ export class PaperTradingService {
       .orderBy(desc(paperSnapshots.snapshotDate));
     const prev = rows.find((r) => r.snapshotDate < today);
     if (prev) return Number(prev.equity);
-    // No prior snapshot: if today's exists use its opening (equity - dailyPl).
+    // 无历史快照：若存在今日快照，用其开盘值（equity - dailyPl）。
     const todayRow = rows.find((r) => r.snapshotDate === today);
     if (todayRow) return Number(todayRow.equity) - Number(todayRow.dailyPl);
-    // Existing accounts may already have deposits and positions before their
-    // first snapshot. Initial cash would make the loss breaker inaccurate.
+    // 存量账户可能在首个快照之前就已入金并建仓；用初始现金会使亏损熔断失准。
     return this.equityOf(userId, { id: accountId });
   }
 
-  /** Today's orders (UTC day) for an account. */
+  /** 今日（UTC 日界）该账户的全部订单。 */
   private async todayOrders(userId: string, accountId: string) {
     const dayStart = new Date();
     dayStart.setUTCHours(0, 0, 0, 0);
@@ -1614,7 +1768,7 @@ export class PaperTradingService {
       .where(and(eq(paperOrders.accountId, accountId), gte(paperOrders.createdAt, dayStart)));
   }
 
-  /** Whether the daily-loss circuit breaker is currently tripped. */
+  /** 日亏损熔断当前是否触发（dayStart ≤ 0 时不判熔断）。 */
   private circuitBreakerHit(
     dayStart: number,
     equityNow: number,
@@ -1624,7 +1778,7 @@ export class PaperTradingService {
     return (dayStart - equityNow) / dayStart >= guardrails.dailyLossLimitPct / 100;
   }
 
-  /** Parse the guardrails JSON with defaults for missing keys. */
+  /** 解析护栏 JSON，缺失的键用缺省值补齐。 */
   private parseGuardrails(raw: unknown): PaperGuardrails {
     const g = (raw ?? {}) as Partial<PaperGuardrails>;
     return {
@@ -1641,7 +1795,7 @@ export class PaperTradingService {
     };
   }
 
-  /** Append an event to the paper activity timeline. */
+  /** 追加一条事件到模拟盘活动时间线（paperEvents）。 */
   private async recordEvent(
     userId: string,
     accountId: string,
@@ -1656,6 +1810,12 @@ export class PaperTradingService {
     });
   }
 
+  /**
+   * mapAccount — 账户 DB 行 → API 的 PaperAccount（金额转字符串数值）。
+   *
+   * @param row paperAccounts 查询行。
+   * @returns PaperAccount。
+   */
   private mapAccount(row: typeof paperAccounts.$inferSelect): PaperAccount {
     return {
       id: row.id,
@@ -1668,6 +1828,13 @@ export class PaperTradingService {
     };
   }
 
+  /**
+   * mapPosition — 持仓 DB 行 → API 对象（shares/avgCost 转字符串数值，
+   * market/currency 归一为字面量联合类型）。
+   *
+   * @param row paperPositions 查询行。
+   * @returns 持仓 API 对象。
+   */
   private mapPosition(row: typeof paperPositions.$inferSelect) {
     return {
       id: row.id,
@@ -1682,6 +1849,13 @@ export class PaperTradingService {
     };
   }
 
+  /**
+   * mapOrder — 订单 DB 行 → API 的 PaperOrder（numeric 列转字符串数值，
+   * NULL 归一为 null，riskCheck 原样透出）。
+   *
+   * @param row paperOrders 查询行。
+   * @returns PaperOrder。
+   */
   private mapOrder(row: typeof paperOrders.$inferSelect): PaperOrder {
     return {
       id: row.id,

@@ -1,14 +1,22 @@
 /**
- * Transactions service.
+ * transactions.service.ts — 交易记账服务（组合的唯一事实来源）。
  *
- * The source-of-truth bookkeeping for the portfolio. Transactions (Buy / Sell /
- * Deposit / Withdrawal / Opening) are entered directly by the user; holdings,
- * closed positions (realized P&L), and per-currency cash balances are all DERIVED
- * from them and rebuilt after every mutation. All writes run in a single DB
- * transaction. Cash is tracked per currency and a balance may never go negative
- * (`adjustCash` throws otherwise). For Buy orders without enough cash,
- * `createWithAutoDeposit` auto-deposits the shortfall and records a paired Deposit
- * row tagged `__AUTO_DEPOSIT_FOR_BUY__:<ticker>`.
+ * 职责边界：
+ *  - 承载交易（Buy / Sell / Deposit / Withdrawal / Opening）的 CRUD 与派生状态重建；
+ *    持仓、已平仓（已实现盈亏）、分币种现金余额全部由交易记录派生并在每次变更后重建。
+ *    不做 HTTP 校验（控制器层负责），不调用外部行情写入（只读 QuoteService.detectMarket）。
+ * 上下游：
+ *  - 上游（谁调用本服务）：TransactionsController、server 内复用对账逻辑的其他模块。
+ *  - 下游（本文件调用谁）：Drizzle 数据库（transactions / holdings / closed / cashAccounts 四张表）、
+ *    QuoteService.detectMarket（币种与市场推断）。
+ * 关键约定：
+ *  - 所有写操作都在单个数据库事务内执行。
+ *  - 现金按币种记账，余额永不为负（adjustCash 越界即抛 BadRequestException）。
+ *  - 现金不足的买入走 createWithAutoDeposit：先自动存入差额，并落一条 notes 标记为
+ *    `__AUTO_DEPOSIT_FOR_BUY__:<ticker>` 的配对 Deposit 行；删除该买入时会回冲这笔配对存入。
+ *  - 单位约定：DB 数值列（numeric）与 API 层均以字符串数值流转（如 '123.45'），
+ *    计算前用 Number() 转换；shares 字段在 Deposit/Withdrawal 类型里承载的是"金额"而非股数。
+ *  - 浮点比较统一用 1e-9 容差，避免二进制浮点误差误判。
  */
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -22,29 +30,27 @@ import type {
   Currency,
 } from '@shared/api.interface';
 
-/** Partial-update variant of the create DTO. */
+/** 新建 DTO 的部分更新变体。 */
 type UpdateTransactionDto = Partial<CreateTransactionDto>;
 
 /**
- * Running state used while replaying a ticker's transactions in chronological
- * order to recompute shares held and average cost basis.
+ * 按时间顺序回放某 ticker 的交易记录、重算持股数量与平均成本时的游标状态。
  */
 interface TxCursor {
-  /** Ticker being replayed. */
+  /** 正在回放的 ticker。 */
   ticker: string;
-  /** Net shares currently held. */
+  /** 当前净持股数量。 */
   shares: number;
-  /** Total cost basis of the remaining shares. */
+  /** 剩余持股的总成本基础。 */
   costBasis: number;
-  /** Date of the first open (buy) transaction, if any. */
+  /** 首笔开仓（买入）交易日期，无则为 null。 */
   buyDate: string | null;
-  /** Company display name carried into derived holdings/closed rows. */
+  /** 透传到派生 holdings/closed 行的公司显示名。 */
   company: string | null;
 }
 
 /**
- * Provides transaction CRUD plus derived-state rebuild (holdings, closed
- * positions, cash). Depends on the Drizzle database connection.
+ * 提供交易 CRUD 与派生状态重建（持仓、已平仓、现金），依赖注入的 Drizzle 数据库连接。
  */
 @Injectable()
 export class TransactionsService {
@@ -56,11 +62,12 @@ export class TransactionsService {
   ) {}
 
   /**
-   * Lists the user's transactions, newest first, optionally filtered by ticker.
+   * 列出用户交易记录，最新在前，可按 ticker 过滤。
    *
-   * @param userId Owner id from the authenticated request.
-   * @param ticker  Optional ticker filter.
-   * @param limit   Max rows (capped client-side by the caller; default 100).
+   * @param userId 来自鉴权请求的 owner id。
+   * @param ticker 可选 ticker 过滤条件。
+   * @param limit  最大行数（由调用方在控制器层钳制；默认 100）。
+   * @returns Transaction 数组。
    */
   async list(
     userId: string,
@@ -83,11 +90,12 @@ export class TransactionsService {
   }
 
   /**
-   * Fetches a single transaction by id, only when owned by the caller.
+   * 按 id 获取单条交易记录，仅当记录属于调用者时返回。
    *
-   * @param userId Owner id used for the ownership filter.
-   * @param id     Transaction primary key.
-   * @throws NotFoundException if no matching (id, owner) row exists.
+   * @param userId 用于 owner 过滤的用户 id。
+   * @param id     交易记录主键。
+   * @returns Transaction。
+   * @throws NotFoundException 当 (id, owner) 无匹配行时。
    */
   async getById(userId: string, id: string): Promise<Transaction> {
     const rows = await this.db
@@ -96,26 +104,25 @@ export class TransactionsService {
       .where(and(eq(transactions.id, id), eq(transactions.owner, userId)));
 
     if (rows.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new NotFoundException('交易记录不存在');
 
     return this.mapRow(rows[0]);
   }
 
   /**
-   * Creates a Buy transaction and, if the user's cash in the transaction's
-   * currency is insufficient, automatically deposits the shortfall first. The
-   * auto-deposit is recorded as a synthetic Deposit row paired by a notes tag.
-   * Everything (deposit, cash deduction, buy insert, holdings rebuild) runs in
-   * one transaction.
+   * 创建买入交易；若该币种现金不足，先自动存入差额。自动存入以合成 Deposit 行落库，
+   * 通过 notes 标记配对。存款、扣款、买入落库、持仓重建全部在同一个事务内执行。
    *
-   * @param userId Owner id.
-   * @param dto    Create payload (must be a Buy).
-   * @throws BadRequestException on validation failures.
+   * @param userId owner id。
+   * @param dto    新建载荷（必须是 Buy 类型）。
+   * @returns 新建后的 Transaction。
+   * @throws BadRequestException 校验失败时。
    */
   async createWithAutoDeposit(userId: string, dto: CreateTransactionDto): Promise<Transaction> {
+    // 入参规范化与校验：数值字段转 number，ticker 统一大写。
     if (dto.txType !== 'Buy') {
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('自动充值仅支持买入交易');
     }
 
@@ -126,32 +133,33 @@ export class TransactionsService {
     const ticker = dto.ticker?.trim().toUpperCase();
 
     if (!dto.txDate)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('交易日期不能为空');
     if (sharesNum <= 0 || isNaN(sharesNum))
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('数量必须大于 0');
     if (!ticker)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('代码不能为空');
     if (priceNum <= 0 || isNaN(priceNum))
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('价格必须大于 0');
 
-    // Total cash outflow for the buy including fees.
+    // 本次买入的总现金流出（含手续费）。
     const costAmount = sharesNum * priceNum + feesNum;
 
     const result = await this.db.transaction(async (tx) => {
+      // 先读当前现金账户，算出买入所需差额。
       const existing = await tx
         .select()
         .from(cashAccounts)
         .where(and(eq(cashAccounts.owner, userId), eq(cashAccounts.currency, currency)));
       const curBalance = existing.length > 0 ? Number(existing[0].balance) : 0;
-      // How much extra cash is needed to afford this buy.
+      // 买够这笔还需要多少现金。
       const shortfall = costAmount - curBalance;
 
       if (shortfall > 1e-9) {
-        // Top up the cash account by the shortfall (create or increment).
+        // 现金不足：把差额补进现金账户（账户缺失则建户，否则累加）。
         if (existing.length === 0) {
           await tx.insert(cashAccounts).values({
             currency,
@@ -171,7 +179,7 @@ export class TransactionsService {
             .where(eq(cashAccounts.id, existing[0].id));
         }
 
-        // Record the paired synthetic deposit so it can be removed later if the buy is deleted.
+        // 落一条配对的合成 Deposit 行，日后删除该买入时可据此回收这笔存入。
         await tx.insert(transactions).values({
           txDate: dto.txDate,
           ticker: '',
@@ -187,7 +195,7 @@ export class TransactionsService {
         });
       }
 
-      // Spend the cash on the buy.
+      // 支付买入的现金流出。
       await this.adjustCash(tx, userId, currency, -costAmount);
 
       const insertRows = await tx
@@ -207,7 +215,7 @@ export class TransactionsService {
         })
         .returning();
 
-      // Re-derive holdings/closed for this ticker from the updated transactions.
+      // 从更新后的交易历史重派生该 ticker 的持仓/已平仓。
       await this.rebuildTickersFromTransactions(tx, userId, [ticker]);
 
       return insertRows[0];
@@ -217,15 +225,17 @@ export class TransactionsService {
   }
 
   /**
-   * Creates a transaction of any valid type. Cash-flow types (Deposit/Withdrawal)
-   * adjust cash only; Buy/Sell/Opening adjust cash and then rebuild derived holdings
-   * for the affected ticker. All in one DB transaction.
+   * 创建任意合法类型的交易。现金流类型（Deposit/Withdrawal）只调整现金；
+   * Buy/Sell/Opening 调整现金后还会重建受影响 ticker 的派生持仓。
+   * 全部在单个数据库事务内执行。
    *
-   * @param userId Owner id.
-   * @param dto    Create payload.
-   * @throws BadRequestException on validation failures.
+   * @param userId owner id。
+   * @param dto    新建载荷。
+   * @returns 新建后的 Transaction。
+   * @throws BadRequestException 校验失败时。
    */
   async create(userId: string, dto: CreateTransactionDto): Promise<Transaction> {
+    // 入参规范化：数值字段转 number，币种缺省 USD。
     const sharesNum = Number(dto.shares);
     const priceNum = Number(dto.price);
     const feesNum = dto.fees !== undefined ? Number(dto.fees) : 0;
@@ -234,7 +244,7 @@ export class TransactionsService {
 
     const validTypes = ['Buy', 'Sell', 'Deposit', 'Withdrawal', 'Opening'] as const;
     if (!validTypes.includes(rawTxType as (typeof validTypes)[number]))
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('交易类型无效');
     const txType = rawTxType;
 
@@ -242,27 +252,27 @@ export class TransactionsService {
     const isOpening = txType === 'Opening';
 
     if (!dto.txDate)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('交易日期不能为空');
 
     if (sharesNum <= 0 || isNaN(sharesNum)) {
-      // Amount validation differs for cash flows vs share trades.
-      // NOTE: Chinese user-facing messages (existing behavior; not mojibake).
+      // 现金流与股票交易对 shares 字段的语义不同，报错文案也相应区分。
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException(isCashFlow ? '金额必须大于 0' : '数量必须大于 0');
     }
 
     if (!isCashFlow && !isOpening) {
       if (!dto.ticker || !dto.ticker.trim()) {
-        // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+        // NOTE: 用户可见文案为中文，属既有行为而非乱码。
         throw new BadRequestException('代码不能为空');
       }
       if (priceNum <= 0 || isNaN(priceNum)) {
-        // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+        // NOTE: 用户可见文案为中文，属既有行为而非乱码。
         throw new BadRequestException('价格必须大于 0');
       }
     }
 
-    // Cash flows/opening use a blank or optional ticker; share trades require one.
+    // 现金流/建仓的 ticker 可为空或可选；股票交易必须提供（统一大写）。
     const ticker =
       isCashFlow || isOpening
         ? isOpening
@@ -271,7 +281,7 @@ export class TransactionsService {
         : dto.ticker.trim().toUpperCase();
 
     if (isCashFlow) {
-      // Deposit adds cash, Withdrawal removes it.
+      // 存入加现金，取款减现金。
       const amount = txType === 'Deposit' ? sharesNum : -sharesNum;
       const result = await this.db.transaction(async (tx) => {
         const insertRows = await tx
@@ -297,9 +307,10 @@ export class TransactionsService {
       return this.mapRow(result);
     }
 
-    // Share trade (Buy/Sell/Opening): compute cash sign first.
+    // 股票交易（Buy/Sell/Opening）：先算现金变动方向。
     const result = await this.db.transaction(async (tx) => {
       if (txType === 'Sell') {
+        // 卖出前锁定持仓行（行级锁），再回放全部历史交易核对可卖数量。
         await tx
           .select({ id: holdings.id })
           .from(holdings)
@@ -322,7 +333,7 @@ export class TransactionsService {
       const cashDelta =
         txType === 'Buy' ? -(sharesNum * priceNum + feesNum) : sharesNum * priceNum - feesNum;
 
-      // Buy spends cash; an Opening position does not move cash (it sets the starting lot).
+      // 买入花现金；建仓（Opening）不动现金（只设定起始批次）。
       if (txType === 'Buy' || txType === 'Opening') {
         await this.adjustCash(tx, userId, currency, txType === 'Buy' ? cashDelta : 0);
       }
@@ -345,12 +356,12 @@ export class TransactionsService {
         .returning();
 
       if (txType === 'Sell') {
-        // Sell proceeds (minus fees) add cash.
+        // 卖出所得（扣手续费后）加回现金。
         await this.adjustCash(tx, userId, currency, cashDelta);
       }
 
       if (txType === 'Buy' || txType === 'Sell' || txType === 'Opening') {
-        // Re-derive holdings/closed for the affected ticker.
+        // 重派生受影响 ticker 的持仓/已平仓。
         await this.rebuildTickersFromTransactions(tx, userId, [ticker]);
       }
 
@@ -361,15 +372,15 @@ export class TransactionsService {
   }
 
   /**
-   * Updates a transaction. It recomputes the old vs. new cash impact, applies the
-   * net cash difference to the account, then rebuilds derived holdings/closed for
-   * any ticker touched by the change. All in one transaction.
+   * 更新交易记录。先算旧值与新值的现金影响差，把净差额应用到现金账户，
+   * 再对变更涉及的所有 ticker 重建派生持仓/已平仓。全部在单个事务内执行。
    *
-   * @param userId Owner id.
-   * @param id     Transaction primary key.
-   * @param dto    Partial update payload.
-   * @throws NotFoundException if the row is not owned by the user.
-   * @throws BadRequestException if no updatable field is supplied.
+   * @param userId owner id。
+   * @param id     交易记录主键。
+   * @param dto    部分更新载荷。
+   * @returns 更新后的 Transaction。
+   * @throws NotFoundException 记录不属于该用户时。
+   * @throws BadRequestException 未提供任何可更新字段时。
    */
   async update(userId: string, id: string, dto: UpdateTransactionDto): Promise<Transaction> {
     const existing = await this.db
@@ -378,10 +389,11 @@ export class TransactionsService {
       .where(and(eq(transactions.id, id), eq(transactions.owner, userId)));
 
     if (existing.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new NotFoundException('交易记录不存在');
     const oldRow = existing[0];
 
+    // 只把 payload 中显式给出的字段搬进 patch，数值字段转字符串落库。
     const patch: Record<string, unknown> = {};
     if (dto.txDate !== undefined) patch.txDate = dto.txDate;
     if (dto.ticker !== undefined) patch.ticker = dto.ticker;
@@ -393,13 +405,14 @@ export class TransactionsService {
     if (dto.currency !== undefined) patch.currency = dto.currency;
 
     if (Object.keys(patch).length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('未提供可更新字段');
 
+    // 补齐审计字段。
     patch.updatedAt = new Date();
     patch.updatedBy = userId;
 
-    // A rebuild is needed if any financial/identity field changed.
+    // 只要金融/身份字段有变，就需要重建派生状态。
     const needsReconcile =
       dto.ticker !== undefined ||
       dto.txType !== undefined ||
@@ -410,6 +423,7 @@ export class TransactionsService {
       dto.currency !== undefined;
 
     const result = await this.db.transaction(async (tx) => {
+      // 计算旧记录与（合并 patch 后）新记录各自的现金影响。
       const oldCashDelta = this.getCashDeltaFromRow(oldRow);
       const newShares = dto.shares !== undefined ? Number(dto.shares) : Number(oldRow.shares);
       const newPrice = dto.price !== undefined ? Number(dto.price) : Number(oldRow.price);
@@ -430,6 +444,7 @@ export class TransactionsService {
         newCashDelta = 0;
       }
 
+      // 币种变更时分别回冲旧币种、应用新币种；否则只补差额。
       if (newCurrency !== oldRow.currency) {
         if (Math.abs(oldCashDelta) > 1e-9)
           await this.adjustCash(tx, userId, oldRow.currency, -oldCashDelta);
@@ -447,17 +462,18 @@ export class TransactionsService {
         .returning();
 
       if (updatedRows.length === 0)
-        // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+        // NOTE: 用户可见文案为中文，属既有行为而非乱码。
         throw new NotFoundException('交易记录不存在');
 
       if (needsReconcile) {
+        // ticker 可能被改，旧、新两个 ticker 都要重派生。
         const oldType = oldRow.txType as string;
         const newType = (dto.txType || oldRow.txType) as string;
         const oldTicker = oldRow.ticker;
         const newTicker = (dto.ticker || oldRow.ticker).trim().toUpperCase();
         const tickersOld: string[] = [];
         const tickersNew: string[] = [];
-        // Rebuild both the old and new tickers in case the ticker was changed.
+        // 仅股票类交易（Buy/Sell/Opening）会派生持仓/已平仓。
         if (oldTicker && (oldType === 'Buy' || oldType === 'Sell' || oldType === 'Opening')) {
           tickersOld.push(oldTicker);
         }
@@ -477,13 +493,12 @@ export class TransactionsService {
   }
 
   /**
-   * Deletes a transaction. Reverses its cash impact, removes any paired
-   * auto-deposit row if this was the matching Buy, and rebuilds the affected
-   * ticker's derived holdings/closed. All in one transaction.
+   * 删除交易记录。回冲其现金影响，若是普通买入则连带删除 createWithAutoDeposit
+   * 产生的配对自动存入行，并重建受影响 ticker 的派生持仓/已平仓。全部在单个事务内执行。
    *
-   * @param userId Owner id.
-   * @param id     Transaction primary key.
-   * @throws NotFoundException if the row is not owned by the user.
+   * @param userId owner id。
+   * @param id     交易记录主键。
+   * @throws NotFoundException 记录不属于该用户时。
    */
   async remove(userId: string, id: string): Promise<void> {
     const existing = await this.db
@@ -492,18 +507,17 @@ export class TransactionsService {
       .where(and(eq(transactions.id, id), eq(transactions.owner, userId)));
 
     if (existing.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new NotFoundException('交易记录不存在');
     const oldRow = existing[0];
 
     await this.db.transaction(async (tx) => {
       const currency = (oldRow.currency as Currency) || 'USD';
-      // Removing a transaction reverses its cash delta.
+      // 删除交易意味着回冲其现金变动。
       let cashDelta = -this.getCashDeltaFromRow(oldRow);
       const idsToDelete: string[] = [id];
 
-      // For a plain Buy (not already an auto-deposit buy), also delete the paired
-      // synthetic Deposit rows created by createWithAutoDeposit.
+      // 普通买入（本身不是自动存入买入）还要连带删除配对的合成 Deposit 行。
       if (
         oldRow.txType === 'Buy' &&
         (!oldRow.notes || !oldRow.notes.startsWith('__AUTO_DEPOSIT_FOR_BUY__:'))
@@ -524,7 +538,7 @@ export class TransactionsService {
           .orderBy(desc(transactions.createdAt))
           .limit(10);
 
-        // Reclaim the deposited cash by removing the deposits, largest first.
+        // 通过删除配对存入行回收垫付的现金，从最近的开始、够额即止。
         let remaining = costAmount;
         for (const dep of matchingDeposits) {
           if (remaining <= 1e-9) break;
@@ -553,15 +567,15 @@ export class TransactionsService {
   }
 
   /**
-   * Applies a Buy directly to a holdings row (creates or averages up).
-   * NOTE: legacy helper; the live rebuild path uses `rebuildTickersFromTransactions`.
+   * 直接把一笔买入应用到持仓行（建户或摊高均价）。
+   * NOTE: 遗留辅助方法；现行重建路径走 `rebuildTickersFromTransactions`。
    *
-   * @param tx        Active transaction.
-   * @param userId    Owner id.
-   * @param ticker    Ticker to update.
-   * @param sharesNum Shares bought.
-   * @param priceNum  Price per share.
-   * @param feesNum   Fees paid.
+   * @param tx        活动事务。
+   * @param userId    owner id。
+   * @param ticker    要更新的 ticker。
+   * @param sharesNum 买入股数。
+   * @param priceNum  每股价格。
+   * @param feesNum   手续费。
    */
   private async applyBuyToHoldings(
     tx: PostgresJsDatabase,
@@ -582,7 +596,7 @@ export class TransactionsService {
         ticker,
         company: ticker,
         shares: String(sharesNum),
-        // Average buy price including fees spread over shares.
+        // 含手续费的买入均价（手续费摊到每股）。
         buyPrice: String((sharesNum * priceNum + feesNum) / sharesNum),
         buyDate: new Date().toISOString().slice(0, 10),
         market: marketInfo.market,
@@ -615,15 +629,15 @@ export class TransactionsService {
   }
 
   /**
-   * Reduces a holdings row by a sold amount (clamped to current shares).
-   * NOTE: legacy helper; the live rebuild path uses `rebuildTickersFromTransactions`.
+   * 从持仓行扣减卖出数量（上限为当前持股）。
+   * NOTE: 遗留辅助方法；现行重建路径走 `rebuildTickersFromTransactions`。
    *
-   * @param tx        Active transaction.
-   * @param userId    Owner id.
-   * @param ticker    Ticker to update.
-   * @param sharesNum Shares sold.
-   * @param _priceNum Unused (kept for signature symmetry).
-   * @param _feesNum  Unused (kept for signature symmetry).
+   * @param tx        活动事务。
+   * @param userId    owner id。
+   * @param ticker    要更新的 ticker。
+   * @param sharesNum 卖出股数。
+   * @param _priceNum 未使用（保持签名对称）。
+   * @param _feesNum  未使用（保持签名对称）。
    */
   private async applySellToHoldings(
     tx: PostgresJsDatabase,
@@ -642,7 +656,7 @@ export class TransactionsService {
 
     const h = existing[0];
     const curShares = Number(h.shares);
-    // Never sell more than currently held.
+    // 永不卖出超过当前持股的数量。
     const sellShares = Math.min(sharesNum, curShares);
     const newShares = curShares - sellShares;
 
@@ -661,15 +675,15 @@ export class TransactionsService {
   }
 
   /**
-   * Reverses a prior Buy from a holdings row (used on delete/update).
-   * NOTE: legacy helper; the live rebuild path uses `rebuildTickersFromTransactions`.
+   * 从持仓行回冲一笔此前的买入（用于删除/更新）。
+   * NOTE: 遗留辅助方法；现行重建路径走 `rebuildTickersFromTransactions`。
    *
-   * @param tx        Active transaction.
-   * @param userId    Owner id.
-   * @param ticker    Ticker to update.
-   * @param sharesNum Shares of the reversed buy.
-   * @param priceNum  Price per share.
-   * @param feesNum   Fees paid.
+   * @param tx        活动事务。
+   * @param userId    owner id。
+   * @param ticker    要更新的 ticker。
+   * @param sharesNum 回冲的买入股数。
+   * @param priceNum  每股价格。
+   * @param feesNum   手续费。
    */
   private async revertBuyFromHoldings(
     tx: PostgresJsDatabase,
@@ -709,15 +723,15 @@ export class TransactionsService {
   }
 
   /**
-   * Reverses a prior Sell from a holdings row (re-adds shares and cost).
-   * NOTE: legacy helper; the live rebuild path uses `rebuildTickersFromTransactions`.
+   * 从持仓行回冲一笔此前的卖出（把股数与成本加回）。
+   * NOTE: 遗留辅助方法；现行重建路径走 `rebuildTickersFromTransactions`。
    *
-   * @param tx        Active transaction.
-   * @param userId    Owner id.
-   * @param ticker    Ticker to update.
-   * @param sharesNum Shares of the reversed sell.
-   * @param priceNum  Price per share.
-   * @param feesNum   Fees paid.
+   * @param tx        活动事务。
+   * @param userId    owner id。
+   * @param ticker    要更新的 ticker。
+   * @param sharesNum 回冲的卖出股数。
+   * @param priceNum  每股价格。
+   * @param feesNum   手续费。
    */
   private async revertSellFromHoldings(
     tx: PostgresJsDatabase,
@@ -755,13 +769,12 @@ export class TransactionsService {
   }
 
   /**
-   * Full reconciliation: replays ALL of the user's transactions in chronological
-   * order to recompute holdings (average cost), closed positions (realized P&L),
-   * and per-currency cash balances from scratch. Used by the `/reconcile` route as
-   * a self-healing operation. Runs in one transaction.
+   * 全量对账：按时间顺序回放用户全部交易，从零重算持仓（平均成本）、
+   * 已平仓（已实现盈亏）与分币种现金余额。供 `/reconcile` 路由做自愈操作使用。
+   * 在单个事务内执行。
    *
-   * @param userId Owner id.
-   * @returns Counts of resulting holdings, closed positions, and processed txs.
+   * @param userId owner id。
+   * @returns 最终的持仓数、已平仓数与处理的交易数。
    */
   async reconcileAll(userId: string): Promise<ReconcileResult> {
     const allTx = await this.db
@@ -772,6 +785,7 @@ export class TransactionsService {
 
     const allHoldings = await this.db.select().from(holdings).where(eq(holdings.owner, userId));
 
+    // 没有任何交易时无需重建，直接按现状返回。
     if (allTx.length === 0) {
       return {
         holdingsCount: allHoldings.length,
@@ -780,13 +794,13 @@ export class TransactionsService {
       };
     }
 
-    // Recompute expected cash per currency from the transaction history.
+    // 从交易历史重算每个币种的预期现金余额。
     const cashByCurrency = this.computeCashFromTransactions(allTx);
 
     const result = await this.db.transaction(async (tx) => {
+      // 按 ticker 分组交易记录，现金流类型不参与分组。
       const txByTicker = new Map<string, typeof allTx>();
       for (const t of allTx) {
-        // Skip cash flows when grouping by ticker.
         if (!t.ticker || t.txType === 'Deposit' || t.txType === 'Withdrawal') continue;
         const arr = txByTicker.get(t.ticker) ?? [];
         arr.push(t);
@@ -798,12 +812,12 @@ export class TransactionsService {
         holdingByTicker.set(h.ticker, h);
       }
 
+      // 只统计曾开过仓的 ticker；其余不产持仓行。
       const rebuiltTickers: string[] = [];
       for (const [ticker, txs] of txByTicker) {
         const hasBuyOrOpening = txs.some(
           (t: (typeof txs)[number]) => t.txType === 'Buy' || t.txType === 'Opening',
         );
-        // Only tickers that ever opened a position produce a holding.
         if (hasBuyOrOpening) rebuiltTickers.push(ticker);
       }
       const updatedHoldings: Array<{
@@ -827,6 +841,7 @@ export class TransactionsService {
           company: existingH?.company ?? ticker,
         };
 
+        // 逐笔回放：买入累加成本与股数，卖出按均价法落已平仓行。
         for (const t of txs) {
           const sharesNum = Number(t.shares);
           const priceNum = Number(t.price);
@@ -839,7 +854,7 @@ export class TransactionsService {
           } else if (t.txType === 'Sell') {
             if (cursor.shares <= 1e-9) continue;
 
-            // Average-cost accounting for the realized P&L of this sell.
+            // 该笔卖出的已实现盈亏按平均成本法核算。
             const avgCost = cursor.shares > 0 ? cursor.costBasis / cursor.shares : 0;
             const sellShares = Math.min(sharesNum, cursor.shares);
             const sellCost = avgCost * sellShares;
@@ -867,7 +882,7 @@ export class TransactionsService {
             cursor.costBasis -= sellCost;
 
             if (cursor.shares <= 1e-9) {
-              // Position fully closed: reset the cursor.
+              // 仓位清零：重置游标。
               cursor.shares = 0;
               cursor.costBasis = 0;
               cursor.buyDate = null;
@@ -875,6 +890,7 @@ export class TransactionsService {
           }
         }
 
+        // 回放结束：按剩余仓位更新/删除/新建持仓行。
         if (existingH) {
           if (cursor.shares > 0) {
             const avgBuyPrice = cursor.costBasis / cursor.shares;
@@ -885,7 +901,7 @@ export class TransactionsService {
               buyDate: cursor.buyDate,
             });
           } else {
-            // Position closed out: remove the holding row.
+            // 仓位已清空：删除持仓行。
             await tx.delete(holdings).where(eq(holdings.id, existingH.id));
           }
         } else if (cursor.shares > 0) {
@@ -921,7 +937,7 @@ export class TransactionsService {
         await tx.insert(holdings).values(newHoldings);
       }
 
-      // Rebuild closed positions for the affected tickers from scratch.
+      // 受影响 ticker 的已平仓记录从零重建。
       if (rebuiltTickers.length > 0) {
         await tx
           .delete(closed)
@@ -942,7 +958,7 @@ export class TransactionsService {
         .from(closed)
         .where(eq(closed.owner, userId));
 
-      // Overwrite each currency's cash balance with the recomputed value.
+      // 用重算值覆盖每个币种的现金余额。
       for (const [currency, balance] of cashByCurrency) {
         const existing = await tx
           .select()
@@ -979,11 +995,10 @@ export class TransactionsService {
   }
 
   /**
-   * Computes the signed cash impact of a single transaction row. Positive = cash
-   * in, negative = cash out.
+   * 计算单条交易行的带符号现金影响。正 = 现金流入，负 = 现金流出。
    *
-   * @param row Transaction row.
-   * @returns Signed cash delta in the row's currency.
+   * @param row 交易行。
+   * @returns 该行币种下的带符号现金变动。
    */
   private getCashDeltaFromRow(row: typeof transactions.$inferSelect): number {
     const sharesNum = Number(row.shares);
@@ -999,10 +1014,10 @@ export class TransactionsService {
   }
 
   /**
-   * Sums cash deltas across all transactions, grouped by currency.
+   * 汇总全部交易的现金影响，按币种分组求和。
    *
-   * @param allTx Transaction rows.
-   * @returns Map of currency -> net cash balance.
+   * @param allTx 交易行数组。
+   * @returns 币种 -> 净现金余额 的 Map。
    */
   private computeCashFromTransactions(
     allTx: Array<typeof transactions.$inferSelect>,
@@ -1018,15 +1033,14 @@ export class TransactionsService {
   }
 
   /**
-   * Applies a cash balance change to a user's currency account. Creates the
-   * account if missing and the change is positive; rejects (throws) any change
-   * that would drive the balance below zero.
+   * 对某币种现金账户应用一笔余额变动。账户缺失且变动为正时会建户；
+   * 任何会把余额打到负值的变动都会被拒绝（抛异常）。
    *
-   * @param tx       Active transaction.
-   * @param userId   Owner id.
-   * @param currency Account currency.
-   * @param delta    Signed amount to add (negative to withdraw).
-   * @throws BadRequestException if the resulting balance would be negative.
+   * @param tx       活动事务。
+   * @param userId   owner id。
+   * @param currency 币种。
+   * @param delta    带符号增量（负数即支出/取款）。
+   * @throws BadRequestException 变动后余额为负时。
    */
   private async adjustCash(
     tx: PostgresJsDatabase,
@@ -1034,6 +1048,7 @@ export class TransactionsService {
     currency: string,
     delta: number,
   ): Promise<void> {
+    // 零变动直接跳过（1e-9 容差内视为零）。
     if (Math.abs(delta) < 1e-9) return;
 
     const existing = await tx
@@ -1042,8 +1057,9 @@ export class TransactionsService {
       .where(and(eq(cashAccounts.owner, userId), eq(cashAccounts.currency, currency)));
 
     if (existing.length === 0) {
+      // 账户尚不存在：负变动无余额可扣，直接拒绝。
       if (delta < 0) {
-        // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+        // NOTE: 用户可见文案为中文，属既有行为而非乱码。
         throw new BadRequestException(`现金不足：${currency} 账户余额为 0`);
       }
       await tx.insert(cashAccounts).values({
@@ -1059,13 +1075,14 @@ export class TransactionsService {
     const curBalance = Number(existing[0].balance);
     const newBalance = curBalance + delta;
     if (newBalance < -1e-9) {
-      // Cash non-negative risk gate: reject trades that overdraw the account.
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // 现金非负风险闸门：拒绝透支账户的交易。
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException(
         `现金不足：${currency} 余额 ${curBalance.toFixed(2)}，需要 ${Math.abs(delta).toFixed(2)}`,
       );
     }
 
+    // 用 SQL 表达式做原子自增，避免读改写竞态。
     await tx
       .update(cashAccounts)
       .set({
@@ -1077,19 +1094,19 @@ export class TransactionsService {
   }
 
   /**
-   * Incrementally rebuilds derived holdings and closed positions for a specific
-   * set of tickers from their transactions (used after create/update/delete,
-   * instead of a full reconciliation).
+   * 针对指定 ticker 集合，从其交易历史增量重建派生持仓与已平仓
+   * （在 create/update/delete 之后调用，代替全量对账）。
    *
-   * @param tx       Active transaction.
-   * @param userId   Owner id.
-   * @param tickers  Tickers to rebuild.
+   * @param tx      活动事务。
+   * @param userId  owner id。
+   * @param tickers 要重建的 ticker 列表。
    */
   private async rebuildTickersFromTransactions(
     tx: PostgresJsDatabase,
     userId: string,
     tickers: string[],
   ): Promise<void> {
+    // 过滤空 ticker，全部为空则无事可做。
     const validTickers = tickers.filter((t) => t && t.length > 0);
     if (validTickers.length === 0) return;
 
@@ -1128,6 +1145,7 @@ export class TransactionsService {
       const existingH = holdingByTicker.get(ticker);
       const hasBuyOrOpening = txs.some((t) => t.txType === 'Buy' || t.txType === 'Opening');
 
+      // 从未开过仓的 ticker 不产持仓行；若旧持仓还在则删掉。
       if (!hasBuyOrOpening) {
         if (existingH) deleteHoldingTickers.push(ticker);
         continue;
@@ -1141,6 +1159,7 @@ export class TransactionsService {
         company: existingH?.company ?? ticker,
       };
 
+      // 逐笔回放：买入累加成本与股数，卖出按均价法生成已平仓行。
       for (const t of txs) {
         const sharesNum = Number(t.shares);
         const priceNum = Number(t.price);
@@ -1153,7 +1172,7 @@ export class TransactionsService {
         } else if (t.txType === 'Sell') {
           if (cursor.shares <= 1e-9) continue;
 
-          // Average-cost realized P&L for this sell.
+          // 该笔卖出的已实现盈亏按平均成本法核算。
           const avgCost = cursor.shares > 0 ? cursor.costBasis / cursor.shares : 0;
           const sellShares = Math.min(sharesNum, cursor.shares);
           const sellCost = avgCost * sellShares;
@@ -1181,6 +1200,7 @@ export class TransactionsService {
           cursor.costBasis -= sellCost;
 
           if (cursor.shares <= 1e-9) {
+            // 仓位清零：重置游标。
             cursor.shares = 0;
             cursor.costBasis = 0;
             cursor.buyDate = null;
@@ -1188,6 +1208,7 @@ export class TransactionsService {
         }
       }
 
+      // 回放结束：剩余仓位写入更新表，清仓则列入待删除。
       if (cursor.shares > 0) {
         const avgBuyPrice = cursor.costBasis / cursor.shares;
         updateHoldingMap.set(ticker, {
@@ -1196,11 +1217,12 @@ export class TransactionsService {
           buyDate: cursor.buyDate,
         });
       } else {
-        // Position closed out: schedule the holding for deletion.
+        // 仓位已清空：把持仓列入待删除。
         deleteHoldingTickers.push(ticker);
       }
     }
 
+    // 落库阶段：既有持仓行更新，缺失则新建（带市场信息推断）。
     for (const [ticker, data] of updateHoldingMap) {
       const existing = holdingByTicker.get(ticker);
       if (existing) {
@@ -1234,7 +1256,7 @@ export class TransactionsService {
         .where(and(eq(holdings.owner, userId), inArray(holdings.ticker, deleteHoldingTickers)));
     }
 
-    // Rebuild closed positions for these tickers from scratch.
+    // 这些 ticker 的已平仓记录从零重建。
     await tx
       .delete(closed)
       .where(and(eq(closed.owner, userId), inArray(closed.ticker, validTickers)));
@@ -1245,10 +1267,10 @@ export class TransactionsService {
   }
 
   /**
-   * Maps a raw transaction row to the API `Transaction` shape, defaulting currency
-   * to USD and fees to 0.
+   * 把交易原始行映射为 API 契约的 Transaction 形状，币种缺省 USD、手续费缺省 '0'。
    *
-   * @param row Raw transactions table row.
+   * @param row transactions 表原始行。
+   * @returns 供前端使用的 Transaction 对象。
    */
   private mapRow(row: typeof transactions.$inferSelect): Transaction {
     return {
