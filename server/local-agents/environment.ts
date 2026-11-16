@@ -1,4 +1,17 @@
-/** Preserve the user's CLI identity, never the application's database or pairing credentials. */
+/**
+ * local-agents 环境变量过滤：构造 Python 桥接子进程继承的环境。
+ *
+ * 职责边界：只做"环境白名单拷贝"；不负责进程启动/回收（见 process.ts），
+ * 也不注入任何应用凭据。
+ *
+ * 上下游：被 process.ts 等启动子进程的模块调用；自身无 import。
+ *
+ * 关键约定：三类白名单正则（system 通用系统变量 / provider 三方 CLI 凭据 /
+ * additional 其他 CLI 变量）取交集之外的值一律丢弃——子进程拿到的是用户的
+ * CLI 身份，绝不是本应用的数据库连接串或配对凭据。
+ */
+
+/** 保留用户的 CLI 身份环境，绝不传递本应用的数据库或配对凭据。 */
 export function nativeChildEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   const system: RegExp =

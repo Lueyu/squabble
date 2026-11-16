@@ -1,9 +1,18 @@
 /**
- * Alpha-picks service.
+ * Alpha-picks service（精选推荐服务）。
  *
- * Business logic and PostgreSQL (Drizzle) data access for the user's curated alpha
- * picks. Rows are owner-scoped; numeric fields are stored as Postgres `numeric`
- * and round-tripped as strings.
+ * 职责边界：承载 alpha picks 的业务逻辑与 PostgreSQL（Drizzle）数据访问；
+ * 行按 owner 隔离，数值字段以 Postgres `numeric` 存储、以字符串往返
+ * （DTO number ↔ DB string 的转换集中在此处）。不管鉴权与路由。
+ *
+ * 上下游：import @nestjs/common（NotFoundException）、drizzle-orm 操作符、
+ * DRIZZLE_DATABASE/PostgresJsDatabase（common/platform 注入）、
+ * @server/database/schema 的 alphaPicks 表、@shared/api.interface 类型；
+ * 由 alpha-picks.controller.ts 调用。
+ *
+ * 关键约定：returnPct/weightPct 写库前 String() 转字符串；update/remove
+ * 的 where 条件同时匹配 id 与 owner，未命中（0 行返回）抛
+ * NotFoundException（文案'推荐记录不存在'，既有中文行为）。
  */
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { eq, desc, and } from 'drizzle-orm';
@@ -12,7 +21,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 import { alphaPicks } from '@server/database/schema';
 import type { AlphaPick, CreateAlphaPickDto, ListResponse } from '@shared/api.interface';
 
-/** Partial update payload for an alpha pick (all fields optional). */
+/** Alpha pick 的部分更新载荷（所有字段均可选）。 */
 export interface UpdateAlphaPickDto {
   company?: string;
   sector?: string;
@@ -23,16 +32,16 @@ export interface UpdateAlphaPickDto {
 }
 
 /**
- * Provides alpha-pick CRUD. Depends on the Drizzle database connection.
+ * 提供 alpha pick 的 CRUD。依赖注入的 Drizzle 数据库连接。
  */
 @Injectable()
 export class AlphaPicksService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
   /**
-   * Lists all alpha picks for a user, newest pick first.
+   * 列出某用户的全部 alpha picks，按选入日期倒序（最新在前）。
    *
-   * @param userId Owner id.
+   * @param userId 属主 id。
    */
   async findAll(userId: string): Promise<ListResponse<AlphaPick>> {
     const rows = await this.db
@@ -44,10 +53,10 @@ export class AlphaPicksService {
   }
 
   /**
-   * Creates a new alpha pick owned by the user.
+   * 新建一条属于该用户的 alpha pick。
    *
-   * @param dto    Pick payload.
-   * @param userId Owner id.
+   * @param dto    推荐载荷。
+   * @param userId 属主 id。
    */
   async create(dto: CreateAlphaPickDto, userId: string): Promise<AlphaPick> {
     const rows = await this.db
@@ -57,6 +66,7 @@ export class AlphaPicksService {
         company: dto.company,
         sector: dto.sector,
         datePicked: dto.datePicked,
+        // Postgres numeric 以字符串存储：DTO 的 number 先转字符串再入库。
         returnPct: dto.returnPct !== undefined ? String(dto.returnPct) : undefined,
         rating: dto.rating,
         weightPct: dto.weightPct !== undefined ? String(dto.weightPct) : undefined,
@@ -69,14 +79,15 @@ export class AlphaPicksService {
   }
 
   /**
-   * Updates an owned alpha pick.
+   * 更新一条属于该用户的 alpha pick。
    *
-   * @param id     Pick primary key.
-   * @param dto    Partial update payload.
-   * @param userId Owner id.
-   * @throws NotFoundException if the pick does not belong to the user.
+   * @param id     推荐主键。
+   * @param dto    部分更新载荷。
+   * @param userId 属主 id。
+   * @throws NotFoundException 当记录不存在或不属于该用户时抛出。
    */
   async update(id: string, dto: UpdateAlphaPickDto, userId: string): Promise<AlphaPick> {
+    // 仅收集 DTO 中显式给出的字段，构成部分更新 patch。
     const patch: Partial<typeof alphaPicks.$inferInsert> = {};
     if (dto.company !== undefined) patch.company = dto.company;
     if (dto.sector !== undefined) patch.sector = dto.sector;
@@ -85,6 +96,7 @@ export class AlphaPicksService {
     if (dto.rating !== undefined) patch.rating = dto.rating;
     if (dto.weightPct !== undefined) patch.weightPct = String(dto.weightPct);
 
+    // 系统字段：任何更新都要刷新时间戳与更新人。
     patch.updatedAt = new Date();
     patch.updatedBy = userId;
 
@@ -94,17 +106,17 @@ export class AlphaPicksService {
       .where(and(eq(alphaPicks.id, id), eq(alphaPicks.owner, userId)))
       .returning();
     if (rows.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // 中文用户可见文案（既有行为，非乱码）。
       throw new NotFoundException('推荐记录不存在');
     return this.mapRow(rows[0]);
   }
 
   /**
-   * Deletes an owned alpha pick.
+   * 删除一条属于该用户的 alpha pick。
    *
-   * @param id     Pick primary key.
-   * @param userId Owner id.
-   * @throws NotFoundException if the pick does not belong to the user.
+   * @param id     推荐主键。
+   * @param userId 属主 id。
+   * @throws NotFoundException 当记录不存在或不属于该用户时抛出。
    */
   async remove(id: string, userId: string): Promise<{ success: true }> {
     const rows = await this.db
@@ -112,15 +124,15 @@ export class AlphaPicksService {
       .where(and(eq(alphaPicks.id, id), eq(alphaPicks.owner, userId)))
       .returning({ id: alphaPicks.id });
     if (rows.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // 中文用户可见文案（既有行为，非乱码）。
       throw new NotFoundException('推荐记录不存在');
     return { success: true };
   }
 
   /**
-   * Maps a raw alpha-picks row to the API `AlphaPick` shape.
+   * 把原始 alphaPicks 行映射为 API 的 `AlphaPick` 形状。
    *
-   * @param row Raw alphaPicks table row.
+   * @param row alphaPicks 表原始行。
    */
   private mapRow(row: typeof alphaPicks.$inferSelect): AlphaPick {
     return {

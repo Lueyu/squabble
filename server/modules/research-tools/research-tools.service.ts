@@ -1,3 +1,27 @@
+/**
+ * Research tools service（研究工具执行服务）。
+ *
+ * 职责边界：把 RESEARCH_TOOLS 白名单接到真实数据源——行情（QuoteService）、
+ * 证据检索（EvidenceService，multi-agent）、已存研报（deepReport +
+ * councilReports）、讨论上下文（councilMessages）。所有调用都要求一个
+ * "仍有效"的 council 会话 scope：每步前都经 guard() 复核（会话 running、
+ * revision/turn/memberId/ticker/language 一致、未超时、未被 abort），
+ * 任何一步失效都返回 cancelled 而不是部分结果。不负责工具 schema 声明
+ * （registry）与结果整形细节（output）。
+ *
+ * 上下游：import DRIZZLE_DATABASE（common/platform）、council 三表
+ * （database/council.schema）、deepReport（database/schema）、
+ * QuoteService（quote 模块）、EvidenceService（multi-agent 模块）、
+ * registry/output 工具；由 multi-agent 的 council 编排与 mcp 桥调用
+ * （bundle/descriptors 下发工具清单，call 执行）。
+ *
+ * 关键约定：descriptors() 永不含 web 类工具（bundle() 仅在
+ * scope.webResearch=true 时含）；每个工具的 timeoutMs 见 registry，超时
+ * 返回 RESEARCH_TIMEOUT；预算类错误（RESEARCH_TASK_LIMIT/DAILY_LIMIT/
+ * BUDGET_UNAVAILABLE）原样透传错误码；结果统一经 boundedResult 裁剪到
+ * RESULT_LIMIT_BYTES；web 类工具在 scope 未授权时一律 RESEARCH_TOOL_
+ * UNAVAILABLE。
+ */
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, lte, ne, or } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -43,6 +67,7 @@ interface SavedReport {
   source: ResearchSource;
   truncated: boolean;
 }
+/** scope 失效（会话推进/过期/取消）时抛出的内部哨兵错误。 */
 class ScopeEnded extends Error {}
 
 @Injectable()
@@ -53,12 +78,14 @@ export class ResearchToolsService {
     private readonly evidence: EvidenceService,
   ) {}
 
+  /** 下发基础工具清单（永远不含 web 类工具——web 仅限显式授权的 bundle）。 */
   descriptors(): ResearchToolDescriptor[] {
     return RESEARCH_TOOLS.filter((tool: ResearchToolDefinition) => tool.kind !== 'web').map(
       toolDescriptor,
     );
   }
 
+  /** scope 是否仍指向一个可用的运行中会话（异常一律按 false 处理）。 */
   async isCurrent(owner: string, scope: ResearchToolScope): Promise<boolean> {
     try {
       return Boolean(await this.currentSession(owner, scope));
@@ -67,6 +94,11 @@ export class ResearchToolsService {
     }
   }
 
+  /**
+   * 组装一次研究会话的工具包：快照（讨论上下文前 6 条）+ 工具描述符。
+   * web 工具仅在 scope.webResearch=true 时进入清单；快照失败则返回空
+   * 清单，让编排方据此降级。
+   */
   async bundle(owner: string, scope: ResearchToolScope): Promise<ResearchToolBundle> {
     const result: ResearchToolResult = await this.call(owner, scope, {
       callId: 'snapshot',
@@ -84,12 +116,18 @@ export class ResearchToolsService {
     };
   }
 
+  /**
+   * 执行一次工具调用。全程在超时/取消竞争下运行：operation() 是真正的
+   * 执行体，stopped() 在 timeoutMs 到点或 abort 时率先 resolve；竞得者
+   * 作为结果返回，另一侧在 finally 里被置为 inactive。
+   */
   async call(
     owner: string,
     scope: ResearchToolScope,
     request: ResearchToolRequest,
     options: CallOptions = {},
   ): Promise<ResearchToolResult> {
+    // 边界校验：请求形状 → 白名单（web 需授权）→ 工具入参 → 取消状态。
     if (!validRequest(request)) return researchFailure('failed', 'RESEARCH_INVALID_ARGUMENTS');
     const tool: ResearchToolDefinition | undefined = RESEARCH_TOOLS.find(
       (item: ResearchToolDefinition) => item.name === request.name,
@@ -99,10 +137,14 @@ export class ResearchToolsService {
     const parsed = tool.input.safeParse(request.arguments);
     if (!parsed.success) return researchFailure('failed', 'RESEARCH_INVALID_ARGUMENTS');
     if (options.signal?.aborted) return researchFailure('cancelled', 'RESEARCH_CANCELLED');
+
+    // active 是 operation 与 stopped 共享的"仍应继续"标志。
     let active: boolean = true;
     let started: boolean = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
+
+    // guard：每步之间复核 active/abort/shouldContinue/scope；失效抛 ScopeEnded。
     const guard = async (): Promise<SessionRow> => {
       if (!active || options.signal?.aborted) throw new ScopeEnded();
       if (options.shouldContinue && !(await options.shouldContinue())) throw new ScopeEnded();
@@ -111,6 +153,8 @@ export class ResearchToolsService {
       if (!session || !active || options.signal?.aborted) throw new ScopeEnded();
       return session;
     };
+
+    // 执行体：执行前后各 guard 一次，保证结果只在 scope 仍有效时产出。
     const operation = async (): Promise<ResearchToolResult> => {
       try {
         const session: SessionRow = await guard();
@@ -126,6 +170,7 @@ export class ResearchToolsService {
         await guard();
         return boundedResult(result);
       } catch (error) {
+        // 取消语义：ScopeEnded/abort → cancelled（标注上游可能已 started）。
         if (error instanceof ScopeEnded || !active || options.signal?.aborted) {
           return researchFailure(
             'cancelled',
@@ -133,6 +178,7 @@ export class ResearchToolsService {
             started,
           );
         }
+        // 预算类错误码原样透传（前端依赖这些精确字符串），其余归为 provider 错误。
         const code: string =
           error instanceof Error &&
           /^RESEARCH_(TASK_LIMIT|DAILY_LIMIT|BUDGET_UNAVAILABLE)$/.test(error.message)
@@ -141,6 +187,8 @@ export class ResearchToolsService {
         return researchFailure('failed', code);
       }
     };
+
+    // 竞争侧：超时或 abort 时把结果提前定下来（谁先到谁赢）。
     const stopped = new Promise<ResearchToolResult>(
       (resolve: (value: ResearchToolResult) => void) => {
         timer = setTimeout(() => {
@@ -154,19 +202,27 @@ export class ResearchToolsService {
         options.signal?.addEventListener('abort', onAbort, { once: true });
       },
     );
+
     try {
       return await Promise.race([operation(), stopped]);
     } finally {
+      // 清理：停表 + 摘掉 abort 监听，避免泄漏。
       active = false;
       if (timer) clearTimeout(timer);
       if (onAbort) options.signal?.removeEventListener('abort', onAbort);
     }
   }
 
+  /**
+   * 校验并加载当前会话：scope 自身合法性（uuid/revision/turn/ticker 格式
+   * 与过期时间）→ DB 行存在 → 行状态与 scope 逐项一致 → memberId 属于
+   * 席位表。任何一项不符返回 null。
+   */
   private async currentSession(
     owner: string,
     scope: ResearchToolScope,
   ): Promise<SessionRow | null> {
+    // 第一道：scope 字段自身校验（不查库，先挡掉明显伪造/过期的 scope）。
     if (
       !owner ||
       !scope ||
@@ -180,11 +236,14 @@ export class ResearchToolsService {
       !/^[A-Z0-9][A-Z0-9.^-]{0,19}$/u.test(scope.ticker)
     )
       return null;
+    // 第二道：属主 + 会话 id 查库。
     const [row]: SessionRow[] = await this.db
       .select()
       .from(councilSessions)
       .where(and(eq(councilSessions.owner, owner), eq(councilSessions.id, scope.sessionId)))
       .limit(1);
+    // 第三道：行状态与 scope 逐项比对（revision/turn/memberId/ticker/语言，
+    // 且 web 授权必须来自 profile 快照而非仅 scope 声明）。
     if (
       !row ||
       scope.expiresAt <= Date.now() ||
@@ -197,6 +256,7 @@ export class ResearchToolsService {
       (scope.webResearch && !row.profileSnapshot.council?.webResearch)
     )
       return null;
+    // 第四道：memberId 必须在席位表中（profile 缺省用三席默认阵容）。
     const memberIds: string[] = row.profileSnapshot.council?.members.map((member) => member.id) ?? [
       'researcher',
       'challenger',
@@ -205,6 +265,7 @@ export class ResearchToolsService {
     return memberIds.includes(scope.memberId) ? row : null;
   }
 
+  /** 按工具名分发到具体实现；kind 类工具统一走 EvidenceService。 */
   private async handle(
     tool: ResearchToolDefinition,
     owner: string,
@@ -218,6 +279,8 @@ export class ResearchToolsService {
     if (tool.name === 'get_discussion_context')
       return this.context(owner, scope, session, input.limit ?? 8);
     if (!tool.kind) return researchFailure('unavailable', 'RESEARCH_TOOL_UNAVAILABLE');
+    // financials/valuation/news/web 全部收敛到证据采集；shouldContinue 复用
+    // guard（任何失效即停采）。
     const items: EvidenceInput[] = await this.evidence.collectResearch(
       scope.ticker,
       owner,
@@ -241,12 +304,14 @@ export class ResearchToolsService {
     return this.evidenceResult(items, scope.ticker, now, input.limit ?? 10);
   }
 
+  /** get_quotes：实时报价；价格非法视为不可用，时间/币种缺失降级 partial。 */
   private async quote(scope: ResearchToolScope, sourceTitle: string): Promise<ResearchToolResult> {
     const quote: QuoteResponse | null = await this.quotes.getQuote(scope.ticker);
     if (!quote || !Number.isFinite(Number(quote.price)) || Number(quote.price) <= 0) {
       return researchFailure('unavailable', 'RESEARCH_NO_DATA');
     }
     const timestamp: string | null = isoDate(quote.timestamp);
+    // 币种必须严格是 3 位大写字母，否则视为未知（宁缺毋假）。
     const currency: string | null =
       typeof quote.currency === 'string' && /^[A-Z]{3}$/u.test(quote.currency)
         ? quote.currency
@@ -289,12 +354,14 @@ export class ResearchToolsService {
     };
   }
 
+  /** 证据清单 → 统一结果：facts/gaps 分组、按 limit 截断、状态聚合。 */
   private evidenceResult(
     items: EvidenceInput[],
     ticker: string,
     asOf: string,
     limit: number,
   ): ResearchToolResult {
+    // gap 定义：来源标记 'Data Unavailable' 或相关度 <=0 的证据。
     const gaps: EvidenceInput[] = items.filter(
       (item: EvidenceInput) => item.sourceName === 'Data Unavailable' || item.relevanceScore <= 0,
     );
@@ -303,6 +370,7 @@ export class ResearchToolsService {
     const sources: ResearchSource[] = selected.map((item: EvidenceInput) =>
       researchSource(item.sourceName, item.sourceUrl, asOf),
     );
+    // 状态聚合：无 facts → unavailable；有 gap → partial；否则 succeeded。
     return {
       status: !facts.length ? 'unavailable' : gaps.length ? 'partial' : 'succeeded',
       asOf,
@@ -317,12 +385,10 @@ export class ResearchToolsService {
           evidenceType: item.evidenceType,
           source: researchSource(item.sourceName, item.sourceUrl, asOf),
         })),
-        gaps: gaps
-          .slice(0, 10)
-          .map((item: EvidenceInput) => ({
-            title: clipped(item.title, 200),
-            content: item.content,
-          })),
+        gaps: gaps.slice(0, 10).map((item: EvidenceInput) => ({
+          title: clipped(item.title, 200),
+          content: item.content,
+        })),
         ...(!items.length ? { availability: 'No verified data was returned.' } : {}),
         currencyAndUnits:
           'Only currencies, units and reporting periods explicitly stated in each source are known.',
@@ -332,11 +398,18 @@ export class ResearchToolsService {
     };
   }
 
+  /**
+   * get_research_report：读取已存研报（deep research 报告 + Council 报告，
+   * 两路并发查询后按 savedAt 合并排序取前 limit 条）。Council 报告只取
+   * 修订号不高于当前会话、且"非本会话或修订不新于当前 scope"的历史版本。
+   */
   private async reports(
     owner: string,
     scope: ResearchToolScope,
     limit: number,
   ): Promise<ResearchToolResult> {
+    // 第一步：两路并发——deep 报告按 ticker+owner；council 报告按 owner+ticker
+    // 且 revision 过滤（各多取 1 条用于判断 truncated）。
     const [deepRows, councilRows] = await Promise.all([
       this.db
         .select({
@@ -377,7 +450,9 @@ export class ResearchToolsService {
             eq(councilReports.owner, owner),
             eq(councilSessions.owner, owner),
             eq(councilSessions.ticker, scope.ticker),
+            // 只看已定稿（revision 不超过会话当前 revision）的报告。
             lte(councilReports.revision, councilSessions.revision),
+            // 防泄漏：非本会话的旧报告，或本会话中不新于当前 revision 的版本。
             or(
               ne(councilReports.sessionId, scope.sessionId),
               lte(councilReports.revision, scope.revision),
@@ -387,6 +462,8 @@ export class ResearchToolsService {
         .orderBy(desc(councilReports.createdAt), desc(councilReports.version))
         .limit(limit + 1),
     ]);
+    // 第二步：映射为统一 SavedReport（deep 无截断；council 截 evidence/dissent
+    // 到 6 条并记录省略数）。
     const now: string = new Date().toISOString();
     const deep: SavedReport[] = deepRows.map((row) => ({
       savedAt: Date.parse(isoDate(row.updatedAt) ?? '') || 0,
@@ -431,22 +508,22 @@ export class ResearchToolsService {
         dissent: row.dissent.slice(0, 6),
         nextReviewCondition: row.nextReviewCondition,
         createdAt: isoDate(row.createdAt),
-        evidence: row.evidence
-          .slice(0, 6)
-          .map((item) => ({
-            id: item.id,
-            title: item.title,
-            content: item.content,
-            source: researchSource(
-              item.title,
-              item.sourceUrl,
-              isoDate(item.fetchedAt) ?? 'unknown',
-            ),
-            fetchedAt: isoDate(item.fetchedAt),
-          })),
+        evidence: row.evidence.slice(0, 6).map((item) => ({
+          id: item.id,
+          title: item.title,
+          content: item.content,
+          source: researchSource(
+            item.title,
+            item.sourceUrl,
+            // 标题+链接+抓取时间构成一条来源引用；抓取时间缺失时回退为 'unknown'（行内注释使实参保持多行，避免 Prettier 折叠后删去参数表尾逗号）
+            isoDate(item.fetchedAt) ?? 'unknown',
+          ),
+          fetchedAt: isoDate(item.fetchedAt),
+        })),
         omittedEvidenceCount: Math.max(0, row.evidence.length - 6),
       },
     }));
+    // 第三步：合并排序、截取前 limit 条；无结果按不可用处理。
     const reports: SavedReport[] = [...deep, ...council].sort(
       (a: SavedReport, b: SavedReport) => b.savedAt - a.savedAt,
     );
@@ -468,6 +545,11 @@ export class ResearchToolsService {
     };
   }
 
+  /**
+   * get_discussion_context：本会话的公开讨论历史（councilMessages，按
+   * revision 过滤，取最近 limit 条后反转为时间正序）+ 会话证据快照
+   * （gap 最多 6 条在前，facts 补足到 12 条）。
+   */
   private async context(
     owner: string,
     scope: ResearchToolScope,
@@ -488,12 +570,14 @@ export class ResearchToolsService {
         and(
           eq(councilMessages.owner, owner),
           eq(councilMessages.sessionId, scope.sessionId),
+          // 只能看到当前 revision 及更早的发言（新修订的发言先不下发）。
           lte(councilMessages.revision, scope.revision),
         ),
       )
       .orderBy(desc(councilMessages.createdAt))
       .limit(limit + 1);
     const now: string = new Date().toISOString();
+    // 证据快照同样区分 gap/facts：gap 最多 6 条，总量最多 12 条。
     const gaps = session.evidenceSnapshot.filter(
       (item) => item.sourceName === 'Data Unavailable' || item.relevanceScore <= 0,
     );
@@ -523,6 +607,7 @@ export class ResearchToolsService {
         })),
         messages: rows
           .slice(0, limit)
+          // 查询是倒序取的，这里反转为时间正序给 LLM。
           .reverse()
           .map((row) => ({
             id: row.id,

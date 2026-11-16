@@ -1,9 +1,18 @@
 /**
- * Analysis controller.
+ * Analysis controller（个股研究笔记控制器）。
  *
- * Exposes endpoints for per-date / per-ticker stock research notes (rating, action,
- * thesis, target price, catalysts, risks) under `/api/portfolio/analysis`.
- * Requires login on every route.
+ * 职责边界：暴露按（日期, ticker）维度的股票研究笔记（评级 rating、动作
+ * action、论点 thesis、目标价 target price、催化剂 catalysts、风险 risks）
+ * 的 REST 端点，路由前缀 `/api/portfolio/analysis`；只做参数透传与登录态
+ * 取 userId，业务规则全部下沉到 AnalysisService。
+ *
+ * 上下游：import @nestjs/common、NeedLogin（common/platform，类级全量
+ * 鉴权）、AnalysisService（本模块 service）、@shared/api.interface 类型；
+ * 由 analysis.module.ts 注册，被 app.module.ts 装配。
+ *
+ * 关键约定：GET /dates 列出有笔记的 distinct 日期；POST 与 POST /batch
+ * 均为 upsert 语义（同 owner+date+ticker 已存在则更新）；DELETE /:id 按
+ * 行主键删除。
  */
 import { Controller, Get, Post, Delete, Body, Param, Query, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
@@ -12,7 +21,7 @@ import { AnalysisService } from './analysis.service';
 import type { Analysis, CreateAnalysisDto, ListResponse } from '@shared/api.interface';
 
 /**
- * REST controller for stock analysis notes. Delegates to `AnalysisService`.
+ * 股票研究笔记的 REST 控制器，全部委托给 `AnalysisService`。
  */
 @NeedLogin()
 @Controller('api/portfolio/analysis')
@@ -20,12 +29,11 @@ export class AnalysisController {
   constructor(private readonly analysisService: AnalysisService) {}
 
   /**
-   * Lists analysis notes, newest date / ticker order, optionally filtered by date
-   * and/or ticker.
+   * 列出研究笔记，按日期倒序 / ticker 正序，可按日期和/或 ticker 过滤。
    *
-   * @param req    Authenticated request carrying `req.userContext.userId`.
-   * @param date   Optional analysis date filter.
-   * @param ticker Optional ticker filter.
+   * @param req    已鉴权请求，携带 `req.userContext.userId`。
+   * @param date   可选的研究日期过滤。
+   * @param ticker 可选的 ticker 过滤。
    */
   @Get()
   async list(
@@ -38,9 +46,9 @@ export class AnalysisController {
   }
 
   /**
-   * Lists the distinct dates that have analysis notes.
+   * 列出存在研究笔记的 distinct 日期。
    *
-   * @param req Authenticated request.
+   * @param req 已鉴权请求。
    */
   @Get('dates')
   async dates(@Req() req: Request): Promise<ListResponse<{ date: string }>> {
@@ -49,10 +57,10 @@ export class AnalysisController {
   }
 
   /**
-   * Creates or updates (upserts) the analysis note for a (date, ticker).
+   * 新建或更新（upsert）某（日期, ticker）的研究笔记。
    *
-   * @param req Authenticated request.
-   * @param dto Analysis payload.
+   * @param req 已鉴权请求。
+   * @param dto 研究笔记载荷。
    */
   @Post()
   async upsert(@Req() req: Request, @Body() dto: CreateAnalysisDto): Promise<Analysis> {
@@ -61,10 +69,10 @@ export class AnalysisController {
   }
 
   /**
-   * Upserts multiple analysis notes at once.
+   * 一次性 upsert 多条研究笔记。
    *
-   * @param req   Authenticated request.
-   * @param items Analysis payloads.
+   * @param req   已鉴权请求。
+   * @param items 研究笔记载荷数组。
    */
   @Post('batch')
   async batchUpsert(
@@ -76,10 +84,10 @@ export class AnalysisController {
   }
 
   /**
-   * Deletes an owned analysis note.
+   * 删除一条属于当前用户的研究笔记。
    *
-   * @param req Authenticated request.
-   * @param id  Analysis row primary key.
+   * @param req 已鉴权请求。
+   * @param id  analysis 行主键。
    */
   @Delete(':id')
   async remove(@Req() req: Request, @Param('id') id: string): Promise<{ success: boolean }> {

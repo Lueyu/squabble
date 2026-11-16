@@ -1,8 +1,24 @@
+/**
+ * local-agents 活动事件采集器：把各 CLI 的原生事件流归一成对外的
+ * ResearchActivity（阶段摘要 + 工具调用起止）。
+ *
+ * 职责边界：只读公开协议元数据（事件类型、工具名白名单映射），绝不转发
+ * provider 提供的正文/参数/原始错误；Squabble 自有 MCP 工具（本桥）一律
+ * 不对外播报。
+ *
+ * 上下游：import node:crypto、shared 接口与 metadata 的 object；
+ * 被 events.ts、doubao.ts、research.ts 组合使用。
+ *
+ * 关键约定：事件上限 256 条（超出静默丢弃）、单事件 id 去重；工具调用 id
+ * 只接受 <= 512 字符的字符串并做 sha256 前 20 位哈希化（callId 不外泄原值）；
+ * 未知工具名一律丢弃——它们可能携带参数或凭据，绝不合成工具名或生命周期。
+ */
 import { createHash } from 'node:crypto';
 import type { LocalAgentProvider } from '../../shared/local-agents.interface';
 import type { ResearchActivity, ResearchEventStatus } from '../../shared/research-events.interface';
 import { object, type JsonObject } from './metadata';
 
+/** 各 CLI 的工具名 -> 对外统一工具名（白名单；表外名字一律不播报）。 */
 const PUBLIC_TOOLS: Record<string, string> = {
   web_search: 'web_search',
   WebSearch: 'web_search',
@@ -30,7 +46,7 @@ const PUBLIC_TOOLS: Record<string, string> = {
   Bash: 'shell',
 };
 
-/** Uses an allowlist of public protocol metadata. Never forwards provider-supplied prose or arguments. */
+/** 只使用公开协议元数据的白名单。绝不转发 provider 提供的正文或参数。 */
 export class NativeActivityCollector {
   private readonly emitted: Set<string> = new Set();
   private readonly calls: Map<string, { name: string; at: number }> = new Map();
@@ -39,6 +55,7 @@ export class NativeActivityCollector {
     private readonly onEvent?: (event: ResearchActivity) => void,
   ) {}
 
+  /** 阶段级摘要事件：started/completed/ended 等粗粒度节点。 */
   private phase(key: string, status: ResearchEventStatus, summary: string): void {
     this.emit({
       id: `${this.provider}-phase-${key}`,
@@ -48,6 +65,7 @@ export class NativeActivityCollector {
       summary,
     });
   }
+  /** 统一出口：无订阅者、id 已发过、或总量到 256 上限即丢弃。 */
   private emit(event: ResearchActivity): void {
     if (!this.onEvent || this.emitted.has(event.id) || this.emitted.size >= 256) return;
     this.emitted.add(event.id);
@@ -55,19 +73,22 @@ export class NativeActivityCollector {
   }
   private tool(id: unknown, name: unknown, status: ResearchEventStatus, server?: unknown): void {
     if (typeof id !== 'string' || !id || id.length > 512) return;
+    // Squabble 自有 MCP 工具（server 名或工具名以 squabble 开头）不对外播报。
     if (
       (typeof server === 'string' && /^squabble(?:_|$)/u.test(server)) ||
       (typeof name === 'string' && /^(?:mcp__)?squabble(?:_|$)/u.test(name))
     )
       return;
+    // callId 用原 id 的 sha256 前 20 位：对外不暴露 CLI 的原始调用 id。
     const callId: string = `${this.provider}-${createHash('sha256').update(id).digest('hex').slice(0, 20)}`;
     const existing = this.calls.get(callId);
     const toolName: string | undefined =
       existing?.name ?? (typeof name === 'string' ? PUBLIC_TOOLS[name] : undefined);
-    // Unknown names could contain arguments/credentials. No synthetic tool names or lifecycle.
+    // 未知名字可能携带参数/凭据。绝不合成工具名或生命周期。
     if (!toolName) return;
     if (status === 'running' && !existing)
       this.calls.set(callId, { name: toolName, at: Date.now() });
+    // 结束事件带时长：以首次 running 的时间为起点，负值钳为 0。
     const durationMs: number | undefined =
       status !== 'running' && existing ? Math.max(0, Date.now() - existing.at) : undefined;
     this.emit({
@@ -81,6 +102,7 @@ export class NativeActivityCollector {
       summary: status === 'running' ? `Using ${toolName}` : `${toolName}: ${status}`,
     });
   }
+  /** 各 provider 事件分派：只读公开元数据，正文一律不进事件流。 */
   read(event: JsonObject): void {
     if (!this.onEvent) return;
     if (this.provider === 'codex') {
@@ -127,7 +149,7 @@ export class NativeActivityCollector {
         this.phase('completed', 'succeeded', 'Research completed');
     } else if (this.provider === 'antigravity') {
       const step = object(event.step_update);
-      // The public step_update does not guarantee a call ID or an outcome.
+      // 公开的 step_update 不保证携带调用 id 或结果状态，只能播报"工具在活动"。
       if (event.event === 'step_update' && step.step_type === 'tool')
         this.phase('tool', 'running', 'Research tool activity');
       if (event.event === 'result' && object(event.result).status === 'SUCCESS')
@@ -158,8 +180,9 @@ export class NativeActivityCollector {
           const call = object(value);
           this.tool(call.id, object(call.function).name, 'running');
         }
-      // Kimi's role=tool content has no documented outcome: let the task owner close unfinished calls.
+      // Kimi 的 role=tool 内容没有文档化的结果状态：未完成的调用交给任务方收尾。
     } else if (this.provider === 'doubao') {
+      // Doubao 只暴露粗粒度 status，没有工具级事件。
       if (event.status === 'running') this.phase('started', 'running', 'Research running');
       if (event.status === 'completed') this.phase('completed', 'succeeded', 'Research completed');
       if (event.status === 'failed' || event.status === 'cancelled')

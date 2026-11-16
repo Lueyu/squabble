@@ -1,3 +1,18 @@
+/**
+ * local-agents CLI 本地元数据读取：模型清单、推理档位、登录状态探测。
+ *
+ * 职责边界：只读 CLI 生成的标量元数据（settings.json/config.toml/models
+ * 缓存），绝不返回凭据值；kimiCredentialEnv 只转发所选 provider 显式声明
+ * 的凭据环境变量名，应用侧机密绝不外泄。
+ *
+ * 上下游：import node:fs/os/path、shared 接口与 process/resolver 的类型；
+ * 被 native.ts、doubao.ts、events.ts 等使用（object/jsonValues 是通用工具）。
+ *
+ * 关键约定：模型列表统一截断到 256 条；标签类字段必须过 validLabel
+ * （trim 对称、<=160 字符、无控制字符，可传更短上限）；本地文本读取上限
+ * 1MiB（超限或不存在返回空串）；gemini 只对白名单的 3.x preview 模型提供
+ * low/high 思考档位；antigravity 要求 agy >= 1.3.4。
+ */
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -12,11 +27,13 @@ import type { NativeResolverOptions } from './resolver';
 export interface JsonObject {
   [key: string]: unknown;
 }
+/** 仅当 value 是非数组对象时返回它，否则返回空对象（读字段防炸）。 */
 export function object(value: unknown): JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as JsonObject)
     : {};
 }
+/** 读本地文本：超过 1MiB 或读取失败一律返回空串（绝不放大文件进内存）。 */
 export function readLocalText(path: string): string {
   try {
     return statSync(path).size <= 1024 * 1024 ? readFileSync(path, 'utf8') : '';
@@ -24,11 +41,16 @@ export function readLocalText(path: string): string {
     return '';
   }
 }
+/**
+ * 从文本里提取所有 JSON 值：先尝试整段 parse；失败则逐字符扫描括号配对
+ * （忽略字符串字面量与转义）提取顶层 {}/[] 片段——有些 CLI 会在 JSON 前
+ * 输出告示或模型 id。
+ */
 export function jsonValues(text: string): unknown[] {
   try {
     return [JSON.parse(text)];
   } catch {
-    /* Some CLIs prefix JSON with notices or model IDs. */
+    /* 有些 CLI 会在 JSON 前缀输出告示或模型 id。 */
   }
   const values: unknown[] = [];
   let start: number = -1;
@@ -37,6 +59,7 @@ export function jsonValues(text: string): unknown[] {
   let escaped: boolean = false;
   for (let i: number = 0; i < text.length; i++) {
     const char: string = text[i];
+    // 尚未进入 JSON：找到第一个 { 或 [ 才开始记录。
     if (start < 0) {
       if (char === '{' || char === '[') {
         start = i;
@@ -44,6 +67,7 @@ export function jsonValues(text: string): unknown[] {
       }
       continue;
     }
+    // 字符串字面量内：跟踪反斜杠转义，引号只在非转义时闭合。
     if (quoted) {
       if (escaped) escaped = false;
       else if (char === '\\') escaped = true;
@@ -57,7 +81,7 @@ export function jsonValues(text: string): unknown[] {
       try {
         values.push(JSON.parse(text.slice(start, i + 1)));
       } catch {
-        /* Skip non-JSON diagnostics. */
+        /* 跳过非 JSON 的诊断输出。 */
       }
       start = -1;
     }
@@ -67,6 +91,7 @@ export function jsonValues(text: string): unknown[] {
 function jsonFile(path: string): JsonObject {
   return object(jsonValues(readLocalText(path))[0]);
 }
+/** 标签合法性：trim 对称、长度 1..length（默认 160）、不含控制字符。 */
 function validLabel(value: unknown, length: number = 160): value is string {
   return (
     typeof value === 'string' &&
@@ -76,6 +101,7 @@ function validLabel(value: unknown, length: number = 160): value is string {
     !/[\u0000-\u001f\u007f]/u.test(value)
   );
 }
+/** 推理档位清洗：字符串去重（<=32 字符标签）、最多保留 16 个。 */
 export function effortValues(value: unknown): string[] {
   return Array.isArray(value)
     ? [...new Set(value.filter((item: unknown): item is string => validLabel(item, 32)))].slice(
@@ -84,6 +110,7 @@ export function effortValues(value: unknown): string[] {
       )
     : [];
 }
+/** 各 provider 出厂推理档位（读不到 CLI 配置时的默认值）。 */
 export const DEFAULT_EFFORTS: Record<LocalAgentProvider, string[]> = {
   codex: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
   claude: ['low', 'medium', 'high', 'max'],
@@ -93,6 +120,7 @@ export const DEFAULT_EFFORTS: Record<LocalAgentProvider, string[]> = {
   kimi: [],
   doubao: ['low', 'medium', 'high', 'xhigh', 'max'],
 };
+/** 前端配置帮助文案：逐 provider 说明登录方式与模型来源（如实描述，不编造能力）。 */
 const HELP: Record<LocalAgentProvider, string> = {
   codex:
     'Uses codex login and your native model configuration. Model IDs can also be entered manually; the CLI validates model/effort compatibility.',
@@ -108,6 +136,7 @@ const HELP: Record<LocalAgentProvider, string> = {
   doubao:
     'Community doubao-cli bridge (not an official ByteDance CLI). Uses headless login and cloud Work tasks. Exact live model names are required. Tasks remain in Doubao history; cancellation calls sessions stop.',
 };
+/** 支持 thinking 覆盖的 Gemini 模型白名单：只有这些模型提供 low/high 档位。 */
 const GEMINI_THINKING_MODELS: ReadonlySet<string> = new Set([
   'gemini-3-pro-preview',
   'gemini-3-flash-preview',
@@ -117,6 +146,7 @@ const GEMINI_THINKING_MODELS: ReadonlySet<string> = new Set([
 export function geminiEfforts(model: string): string[] {
   return GEMINI_THINKING_MODELS.has(model) ? ['low', 'high'] : [];
 }
+/** antigravity 版本门槛：agy >= 1.3.4 才视为支持。 */
 export function supportsAntigravity(version: string): boolean {
   const match: RegExpMatchArray | null = version.match(/\b(\d+)\.(\d+)\.(\d+)/u);
   return Boolean(
@@ -126,6 +156,7 @@ export function supportsAntigravity(version: string): boolean {
         (Number(match[2]) > 3 || (Number(match[2]) === 3 && Number(match[3]) >= 4)))),
   );
 }
+/** 无本地配置时的兜底能力集：空模型列表 + 出厂档位 + 帮助文案。 */
 export function defaultCapabilities(
   provider: LocalAgentProvider,
 ): Pick<NativeAgentStatus, 'models' | 'reasoningEfforts' | 'configurationHelp'> {
@@ -136,6 +167,13 @@ export function defaultCapabilities(
   };
 }
 
+/**
+ * codex/claude 的本地模型清单：
+ * - claude：读 $CLAUDE_CONFIG_DIR(默认 ~/.claude)/settings.json 的 model 字段，
+ *   环境变量 ANTHROPIC_MODEL 优先；无论如何都补上 opus/sonnet/haiku 三个别名。
+ * - codex：读 $CODEX_HOME(默认 ~/.codex)/models_cache.json（隐藏 visibility 的
+ *   条目剔除），再从 config.toml 顶部 model 字段补一个未列出的自定义模型。
+ */
 export function configuredModels(
   provider: 'codex' | 'claude',
   options: NativeResolverOptions,
@@ -171,6 +209,7 @@ export function configuredModels(
   const config: JsonObject | undefined = tomlSections(readLocalText(join(root, 'config.toml'))).get(
     '',
   );
+  // config.toml 里手工指定的 model 若不在缓存清单中，插到最前面（用户显式选择优先）。
   if (
     validLabel(config?.model) &&
     !models.some((model: NativeAgentModel) => model.id === config.model)
@@ -179,12 +218,13 @@ export function configuredModels(
   return models.slice(0, 256);
 }
 
-/** Reads only CLI-generated scalar metadata, never returns credential values. */
+/** 只读 CLI 生成的标量元数据，绝不返回凭据值。 */
 export function tomlSections(text: string): Map<string, JsonObject> {
   const sections: Map<string, JsonObject> = new Map([['', {}]]);
   let current: JsonObject = sections.get('')!;
   for (const raw of text.split(/\r?\n/)) {
     const line: string = raw.trim();
+    // [section] 头：键名支持点路径与引号包裹的段（转成点连接）。
     const header: RegExpMatchArray | null = line.match(/^\[([^\[\]]+)\]\s*(?:#.*)?$/u);
     if (header) {
       const parts: string[] = header[1].match(/"(?:\\.|[^"\\])*"|'[^']*'|[^.\s]+/gu) ?? [];
@@ -193,6 +233,7 @@ export function tomlSections(text: string): Map<string, JsonObject> {
       sections.set(key, current);
       continue;
     }
+    // key = value 行：值先按 JSON.parse 解（数字/布尔/JSON 字符串），失败再回退单引号字面量。
     const field: RegExpMatchArray | null = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.*)$/u);
     if (!field) continue;
     const value: string = field[2].replace(/\s+#.*$/u, '').trim();
@@ -204,6 +245,11 @@ export function tomlSections(text: string): Map<string, JsonObject> {
   }
   return sections;
 }
+/**
+ * kimi 凭据环境变量白名单：名字必须是合法 env 名、含 KEY/TOKEN/CREDENTIAL/
+ * SECRET 语义、且不属于应用侧前缀（SQUABBLE/DATABASE/JWT/SESSION 等）——
+ * 只允许 CLI 自身的凭据变量。
+ */
 function allowedCredentialName(name: unknown): name is string {
   return (
     typeof name === 'string' &&
@@ -214,7 +260,7 @@ function allowedCredentialName(name: unknown): name is string {
     )
   );
 }
-/** Forward only the selected native provider's explicitly named credential, never application secrets. */
+/** 只转发所选 kimi provider 在 config.toml 里显式声明的那个凭据环境变量，绝不带上应用机密。 */
 export function kimiCredentialEnv(
   options: NativeResolverOptions,
   model?: string,
@@ -222,6 +268,7 @@ export function kimiCredentialEnv(
   const source: NodeJS.ProcessEnv = options.env ?? process.env;
   const root: string = source.KIMI_CODE_HOME ?? join(options.home ?? homedir(), '.kimi-code');
   const sections = tomlSections(readLocalText(join(root, 'config.toml')));
+  // 链式查找：模型 -> provider -> api_key_env 变量名。
   const selected: unknown = model ?? sections.get('')?.default_model;
   const provider: unknown =
     typeof selected === 'string' ? sections.get(`models.${selected}`)?.provider : undefined;
@@ -229,6 +276,12 @@ export function kimiCredentialEnv(
     typeof provider === 'string' ? sections.get(`providers.${provider}`)?.api_key_env : undefined;
   return allowedCredentialName(key) && source[key]?.trim() ? { [key]: source[key] } : {};
 }
+/**
+ * kimi 状态探测：解析 config.toml 的 models.* 段生成模型清单，并按四种凭据
+ * 形态判定 configured（provider.api_key 内联 / api_key_env 环境变量 /
+ * providers.*.env 里的 *_API_KEY / oauth file 凭据文件的 token），再叠加
+ * KIMI_MODEL_NAME+KIMI_MODEL_API_KEY 组合。
+ */
 export function kimiMetadata(options: NativeResolverOptions): {
   models: NativeAgentModel[];
   state: NativeAgentStatus['state'];
@@ -253,6 +306,7 @@ export function kimiMetadata(options: NativeResolverOptions): {
     if (!validLabel(id) || id.endsWith('.overrides')) continue;
     const provider: JsonObject = sections.get(`providers.${value.provider}`) ?? {};
     const overrides: JsonObject = sections.get(`${key}.overrides`) ?? {};
+    // 思考档位只在 provider.type==='kimi' 且 thinking 未禁用时生效。
     const efforts: string[] =
       provider.type === 'kimi' && !thinkingDisabled
         ? effortValues(overrides.support_efforts ?? value.support_efforts)
@@ -263,6 +317,7 @@ export function kimiMetadata(options: NativeResolverOptions): {
       reasoningEfforts: efforts,
     });
     if (id !== defaultModel) continue;
+    // 仅对默认模型做登录状态判定：四类凭据任一存在即 configured。
     if (typeof provider.api_key === 'string' && provider.api_key.trim()) configured = true;
     if (allowedCredentialName(provider.api_key_env) && env[provider.api_key_env]?.trim())
       configured = true;
@@ -294,7 +349,12 @@ export function kimiMetadata(options: NativeResolverOptions): {
     thinkingDisabled,
   };
 }
-
+/**
+ * gemini 状态探测：settings.json 的 security.auth.selectedType 决定判定分支
+ * （oauth-personal 查 oauth_creds.json 的 token；vertex-ai 查 API key 或
+ * GOOGLE_APPLICATION_CREDENTIALS；其余查 API key）。模型清单 = modelConfigs
+ * aliases + thinking 白名单 + settings.model.name，全部按 validLabel 过滤。
+ */
 export function geminiMetadata(options: NativeResolverOptions): {
   state: NativeAgentStatus['state'];
   models: NativeAgentModel[];
@@ -328,7 +388,15 @@ export function geminiMetadata(options: NativeResolverOptions): {
       .map((id: string) => ({ id, name: id, reasoningEfforts: geminiEfforts(id) })),
   };
 }
-
+/**
+ * 解析 CLI `models` 命令的输出（JSON 或纯文本）：
+ * - JSON 路径：数组/对象展开，剔除 available=false 与 doubao 非 work 模式；
+ *   opencode 自动补 providerID/ 前缀；id 取 id/slug/model（doubao 用 name）；
+ *   name 取 name/label/display_name 兜底。
+ * - 纯文本路径（opencode/antigravity）：逐行匹配 `id`（opencode 要求含 `/`，
+ *   antigravity 要求 id 后两个以上空格接显示名）。
+ * 统一按 Map 去重并截断到 256 条。
+ */
 export function parseModels(provider: LocalAgentProvider, text: string): NativeAgentModel[] {
   const rows: unknown[] = jsonValues(text).flatMap((value: unknown) => {
     if (Array.isArray(value)) return value;
@@ -392,7 +460,11 @@ export function parseModels(provider: LocalAgentProvider, text: string): NativeA
   }
   return [...models.values()].slice(0, 256);
 }
-
+/**
+ * 登录状态判定：先看 stdout+stderr 是否含 login_required 类文案；codex 直接
+ * 以退出码为准；opencode 要求退出码 0 且输出里有 "N credentials/environment
+ * variables" 计数；其余 provider 解析 stdout JSON 的 loggedIn/loginRequired。
+ */
 export function authenticationState(
   provider: LocalAgentProvider,
   result: NativeProcessResult,

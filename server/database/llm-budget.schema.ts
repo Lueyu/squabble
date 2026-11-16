@@ -1,3 +1,16 @@
+/**
+ * LLM 预算（llm budget）两张表定义（Drizzle schema）。
+ *
+ * 职责边界：只声明 llm_budget_settings / llm_budget_usage 的列与约束；
+ * 预算判定、预留/结算逻辑在 modules/llm-budget，本文件不管。
+ * 对应增量迁移脚本 scripts/db/07_llm_budget.sql。
+ *
+ * 上下游：import drizzle-orm/pg-core 与 users 表（./schema）；被
+ * modules/llm-budget 的 service 使用。
+ *
+ * 关键约定：额度单位是 token（整数），调用次数单位是"次/天"或"次/任务"；
+ * 单价单位是 USD / 每百万 token（numeric，可空表示不按价计费）。
+ */
 import { sql } from 'drizzle-orm';
 import {
   boolean,
@@ -12,6 +25,14 @@ import {
 } from 'drizzle-orm/pg-core';
 import { users } from './schema';
 
+/**
+ * LLM 预算设置表：每个属主（owner，主键）一行，owner 外键关联 users.id 且
+ * onDelete: 'cascade'。默认额度（token 数）：日 60000、月 600000、单任务
+ * 24000；单次调用输入上限 6000、输出上限 1000；每任务最多调用 8 次、每天
+ * 最多 30 次。input/output_usd_per_million 为可空单价（USD/百万 token）。
+ * 两条 CHECK：①额度大小关系链（input+output <= perTask <= daily <=
+ * monthly <= 10^9 等上限）；②费率非负（0..100000，可空豁免）。
+ */
 export const llmBudgetSettings = pgTable(
   'llm_budget_settings',
   {
@@ -51,6 +72,14 @@ export const llmBudgetSettings = pgTable(
   ],
 );
 
+/**
+ * LLM 用量流水表：每次调用一行，采用"预留-结算"两段式：先以
+ * status='reserved' 写入并登记 reservedTokens（预占额度），任务结束后结算为
+ * completed（实报）/ estimated（估算）/ failed_unknown（失败但用量未知），
+ * 并把实扣 token 写入 chargedTokens、时间写入 settledAt（可空=未结算）。
+ * CHECK：各 token 计数非负（maxOutput/reserved 必须 > 0）。索引：属主+日期
+ * （日/月窗口统计）、属主+任务（任务维度聚合）。
+ */
 export const llmBudgetUsage = pgTable(
   'llm_budget_usage',
   {

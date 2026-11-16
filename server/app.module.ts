@@ -1,13 +1,23 @@
 /**
- * Root (application) module.
+ * 根（application）模块。
  *
- * Wires together the first-party platform layer (database + auth with the
- * global guard) and every feature module (holdings, watchlist, groups,
- * analysis, transactions, closed positions, journal, snapshots, alpha picks,
- * dashboard, LLM agent, cash accounts, quotes, FX, and the multi-agent
- * pipeline), and registers `GlobalExceptionFilter` as the application-wide
- * exception handler via `APP_FILTER`. `ViewModule` must remain the last
- * import because it provides the SPA fallback routes.
+ * 职责边界：纯 DI 装配 —— 把第一方平台层（Drizzle 数据库 + 全局 JWT 鉴权
+ * guard）与全部业务模块（holdings、watchlist、groups、analysis、transactions、
+ * closed positions、journal、snapshots、alpha picks、dashboard、LLM agent、
+ * cash accounts、quotes、FX、multi-agent 管线等）组装进 Nest 容器，并通过
+ * APP_FILTER 注册 GlobalExceptionFilter 作为全应用异常过滤器；自身无任何
+ * 运行时逻辑。
+ *
+ * 上下游：import 平台层与全部业务模块；被 server/main.ts 作为根模块传入
+ * NestFactory.create。
+ *
+ * 装配顺序约束（关键，勿调）：
+ * - ViewModule 必须最后注册：它是 SPA fallback（兜底）路由模块，Nest 按模块
+ *   注册顺序匹配路由，兜底路由必须排在所有业务路由之后（代码中有
+ *   @route-order 标记）；
+ * - 平台层模块（DatabaseModule/AuthModule/SettingsModule/LlmBudget/Health/
+ *   SystemUpdate）先于业务模块装配；
+ * - 业务模块区块由 @route-section 注释标记包裹，勿移动或改写标记本身。
  */
 import { APP_FILTER } from '@nestjs/core';
 import { Module } from '@nestjs/common';
@@ -42,12 +52,12 @@ import { LlmBudgetModule } from './modules/llm-budget/llm-budget.module';
 import { SystemUpdateModule } from './modules/system-update/system-update.module';
 
 /**
- * Root Nest module. Aggregates feature modules and installs the global
- * exception filter. Has no logic of its own; it exists purely for DI wiring.
+ * 根 Nest 模块：聚合全部业务模块并安装全局异常过滤器。自身没有逻辑，
+ * 纯粹为 DI 装配而存在。
  */
 @Module({
   imports: [
-    // First-party platform layer: Drizzle database + JWT auth guard.
+    // 第一方平台层：Drizzle 数据库 + JWT 鉴权 guard。
     DatabaseModule,
     AuthModule,
     SettingsModule,
@@ -56,6 +66,7 @@ import { SystemUpdateModule } from './modules/system-update/system-update.module
     SystemUpdateModule,
 
     // ====== @route-section: business-modules START ======
+    // 业务模块区块（顺序即路由注册顺序，勿调整；下方 END 标记为区块收尾）。
     HoldingsModule,
     WatchlistModule,
     GroupsModule,
@@ -79,10 +90,12 @@ import { SystemUpdateModule } from './modules/system-update/system-update.module
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last
-    // ViewModule is the fallback route module, must be registered last.
+    // ViewModule 是兜底（fallback）路由模块，必须最后注册。
     ViewModule,
   ],
   providers: [
+    // 通过 APP_FILTER 把 GlobalExceptionFilter 注册为全局异常过滤器：
+    // 与 useGlobalFilters 等价的全局生效，但保留 DI，过滤器内部可以注入依赖。
     {
       provide: APP_FILTER,
       useClass: GlobalExceptionFilter,

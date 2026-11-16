@@ -1,9 +1,17 @@
 /**
- * Trading journal controller.
+ * Trading journal controller（交易日志控制器）。
  *
- * Exposes endpoints for the user's per-day trading journal notes (market summary,
- * portfolio summary, actions, plan, lessons) under
- * `/api/portfolio/journal`. Requires login on every route.
+ * 职责边界：暴露用户的逐日交易日志笔记（市场综述 marketSummary、组合综述
+ * portfolioSummary、操作 actions、计划 plan、经验 lessons）的 REST 端点，
+ * 路由前缀 `/api/portfolio/journal`；只做参数透传，业务规则下沉到
+ * JournalService。
+ *
+ * 上下游：import @nestjs/common、NeedLogin（common/platform，类级全量
+ * 鉴权）、JournalService（本模块）、@shared/api.interface 类型；由
+ * journal.module.ts 注册，被 app.module.ts 装配。
+ *
+ * 关键约定：GET /latest 返回最近一条或 null；POST 为 upsert 语义（同一
+ * journalDate 已存在则更新）；GET 可按 date 过滤（YYYY-MM-DD）。
  */
 import { Controller, Get, Post, Delete, Body, Param, Query, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
@@ -12,7 +20,7 @@ import { JournalService } from './journal.service';
 import type { JournalEntry, CreateJournalDto, ListResponse } from '@shared/api.interface';
 
 /**
- * REST controller for the trading journal. Delegates to `JournalService`.
+ * 交易日志的 REST 控制器，全部委托给 `JournalService`。
  */
 @NeedLogin()
 @Controller('api/portfolio/journal')
@@ -20,10 +28,10 @@ export class JournalController {
   constructor(private readonly journalService: JournalService) {}
 
   /**
-   * Lists journal entries for the user, newest first, optionally filtered by date.
+   * 列出用户的交易日志，最新在前，可按日期过滤。
    *
-   * @param req  Authenticated request carrying `req.userContext.userId`.
-   * @param date  Optional journal date (YYYY-MM-DD) filter.
+   * @param req  已鉴权请求，携带 `req.userContext.userId`。
+   * @param date 可选的日志日期（YYYY-MM-DD）过滤。
    */
   @Get()
   async list(
@@ -35,9 +43,9 @@ export class JournalController {
   }
 
   /**
-   * Returns the most recent journal entry, or null if none exists.
+   * 返回最近一条日志，无记录时返回 null。
    *
-   * @param req Authenticated request.
+   * @param req 已鉴权请求。
    */
   @Get('latest')
   async latest(@Req() req: Request): Promise<JournalEntry | null> {
@@ -46,10 +54,10 @@ export class JournalController {
   }
 
   /**
-   * Creates or updates (upserts) the journal entry for a given date.
+   * 新建或更新（upsert）指定日期的日志。
    *
-   * @param req Authenticated request.
-   * @param dto Journal payload (keyed by `journalDate`).
+   * @param req 已鉴权请求。
+   * @param dto 日志载荷（以 `journalDate` 为键）。
    */
   @Post()
   async upsert(@Req() req: Request, @Body() dto: CreateJournalDto): Promise<JournalEntry> {
@@ -58,10 +66,10 @@ export class JournalController {
   }
 
   /**
-   * Deletes an owned journal entry.
+   * 删除一条属于当前用户的日志。
    *
-   * @param req Authenticated request.
-   * @param id  Journal entry primary key.
+   * @param req 已鉴权请求。
+   * @param id  日志主键。
    */
   @Delete(':id')
   async remove(@Req() req: Request, @Param('id') id: string): Promise<{ success: boolean }> {
