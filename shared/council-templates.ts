@@ -1,3 +1,24 @@
+/**
+ * council-templates.ts — 委员会成员模板与预设组合（中英双语文案）。
+ *
+ * 职责边界：
+ *  - 提供七位委员会成员的人设模板（COUNCIL_MEMBER_TEMPLATES：名字/头衔/性格/指令的
+ *    zh-CN 与 en 双语文案 + 角色/模型通道/研究方向/发言风格）与三套团队预设
+ *    （COUNCIL_TEAM_PRESETS：成员组合 + 名称/描述）。
+ *  - 提供两个纯工厂函数：createCouncilMember（按模板实例化一名成员）与
+ *    createCouncilPreset（按预设实例化整套成员），外加 councilLanguage（语言归一化）。
+ *  - 只服务委员会配置的默认值；用户可以在实例上继续改配置。
+ * 上下游：
+ *  - 上游：仅 client/src（委员会设置界面与表单预填），共 6 个文件 import 本契约；
+ *    server 不引用（服务端只消费已实例化的 CouncilMember）。
+ *  - 下游：import type { CouncilMember / CouncilResearchKind / CouncilRole /
+ *    CouncilSpeakingStyle }（council.interface.ts）。
+ * 关键约定：
+ *  - 双语结构：text 以 'zh-CN' 与 'en' 为键；模板文案是产品文案，修改前需同步两种语言。
+ *  - createCouncilMember 生成的成员 id 由调用方传入（预设成员为 `<模板id>-<序号>`）。
+ *  - CouncilTemplateId 与 COUNCIL_AVATARS 同源推导，二者始终一致。
+ */
+
 import type {
   CouncilMember,
   CouncilResearchKind,
@@ -5,6 +26,7 @@ import type {
   CouncilSpeakingStyle,
 } from './council.interface';
 
+/** 可选的研究方向全集（顺序即 UI 展示顺序）。 */
 export const COUNCIL_RESEARCH_KINDS: CouncilResearchKind[] = [
   'financials',
   'valuation',
@@ -12,7 +34,9 @@ export const COUNCIL_RESEARCH_KINDS: CouncilResearchKind[] = [
   'price',
   'web',
 ];
+/** 可选的发言风格全集。 */
 export const COUNCIL_SPEAKING_STYLES: CouncilSpeakingStyle[] = ['concise', 'detailed', 'socratic'];
+/** 头像主题全集；模板 id 与之一一对应，因此也用作成员模板 id 的来源。 */
 export const COUNCIL_AVATARS = [
   'value',
   'growth',
@@ -22,33 +46,61 @@ export const COUNCIL_AVATARS = [
   'macro',
   'moderator',
 ] as const;
+/** 成员模板 id（与头像主题同源）。 */
 export type CouncilTemplateId = (typeof COUNCIL_AVATARS)[number];
+/** 团队预设 id。 */
 export type CouncilPresetId = 'balanced' | 'contrarian' | 'earnings';
+/** 文案语言（模板 text 的键）。 */
 export type CouncilLanguage = 'zh-CN' | 'en';
 
+/** 单个模板的双语文案块。 */
 interface TemplateText {
+  /** 成员名。 */
   name: string;
+  /** 职位头衔。 */
   roleTitle: string;
+  /** 性格描述。 */
   personality: string;
+  /** 研究指令（进入成员的 system prompt）。 */
   instructions: string;
+  /** 一句话简介（选择器里的描述行）。 */
   description: string;
 }
+
+/** 成员模板：静态人设 + 协作参数。 */
 export interface CouncilMemberTemplate {
+  /** 模板 id（同头像主题）。 */
   id: CouncilTemplateId;
+  /** 委员会角色。 */
   role: CouncilRole;
+  /** 默认使用的模型通道。 */
   model: CouncilMember['model'];
+  /** 默认研究方向。 */
   researchFocus: CouncilResearchKind[];
+  /** 默认发言风格。 */
   speakingStyle: CouncilSpeakingStyle;
+  /** 双语文案（键为 CouncilLanguage）。 */
   text: Record<CouncilLanguage, TemplateText>;
 }
+
+/** 团队预设：一组成员模板 id + 预设名称/描述。 */
 export interface CouncilTeamPreset {
+  /** 预设 id。 */
   id: CouncilPresetId;
+  /** 成员模板 id 列表（顺序即讨论席位顺序）。 */
   members: CouncilTemplateId[];
+  /** 双语预设名。 */
   name: Record<CouncilLanguage, string>;
+  /** 双语预设描述。 */
   description: Record<CouncilLanguage, string>;
 }
 
+/**
+ * 七位成员模板。每位给出：角色 / 模型通道 / 研究方向 / 发言风格 / 适用场景。
+ */
 export const COUNCIL_MEMBER_TEMPLATES: CouncilMemberTemplate[] = [
+  // ── 老钱 / Morgan：价值研究员。researcher，fast 模型，聚焦财务质量与估值，
+  //    详细风格；适用于评估盈利质量、资产负债表与估值假设是否站得住。
   {
     id: 'value',
     role: 'researcher',
@@ -74,6 +126,8 @@ export const COUNCIL_MEMBER_TEMPLATES: CouncilMemberTemplate[] = [
       },
     },
   },
+  // ── 小芽 / Nova：成长研究员。researcher，fast 模型，聚焦财务与新闻、简练风格；
+  //    适用于研究增长来源、单位经济模型与经营拐点。
   {
     id: 'growth',
     role: 'researcher',
@@ -99,6 +153,8 @@ export const COUNCIL_MEMBER_TEMPLATES: CouncilMemberTemplate[] = [
       },
     },
   },
+  // ── 知秋 / Sage：风险审视者。challenger，fast 模型，聚焦财务/估值/新闻，
+  //    苏格拉底式追问；适用于对乐观假设提出反证、检查负债与集中度风险。
   {
     id: 'risk',
     role: 'challenger',
@@ -124,6 +180,8 @@ export const COUNCIL_MEMBER_TEMPLATES: CouncilMemberTemplate[] = [
       },
     },
   },
+  // ── 观潮 / River：市场观察员。researcher，fast 模型，聚焦价格与估值、简练风格；
+  //    适用于解读价格变化、波动与市场预期（只用实际提供的数据，不杜撰指标）。
   {
     id: 'technical',
     role: 'researcher',
@@ -150,6 +208,8 @@ export const COUNCIL_MEMBER_TEMPLATES: CouncilMemberTemplate[] = [
       },
     },
   },
+  // ── 闻溪 / Quinn：事件研究员。researcher，fast 模型，聚焦新闻与财务、详细风格；
+  //    适用于公告/财报事件的核实、来源与日期校验。
   {
     id: 'news',
     role: 'researcher',
@@ -175,6 +235,8 @@ export const COUNCIL_MEMBER_TEMPLATES: CouncilMemberTemplate[] = [
       },
     },
   },
+  // ── 远山 / Atlas：宏观研究员。challenger，fast 模型，聚焦新闻与估值、追问风格；
+  //    适用于利率/周期/行业情景对公司的传导分析（条件式情景，不做断言预测）。
   {
     id: 'macro',
     role: 'challenger',
@@ -201,6 +263,8 @@ export const COUNCIL_MEMBER_TEMPLATES: CouncilMemberTemplate[] = [
       },
     },
   },
+  // ── 知衡 / Avery：讨论主持人。manager，slow 模型（需要更强的综合能力），
+  //    覆盖三个研究方向、简练风格；用于串联观点、提炼共识、保留分歧并整理研报。
   {
     id: 'moderator',
     role: 'manager',
@@ -229,6 +293,12 @@ export const COUNCIL_MEMBER_TEMPLATES: CouncilMemberTemplate[] = [
   },
 ];
 
+/**
+ * 三套团队预设（成员构成均以主持人收尾）：
+ *  - balanced「稳健研究」：价值 + 风险质询，适合常规持仓复核。
+ *  - contrarian「多角度辩论」：成长视角 + 宏观质疑，适合多空分歧大的标的。
+ *  - earnings「财报讨论」：财务质量 + 事件研究，适合财报季。
+ */
 export const COUNCIL_TEAM_PRESETS: CouncilTeamPreset[] = [
   {
     id: 'balanced',
@@ -256,10 +326,12 @@ export const COUNCIL_TEAM_PRESETS: CouncilTeamPreset[] = [
   },
 ];
 
+/** 语言归一化：以 zh 开头的语言串视为中文，其余一律英文。 */
 export function councilLanguage(language: string): CouncilLanguage {
   return language.startsWith('zh') ? 'zh-CN' : 'en';
 }
 
+/** 按模板实例化一名委员会成员：文案取对应语言，其余协作参数来自模板。 */
 export function createCouncilMember(
   templateId: CouncilTemplateId,
   language: string,
@@ -283,6 +355,7 @@ export function createCouncilMember(
   };
 }
 
+/** 按预设实例化整套成员：id 形如 `<模板id>-<序号>`（序号从 1 起）。 */
 export function createCouncilPreset(presetId: CouncilPresetId, language: string): CouncilMember[] {
   const preset = COUNCIL_TEAM_PRESETS.find((item: CouncilTeamPreset) => item.id === presetId)!;
   return preset.members.map((id: CouncilTemplateId, index: number) =>
