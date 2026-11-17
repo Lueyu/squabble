@@ -142,10 +142,49 @@ export class CouncilService implements OnModuleInit {
     const tasks = await this.workflow.store.list(owner, sessionId, row.checkpoint.cycleId);
     // Query the original durable handle only. A status check never enters the execution loop.
     if (input.action === 'check_existing') {
-      if (this.a2aAgents) for (const task of tasks.filter(item => !input.workKey || item.workKey === input.workKey)) {
+      for (const task of tasks.filter(item => !input.workKey || item.workKey === input.workKey)) {
         for (const attempt of task.attempts.filter(item => (!input.attemptId || item.id === input.attemptId) && item.remoteTaskId)) {
           const member = this.members(row.profileSnapshot).find(item => item.id === (attempt.kind === 'review' ? task.reviewerMemberId : task.memberId));
-          if (member?.executionMode !== 'a2a') continue;
+          if (member?.executionMode === 'local' && this.localAgents) {
+            if (!['uncertain', 'running'].includes(task.state) || !['uncertain', 'running'].includes(attempt.state) || !attempt.dispatched) continue;
+            const matches = (receipt: Awaited<ReturnType<LocalAgentsService['store']['task']>>): boolean => {
+              const processExit = receipt?.diagnostics?.filter(event => event.stage === 'process').at(-1);
+              return Boolean(receipt
+              && receipt.id === attempt.remoteTaskId && receipt.owner === owner && receipt.kind === 'run'
+              && receipt.provider === 'codex' && receipt.agentId === 'native-codex'
+              && receipt.agentId === member.agentId && receipt.agentId.startsWith('native-') && !receipt.deviceId && !receipt.commandEmitted
+              && receipt.runtimeEntered && ['failed', 'cancelled'].includes(receipt.state) && receipt.error !== 'LOCAL_DISPATCH_UNCERTAIN'
+              && receipt.messageId === attempt.messageId && receipt.activityContext?.sessionId === row.id
+              && receipt.activityContext.revision === attempt.revision && receipt.activityContext.cycleId === task.cycleId
+              && receipt.activityContext.memberId === member.id
+              && (!receipt.researchScope || receipt.researchScope.sessionId === row.id
+                && receipt.researchScope.revision === attempt.revision && receipt.researchScope.memberId === member.id)
+              && processExit && ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(processExit.status)
+              && Number.isInteger(processExit.exitCode) && processExit.exitCode >= 0);
+            };
+            const receipt = await this.localAgents.store.task(owner, attempt.remoteTaskId!).catch(() => null);
+            if (!matches(receipt) || !await this.localAgents.waitForTaskSettlement(owner, receipt.id, 1000).catch(() => false)) continue;
+            // A restarted store can label an orphan LOCAL_INTERRUPTED while its CLI survives.
+            // Only Codex direct-process receipts are supported here; asynchronous upstream ACKs are not termination.
+            // Require explicit process-exit evidence plus a drained native slot, never fees or journal state alone.
+            const stopped = await this.localAgents.store.task(owner, attempt.remoteTaskId!).catch(() => null);
+            if (!matches(stopped)) continue;
+            const state = stopped.state === 'cancelled' ? 'cancelled' as const : 'failed' as const;
+            await this.db.transaction(async tx => {
+              const [current] = await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner),
+                eq(councilResearchTasks.id, task.id))).for('update');
+              const latest = current?.attempts.at(-1);
+              if (!current || !['uncertain', 'running'].includes(current.state) || current.acceptedAttemptId
+                || current.revision !== task.revision || current.cycleId !== task.cycleId || latest?.id !== attempt.id
+                || latest.remoteTaskId !== stopped.id || latest.messageId !== stopped.messageId
+                || !['uncertain', 'running'].includes(latest.state)) return;
+              await tx.update(councilResearchTasks).set({ state, reason: 'LOCAL_NATIVE_TERMINAL',
+                attempts: current.attempts.map(item => item.id === attempt.id ? { ...item, state, externalUsageUnknown: true } : item),
+                updatedAt: new Date() }).where(eq(councilResearchTasks.id, current.id));
+            });
+            continue;
+          }
+          if (member?.executionMode !== 'a2a' || !this.a2aAgents) continue;
           const receipt = await this.a2aAgents.read(owner, attempt.remoteTaskId!).catch(() => this.a2aAgents!.inspectTask(owner, attempt.remoteTaskId!));
           if (!['completed', 'failed', 'cancelled', 'rejected'].includes(receipt.state)) continue;
           let savedResponse = attempt.savedResponse;
