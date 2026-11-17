@@ -1,6 +1,7 @@
 import { AGENT_TEMPLATE_IDS } from '@shared/agent-roster.interface';
 import type { AgentProfile, AgentTemplateId } from '@shared/agent-roster.interface';
 import type { ModelConnection } from '@shared/model-connections.interface';
+import { TEAM_TEMPLATES } from '@shared/team-templates';
 import { rosterTeamConfig } from './guided-team-state';
 import type { TeamEditorState } from './team-graph';
 
@@ -75,6 +76,42 @@ export function matchStaffing(slots: readonly StaffingSlot[], agents: readonly A
     }
   }
   return { assignments, open, candidates };
+}
+
+/**
+ * Recover specialty hints for copied template seats using their unchanged duty
+ * contract, rather than display names or the freshly generated instance IDs.
+ * Custom duties and ambiguous hints require an explicit individual choice.
+ */
+export function suggestTeamStaffing(state: TeamEditorState, agents: readonly AgentProfile[]): StaffingMatch {
+  const slots: StaffingSlot[] = [];
+  for (const role of state.config.roles) {
+    if (role.agentId || role.executor) continue;
+    const specialties = new Set<AgentTemplateId>();
+    for (const template of TEAM_TEMPLATES) {
+      for (const source of template.config.roles) {
+        if (source.responsibility !== role.responsibility || source.expectedOutput !== role.expectedOutput) continue;
+        const hint = template.staffing.find(slot => slot.roleId === source.id);
+        if (hint) specialties.add(hint.recommendedTemplateId);
+      }
+    }
+    if (specialties.size === 1) slots.push({ roleId: role.id, recommendedTemplateId: [...specialties][0], required: true });
+  }
+  const used = new Set(state.config.roles.map(role => role.agentId).filter(Boolean));
+  return matchStaffing(slots, agents.filter(agent => !used.has(agent.id)));
+}
+
+/** Apply reviewed suggestions only to seats that are still empty at click time. */
+export function applySuggestedTeamStaffing(state: TeamEditorState, assignments: Record<string, string>, agents: readonly AgentProfile[], models: ModelConnection[]): TeamEditorState {
+  let next = state;
+  const used = new Set(state.config.roles.map(role => role.agentId).filter(Boolean));
+  for (const [roleId, agentId] of Object.entries(assignments)) {
+    const role = next.config.roles.find(candidate => candidate.id === roleId);
+    if (!role || role.agentId || role.executor || used.has(agentId)) continue;
+    next = assignAgentToRole(next, roleId, agentId, [...agents], models);
+    used.add(agentId);
+  }
+  return next;
 }
 
 type StaffingFailureCode = 'read_only' | 'role_missing' | 'agent_missing' | 'agent_archived' | 'agent_unavailable' | 'connection_unavailable';

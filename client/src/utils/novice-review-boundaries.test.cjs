@@ -45,7 +45,7 @@ test('definitively stale setup requires a fresh reviewed intent, while timeouts 
 });
 test('a suspended agreement still links its original paper account after the team changes binding', () => {
   const f = fixture();
-  f.state.queries.set('team-run', { data: { agreement: { id: 'agreement', accountId: 'original-account', state: 'suspended', configuration: { market: 'US', cadence: { delayMinutes: 60 }, budget: { daily: { costUsd: '2' }, monthly: { costUsd: '40' } } }, members: [] }, recentCycles: [] } });
+  f.state.queries.set('team-run', { data: { agreement: { id: 'agreement', accountId: 'original-account', state: 'suspended', configuration: { market: 'US', cadence: { delayMinutes: 60 }, budget: { perRun: { ceiling: { amount: '1' }, callLimit: 8 }, daily: { costUsd: '2', calls: 16 }, monthly: { costUsd: '40', calls: 320 } } }, members: [] }, recentCycles: [] } });
   const { TeamRunPanel } = f.load('features/teams/TeamRunPanel.tsx');
   const html = f.render(TeamRunPanel, { team: { id: 'team', accountId: 'different-account', status: 'active' }, zh: false });
   assert.match(html, /accountId=original-account/);

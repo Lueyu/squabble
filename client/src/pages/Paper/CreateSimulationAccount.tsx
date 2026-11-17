@@ -37,10 +37,13 @@ import { accountSeedInput, type AccountSeedOrigin, type SeedCurrency, type SeedP
 
 export default function CreateSimulationAccount({
   onClose,
+  onCreated,
   initialCompanionId = 'value',
   initialOrigin = 'cash',
 }: {
   onClose: () => void;
+  /** Keeps a reviewed account creation inside its originating setup flow. */
+  onCreated?: (accountId: string) => void;
   initialCompanionId?: PortfolioCompanionId;
   initialOrigin?: AccountSeedOrigin;
 }) {
@@ -278,8 +281,10 @@ export default function CreateSimulationAccount({
             onStarted={() => {
               onClose();
               // Close the old setup URL before navigating to the acknowledged account.
-              if (createdAccountId.current)
-                navigate(simulationAccountPath(createdAccountId.current), { replace: true });
+              if (createdAccountId.current) {
+                if (onCreated) onCreated(createdAccountId.current);
+                else navigate(simulationAccountPath(createdAccountId.current), { replace: true });
+              }
             }}
           />
           </div>

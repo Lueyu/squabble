@@ -87,6 +87,31 @@ test('the account seed request follows the chosen origin', () => {
   assert.throws(() => quickStartPreviewRequest({ kind: 'none' }, 'key-4'), /cash or holdings/);
 });
 
+test('team account seeds replace cash with three editable virtual balances and survive recovery', () => {
+  withSessionStorage(() => {
+    const qs = quick();
+    const virtualCash = [{ currency: 'CNY', amount: 10000 }, { currency: 'USD', amount: 20000 }, { currency: 'HKD', amount: 5000 }];
+    const input = { ...baseInput({ kind: 'holdings', virtualCash }), connectionId: null, creationMode: 'blank', reviewedSeed: { previewId: 'reviewed-snapshot', requestKey: 'snapshot-request' } };
+    assert.deepEqual(qs.quickStartPreviewRequest(input.seed, 'key'), { origin: 'holdings', virtualCash, requestKey: 'key' });
+    const record = { savedAt: '2026-11-17T00:00:00Z', input, keys: qs.initialQuickStartKeys(() => 'k'), progress: qs.initialQuickStartProgress(input) };
+    qs.writeStoredQuickStart(record);
+    assert.deepEqual(qs.readStoredQuickStart().input, input);
+    assert.deepEqual(qs.quickStartTeamRequest(input, 'team-key'), { requestKey: 'team-key', name: '铁三角', description: '', avatar: null });
+    assert.deepEqual(qs.quickStartTeamRequest({ ...input, creationMode: 'copy', copyFromTeamVersionId: 'source-version' }, 'team-key'), { requestKey: 'team-key', name: '铁三角', description: '', avatar: null, copyFromTeamVersionId: 'source-version' });
+  });
+});
+
+test('malformed stored virtual cash cannot silently fall back to copying real cash', () => {
+  withSessionStorage(store => {
+    const qs = quick();
+    const input = baseInput({ kind: 'holdings', virtualCash: [{ currency: 'CNY', amount: -1 }] });
+    const record = { savedAt: 'x', input, keys: qs.initialQuickStartKeys(() => 'k'), progress: qs.initialQuickStartProgress(input) };
+    store.set(qs.QUICK_START_STORAGE_KEY, JSON.stringify(record));
+    assert.equal(qs.readStoredQuickStart(), null);
+    assert.ok(qs.validateQuickStartInput(input).some(issue => issue.field === 'virtualCash'));
+  });
+});
+
 test('an expired preview adopts only an account this chain created', () => {
   const { adoptCreatedAccount } = quick();
   const known = new Set(['old-1']);

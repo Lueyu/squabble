@@ -4,11 +4,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { fetchModelConnections } from '@/api/model-connections';
 import { previewAiInvestment } from '@/api/ai-investment';
 import { portfolioWorkspaceApi, portfolioWorkspaceKeys } from '@/api/portfolio-workspace';
+import type { AiInvestmentPreview } from '@shared/investment-policy.interface';
 import { teamKeys, teamsApi } from '@/api/teams';
 import { friendlyError } from '@/utils/error-message';
 import {
   adoptCreatedAccount, applyQuickStartExecutors, clearStoredQuickStart, initialQuickStartKeys, initialQuickStartProgress,
-  quickStartAccountName, quickStartCreateAccountRequest, quickStartFailureKind, quickStartPreviewRequest, readStoredQuickStart,
+  quickStartAccountName, quickStartCreateAccountRequest, quickStartFailureKind, quickStartPreviewRequest, quickStartTeamRequest, readStoredQuickStart,
   storedQuickStartResumable, updateQuickStartStep, writeStoredQuickStart,
   type QuickStartFailureKind, type QuickStartInput, type QuickStartProgress, type QuickStartStepId, type StoredQuickStart,
 } from './team-quick-start';
@@ -51,7 +52,7 @@ export function useTeamQuickStart(zh: boolean) {
     const fail = (error: unknown, id: QuickStartStepId): void => {
       setStep(id, 'failed');
       const failureKind = quickStartFailureKind(error);
-      if (failureKind === 'rejected') { clearStoredQuickStart(); recordRef.current = null; } else persist(record);
+      if (failureKind === 'rejected' && !input.reviewedSeed) { clearStoredQuickStart(); recordRef.current = null; } else persist(record);
       setState({
         status: 'failed', progress: record.progress, failureKind, input,
         message: friendlyError(error, zh, { zh: '快速开始未完成，已完成的步骤已保留。', en: 'Quick start did not finish. Completed steps are retained.' }),
@@ -63,7 +64,7 @@ export function useTeamQuickStart(zh: boolean) {
       if (!record.progress.teamId) {
         setStep('team', 'running');
         try {
-          const team = await teamsApi.create({ requestKey: record.keys.team, name: input.name.trim(), description: input.description.trim(), avatar: input.avatar.trim() || null, templateId: input.templateId });
+          const team = await teamsApi.create(quickStartTeamRequest(input, record.keys.team));
           record.progress.teamId = team.id;
           persist(record);
         } catch (error) { return fail(error, 'team'); }
@@ -116,13 +117,13 @@ export function useTeamQuickStart(zh: boolean) {
           const accountName = quickStartAccountName(input, zh);
           try {
             const createOnce = async (): Promise<{ accountId: string }> => {
-              const preview = await previewAiInvestment(quickStartPreviewRequest(input.seed, record.keys.accountPreview));
+              const preview = input.reviewedSeed ?? await previewAiInvestment(quickStartPreviewRequest(input.seed, record.keys.accountPreview));
               return portfolioWorkspaceApi.create(quickStartCreateAccountRequest(accountName, preview.previewId, record.keys.accountCreate));
             };
             const createWithRecovery = async (): Promise<{ accountId: string }> => {
               try { return await createOnce(); }
               catch (error) {
-                if (quickStartFailureKind(error) !== 'recoverable-preview') throw error;
+                if (input.reviewedSeed || quickStartFailureKind(error) !== 'recoverable-preview') throw error;
                 const adopted = adoptCreatedAccount(await portfolioWorkspaceApi.accounts(), knownAccountIds, accountName);
                 if (adopted) return { accountId: adopted };
                 record.keys.accountPreview = crypto.randomUUID(); record.keys.accountCreate = crypto.randomUUID();
@@ -179,14 +180,21 @@ export function useTeamQuickStart(zh: boolean) {
     setState({ status: 'done', progress: record.progress, failureKind: null, message: null, input });
     await client.invalidateQueries({ queryKey: teamKeys.all });
     await client.invalidateQueries({ queryKey: portfolioWorkspaceKeys.accounts });
-    navigate(`/teams/${encodeURIComponent(record.progress.teamId!)}?quickStarted=1`);
+    navigate(`/teams/${encodeURIComponent(record.progress.teamId!)}?${input.reviewedSeed ? 'panel=overview' : 'quickStarted=1'}`);
   }, [client, navigate, persist, zh]);
 
   const run = useCallback((input: QuickStartInput, knownAccountIds: ReadonlySet<string>): void => {
     if (runningRef.current) return;
+    const retained = recordRef.current ?? readStoredQuickStart();
+    if (storedQuickStartResumable(retained)) {
+      runningRef.current = true;
+      void execute(retained!, knownAccountIds);
+      return;
+    }
     runningRef.current = true;
     try { window.sessionStorage.removeItem('squabble.team-create'); } catch { /* The chain record replaces the form draft. */ }
     const record: StoredQuickStart = { savedAt: new Date().toISOString(), input, keys: initialQuickStartKeys(), progress: initialQuickStartProgress(input) };
+    if (input.reviewedSeed) record.keys.accountPreview = input.reviewedSeed.requestKey;
     persist(record);
     void execute(record, knownAccountIds);
   }, [execute, persist]);
@@ -205,8 +213,38 @@ export function useTeamQuickStart(zh: boolean) {
     setState(IDLE);
   }, []);
 
-  /** A stored or in-memory record with unfinished steps stays resumable across reloads and dialog closes. */
-  const resumable = storedQuickStartResumable(recordRef.current ?? readStoredQuickStart());
+  /** Expired reviewed seeds need a fresh visible snapshot; completed team/publication steps remain intact. */
+  const refreshSeedReview = useCallback(async (): Promise<AiInvestmentPreview> => {
+    const record = recordRef.current ?? readStoredQuickStart();
+    if (!record?.input.reviewedSeed || record.progress.accountId || state.failureKind !== 'recoverable-preview') throw new Error('A rejected account preview is required before a fresh review');
+    if (!record.accountReviewKey || record.receivedAccountReview?.requestKey === record.accountReviewKey && Date.parse(record.receivedAccountReview.expiresAt) <= Date.now()) {
+      record.accountReviewKey = crypto.randomUUID();
+      delete record.receivedAccountReview;
+    }
+    persist(record);
+    const preview = await previewAiInvestment(quickStartPreviewRequest(record.input.seed, record.accountReviewKey));
+    record.receivedAccountReview = { requestKey: record.accountReviewKey, previewId: preview.previewId, expiresAt: preview.expiresAt };
+    persist(record);
+    return preview;
+  }, [persist, state.failureKind]);
 
-  return { state, resumable, run, resume, reset };
+  const resumeWithSeedReview = useCallback((preview: AiInvestmentPreview, knownAccountIds: ReadonlySet<string>): void => {
+    const record = recordRef.current ?? readStoredQuickStart();
+    if (runningRef.current || !record?.accountReviewKey || record.progress.accountId || state.failureKind !== 'recoverable-preview'
+      || record.receivedAccountReview?.previewId !== preview.previewId || Date.parse(preview.expiresAt) <= Date.now()) return;
+    record.input = { ...record.input, reviewedSeed: { previewId: preview.previewId, requestKey: record.accountReviewKey } };
+    record.keys.accountPreview = record.accountReviewKey;
+    record.keys.accountCreate = crypto.randomUUID();
+    delete record.accountReviewKey;
+    delete record.receivedAccountReview;
+    persist(record);
+    runningRef.current = true;
+    void execute(record, knownAccountIds);
+  }, [execute, persist, state.failureKind]);
+
+  /** A stored or in-memory record with unfinished steps stays resumable across reloads and dialog closes. */
+  const retained = recordRef.current ?? readStoredQuickStart();
+  const resumable = storedQuickStartResumable(retained);
+
+  return { state, resumable, resumableInput: retained?.input ?? null, run, resume, reset, refreshSeedReview, resumeWithSeedReview };
 }

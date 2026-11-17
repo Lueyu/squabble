@@ -1,8 +1,8 @@
 import { isAxiosError } from 'axios';
 import type { ModelConnection } from '@shared/model-connections.interface';
 import type { CreatePortfolioAccountRequest, PortfolioAccountSummary } from '@shared/portfolio-workspace.interface';
-import type { InvestmentPreviewRequest } from '@shared/investment-policy.interface';
-import type { TeamDetail, TeamExecutor, TeamSemanticConfig } from '@shared/team-workspace.interface';
+import type { CustomSimulationCash, InvestmentPreviewRequest } from '@shared/investment-policy.interface';
+import type { CreateTeamInput, TeamExecutor, TeamSemanticConfig } from '@shared/team-workspace.interface';
 
 /**
  * Template quick start: one reviewed confirmation chains the existing draft,
@@ -12,13 +12,16 @@ import type { TeamDetail, TeamExecutor, TeamSemanticConfig } from '@shared/team-
  */
 export type QuickStartSeed =
   | { kind: 'cash'; amount: string; currency: 'USD' | 'HKD' | 'CNY' }
-  | { kind: 'holdings' }
+  | { kind: 'holdings'; virtualCash?: CustomSimulationCash[] }
   | { kind: 'existing'; accountId: string }
   | { kind: 'none' };
 
 export interface QuickStartInput {
   name: string; description: string; avatar: string; templateId: string;
   seed: QuickStartSeed; accountName: string; connectionId: string | null;
+  creationMode?: 'template' | 'blank' | 'copy'; copyFromTeamVersionId?: string;
+  /** The user reviewed this exact frozen seed before the creation chain started. */
+  reviewedSeed?: { previewId: string; requestKey: string };
 }
 
 export type QuickStartStepId = 'team' | 'draft' | 'publish' | 'account' | 'binding';
@@ -37,6 +40,8 @@ export interface QuickStartKeySlots {
 
 export interface StoredQuickStart {
   savedAt: string; input: QuickStartInput; keys: QuickStartKeySlots; progress: QuickStartProgress;
+  accountReviewKey?: string;
+  receivedAccountReview?: { requestKey: string; previewId: string; expiresAt: string };
 }
 
 export const QUICK_START_STORAGE_KEY = 'squabble.team-quick-start';
@@ -97,7 +102,22 @@ export function validateQuickStartInput(input: QuickStartInput): QuickStartField
     issues.push({ field: 'amount', message: 'Enter a positive starting cash amount.' });
   if (input.seed.kind === 'existing' && !input.seed.accountId)
     issues.push({ field: 'accountId', message: 'Choose a simulation account.' });
+  if (input.seed.kind === 'holdings' && input.seed.virtualCash && !validVirtualCash(input.seed.virtualCash))
+    issues.push({ field: 'virtualCash', message: 'Enter one non-negative finite amount for each of CNY, USD and HKD.' });
   return issues;
+}
+
+export function validVirtualCash(value: unknown): value is CustomSimulationCash[] {
+  return Array.isArray(value) && value.length === 3
+    && new Set(value.map(row => row?.currency)).size === 3
+    && value.every(row => row && ['CNY', 'USD', 'HKD'].includes(row.currency) && typeof row.amount === 'number' && Number.isFinite(row.amount) && row.amount >= 0 && row.amount <= 1e12);
+}
+
+/** Source selection changes only organization structure; every reviewed seed creates a new account. */
+export function quickStartTeamRequest(input: QuickStartInput, requestKey: string): CreateTeamInput {
+  return { requestKey, name: input.name.trim(), description: input.description.trim(), avatar: input.avatar.trim() || null,
+    ...(input.creationMode === 'copy' ? { copyFromTeamVersionId: input.copyFromTeamVersionId }
+      : input.creationMode === 'blank' ? {} : { templateId: input.templateId }) };
 }
 
 /** The simulation account inherits the team name unless the user typed its own label. */
@@ -110,7 +130,7 @@ export function quickStartAccountName(input: QuickStartInput, zh: boolean): stri
 /** Cash previews are deterministic; the holdings preview freezes the current real ledger as the seed. */
 export function quickStartPreviewRequest(seed: QuickStartSeed, requestKey: string): InvestmentPreviewRequest {
   if (seed.kind === 'cash') return { origin: 'cash', cash: { currency: seed.currency, amount: Number(seed.amount) }, requestKey };
-  if (seed.kind === 'holdings') return { origin: 'holdings', requestKey };
+  if (seed.kind === 'holdings') return { origin: 'holdings', ...(seed.virtualCash ? { virtualCash: seed.virtualCash.map(row => ({ ...row })) } : {}), requestKey };
   throw new Error('Quick start creates an account only for cash or holdings seeds.');
 }
 
@@ -133,7 +153,7 @@ export function quickStartErrorCode(error: unknown): string | null {
     const data = body as { code?: unknown; error?: { code?: unknown }; message?: unknown };
     if (typeof data.code === 'string') return data.code;
     if (data.error && typeof data.error === 'object' && typeof data.error.code === 'string') return data.error.code;
-    if (typeof data.message === 'string' && data.message.startsWith('PREVIEW_')) return data.message;
+    if (typeof data.message === 'string' && (data.message.startsWith('PREVIEW_') || data.message === 'SOURCE_CHANGED_REPREVIEW')) return data.message;
   }
   return null;
 }
@@ -147,7 +167,7 @@ export function quickStartErrorCode(error: unknown): string | null {
  */
 export function quickStartFailureKind(error: unknown): QuickStartFailureKind {
   const code = quickStartErrorCode(error);
-  if (code === 'PREVIEW_EXPIRED' || code === 'TEAM_PREVIEW_STALE' || code === 'TEAM_PREVIEW_CONSUMED') return 'recoverable-preview';
+  if (code === 'PREVIEW_EXPIRED' || code === 'TEAM_PREVIEW_STALE' || code === 'TEAM_PREVIEW_CONSUMED' || code === 'SOURCE_CHANGED_REPREVIEW') return 'recoverable-preview';
   if (!isAxiosError(error)) return 'rejected';
   if (!error.response) return 'network';
   if (error.response.status >= 500) return 'server';
@@ -156,9 +176,9 @@ export function quickStartFailureKind(error: unknown): QuickStartFailureKind {
 
 function readSeed(value: unknown): QuickStartSeed | null {
   if (!value || typeof value !== 'object') return null;
-  const seed = value as { kind?: unknown; amount?: unknown; currency?: unknown; accountId?: unknown };
+  const seed = value as { kind?: unknown; amount?: unknown; currency?: unknown; accountId?: unknown; virtualCash?: unknown };
   if (seed.kind === 'none') return { kind: 'none' };
-  if (seed.kind === 'holdings') return { kind: 'holdings' };
+  if (seed.kind === 'holdings') return seed.virtualCash === undefined ? { kind: 'holdings' } : validVirtualCash(seed.virtualCash) ? { kind: 'holdings', virtualCash: seed.virtualCash } : null;
   if (seed.kind === 'cash' && typeof seed.amount === 'string' && typeof seed.currency === 'string' && ['USD', 'HKD', 'CNY'].includes(seed.currency)) return { kind: 'cash', amount: seed.amount, currency: seed.currency as 'USD' | 'HKD' | 'CNY' };
   if (seed.kind === 'existing' && typeof seed.accountId === 'string') return { kind: 'existing', accountId: seed.accountId };
   return null;
@@ -179,7 +199,9 @@ export function readStoredQuickStart(): StoredQuickStart | null {
     if (!keys || typeof keys !== 'object' || !progress || !Array.isArray(progress.steps)) return null;
     const slots = ['team', 'draft', 'publishPreview', 'publishConfirm', 'accountPreview', 'accountCreate', 'accountCompanion', 'bindingPreview', 'bindingConfirm'] as const;
     if (slots.some(slot => typeof keys[slot] !== 'string')) return null;
-    return { savedAt: value.savedAt, input: { ...input, seed }, keys, progress };
+    if (input.reviewedSeed && (typeof input.reviewedSeed.previewId !== 'string' || typeof input.reviewedSeed.requestKey !== 'string')) return null;
+    const received = value.receivedAccountReview;
+    return { savedAt: value.savedAt, input: { ...input, seed }, keys, progress, ...(typeof value.accountReviewKey === 'string' ? { accountReviewKey: value.accountReviewKey } : {}), ...(received && typeof received.requestKey === 'string' && typeof received.previewId === 'string' && typeof received.expiresAt === 'string' ? { receivedAccountReview: received } : {}) };
   } catch { return null; }
 }
 

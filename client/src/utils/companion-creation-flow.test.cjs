@@ -12,7 +12,7 @@ const { createRoot } = require('react-dom/client');
 const { MemoryRouter, useLocation } = require('react-router-dom');
 const fixture = require('./simple-test-loader.cjs');
 
-test('four starting points preview independently; a lost companion save retains the account and retries only that preference', async t => {
+for (const returnToTeam of [false, true]) test(`four starting points retain exact creation receipts and ${returnToTeam ? 'return the acknowledged account to team setup' : 'open the created account'}`, async t => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T16:00:00Z') });
   const f = fixture();
   const calls = [];
@@ -68,6 +68,7 @@ test('four starting points preview independently; a lost companion save retains 
   const Create = f.load('pages/Paper/CreateSimulationAccount.tsx').default;
   function Location() { return React.createElement('output', null, useLocation().pathname); }
   const root = createRoot(document.getElementById('root'));
+  const returnedAccounts = [];
   const button = text => [...document.querySelectorAll('button')].find(item => item.textContent === text);
   const change = async (input, value) => React.act(async () => {
     Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(input, value);
@@ -75,7 +76,7 @@ test('four starting points preview independently; a lost companion save retains 
   });
   try {
     await React.act(async () => root.render(React.createElement(MemoryRouter, { initialEntries: ['/paper?create=1'] },
-      React.createElement(Create, { onClose() {}, initialCompanionId: 'macro' }), React.createElement(Location))));
+      React.createElement(Create, { onClose() {}, initialCompanionId: 'macro', ...(returnToTeam ? { onCreated: id => returnedAccounts.push(id) } : {}) }), React.createElement(Location))));
     assert.match(document.body.textContent, /Create a simulation account/);
     assert.match(document.body.textContent, /Account style & seed/);
     await change(document.querySelector('input[placeholder]'), 'Fictional account');
@@ -121,7 +122,8 @@ test('four starting points preview independently; a lost companion save retains 
     assert.equal(companionCalls.length, 2);
     assert.deepEqual(companionCalls[0], companionCalls[1]);
     assert.equal(companionCalls[1][2].companionId, 'macro');
-    assert.equal(document.querySelector('output').textContent, '/paper/created-account');
+    assert.deepEqual(returnedAccounts, returnToTeam ? ['created-account'] : []);
+    assert.equal(document.querySelector('output').textContent, returnToTeam ? '/paper' : '/paper/created-account');
   } finally {
     await React.act(async () => root.unmount());
   }

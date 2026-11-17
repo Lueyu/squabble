@@ -30,7 +30,10 @@ const start = z.object({ additionalVirtualCash: z.object({ USD: z.number().finit
   sellableShares: z.record(z.string(), z.number().finite().nonnegative()).optional(), adoptAccountId: z.string().uuid().optional() }).strict();
 export const investmentRequests = {
   preview: z.discriminatedUnion('origin', [
-    z.object({ origin: z.literal('holdings'), requestKey }).strict(),
+    z.object({ origin: z.literal('holdings'), requestKey,
+      virtualCash: z.array(z.object({ currency: z.enum(['USD', 'HKD', 'CNY']), amount: z.number().finite().nonnegative().max(1e12) }).strict()).min(1).max(3)
+        .refine(value => new Set(value.map(cash => cash.currency)).size === value.length, 'Each currency can appear only once').optional(),
+    }).strict(),
     z.object({ origin: z.literal('cash'), cash: z.object({ amount: z.number().finite().positive().max(1e12), currency: z.enum(['USD', 'HKD', 'CNY']) }).strict(), requestKey }).strict(),
     z.object({ origin: z.literal('account'), sourceAccountId: z.string().uuid(), requestKey }).strict(),
     z.object({ origin: z.literal('custom'), requestKey,

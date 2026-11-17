@@ -203,8 +203,11 @@ test('session timeout closes an idle browser and returns a cleanup receipt', asy
   const f = await fixture(3, { timeoutMs: 1800 });
   try {
     const opened = await f.session.open(binding);
-    const deadline = Date.now() + 5000;
-    while (!f.session.receipts(binding.owner).length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    // Chromium can disconnect before its process and proxy have finished closing.
+    // Wait for natural cleanup, separately from the unchanged 1800ms session expiry.
+    const deadline = performance.now() + 20_000;
+    while (!f.session.receipts(binding.owner).length && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(f.session.receipts(binding.owner).at(-1)?.reason, 'timeout', 'Idle cleanup must finish and record its timeout receipt');
     assert.equal(f.browser()?.isConnected(), false);
     await assert.rejects(f.session.act(binding, opened.sessionId, { action: 'read' }), /BROWSER_SESSION_NOT_FOUND/u);
     assert.equal(f.session.receipts(binding.owner).at(-1)?.reason, 'timeout');

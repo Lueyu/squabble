@@ -24,7 +24,7 @@ export type RunCycleRow = typeof teamRunCycles.$inferSelect;
 export const activeCycleStates = ['reserved', 'researching', 'processing', 'uncertain'];
 export function agreementView(row: AgreementRow): TeamRunAgreement {
   return { ...row, state: row.state as TeamRunAgreement['state'], confirmedAt: row.confirmedAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
-    externalCostUnknown: row.configuration.budget.perRun.budgetMode === 'calls_only' || row.members.some(member => member.executor.executionMode !== 'model') };
+    externalCostUnknown: row.members.some(member => member.executor.executionMode !== 'model') };
 }
 export function cycleView(row: RunCycleRow): TeamRunCycle {
   return { ...row, state: row.state as TeamRunCycle['state'], createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
@@ -82,7 +82,8 @@ export class TeamRunService {
         if (guards[field] !== commission.guards[field]) teamError('TEAM_PREVIEW_STALE');
       return this.store.preview(tx, owner, team, 'run-agreement', { configuration: runConfiguration, accountId: commission.result.accountId, members: commission.result.members }, commission.guards,
         [...commission.warnings, { code: 'TEAM_RUN_REPLACES_COMBINATION', message: 'Every executable cycle replaces this paper account combination at the authorized allocation; user drafts are preserved.' },
-          ...(request.budget.perRun.budgetMode === 'calls_only' ? [{ code: 'TEAM_EXTERNAL_COST_UNKNOWN', message: 'External charges are unknown. Finite call limits and conservative monetary reservations apply; actual external fees cannot be guaranteed.' }] : [])]);
+          ...((commission.result.members as TeamMemberSnapshot[]).some(member => member.executor.executionMode !== 'model')
+            ? [{ code: 'TEAM_EXTERNAL_COST_UNKNOWN', message: 'External charges are unknown. Finite per-run calls apply; any chosen monetary cap cannot guarantee actual external fees.' }] : [])]);
     });
   }
   async confirm(owner: string, teamId: string, input: unknown) {

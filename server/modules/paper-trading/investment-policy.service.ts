@@ -111,7 +111,29 @@ export class InvestmentPolicyService {
     const [prior] = await this.db.select().from(investmentPreviews).where(and(eq(investmentPreviews.owner, owner), eq(investmentPreviews.requestKey, request.requestKey)));
     if (prior) { if (prior.requestHash !== hash) throw new ConflictException('REQUEST_KEY_CONFLICT'); return this.previewView(prior); }
     let seed: SimulationSeed; let sourcePreviewId: string | null = null;
-    if (request.origin === 'holdings') { const source = await this.simulations.preview(owner); seed = source.seed; sourcePreviewId = source.id; }
+    if (request.origin === 'holdings') {
+      const source = await this.simulations.preview(owner);
+      seed = structuredClone(source.seed);
+      sourcePreviewId = source.id;
+      if (request.virtualCash) {
+        // Keep the real snapshot identity and original cash for source-change checks.
+        // Only the independent paper ledger receives these reviewed virtual balances.
+        seed.copiedCash = seed.cash.map(cash => ({ currency: cash.currency, total: cash.total }));
+        seed.virtualCash = request.virtualCash;
+        const cashSeeds = await Promise.all(request.virtualCash.map(cash => this.simulations.previewCash(owner, cash.currency, cash.amount)));
+        seed.cash = cashSeeds.flatMap(cash => cash.cash);
+        for (const cashSeed of cashSeeds) for (const rate of cashSeed.fx) {
+          seed.fx = [...seed.fx.filter(previous => previous.currency !== rate.currency), rate];
+        }
+        seed.gaps = seed.gaps.filter(gap => !/^(CASH_UNKNOWN|CASH_AVAILABILITY_UNKNOWN)/u.test(gap)
+          && !(gap.startsWith('FX_MISSING:') && seed.fx.some(rate => gap === `FX_MISSING:${rate.currency}`)));
+        seed.gaps = [...new Set([...seed.gaps, ...cashSeeds.flatMap(cash => cash.gaps)])];
+        const rate = (currency: string) => Number(seed.fx.find(item => item.currency === currency)?.rate ?? 0);
+        const incomplete = seed.gaps.some(gap => /^(QUOTE_MISSING|FX_MISSING|INSTRUMENT_UNKNOWN|NEGATIVE_OR_INVALID)/u.test(gap));
+        seed.initialEquityUsd = incomplete ? null : String(seed.positions.reduce((sum, position) => sum + Number(position.shares) * Number(position.initialPrice) * rate(position.currency), 0)
+          + seed.cash.reduce((sum, cash) => sum + Number(cash.total) * rate(cash.currency), 0));
+      }
+    }
     else if (request.origin === 'account') seed = await this.simulations.previewAccount(owner, request.sourceAccountId);
     else if (request.origin === 'custom') seed = await this.simulations.previewCustom(
       request.holdings.map(holding => ({ ...holding, ticker: holding.ticker ?? '' })), request.cash);
@@ -129,7 +151,7 @@ export class InvestmentPolicyService {
   }
   private previewView(row: typeof investmentPreviews.$inferSelect) {
     const needsInput = row.seed.gaps.filter(g => /^(CASH_UNKNOWN|CASH_AVAILABILITY_UNKNOWN|SELLABILITY_UNKNOWN|QUOTE_MISSING|FX_MISSING|INSTRUMENT_UNKNOWN|NEGATIVE_OR_INVALID)/u.test(g));
-    if (row.origin === 'holdings' && !row.seed.positions.length) needsInput.push('IMPORT_HOLDINGS_OR_CHOOSE_CASH');
+    if (row.origin === 'holdings' && !row.seed.positions.length && !row.seed.virtualCash?.some(cash => cash.amount > 0)) needsInput.push('IMPORT_HOLDINGS_OR_CHOOSE_CASH');
     return { id: row.id, previewId: row.id, seed: row.seed, sourceRevision: row.seed.sourceRevision, expiresAt: row.expiresAt.toISOString(), needsInput,
       markets: [...new Set(row.seed.positions.map(p => p.market))], limits: DEFAULT_INVESTMENT_CONFIG.limits, budget: DEFAULT_INVESTMENT_CONFIG.budget,
       inheritedConcentration: row.seed.positions.filter(p => Number(p.shares) * Number(p.initialPrice) * Number(row.seed.fx.find(f => f.currency === p.currency)?.rate ?? 0) > Number(row.seed.initialEquityUsd) * 0.1).map(p => p.ticker) };
@@ -175,7 +197,7 @@ export class InvestmentPolicyService {
         for (const position of seed.positions) { position.sellableShares = position.shares; position.restriction = 'Opening simulated inventory'; }
         seed.gaps = seed.gaps.filter(g => !g.startsWith('SELLABILITY_UNKNOWN:'));
         for (const cash of seed.cash) if (request.confirmOpeningCash || cash.availabilityKnown) { cash.available = cash.total; cash.frozen = '0'; cash.availabilityKnown = true; }
-        seed.copiedCash = seed.cash.map(cash => ({ currency: cash.currency, total: cash.total }));
+        seed.copiedCash ??= seed.cash.map(cash => ({ currency: cash.currency, total: cash.total }));
         for (const [currency, amount] of Object.entries(request.additionalVirtualCash ?? {})) {
           if (!amount) continue;
           const cash = seed.cash.find(item => item.currency === currency);

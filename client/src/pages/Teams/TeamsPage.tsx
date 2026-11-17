@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { FolderTree, Plus, Search, UsersRound } from 'lucide-react';
 import type { TeamSummary } from '@shared/team-workspace.interface';
+import type { AiInvestmentPreview } from '@shared/investment-policy.interface';
 import { teamKeys, teamsApi } from '@/api/teams';
 import { portfolioWorkspaceApi, portfolioWorkspaceKeys } from '@/api/portfolio-workspace';
 import { Button } from '@/components/ui/button';
@@ -16,17 +17,19 @@ import { TeamCreateDialog, readTeamCreationDraft, type TeamCreationDraft } from 
 import { teamCostLabel } from '@/features/teams/team-commission-state';
 import { quickStartStepLabel } from '@/features/teams/team-quick-start';
 import { useTeamQuickStart, type QuickStartRunState } from '@/features/teams/use-team-quick-start';
+import { TeamAccountReviewRecovery } from '@/features/teams/TeamAccountReviewRecovery';
 import '@/features/teams/teams.css';
 
-function QuickStartPanel({ state, zh, onContinue, onBackToForm, onLater }: { state: QuickStartRunState; zh: boolean; onContinue: () => void; onBackToForm: () => void; onLater: () => void }) {
+function QuickStartPanel({ state, zh, onContinue, onBackToForm, onLater, onReviewSeed, onConfirmSeed }: { state: QuickStartRunState; zh: boolean; onContinue: () => void; onBackToForm: () => void; onLater: () => void; onReviewSeed: () => Promise<AiInvestmentPreview>; onConfirmSeed: (preview: AiInvestmentPreview) => void }) {
   const states = { done: zh ? '已完成' : 'Done', running: zh ? '进行中…' : 'Running…', failed: zh ? '未完成' : 'Failed', pending: zh ? '等待中' : 'Pending' } as const;
+  const needsSeedReview = Boolean(state.input?.reviewedSeed && state.failureKind === 'recoverable-preview' && state.progress?.steps.some(step => step.id === 'account' && step.state === 'failed'));
   return <div className="team-quick-progress" aria-live="polite">
     <p className="team-muted team-small">{zh ? '快速开始按你确认的选项执行：创建团队、发布模板配置、准备并关联模拟盘。已完成的步骤不会重复执行，本过程不调用模型。' : 'Quick start follows your reviewed choices: create the team, publish the template configuration, prepare and link the simulation account. Completed steps never rerun and no model is called.'}</p>
     <ol>{(state.progress?.steps ?? []).map(step => <li key={step.id} className={`is-${step.state}`}><span>{quickStartStepLabel(step.id, zh)}</span><span>{states[step.state]}</span></li>)}</ol>
     {state.status === 'running' && <p role="status">{zh ? '正在执行，请保持此窗口打开…' : 'Running; keep this window open…'}</p>}
-    {state.status === 'failed' && <TeamNotice error><p>{state.message}</p><div className="team-inline-actions">{state.failureKind === 'rejected'
+    {state.status === 'failed' && <TeamNotice error><p>{state.message}</p>{needsSeedReview && <TeamAccountReviewRecovery zh={zh} read={onReviewSeed} confirm={onConfirmSeed} />}<div className="team-inline-actions">{state.failureKind === 'rejected' && (!state.input?.reviewedSeed || !state.progress?.teamId)
       ? <Button variant="outline" onClick={onBackToForm}>{zh ? '返回修改选项' : 'Back to the options'}</Button>
-      : <><Button onClick={onContinue}>{zh ? '继续完成剩余步骤' : 'Continue the remaining steps'}</Button><Button variant="ghost" onClick={onLater}>{zh ? '稍后继续' : 'Continue later'}</Button></>}</div></TeamNotice>}
+      : <>{!needsSeedReview && <Button onClick={onContinue}>{zh ? '继续完成剩余步骤' : 'Continue the remaining steps'}</Button>}<Button variant="ghost" onClick={onLater}>{zh ? '稍后继续' : 'Continue later'}</Button>{state.progress?.teamId && <Button asChild variant="outline"><Link to={`/teams/${encodeURIComponent(state.progress.teamId)}?panel=overview`}>{zh ? '查看已创建的团队' : 'View the created team'}</Link></Button>}</>}</div></TeamNotice>}
   </div>;
 }
 
@@ -36,7 +39,7 @@ function TeamCard({ team, accountName, executionStatus, zh, copy, remove, canRem
 
 export function TeamsPage() {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
-  const navigate = useNavigate(); const [params, setParams] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? ''; const filter = ['published', 'draft', 'unbound', 'archived'].includes(params.get('filter') ?? '') ? params.get('filter')! : 'all';
   const filters = { q, filter: filter === 'archived' ? 'all' : filter, status: filter === 'archived' ? 'archived' : 'active', limit: 30 };
   const list = useInfiniteQuery({ queryKey: teamKeys.list(filters), initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => teamsApi.list({ ...filters, cursor: pageParam }), getNextPageParam: page => page.nextCursor || undefined, retry: false });
@@ -48,7 +51,7 @@ export function TeamsPage() {
   const accounts = useQuery({ queryKey: portfolioWorkspaceKeys.accounts, queryFn: portfolioWorkspaceApi.accounts, retry: false });
   const items = list.data?.pages.flatMap(page => page.items) ?? [];
   const knownAccountIds = new Set((accounts.data ?? []).map(account => account.id));
-  const openCreate = (source?: TeamSummary): void => { setCopySource(source ?? null); setCreating(true); };
+  const openCreate = (source?: TeamSummary): void => { if (quick.resumable) { setCreating(true); quick.resume(knownAccountIds); return; } setCopySource(source ?? null); setCreating(true); };
   const resumeQuickStart = (): void => { setCreating(true); quick.resume(knownAccountIds); };
   const quickActive = quick.state.status !== 'idle';
   const updateFilter = (key: string, value: string): void => { const next = new URLSearchParams(params); if (value && value !== 'all') next.set(key, value); else next.delete(key); setParams(next, { replace: true }); };
@@ -58,10 +61,10 @@ export function TeamsPage() {
     {list.isPending && <p role="status">{zh ? '正在读取团队…' : 'Loading teams…'}</p>}{list.isError && <TeamLoadError zh={zh} retry={() => void list.refetch()} message={friendlyError(list.error, zh, { zh: '团队列表读取失败', en: 'Could not load teams' })} />}
     {list.data && !items.length && <div className="team-empty"><span className="team-empty-icon"><FolderTree size={42} /></span><h2>{q || filter !== 'all' ? (zh ? '没有匹配的团队' : 'No matching teams') : (zh ? '你的研究团队，从这里开始' : 'Your research team starts here')}</h2><p>{zh ? '从空白、现有配置或研究启发的模板开始。组织配置不会发起研究或交易。' : 'Start from a blank canvas, a published configuration or a research-inspired template. Configuration never initiates research or trading.'}</p><Button onClick={() => openCreate()} disabled={list.data.pages[0].capabilities.workspaceEnabled === false}><Plus size={16} />{zh ? '创建第一个团队' : 'Create your first team'}</Button></div>}
     {creationRecovery && <TeamNotice><p>{zh ? '此浏览器会话保留了未完成的团队输入。' : 'This browser session retained an unfinished team draft.'}</p><div className="team-inline-actions"><Button variant="outline" onClick={() => openCreate()}>{zh ? '恢复新建输入' : 'Restore creation draft'}</Button><Button variant="ghost" onClick={() => { window.sessionStorage.removeItem('squabble.team-create'); setCreationRecovery(null); }}>{zh ? '放弃输入' : 'Discard input'}</Button></div></TeamNotice>}
-    {quick.resumable && quick.state.status !== 'running' && !creating && <TeamNotice><p>{zh ? '有一个未完成的团队快速开始，已完成的步骤不会重复执行。' : 'An unfinished team quick start exists; completed steps will not rerun.'}</p><div className="team-inline-actions"><Button variant="outline" onClick={resumeQuickStart}>{zh ? '继续完成' : 'Continue'}</Button><Button variant="ghost" onClick={quick.reset}>{zh ? '放弃快速开始' : 'Discard quick start'}</Button></div></TeamNotice>}
+    {quick.resumable && quick.state.status !== 'running' && !creating && <TeamNotice><p>{zh ? '有一个未完成的团队快速开始，已完成的步骤不会重复执行。' : 'An unfinished team quick start exists; completed steps will not rerun.'}</p><div className="team-inline-actions"><Button variant="outline" onClick={resumeQuickStart}>{zh ? '继续完成' : 'Continue'}</Button>{!quick.resumableInput?.reviewedSeed && <Button variant="ghost" onClick={quick.reset}>{zh ? '放弃快速开始' : 'Discard quick start'}</Button>}</div></TeamNotice>}
     <div className="team-card-grid">{items.map(team => <TeamCard key={team.id} team={team} accountName={accounts.data?.find(account => account.id === team.accountId)?.name} executionStatus={accounts.data?.find(account => account.id === team.accountId)?.status} zh={zh} copy={openCreate} remove={setRemovingTeam} canRemove={list.data?.pages[0]?.capabilities.workspaceEnabled !== false} />)}</div>{list.hasNextPage && <Button variant="outline" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{zh ? '加载更多团队' : 'Load more teams'}</Button>}
     {removingTeam && <TeamRemovalDialog team={removingTeam} open close={() => setRemovingTeam(null)} committed={() => { setRemovingTeam(null); void list.refetch(); }} zh={zh} online={typeof window === 'undefined' || window.navigator.onLine} />}
-    {quickActive ? <Dialog open={creating} onOpenChange={open => { if (quick.state.status !== 'running') setCreating(open); }}><DialogContent className="team-dialog team-create-dialog"><DialogHeader><DialogTitle>{zh ? '继续团队快速开始' : 'Resume the team quick start'}</DialogTitle><DialogDescription>{zh ? '快速开始会复用已确认的选项继续完成剩余步骤。' : 'Quick start reuses the reviewed options and completes the remaining steps.'}</DialogDescription></DialogHeader><QuickStartPanel state={quick.state} zh={zh} onContinue={() => quick.resume(knownAccountIds)} onBackToForm={() => { quick.reset(); setCreating(false); }} onLater={() => setCreating(false)} /><div className="team-dialog-actions"><Button variant="outline" onClick={() => setCreating(false)}>{zh ? '关闭' : 'Close'}</Button></div></DialogContent></Dialog> : <TeamCreateDialog open={creating} onOpenChange={open => { setCreating(open); if (!open) setCopySource(null); }} teams={items} recovery={creationRecovery} copyFrom={copySource} onCreated={id => { setCreationRecovery(null); setCopySource(null); navigate(`/teams/${encodeURIComponent(id)}?panel=organization`); }} />}
+    {quickActive ? <Dialog open={creating} onOpenChange={open => { if (quick.state.status !== 'running') setCreating(open); }}><DialogContent className="team-dialog team-create-dialog"><DialogHeader><DialogTitle>{zh ? '继续团队快速开始' : 'Resume the team quick start'}</DialogTitle><DialogDescription>{zh ? '快速开始会复用已确认的选项继续完成剩余步骤。' : 'Quick start reuses the reviewed options and completes the remaining steps.'}</DialogDescription></DialogHeader><QuickStartPanel state={quick.state} zh={zh} onReviewSeed={quick.refreshSeedReview} onConfirmSeed={preview => quick.resumeWithSeedReview(preview, knownAccountIds)} onContinue={() => quick.resume(knownAccountIds)} onBackToForm={() => { quick.reset(); setCreating(false); }} onLater={() => setCreating(false)} /><div className="team-dialog-actions"><Button variant="outline" onClick={() => setCreating(false)}>{zh ? '关闭' : 'Close'}</Button></div></DialogContent></Dialog> : <TeamCreateDialog open={creating} onOpenChange={open => { setCreating(open); if (!open) setCopySource(null); }} teams={items} recovery={creationRecovery} copyFrom={copySource} onCreate={input => { setCreationRecovery(null); setCopySource(null); quick.run(input, knownAccountIds); }} />}
   </section>;
 }
 export default TeamsPage;

@@ -13,7 +13,7 @@ export const teamRunCycles = pgTable('team_run_cycles', {
   id: uuid('id').primaryKey().defaultRandom(), ownerId: text('owner_id').notNull(), teamId: uuid('team_id').notNull(), agreementId: uuid('agreement_id').notNull(),
   agreementRevision: integer('agreement_revision').notNull(), tradingDate: text('trading_date').notNull(), state: text('state').notNull(),
   commissionId: uuid('commission_id'), reportVersionId: uuid('report_version_id'), decisionId: uuid('decision_id'), strategyId: uuid('strategy_id'), policyRevision: integer('policy_revision'),
-  reservedCostUsd: numeric('reserved_cost_usd', { precision: 24, scale: 8 }).notNull(), reservedCalls: integer('reserved_calls').notNull(), lastError: text('last_error'),
+  reservedCostUsd: numeric('reserved_cost_usd', { precision: 24, scale: 8 }), reservedCalls: integer('reserved_calls').notNull(), lastError: text('last_error'),
   leaseOwner: text('lease_owner'), leaseUntil: timestamp('lease_until', { withTimezone: true, precision: 3 }), createdAt: time('created_at'), updatedAt: time('updated_at'),
 }, t => [uniqueIndex('team_run_cycles_date_idx').on(t.agreementId, t.tradingDate), uniqueIndex('team_run_cycles_commission_idx').on(t.commissionId),
   uniqueIndex('team_run_cycles_active_idx').on(t.agreementId).where(sql`state IN ('reserved','researching','processing','uncertain')`),

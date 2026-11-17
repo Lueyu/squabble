@@ -3,13 +3,49 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { fxRates, paperAccounts, paperPositions, paperTrades } from '../../database/schema';
+import { cashAccounts, fxRates, holdings, paperAccounts, paperPositions, paperTrades } from '../../database/schema';
 import { simulationCash, simulationSeeds } from '../../database/simulation-experiments.schema';
 import { InvestmentPolicyService } from './investment-policy.service';
 import { SimulationExperimentsService } from './simulation-experiments.service';
 import { investmentFixture } from './investment-test.fixture';
 import { simulationMarketFixture } from './simulation-market.fixture';
 import { resolveTradingTicker } from '../../../shared/trading-market.interface';
+
+test('team seeds copy owned real positions and use reviewed virtual cash in three currencies without changing the real ledger', async () => {
+  await investmentFixture(async (db, _sql, owner) => {
+    const day = new Date().toISOString().slice(0, 10);
+    await db.insert(fxRates).values([
+      { base: 'HKD', quote: 'USD', rate: '0.125', rateDate: day },
+      { base: 'CNY', quote: 'USD', rate: '0.14', rateDate: day },
+    ]);
+    await db.insert(holdings).values({ owner, ticker: 'AAPL', shares: '10', buyPrice: '80', currentPrice: '100', market: 'US', currency: 'USD' });
+    await db.insert(cashAccounts).values({ owner, currency: 'USD', balance: '98765', reconciliationStatus: 'confirmed' });
+    const simulations = new SimulationExperimentsService(db, {} as never, { convert: async (_amount: number, currency: string) => currency === 'HKD' ? 0.125 : 0.14 } as never,
+      undefined, { getSnapshot: async () => simulationMarketFixture({ price: '100', market: 'US', currency: 'USD', timestamp: Date.now() }) } as never);
+    const policies = new InvestmentPolicyService(db, simulations);
+    const input = { origin: 'holdings', requestKey: randomUUID(), virtualCash: [
+      { currency: 'CNY', amount: 10000 }, { currency: 'USD', amount: 10000 }, { currency: 'HKD', amount: 10000 },
+    ] };
+    const preview = await policies.preview(owner, input);
+    assert.equal(preview.seed.positions[0].shares, '10');
+    assert.deepEqual(Object.fromEntries(preview.seed.cash.map(c => [c.currency, c.total])), { CNY: '10000', USD: '10000', HKD: '10000' });
+    assert.deepEqual(preview.seed.copiedCash, [{ currency: 'USD', total: '98765' }]);
+    assert.equal(Number(preview.seed.initialEquityUsd), 13650);
+    assert.deepEqual(await policies.preview(owner, input), preview);
+    await assert.rejects(policies.preview(owner, { ...input, virtualCash: [{ currency: 'USD', amount: 1 }] }), /REQUEST_KEY_CONFLICT/);
+    const create = { name: 'Team cash fixture', previewId: preview.id, requestKey: randomUUID() };
+    const account = await policies.createAccount(owner, create);
+    assert.equal((await policies.createAccount(owner, create)).accountId, account.accountId);
+    assert.equal((await db.select().from(paperPositions).where(eq(paperPositions.accountId, account.accountId)))[0].shares, '10');
+    assert.deepEqual(Object.fromEntries((await db.select().from(simulationCash).where(eq(simulationCash.accountId, account.accountId))).map(c => [c.currency, c.available])), { CNY: '10000', USD: '10000', HKD: '10000' });
+    assert.equal((await db.select().from(cashAccounts).where(eq(cashAccounts.owner, owner)))[0].balance, '98765');
+    assert.equal((await db.select().from(holdings).where(eq(holdings.owner, owner)))[0].shares, '10');
+    assert.equal((await db.select().from(paperTrades)).length, 0);
+    const stale = await policies.preview(owner, { ...input, requestKey: randomUUID() });
+    await db.update(holdings).set({ shares: '11' }).where(eq(holdings.owner, owner));
+    await assert.rejects(policies.createAccount(owner, { name: 'Stale fixture', previewId: stale.id, requestKey: randomUUID() }), /SOURCE_CHANGED_REPREVIEW/);
+  });
+});
 
 test('copy and custom seeds freeze current mixed-currency balances without changing the source or fabricating trades', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-03T16:00:00Z') });

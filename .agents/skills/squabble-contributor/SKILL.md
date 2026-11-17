@@ -57,6 +57,8 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 
 ## Agent 运行分析
 
+自动团队启动排查先看 `TeamRunPanel.tsx` 的运行状态与可执行前置步骤，再看成员是否固定股友版本、团队是否发布及模拟账户是否关联。创建后从运行概览完成配员、发布与账户设置；账户创建回到同一关联检查。运行规则先取得服务端预览再确认。协议可固定 `initialRun: immediate`，首轮沿原持久周期运行；旧协议缺省保持定时，暂停/恢复或重启不重复首轮。后续收盘后研究和模拟策略调度保持分离，已应用策略不代表已成交。每个新团队准备独立模拟账户；研究金额、每日/每月调用预算默认null不设上限，可设置日金额上限，单轮调用仍有限。迁移68允许费用预留NULL表示未限定，后来有限预算不能把此前未知费用当零。实际启用沿用用户明确确认的账户和协议，测试使用隔离数据与假提供方。
+
 `/telemetry` 提供总览、成员比较、运行列表、Trace 与反馈/质量视图；`shared/telemetry.interface.ts` 定义未知值与统计口径。`server/modules/telemetry/` 读取所属用户来源并尊重删除墓碑，迁移52持久化观测元数据和反馈。模型/本地助手/工具的采集不改变执行结果。Langfuse 默认不启用，只有显式配置后导出元数据；不得将提示词、回答、持仓或密钥写入导出。详见 `docs/agent-telemetry.md`；使用临时 `TELEMETRY_TEST_DATABASE_URL` 运行 `npm run test:telemetry`，浏览界面不能触发研究。
 
 本地 Agent 诊断通过 `shared/telemetry-diagnostics.interface.ts` 分别表达进程证据、公开活动、结果验收和发布状态；认证快照读取持续复验 owner 与来源可见性。`server/local-agents/` 和 Companion 只传固定安全元数据，runtime handoff 不代表 CLI 已启动。静默、缺失或截断的历史不能推断成失败或完整链路，诊断页不能隐式恢复或重新派发任务。
@@ -67,6 +69,6 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 
 列表卡片和详情常用入口的“移除团队”复用归档预览/确认，固定`pause_all`并明确保留账户、成交、报告及版本，可在已归档查看。`team-version.service.ts`在同一事务复核运行协议快照、暂停协议并记修订、取消未派发周期；`team-run.service.ts`对旧暂停/对账复核当前绑定，不能影响接手团队。高级归档显式保留已确认规则的兼容入口保留，但团队自动研究协议也停止。比例调整集中在`client/src/workspace-density.css`，研究室由`Layout.tsx`的专用pane填充剩余高度。验证与截图见`docs/compact-ui-team-removal.md`。
 
-`/teams` 新建使用统一组织选择器，提供11种模板；`/teams/:id?panel=organization`共享目录、画布和响应式属性编辑，显式`view=canvas|list`保留视图选择。指派股友只改草稿，新建与结构预览不自动发布、关联账户或发起研究。统一资产页使用 `/holdings?accountId=real|id`。保留的模板快速开始编排位于 `client/src/features/teams/team-quick-start.ts` 与 `use-team-quick-start.ts`，保留旧请求的逐步幂等与断点恢复，不调用模型。`team-work-blueprint.ts`将岗位、依赖与复核编译为既有Council任务；结构预览只读，正式委托仍冻结版本与授权。界面修复与验收见`docs/team-organization-redesign/ui-repair-plan.zh-CN.md`。迁移61新增组织/布局独立修订、不可变团队版本、唯一有效绑定、预览/幂等回执、有限手动委托、来源授权与精确决定关联；已有Council执行workKey DAG，不另建模型引擎。团队私有召回、工具、最终发布与记忆写入沿可信team context检查，历史普通入口不能省scope绕过。采纳不应用策略，teamDecisionRefs随原组合preview/apply及signal/order/trade传递。测试、启用开关及真实剩余限制见 `docs/team-workspace.md` 与 `docs/team-workspace-validation.md`。
+`/teams` 新建使用统一组织选择器，提供11种模板。每次核对实仓持仓快照和可编辑的人民币、美元、港币各10,000虚拟现金，再创建独立模拟盘；不复制实仓现金，不修改实仓账本。预览过期或实仓变化时保留已建团队和回执，重新核对起点；未知响应沿原key恢复。`/teams/:id?panel=organization`共享目录、画布和响应式属性编辑，显式`view=canvas|list`保留视图选择。指派股友只改草稿；创建编排使用已核对起点创建账户及发布/关联，空白组织也发布真实的初始空结构并关联账户，配员后重新发布才能启动。结构预览不发起研究。统一资产页使用 `/holdings?accountId=real|id`。保留的模板快速开始编排位于 `client/src/features/teams/team-quick-start.ts` 与 `use-team-quick-start.ts`，保留旧请求的逐步幂等与断点恢复，不调用模型。`team-work-blueprint.ts`将岗位、依赖与复核编译为既有Council任务；结构预览只读，正式委托仍冻结版本与授权。界面修复与验收见`docs/team-organization-redesign/ui-repair-plan.zh-CN.md`。迁移61新增组织/布局独立修订、不可变团队版本、唯一有效绑定、预览/幂等回执、有限手动委托、来源授权与精确决定关联；已有Council执行workKey DAG，不另建模型引擎。团队私有召回、工具、最终发布与记忆写入沿可信team context检查，历史普通入口不能省scope绕过。采纳不应用策略，teamDecisionRefs随原组合preview/apply及signal/order/trade传递。测试、启用开关及真实剩余限制见 `docs/team-workspace.md` 与 `docs/team-workspace-validation.md`。
 
 岗位来源权限与本次work/复核/依赖输入取交集，不能把团队所有grant并给每人；共享记忆和工具上下文同样受接收范围约束。Team报告的用户派生版不继承原采纳，message策略必须绑定已接受的确切工作尝试。用户后续论点复核与原Agent迟到发布分开：前者保留历史归属并复验当前来源，不能因原期限结束阻止驳回/到期/排除；后者仍严格按冻结期限与授权验收。

@@ -2517,3 +2517,8 @@ CREATE TABLE IF NOT EXISTS portfolio_valuation_claims (
   lease_until timestamptz NOT NULL, completed boolean NOT NULL DEFAULT false
 );
 CREATE UNIQUE INDEX IF NOT EXISTS portfolio_valuation_claim_slot ON portfolio_valuation_claims(owner, account_key, slot);
+
+-- 68_team_run_unbounded_budget.sql
+-- An unset monetary cap is unknown, never a zero-cost reservation.
+-- Existing positive reservations and every finite per-run call limit remain unchanged.
+ALTER TABLE team_run_cycles ALTER COLUMN reserved_cost_usd DROP NOT NULL;

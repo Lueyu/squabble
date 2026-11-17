@@ -2,13 +2,16 @@ import type { ResearchSourceRef, TeamBudget, TeamMemberSnapshot, TeamPreview } f
 import type { TradingMarket } from './trading-market.interface';
 
 export interface TeamRunBudget {
-  perRun: TeamBudget & { ceiling: { amount: string; currency: 'USD' } };
-  daily: { costUsd: string; calls: number };
-  monthly: { costUsd: string; calls: number };
+  perRun: TeamBudget & { ceiling: { amount: string | null; currency: 'USD' } };
+  /** Null explicitly leaves this aggregate limit unset; every individual research run remains finite. */
+  daily: { costUsd: string | null; calls: number | null };
+  monthly: { costUsd: string | null; calls: number | null };
 }
 export interface TeamRunAgreementInput {
   requestKey: string; teamVersionId: string; bindingId: string; expectedBindingRevision: number;
   objective: string; market: TradingMarket; cadence?: { kind: 'after_close'; delayMinutes: number };
+  /** Research once at startup, then follow cadence. Omitted on legacy agreements means scheduled. */
+  initialRun?: 'immediate' | 'scheduled';
   budget: TeamRunBudget; replacementPolicy: { kind: 'replace_combination'; allocationPct: number };
   inputRefs: ResearchSourceRef[];
 }
@@ -29,7 +32,7 @@ export interface TeamRunCycle {
   id: string; agreementId: string; agreementRevision: number; tradingDate: string;
   state: TeamRunCycleState; commissionId: string | null; reportVersionId: string | null;
   decisionId: string | null; strategyId: string | null; policyRevision: number | null;
-  reservedCostUsd: string; reservedCalls: number; lastError: string | null;
+  reservedCostUsd: string | null; reservedCalls: number; lastError: string | null;
   createdAt: string; updatedAt: string;
 }
 export interface TeamRunStatus { agreement: TeamRunAgreement | null; recentCycles: TeamRunCycle[] }

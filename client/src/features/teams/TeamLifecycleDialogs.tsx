@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { Check, ShieldCheck } from 'lucide-react';
 import type { TeamDetail, TeamExecutionChoice, TeamPreview } from '@shared/team-workspace.interface';
 import { teamKeys, teamsApi } from '@/api/teams';
@@ -43,7 +42,8 @@ export function TeamPublishDialog({ team, open, close, committed, zh, online }: 
     </DialogContent></Dialog>;
 }
 
-export function TeamBindingDialog({ team, open, close, committed, zh, online, initialAccountId = '' }: { team: TeamDetail; open: boolean; close: () => void; committed: (team: TeamDetail) => void; zh: boolean; online: boolean; initialAccountId?: string }) {
+export function TeamBindingDialog({ team, open, close, committed, zh, online, initialAccountId = '', AccountCreator }: { team: TeamDetail; open: boolean; close: () => void; committed: (team: TeamDetail) => void; zh: boolean; online: boolean; initialAccountId?: string; AccountCreator: ComponentType<{ onClose: () => void; onCreated: (accountId: string) => void }> }) {
+  const [creatingAccount, setCreatingAccount] = useState(false);
   const [accountId, setAccountId] = useState(initialAccountId); const [choice, setChoice] = useState<TeamExecutionChoice | ''>(''); const [ack, setAck] = useState(false); const [preview, setPreview] = useState<TeamPreview | null>(null); const [released, setReleased] = useState(false); const key = useRef('');
   const choiceTouched = useRef(false);
   const expired = usePreviewExpired(preview);
@@ -57,11 +57,16 @@ export function TeamBindingDialog({ team, open, close, committed, zh, online, in
     return teamsApi.bindingPreview(team.id, { requestKey: crypto.randomUUID(), action, accountId: target, teamVersionId: team.currentVersionId, expectedBindingRevision: team.bindingRevision, expectedAccountBindingId: existing?.id ?? team.binding?.id ?? null, executionChoice: choice, acknowledgePendingReapproval: true });
   }, onSuccess: value => { setPreview(value); key.current = crypto.randomUUID(); setAck(false); } });
   const confirm = useMutation({ retry: false, mutationFn: async () => { if (!preview) throw new Error('Preview required'); if (confirm.isError) await teamsApi.detail(team.id); return teamsApi.binding(team.id, { requestKey: key.current, previewId: preview.previewId, previewHash: preview.previewHash }); }, onSuccess: value => { committed(value.team); setPreview(null); setAck(false); setChoice(''); if (action === 'release') setReleased(true); else close(); } });
-  useEffect(() => { if (open) { setAccountId(initialAccountId); setReleased(false); setPreview(null); setChoice(''); choiceTouched.current = false; setAck(false); prepare.reset(); confirm.reset(); } }, [open]);
+  useEffect(() => { if (open) { setCreatingAccount(false); setAccountId(initialAccountId); setReleased(false); setPreview(null); setChoice(''); choiceTouched.current = false; setAck(false); prepare.reset(); confirm.reset(); } }, [open]);
   // A brand-new account has no confirmed rules, so continuing them is a disclosed no-op default; any explicit user choice wins.
   useEffect(() => { if (open && action === 'assign' && !choiceTouched.current && !choice && accountId && selectedAccount && selectedAccount.strategyCount === 0) setChoice('keep_confirmed_rules'); }, [open, action, choice, accountId, selectedAccount]);
   const change = (callback: () => void): void => { callback(); setPreview(null); setAck(false); };
   const inflightComplete = preview !== null && readInflightCommissions(preview.result) !== null;
+  if (open && creatingAccount) return <AccountCreator onClose={() => setCreatingAccount(false)} onCreated={id => {
+    change(() => { setAccountId(id); setChoice(''); choiceTouched.current = false; });
+    setCreatingAccount(false);
+    void accounts.refetch();
+  }} />;
   return <Dialog open={open} onOpenChange={value => { if (!value && !confirm.isPending) close(); }}><DialogContent className="team-dialog"><DialogHeader><DialogTitle>{action === 'release' ? (zh ? '第一步：解除当前关联' : 'Step 1: release current account') : (zh ? '关联模拟账户' : 'Link a simulation account')}</DialogTitle><DialogDescription>{zh ? '一队一个当前账户。跨账户切换须先解除，再独立确认新关联；历史研究和成绩不会迁移。' : 'A team has one current account. Switching accounts requires release followed by a separate assignment. Historical research and performance never move.'}</DialogDescription></DialogHeader>
       {released && !team.binding && <TeamNotice>{zh ? '旧关联已解除，团队目前未关联账户。现在可单独选择并确认新关联；第二步失败也保持未关联。' : 'The previous account was released. The team is currently unlinked. Confirm a new assignment separately; a failed assignment leaves it unlinked.'}</TeamNotice>}
       <TeamKeyValue label={zh ? '当前账户' : 'Current account'}>{accounts.data?.find(account => account.id === team.accountId)?.name ?? team.accountId ?? (zh ? '未关联' : 'Unlinked')}</TeamKeyValue>
@@ -72,7 +77,7 @@ export function TeamBindingDialog({ team, open, close, committed, zh, online, in
       {(accounts.isError || teams.isError) && <TeamNotice error><p>{zh ? '账户或当前绑定读取失败，请先重读。' : 'Could not read accounts or active bindings.'}</p><Button variant="outline" onClick={() => { void accounts.refetch(); void teams.refetch(); }}>{zh ? '重试读取' : 'Retry reading'}</Button></TeamNotice>}
       {preview && <><TeamInflightCommissions result={preview.result} zh={zh} kind="binding" teams={teams.data?.items} accounts={accounts.data} close={close} /><PreviewReview preview={preview} zh={zh} /><label className="team-check-row"><Checkbox checked={ack} disabled={!inflightComplete} onCheckedChange={value => setAck(value === true)} />{zh ? '我已核对在途委托、待审提案与规则处理清单，确认本步交接。' : 'I reviewed active work, pending proposals and rule handling and confirm this handoff step.'}</label></>}
       {(prepare.isError || confirm.isError) && <TeamNotice error>{friendlyError(prepare.error || confirm.error, zh, { zh: '交接未确认，当前关联以服务器状态为准。', en: 'Handoff was not confirmed. Check the current server binding.' })}</TeamNotice>}
-      <div className="team-dialog-actions"><Button variant="outline" onClick={close} disabled={confirm.isPending}>{zh ? '关闭' : 'Close'}</Button><Button variant="outline" onClick={() => prepare.mutate()} disabled={!online || !choice || (!accountId && action === 'assign') || !team.currentVersionId || accounts.isError || teams.isError || prepare.isPending || confirm.isPending}>{zh ? '预览本步影响' : 'Preview this step'}</Button><Button onClick={() => confirm.mutate()} disabled={!online || !preview || !inflightComplete || !ack || confirm.isPending || (expired && !confirm.isError)}>{confirm.isPending ? (zh ? '等待回执…' : 'Awaiting receipt…') : confirm.isError ? (zh ? '核对同一交接回执' : 'Check same handoff receipt') : action === 'release' ? (zh ? '确认解除旧关联' : 'Confirm release') : (zh ? '确认关联' : 'Confirm assignment')}</Button></div><Link to="/paper?create=1" state={{ returnTo: `/teams/${team.id}?panel=binding` }}>{zh ? '使用原流程新建模拟盘' : 'Create an account with the existing workflow'}</Link>
+      <div className="team-dialog-actions"><Button variant="outline" onClick={close} disabled={confirm.isPending}>{zh ? '关闭' : 'Close'}</Button><Button variant="outline" onClick={() => prepare.mutate()} disabled={!online || !choice || (!accountId && action === 'assign') || !team.currentVersionId || accounts.isError || teams.isError || prepare.isPending || confirm.isPending}>{zh ? '预览本步影响' : 'Preview this step'}</Button><Button onClick={() => confirm.mutate()} disabled={!online || !preview || !inflightComplete || !ack || confirm.isPending || (expired && !confirm.isError)}>{confirm.isPending ? (zh ? '等待回执…' : 'Awaiting receipt…') : confirm.isError ? (zh ? '核对同一交接回执' : 'Check same handoff receipt') : action === 'release' ? (zh ? '确认解除旧关联' : 'Confirm release') : (zh ? '确认关联' : 'Confirm assignment')}</Button></div>{action === 'assign' && <Button variant="outline" disabled={!online || confirm.isPending || confirm.isError || prepare.isPending} onClick={() => setCreatingAccount(true)}>{zh ? '新建模拟账户' : 'Create a paper account'}</Button>}
     </DialogContent></Dialog>;
 }
 
