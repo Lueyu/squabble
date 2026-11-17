@@ -46,7 +46,7 @@ export interface CustomSimulationHolding {
 }
 export interface CustomSimulationCash { currency: 'USD' | 'HKD' | 'CNY'; amount: number }
 export type InvestmentPreviewRequest =
-  | { origin: 'holdings'; requestKey: string }
+  | { origin: 'holdings'; requestKey: string; virtualCash?: CustomSimulationCash[] }
   | { origin: 'cash'; cash: CustomSimulationCash; requestKey: string }
   | { origin: 'account'; sourceAccountId: string; requestKey: string }
   | { origin: 'custom'; holdings: CustomSimulationHolding[]; cash: CustomSimulationCash[]; requestKey: string };

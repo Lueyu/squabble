@@ -32,7 +32,7 @@ import { TeamCommissionService, commissionContext } from '../teams/team-commissi
 import { assertTeamRunCommissionAuthority } from '../../database/team-run-authority';
 
 const options = { skip: !process.env.TEAM_TEST_DATABASE_URL };
-async function setup() {
+async function setup(initialRun?: 'immediate' | 'scheduled', market: TeamRunAgreementInput['market'] = 'CN', budget?: TeamRunAgreementInput['budget']) {
   const f = await makeTeamFixture(), team = await f.team(), roster = new AgentRosterService(f.db);
   const friend = await roster.create(f.owner, { requestKey: randomUUID(), name: 'Fictional analyst', instructions: 'Frozen base instructions',
     executor: { executionMode: 'model', connectionId: f.connection.id, model: 'slow' }, allowedToolIds: [], allowedSources: [] });
@@ -52,17 +52,19 @@ async function setup() {
   const runs = new TeamRunService(f.store, f.commissions), delivery = new TeamRunDelivery(runs, f.decisions, strategies, workspace);
   const scheduler = new TeamRunScheduler(runs, new TradingMarketService({} as never), f.commissions, delivery);
   const input: TeamRunAgreementInput = { requestKey: randomUUID(), teamVersionId: published.version.id, bindingId: binding.binding!.id,
-    expectedBindingRevision: binding.team.bindingRevision, objective: 'Fictional portfolio review', market: 'CN', budget: {
+    expectedBindingRevision: binding.team.bindingRevision, objective: 'Fictional portfolio review', market,
+    ...(initialRun ? { initialRun } : {}), budget: {
       perRun: { budgetMode: 'cost_and_calls', ceiling: { amount: '1', currency: 'USD' }, callLimit: 2, paidRevisionLimit: 0 },
       daily: { costUsd: '1', calls: 2 }, monthly: { costUsd: '2', calls: 4 } }, replacementPolicy: { kind: 'replace_combination', allocationPct: 50 }, inputRefs: [] };
+  if (budget) input.budget = budget;
   const preview = await runs.preview(f.owner, team.team.id, input);
   const agreement = await runs.confirm(f.owner, team.team.id, { requestKey: randomUUID(), previewId: preview.previewId, previewHash: preview.previewHash });
   const running = await runs.control(f.owner, team.team.id, 'start', { requestKey: randomUUID(), expectedRevision: agreement.revision });
   return { ...f, teamId: team.team.id, friend, roster, workspace, documents, strategies, runs, delivery, scheduler, running, account, initialPreview: preview,
     worker: new TeamCommissionWorker(f.store, f.runtime, f.commissions), input };
 }
-async function acceptedReport(f: Awaited<ReturnType<typeof setup>>, noTrade = false) {
-  await f.scheduler.runOnce(new Date('2026-11-12T09:00:00Z'));
+async function acceptedReport(f: Awaited<ReturnType<typeof setup>>, noTrade = false, now = new Date('2026-11-12T09:00:00Z')) {
+  await f.scheduler.runOnce(now);
   await f.worker.runOnce();
   const [cycle] = await f.db.select().from(teamRunCycles).where(eq(teamRunCycles.agreementId, f.running.id));
   assert.ok(cycle.commissionId, JSON.stringify(cycle));
@@ -90,8 +92,151 @@ async function acceptedReport(f: Awaited<ReturnType<typeof setup>>, noTrade = fa
   return { cycle, commission, version, attemptId };
 }
 
+test('explicit immediate startup reserves once before close and preserves the frozen agreement choice', options, async () => {
+  const f = await setup('immediate');
+  try {
+    assert.equal(f.initialPreview.result.configuration.initialRun, 'immediate');
+    assert.equal(f.running.configuration.initialRun, 'immediate');
+    const restarted = new TeamRunScheduler(f.runs, new TradingMarketService({} as never), f.commissions, f.delivery);
+    await Promise.all([
+      f.scheduler.runOnce(new Date('2026-11-12T03:00:00Z')),
+      restarted.runOnce(new Date('2026-11-12T03:00:00Z')),
+    ]);
+    const cycles = await f.db.select().from(teamRunCycles);
+    assert.equal(cycles.length, 1);
+    assert.equal(cycles[0].tradingDate, '2026-11-12');
+    assert.equal((await f.db.select().from(teamCommissions)).length, 1);
+    await f.db.update(teamRunCycles).set({ state: 'observed' }).where(eq(teamRunCycles.id, cycles[0].id));
+    const [agreement] = await f.db.select().from(teamRunAgreements);
+    await restarted.reserve(agreement, new Date('2026-11-12T09:00:00Z'));
+    await restarted.reserve(agreement, new Date('2026-11-13T03:00:00Z'));
+    assert.equal((await f.db.select().from(teamRunCycles)).length, 1, 'The initial reservation consumes its daily slot, and later days wait for close');
+    await restarted.reserve(agreement, new Date('2026-11-13T09:00:00Z'));
+    assert.equal((await f.db.select().from(teamRunCycles)).length, 2);
+  } finally { await f.dispose(); }
+});
+
+test('legacy omission and explicit scheduled startup both wait for the after-close window', options, async () => {
+  for (const mode of [undefined, 'scheduled'] as const) {
+    const f = await setup(mode);
+    try {
+      await f.scheduler.runOnce(new Date('2026-11-12T03:00:00Z'));
+      assert.equal((await f.db.select().from(teamRunCycles)).length, 0);
+      await f.scheduler.runOnce(new Date('2026-11-12T09:00:00Z'));
+      assert.equal((await f.db.select().from(teamRunCycles)).length, 1);
+    } finally { await f.dispose(); }
+  }
+});
+
+test('pause and resume do not grant a second immediate run even after the original reservation was cancelled', options, async () => {
+  const f = await setup('immediate');
+  try {
+    const [original] = await f.db.select().from(teamRunAgreements);
+    await f.scheduler.reserve(original, new Date('2026-11-12T03:00:00Z'));
+    const paused = await f.runs.control(f.owner, f.teamId, 'pause', { requestKey: randomUUID(), expectedRevision: original.revision });
+    await f.runs.control(f.owner, f.teamId, 'resume', { requestKey: randomUUID(), expectedRevision: paused.revision });
+    await f.scheduler.runOnce(new Date('2026-11-13T03:00:00Z'));
+    const cycles = await f.db.select().from(teamRunCycles);
+    assert.equal(cycles.length, 1);
+    assert.equal(cycles[0].state, 'cancelled');
+    await f.scheduler.runOnce(new Date('2026-11-13T09:00:00Z'));
+    assert.equal((await f.db.select().from(teamRunCycles)).length, 2);
+  } finally { await f.dispose(); }
+});
+
+test('a newly confirmed authority may run initially without confusing earlier control revisions', options, async () => {
+  const f = await setup('immediate');
+  try {
+    const [original] = await f.db.select().from(teamRunAgreements);
+    await f.scheduler.reserve(original, new Date('2026-11-12T03:00:00Z'));
+    await f.db.update(teamRunCycles).set({ state: 'observed' }).where(eq(teamRunCycles.agreementId, original.id));
+    const preview = await f.runs.preview(f.owner, f.teamId, { ...f.input, requestKey: randomUUID() });
+    const confirmed = await f.runs.confirm(f.owner, f.teamId, { requestKey: randomUUID(), previewId: preview.previewId, previewHash: preview.previewHash });
+    const running = await f.runs.control(f.owner, f.teamId, 'start', { requestKey: randomUUID(), expectedRevision: confirmed.revision });
+    await f.scheduler.runOnce(new Date('2026-11-13T03:00:00Z'));
+    const cycles = await f.db.select().from(teamRunCycles);
+    assert.equal(cycles.length, 2);
+    assert.ok(cycles.some(cycle => cycle.agreementRevision === running.revision));
+  } finally { await f.dispose(); }
+});
+
+test('immediate research uses verified holiday dates but never an unknown calendar', options, async () => {
+  const f = await setup('immediate', 'US');
+  try {
+    const [agreement] = await f.db.select().from(teamRunAgreements);
+    await f.scheduler.reserve(agreement, new Date('2027-01-04T15:00:00Z'));
+    assert.equal((await f.db.select().from(teamRunCycles)).length, 0);
+    await f.scheduler.reserve(agreement, new Date('2026-11-14T15:00:00Z'));
+    const [cycle] = await f.db.select().from(teamRunCycles);
+    assert.equal(cycle?.tradingDate, '2026-11-14', 'A holiday research reservation does not open the paper market');
+    assert.equal((await f.db.select().from(paperAccounts).where(eq(paperAccounts.id, f.account.id)))[0].botEnabled, false);
+  } finally { await f.dispose(); }
+});
+
+test('unknown immediate delivery keeps its durable cycle and never opens another initial reservation', options, async () => {
+  const f = await setup('immediate');
+  try {
+    await f.scheduler.runOnce(new Date('2026-11-12T03:00:00Z'));
+    const [cycle] = await f.db.select().from(teamRunCycles);
+    assert.ok(cycle?.commissionId);
+    await f.db.update(teamCommissions).set({ state: 'uncertain' }).where(eq(teamCommissions.id, cycle.commissionId));
+    const restarted = new TeamRunScheduler(f.runs, new TradingMarketService({} as never), f.commissions, f.delivery);
+    await restarted.runOnce(new Date('2026-11-13T03:00:00Z'));
+    assert.equal((await f.db.select().from(teamRunCycles)).length, 1);
+    assert.equal((await f.db.select().from(teamCommissions)).length, 1);
+    assert.equal((await f.db.select().from(teamRunCycles))[0].state, 'uncertain');
+  } finally { await f.dispose(); }
+});
+
+test('new immediate consent cannot bypass earlier conservative monthly reservations', options, async () => {
+  const f = await setup('immediate');
+  try {
+    const [agreement] = await f.db.select().from(teamRunAgreements);
+    await f.scheduler.reserve(agreement, new Date('2026-11-12T03:00:00Z'));
+    await f.db.update(teamRunCycles).set({ state: 'observed' }).where(eq(teamRunCycles.agreementId, agreement.id));
+    await f.scheduler.reserve(agreement, new Date('2026-11-13T09:00:00Z'));
+    await f.db.update(teamRunCycles).set({ state: 'observed' }).where(eq(teamRunCycles.agreementId, agreement.id));
+    const preview = await f.runs.preview(f.owner, f.teamId, { ...f.input, requestKey: randomUUID() });
+    const confirmed = await f.runs.confirm(f.owner, f.teamId, { requestKey: randomUUID(), previewId: preview.previewId, previewHash: preview.previewHash });
+    await f.runs.control(f.owner, f.teamId, 'start', { requestKey: randomUUID(), expectedRevision: confirmed.revision });
+    await f.scheduler.runOnce(new Date('2026-11-16T03:00:00Z'));
+    const cycles = await f.db.select().from(teamRunCycles);
+    assert.equal(cycles.length, 2, 'The first cycle of a new consent still fits the same monthly ledger');
+    assert.equal(cycles.reduce((sum, cycle) => sum + Number(cycle.reservedCostUsd), 0), 2);
+    assert.equal((await f.db.select().from(teamCommissions)).length, 0);
+  } finally { await f.dispose(); }
+});
+
+test('explicitly uncapped research keeps unknown cost reservations and does not invent external fee uncertainty', options, async () => {
+  const f = await setup('immediate', 'CN', {
+    perRun: { budgetMode: 'calls_only', ceiling: { amount: null, currency: 'USD' }, callLimit: 2, paidRevisionLimit: 0 },
+    daily: { costUsd: null, calls: null }, monthly: { costUsd: null, calls: null },
+  });
+  try {
+    assert.equal(f.running.externalCostUnknown, false, 'No chosen monetary cap is distinct from an opaque external executor');
+    assert.ok(!f.initialPreview.warnings.some(warning => warning.code === 'TEAM_EXTERNAL_COST_UNKNOWN'));
+    const [agreement] = await f.db.select().from(teamRunAgreements);
+    for (const instant of ['2026-11-12T03:00:00Z', '2026-11-13T09:00:00Z', '2026-11-16T09:00:00Z']) {
+      await f.scheduler.reserve(agreement, new Date(instant));
+      await f.db.update(teamRunCycles).set({ state: 'observed' }).where(eq(teamRunCycles.agreementId, agreement.id));
+    }
+    const cycles = await f.db.select().from(teamRunCycles);
+    assert.equal(cycles.length, 3, 'No implicit daily/monthly cap is invented');
+    assert.ok(cycles.every(cycle => cycle.reservedCostUsd === null && cycle.reservedCalls === 2));
+    const finite = { ...f.input, requestKey: randomUUID(), budget: {
+      perRun: { budgetMode: 'cost_and_calls', ceiling: { amount: '1', currency: 'USD' }, callLimit: 2, paidRevisionLimit: 0 },
+      daily: { costUsd: '1', calls: 2 }, monthly: { costUsd: '10', calls: 20 },
+    } };
+    const preview = await f.runs.preview(f.owner, f.teamId, finite);
+    const confirmed = await f.runs.confirm(f.owner, f.teamId, { requestKey: randomUUID(), previewId: preview.previewId, previewHash: preview.previewHash });
+    await f.runs.control(f.owner, f.teamId, 'start', { requestKey: randomUUID(), expectedRevision: confirmed.revision });
+    await f.scheduler.runOnce(new Date('2026-11-17T03:00:00Z'));
+    assert.equal((await f.db.select().from(teamRunCycles)).length, 3, 'Earlier unknown monthly cost is not treated as zero under a newly finite cap');
+  } finally { await f.dispose(); }
+});
+
 test('durable exact report automatically installs the actual paper bot with system attribution and preserves user draft', options, async () => {
-  const f = await setup();
+  const f = await setup('immediate');
   try {
     assert.deepEqual(await f.runs.preview(f.owner, f.teamId, f.input), f.initialPreview, 'Agreement preview replay restores its saved authorization without regeneration');
     assert.ok((await f.client`SELECT to_regclass('team_run_agreement_revisions') AS relation`)[0].relation, 'Standing authority keeps immutable historical revisions');
@@ -100,8 +245,8 @@ test('durable exact report automatically installs the actual paper bot with syst
     assert.equal(history[0].member_snapshots[0].agentInstructions, 'Frozen base instructions');
     await assert.rejects(f.client`UPDATE team_run_agreement_revisions SET state='paused' WHERE agreement_id=${f.running.id}`, /TEAM_IMMUTABLE_HISTORY/);
     await f.db.insert(portfolioCombinationDrafts).values({ owner: f.owner, accountId: f.account.id, expectedPolicyRevision: 1, allocations: [] });
-    const result = await acceptedReport(f);
-    await f.scheduler.runOnce(new Date('2026-11-12T09:00:00Z'));
+    const result = await acceptedReport(f, false, new Date('2026-11-12T03:00:00Z'));
+    await f.scheduler.runOnce(new Date('2026-11-12T03:00:00Z'));
     const [cycle] = await f.db.select().from(teamRunCycles);
     assert.equal(cycle.state, 'applied', cycle.lastError ?? '');
     const [account] = await f.db.select().from(paperAccounts).where(eq(paperAccounts.id, f.account.id));

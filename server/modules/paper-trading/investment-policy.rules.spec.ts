@@ -24,6 +24,16 @@ test('independent account seeds accept bounded custom holdings and explicit acco
   assert.throws(() => normalizeInvestmentRequest('preview', { ...custom, cash: [{ currency: 'USD', amount: -1 }] }));
 });
 
+test('holdings preview accepts explicit virtual opening balances and rejects duplicate or invalid currencies', () => {
+  const request = { origin: 'holdings', requestKey: 'team-virtual-cash', virtualCash: [
+    { currency: 'USD', amount: 10000 }, { currency: 'HKD', amount: 10000 }, { currency: 'CNY', amount: 10000 },
+  ] };
+  assert.deepEqual(normalizeInvestmentRequest('preview', request), request);
+  for (const virtualCash of [[{ currency: 'USD', amount: -1 }], [{ currency: 'USD', amount: Infinity }], [{ currency: 'EUR', amount: 1 }], [request.virtualCash[0], request.virtualCash[0]]]) {
+    assert.throws(() => normalizeInvestmentRequest('preview', { ...request, virtualCash }));
+  }
+});
+
 test('temporary numeric limits restore permanent settings; no_sell includes protection', () => {
   const now = new Date('2026-11-06T00:00:00Z');
   const records = [

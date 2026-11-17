@@ -46,6 +46,7 @@ export default function StartInvestmentCard({ preview, onStarted, onRefresh, onC
     <p className="text-sm text-muted-foreground">{preview.seed.positions.length} {zh ? '项持仓' : 'positions'} · {new Date(preview.seed.capturedAt).toLocaleString(i18n.language)}</p>
     {preview.seed.origin?.kind === 'simulation_account' && <p className="text-sm">{zh ? '已冻结来源账户：' : 'Frozen source account: '}{preview.seed.origin.accountName}</p>}
     <p className="text-sm leading-6 text-muted-foreground">{zh ? '按可用行情和汇率建立新起点。参考成本只作记录，收益从新账户的可信估值向前计算，不是历史回测。' : 'Available market quotes and FX establish a new starting value. Reference costs are recorded separately; returns begin from the new account’s reliable valuation, with no historical backtest.'}</p>
+    {preview.seed.virtualCash && <p className="text-sm leading-6 text-muted-foreground">{zh ? '复制实仓持仓，以下虚拟资金作为模拟盘起始现金；实仓现金不计入。' : 'Real positions are copied. The virtual balances below replace real cash as this simulation’s opening cash.'}</p>}
     {preview.seed.positions.length > 0 && <div className="overflow-x-auto rounded-lg border">
       <table className="companion-seed-table"><caption className="sr-only">{zh ? '冻结的初始持仓' : 'Frozen opening holdings'}</caption>
         <thead><tr>{(zh ? ['证券', '数量', '参考成本', '起点行情', '行情时间'] : ['Security', 'Quantity', 'Reference cost', 'Starting quote', 'Quote time']).map(label => <th key={label} scope="col">{label}</th>)}</tr></thead>
@@ -58,7 +59,7 @@ export default function StartInvestmentCard({ preview, onStarted, onRefresh, onC
     </div>}
     <div className="grid gap-3 sm:grid-cols-3">{(['USD', 'HKD', 'CNY'] as const).map(currency => {
       const cash = preview.seed.cash.find(item => item.currency === currency);
-      return <div key={currency} className="space-y-2 rounded-lg bg-muted/30 p-3"><p className="text-sm font-medium">{currency} {cash?.total ?? '—'} <span className="text-xs text-muted-foreground">{cash ? cash.availabilityKnown ? (zh ? '已核对现金' : 'Confirmed cash') : (zh ? '待核对现金' : 'Unconfirmed cash') : (zh ? '未记录现金' : 'Cash not recorded')}</span></p>
+      return <div key={currency} className="space-y-2 rounded-lg bg-muted/30 p-3"><p className="text-sm font-medium">{currency} {cash?.total ?? '—'} <span className="text-xs text-muted-foreground">{preview.seed.virtualCash?.some(item => item.currency === currency) ? (zh ? '模拟起始现金' : 'Virtual opening cash') : cash ? cash.availabilityKnown ? (zh ? '已核对现金' : 'Confirmed cash') : (zh ? '待核对现金' : 'Unconfirmed cash') : (zh ? '未记录现金' : 'Cash not recorded')}</span></p>
         <label className="block space-y-1 text-xs"><span>{zh ? '额外模拟现金（可选）' : 'Additional virtual cash (optional)'}</span><Input disabled={pending || frozen} type="number" min="0" step="any" value={extra[currency] ?? ''} onChange={event => setExtra(current => ({ ...current, [currency]: event.target.value }))} /></label></div>;
     })}</div>
     {unknownCash && <label className="flex items-start gap-2 text-sm"><input disabled={pending || frozen} type="checkbox" className="mt-1" checked={confirmCash} onChange={event => setConfirmCash(event.target.checked)} /><span>{zh ? '以上记录现金已核对，可用于此模拟盘。未确认时保留待核对状态。' : 'I checked the recorded cash amounts for this simulation. Otherwise they remain unconfirmed.'}</span></label>}

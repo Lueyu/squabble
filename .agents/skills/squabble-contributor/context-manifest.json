@@ -8,6 +8,7 @@
     "workingTreeChanges": true,
     "reviewedAt": "2026-11-13",
     "scope": [
+      "2026-11-17 automatic team startup against560f9ef plus working tree: overview staffing/publication/account actions, acknowledged account return, server preview before final standing-authority confirmation and optional immediate initial cycle. Immutable confirmation lineage and existing owner/budget/cycle/receipt fences prevent restart or pause/resume replay; later after-close research and paper execution remain distinct. Five architecture flows retain their writer and authority boundaries. Each creation prepares a new paper account from real positions with editable CNY/USD/HKD10,000 virtual cash, retaining source-revision checks and recoverable preview identities. Team money and period caps default to explicit null; additive migration68 permits unknown cost reservations while later finite caps conservatively fence them.",
       "V4 eight-destination navigation, safe return and scroll restoration; compatible legacy routes",
       "Persistent strategy interviews with exact wording, explicit acceptance, saved review and disabled account staging",
       "Strict threshold and exchange-trading-day frequency checks at candidate and final order boundaries",
@@ -597,7 +598,10 @@
         "scripts/db/65_agent_telemetry_identity.sql",
         "scripts/db/66_agent_animal_identity.sql",
         "shared/animal-avatar.ts",
-        "shared/agent-working-instructions.ts"
+        "shared/agent-working-instructions.ts",
+        "scripts/db/68_team_run_unbounded_budget.sql",
+        "client/src/features/teams/TeamAccountSeedReview.tsx",
+        "client/src/features/teams/TeamAccountReviewRecovery.tsx"
       ],
       "entrypoints": [
         "server/modules/agent-roster/agent-roster.service.ts",

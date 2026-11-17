@@ -12,7 +12,7 @@ const fixture = require('./simple-test-loader.cjs');
 
 test('recent cycle links use the actual team history route and the budget is labelled as a cap', () => {
   const f = fixture();
-  f.state.queries.set('team-run', { data: { agreement: { state: 'running', accountId: 'account', members: [], configuration: { market: 'CN', cadence: { delayMinutes: 60 }, budget: { daily: { costUsd: '2' }, monthly: { costUsd: '40' } } } }, recentCycles: [{ id: 'cycle', state: 'completed', tradingDate: '2026-11-12', commissionId: 'commission' }] } });
+  f.state.queries.set('team-run', { data: { agreement: { state: 'running', accountId: 'account', members: [], configuration: { market: 'CN', cadence: { delayMinutes: 60 }, budget: { perRun: { ceiling: { amount: '1' }, callLimit: 8 }, daily: { costUsd: '2', calls: 16 }, monthly: { costUsd: '40', calls: 320 } } } }, recentCycles: [{ id: 'cycle', state: 'completed', tradingDate: '2026-11-12', commissionId: 'commission' }] } });
   const { TeamRunPanel } = f.load('features/teams/TeamRunPanel.tsx');
   const html = f.render(TeamRunPanel, { team: { id: 'team', status: 'active', publishedVersion: { config: { roles: [] } } }, zh: false });
   assert.match(html, /href="\/teams\/team\?panel=history&amp;commissionId=commission"/);
@@ -29,12 +29,12 @@ test('expired run preview is explicitly renewed, unknown renewal keeps its exact
   api.preview = async (_id, input) => {
     calls.push(['preview', input]);
     if (calls.filter(([op]) => op === 'preview').length === 2 && renewalUncertain) { renewalUncertain = false; throw new Error('Lost renewal response'); }
-    return { previewId: input.requestKey.endsWith('intent-1:preview') ? 'expired' : 'renewed', previewHash: input.requestKey, result: { accountId: 'account', members: [{ label: 'Reviewed analyst' }] } };
+    return { previewId: input.requestKey.endsWith('intent-1:preview') ? 'expired' : 'renewed', previewHash: input.requestKey, expiresAt: '2099-01-01T00:00:00Z', result: { accountId: 'account', members: [{ label: 'Reviewed analyst' }], configuration: { ...input } } };
   };
   api.confirm = async (_id, input) => {
     calls.push(['confirm', input]);
     if (input.previewId === 'expired') throw { response: { status: 409, data: { error: { code: 'TEAM_PREVIEW_STALE' } } } };
-    agreement = { id: 'agreement', revision: 1, state: 'confirmed', accountId: 'account', members: [], configuration: { market: 'CN', cadence: { delayMinutes: 60 }, budget: { daily: { costUsd: '2' }, monthly: { costUsd: '40' } } } };
+    agreement = { id: 'agreement', revision: 1, state: 'confirmed', accountId: 'account', members: [], configuration: { market: 'CN', cadence: { delayMinutes: 60 }, budget: { perRun: { ceiling: { amount: '1' }, callLimit: 8 }, daily: { costUsd: '2', calls: 16 }, monthly: { costUsd: '40', calls: 320 } } } };
     return agreement;
   };
   api.start = async (_id, input) => { calls.push(['start', input]); agreement = { ...agreement, state: 'running' }; return agreement; };
@@ -44,17 +44,18 @@ test('expired run preview is explicitly renewed, unknown renewal keeps its exact
   const settle = () => React.act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
   const button = name => [...document.querySelectorAll('button')].find(item => item.textContent === name);
   async function click(name) { const item = button(name); assert.ok(item, name); assert.equal(item.disabled, false); await React.act(async () => item.click()); await settle(); }
-  async function acknowledge() { await React.act(async () => document.querySelector('[role="checkbox"]').click()); await settle(); }
+  async function acknowledge() { await React.act(async () => document.querySelector('[role="checkbox"][aria-label="Confirm reviewed run rules"]').click()); await settle(); }
   try {
-    await React.act(async () => root.render(React.createElement(QueryClientProvider, { client }, React.createElement(MemoryRouter, null, React.createElement(TeamRunPanel, { zh: false, team: { id: 'team', currentVersionId: 'version', bindingRevision: 1, binding: { id: 'binding' }, status: 'active', publishedVersion: { config: { roles: [{ participation: 'enabled', executor: { executionMode: 'model' } }] } } } })))));
+    await React.act(async () => root.render(React.createElement(QueryClientProvider, { client }, React.createElement(MemoryRouter, null, React.createElement(TeamRunPanel, { zh: false, team: { id: 'team', currentVersionId: 'version', bindingRevision: 1, binding: { id: 'binding' }, status: 'active', publishedVersion: { config: { roles: [{ participation: 'enabled', agentId: 'agent', agentVersionId: 'agent-version', executor: { executionMode: 'model' } }] } } } })))));
     await settle();
     await click('Set up automatic runs');
+    await click('Preview run rules');
     await acknowledge();
     await click('Confirm and start');
     assert.match(document.body.textContent, /preview expired/);
-    assert.equal(button('Confirm and start').disabled, true);
+    assert.equal(button('Confirm and start'), undefined);
     await click('Refresh run review');
-    assert.equal(document.querySelector('input[type=number]').disabled, true);
+    assert.equal(document.querySelector('[aria-label="No research amount cap"]').disabled, true);
     await click('Refresh run review');
     const previews = calls.filter(([op]) => op === 'preview');
     assert.notEqual(previews[0][1].requestKey, previews[1][1].requestKey);

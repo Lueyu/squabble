@@ -1,7 +1,7 @@
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
-import { teamRunAgreements, teamRunCycles } from '../../database/team-run.schema';
+import { teamRunAgreements, teamRunAgreementRevisions, teamRunCycles } from '../../database/team-run.schema';
 import { teamCommissions, teamVersions, teamResearchLinks } from '../../database/teams.schema';
 import { lockTeamOwner } from '../../database/team-context';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
@@ -33,23 +33,46 @@ export class TeamRunScheduler implements OnModuleInit, OnModuleDestroy {
   }
   async reserve(row: AgreementRow, now: Date): Promise<void> {
     const schedule = await this.markets.getSchedule(row.configuration.market, now);
-    const tradingDate = dueTeamRun(schedule, row.configuration.cadence.delayMinutes, now);
-    if (!tradingDate) return;
+    if (row.configuration.initialRun !== 'immediate'
+      && !dueTeamRun(schedule, row.configuration.cadence.delayMinutes, now)) return;
     await this.runs.store.db.transaction(async tx => {
       await lockMemoryOwner(tx, row.ownerId); await lockTeamOwner(tx, row.ownerId);
       const current = await this.runs.row(tx, row.ownerId, row.teamId);
       if (!current || current.state !== 'running' || current.revision !== row.revision || await this.runs.authorityChanged(tx, current)) return;
+      let initialRunPending = false;
+      if (current.configuration.initialRun === 'immediate') {
+        // Start, pause and resume increment revisions without granting another initial run.
+        // The last immutable confirmation marks a consent boundary, independent of clock precision.
+        const [confirmation] = await tx.select({ revision: teamRunAgreementRevisions.revision })
+          .from(teamRunAgreementRevisions).where(and(eq(teamRunAgreementRevisions.agreementId, current.id),
+            eq(teamRunAgreementRevisions.state, 'confirmed'), lte(teamRunAgreementRevisions.revision, current.revision)))
+          .orderBy(desc(teamRunAgreementRevisions.revision)).limit(1);
+        const [prior] = await tx.select({ id: teamRunCycles.id }).from(teamRunCycles)
+          .where(and(eq(teamRunCycles.agreementId, current.id),
+            gte(teamRunCycles.agreementRevision, confirmation?.revision ?? 0))).limit(1);
+        initialRunPending = !prior;
+      }
+      const tradingDate = dueTeamRun(schedule, current.configuration.cadence.delayMinutes, now, initialRunPending);
+      if (!tradingDate) return;
       const existing = await tx.select().from(teamRunCycles).where(and(eq(teamRunCycles.agreementId, row.id),
         sql`(${teamRunCycles.tradingDate}=${tradingDate} OR ${teamRunCycles.state} IN ('reserved','researching','processing','uncertain'))`));
       if (existing.length) return;
       const { perRun, daily, monthly } = current.configuration.budget;
       // Entire authorized maxima stay reserved, including uncertain/closed unknown provider calls.
       // This intentionally favours an early budget stop over treating missing usage as zero.
+      const dailyCost = daily.costUsd === null ? sql`true` : sql`
+        count(*) FILTER (WHERE trading_date=${tradingDate} AND reserved_cost_usd IS NULL)=0
+        AND coalesce(sum(reserved_cost_usd) FILTER (WHERE trading_date=${tradingDate}),0)
+          +${perRun.ceiling.amount}::numeric <= ${daily.costUsd}::numeric`;
+      const monthlyCost = monthly.costUsd === null ? sql`true` : sql`
+        count(*) FILTER (WHERE reserved_cost_usd IS NULL)=0
+        AND coalesce(sum(reserved_cost_usd),0)+${perRun.ceiling.amount}::numeric <= ${monthly.costUsd}::numeric`;
       const [usage] = await tx.execute(sql`SELECT
-        coalesce(sum(reserved_cost_usd) FILTER (WHERE trading_date=${tradingDate}),0)+${perRun.ceiling.amount}::numeric <= ${daily.costUsd}::numeric AS daily_cost,
-        coalesce(sum(reserved_calls) FILTER (WHERE trading_date=${tradingDate}),0)+${perRun.callLimit} <= ${daily.calls} AS daily_calls,
-        coalesce(sum(reserved_cost_usd),0)+${perRun.ceiling.amount}::numeric <= ${monthly.costUsd}::numeric AS monthly_cost,
-        coalesce(sum(reserved_calls),0)+${perRun.callLimit} <= ${monthly.calls} AS monthly_calls
+        count(*) AS recorded_cycles,
+        (${dailyCost}) AS daily_cost,
+        (${daily.calls === null ? sql`true` : sql`coalesce(sum(reserved_calls) FILTER (WHERE trading_date=${tradingDate}),0)+${perRun.callLimit} <= ${daily.calls}`}) AS daily_calls,
+        (${monthlyCost}) AS monthly_cost,
+        (${monthly.calls === null ? sql`true` : sql`coalesce(sum(reserved_calls),0)+${perRun.callLimit} <= ${monthly.calls}`}) AS monthly_calls
         FROM team_run_cycles WHERE owner_id=${row.ownerId} AND team_id=${row.teamId} AND left(trading_date,7)=${tradingDate.slice(0, 7)}`);
       if (!usage?.daily_cost || !usage.daily_calls || !usage.monthly_cost || !usage.monthly_calls) return;
       await tx.insert(teamRunCycles).values({ ownerId: row.ownerId, teamId: row.teamId, agreementId: row.id, agreementRevision: row.revision,
