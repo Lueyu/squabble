@@ -171,7 +171,9 @@ export class TeamCommissionWorker implements OnModuleInit, OnModuleDestroy {
             if (['completed', 'cancelled'].includes(commission.state))
                 return;
             // A missing task or a text response is never sufficient completion evidence.
-            const unknown = tasks.some(t => t.state === 'uncertain' || t.attempts.some(a => a.state === 'uncertain' || a.externalUsageUnknown && a.state === 'running'));
+            // Native billing can remain unknown throughout a healthy running task.
+            // Only execution uncertainty blocks the next authorized work/review dispatch.
+            const unknown = tasks.some(t => t.state === 'uncertain' || t.attempts.some(a => a.state === 'uncertain'));
             const accepted = tasks.filter(t => t.state === 'accepted' && t.acceptedAttemptId);
             const complete = commission.plan.work.every(w => tasks.some(t => t.workKey === w.workKey && t.state === 'accepted' && t.acceptedAttemptId));
             let state = commission.state;

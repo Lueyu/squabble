@@ -116,6 +116,41 @@ test('explicit immediate startup reserves once before close and preserves the fr
   } finally { await f.dispose(); }
 });
 
+test('unknown native fees preserve automatic next-dispatch authority while an uncertain result blocks it', options, async () => {
+  const f = await setup('immediate');
+  try {
+    const now = new Date('2026-11-12T03:00:00Z');
+    await f.scheduler.runOnce(now);
+    await f.worker.runOnce();
+    await f.worker.runOnce();
+    const [cycle] = await f.db.select().from(teamRunCycles).where(eq(teamRunCycles.agreementId, f.running.id));
+    const [commission] = await f.db.select().from(teamCommissions).where(eq(teamCommissions.id, cycle.commissionId!));
+    const attempt = { id: randomUUID(), revision: 1, kind: 'work' as const, startedAt: new Date().toISOString(),
+      state: 'running' as const, dispatched: true, remoteTaskId: randomUUID(), externalUsageUnknown: true };
+    const [task] = await f.db.insert(councilResearchTasks).values({ owner: f.owner, sessionId: commission.sessionId!,
+      cycleId: commission.cycleId!, revision: 1, key: 'summary', position: 0, memberId: commission.members[0].memberId,
+      dependencies: [], state: 'running', skills: [], workKey: commission.plan.work[0].workKey, attempts: [attempt] }).returning();
+
+    await f.worker.project(commission.id);
+    await f.scheduler.advance(cycle);
+    assert.equal((await f.db.select().from(teamCommissions).where(eq(teamCommissions.id, commission.id)))[0].state, 'running');
+    assert.equal((await f.db.select().from(teamRunCycles).where(eq(teamRunCycles.id, cycle.id)))[0].state, 'researching');
+    await f.db.transaction(tx => assertTeamRunCommissionAuthority(tx, f.owner, commission.id, true));
+    const detail = await f.commissions.detail(f.owner, f.teamId, commission.id);
+    assert.equal(detail.cost.externalUsageUnknown, true, 'Execution progress does not invent confirmed external charges');
+    assert.ok(detail.cost.unknownAttemptIds.includes(attempt.id));
+
+    await f.db.update(councilResearchTasks).set({ state: 'uncertain', attempts: [{ ...attempt, state: 'uncertain' }] })
+      .where(eq(councilResearchTasks.id, task.id));
+    await f.worker.project(commission.id);
+    await f.scheduler.advance(cycle);
+    assert.equal((await f.db.select().from(teamCommissions).where(eq(teamCommissions.id, commission.id)))[0].state, 'uncertain');
+    assert.equal((await f.db.select().from(teamRunCycles).where(eq(teamRunCycles.id, cycle.id)))[0].state, 'uncertain');
+    await assert.rejects(f.db.transaction(tx => assertTeamRunCommissionAuthority(tx, f.owner, commission.id, true)), /TEAM_SCOPE_REVOKED/u);
+    assert.equal(f.counters.starts, 1, 'Projection never resends an existing provider command');
+  } finally { await f.dispose(); }
+});
+
 test('legacy omission and explicit scheduled startup both wait for the after-close window', options, async () => {
   for (const mode of [undefined, 'scheduled'] as const) {
     const f = await setup(mode);

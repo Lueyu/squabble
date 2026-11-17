@@ -11,6 +11,7 @@ import { teamCommissionJobs } from '../../database/teams.schema';
 import type { ResearchSourceRef, TeamSemanticConfig, TeamWorkItem } from '../../../shared/team-workspace.interface';
 import { CouncilService } from '../council/council.service';
 import type { WorkflowCallbacks } from '../council/council.workflow';
+import type { CouncilWorkflowStore } from '../council/council.workflow-store';
 import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 import { teamStrategyAuthority } from '../paper-trading/team-strategy-transaction';
 import { StrategyModelService } from '../paper-trading/strategy-model.service';
@@ -39,7 +40,7 @@ type CommissionDetail = Awaited<ReturnType<TeamCommissionService['detail']>>;
 type DurableTask = CommissionDetail['tasks'][number];
 interface CouncilInternals {
   jobs: Map<string, Promise<void>>;
-  workflow: { callbacks: WorkflowCallbacks };
+  workflow: { callbacks: WorkflowCallbacks; store: CouncilWorkflowStore };
 }
 
 const fixtureAsOf = '2020-01-01T00:00:00.000Z';
@@ -395,6 +396,60 @@ test('produced report link names accepted work/attempt and can be adopted as str
     assert.equal(adopted.basis.reportVersionId, report.targetId);
     assert.equal(f.calls.length, 1, 'Adoption/application authority reuses the saved report');
   } finally { await f.dispose(); }
+});
+
+test('a running provider with native-style unknown billing continues through the real independent review without redispatch', { timeout: 30000 }, async t => {
+  const entered = deferred(), release = deferred();
+  const f = await realCouncilFixture(t, async call => {
+    if (call.input.task.assignment.objective === 'held investigation' && call.phase === 'work') {
+      entered.resolve();
+      await release.promise;
+    }
+    return { usage: 'missing' };
+  });
+  try {
+    const created = await f.create({ roles: 2, work: ([lead, specialist]) => [
+      workItem('held investigation', specialist, 'specialist', [], lead),
+      workItem('summary', lead, 'summary', ['held investigation'], specialist),
+    ] });
+    await f.worker.runOnce();
+    await f.worker.runOnce();
+    await entered.promise;
+    const during = await f.detail(created);
+    assert.ok(during.sessionId);
+    assert.ok(during.cycleId);
+    const [session] = await f.db.select().from(councilSessions).where(eq(councilSessions.id, during.sessionId));
+    const tasks = await f.internals.workflow.store.list(f.owner, during.sessionId, during.cycleId);
+    const held = tasks.find(task => task.assignment?.objective === 'held investigation');
+    assert.ok(held);
+    const attempt = held.attempts.find(item => item.state === 'running');
+    assert.ok(attempt?.dispatched, 'The real executor has crossed its durable dispatch fence');
+    // Only this native-style billing marker is injected. Work, independent review,
+    // markRemote authority checks and provider submissions all use the real workflow.
+    await f.internals.workflow.store.markRemote(session, held, attempt.id, { externalAgent: true, externalUsageUnknown: true });
+    await f.worker.project(during.id);
+    const projected = await f.detail(created);
+    assert.equal(projected.state, 'running', 'Unknown native billing is not an unknown execution outcome');
+    assert.equal(projected.cost.externalUsageUnknown, true);
+    assert.equal(findTask(projected, 'held investigation').attempts[0].state, 'running');
+    assert.equal(count(f.calls, 'held investigation', 'work'), 1);
+    assert.equal(count(f.calls, 'held investigation', 'review'), 0);
+    release.resolve();
+    const completed = await f.drain(created);
+    assert.equal(completed.state, 'completed');
+    assert.equal(completed.cost.externalUsageUnknown, true, 'Billing uncertainty survives valid completion');
+    for (const objective of ['held investigation', 'summary']) {
+      const task = findTask(completed, objective);
+      assert.equal(task.state, 'accepted');
+      assert.deepEqual(task.attempts.map(item => item.kind), ['work', 'review']);
+      assert.equal(count(f.calls, objective, 'work'), 1);
+      assert.equal(count(f.calls, objective, 'review'), 1, 'The next independent review passed the actual dispatch fence');
+    }
+    await f.worker.projectActive();
+    await f.detail(created);
+    await f.council.getSession(f.owner, completed.sessionId!);
+    assert.equal(f.calls.length, 4, 'Projection and reads cannot replay the original work or review');
+  } finally { release.resolve(); await f.dispose(); }
 });
 
 test('provider completion without usage remains estimated and unknown instead of confirmed zero cost', async t => {

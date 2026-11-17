@@ -28,6 +28,10 @@ Startup authorizes recurring research, system adoption and replacement of the pa
 
 The team overview shows status, recent work, members, budget and the paper account. Pause stops future research and all automatic paper trading, including protective orders. In-flight work retains its real cancellation, uncertain or settlement state. Changed versions or permissions may require fresh confirmation.
 
+Native billing may be unknown while research is running normally. Unknown fees do not make execution uncertain or block the next authorized review. Explicitly uncertain task/attempt results still block new dispatch; their costs remain unknown and the original provider command is not resent.
+
+The team commission's check-existing action can inspect the original native receipt; passive settlement currently supports native Codex only. It settles failed/cancelled work whose identity, scope and explicit original process termination evidence match, after the native task slot is released. It starts no research and does not refund unknown charges. Missing exit evidence, restart leftovers, Companion work, other providers and active tasks remain unresolved.
+
 Setup retains editable fields across refreshes and visits to the roster in the same browser tab, partitioned by workspace identity. Interrupted requests retain their original keys and exact payloads. Restore and review the original setup to continue instead of creating another team. A resolved obsolete setup can end while preserving its created team, account and receipts; an unknown operation must be resolved first. Old unscoped tab progress is exposed only after every referenced resource is verified through owner-scoped APIs. These caches never grant server authority. Advanced organization editing and manual commissions remain available. Legacy seats can be linked to an existing agent or converted into a persistent profile before publishing; private history remains in its original team.
 
 ## Research, external agents and observability
