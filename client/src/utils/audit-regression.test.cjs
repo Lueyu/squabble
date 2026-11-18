@@ -16,6 +16,8 @@ function harness(file, options = {}) {
   const states = [];
   let cursor = 0;
   const effects = [];
+  let searchParams = new URLSearchParams();
+  let navigationType = 'POP';
   const effectDeps = [];
   let effectCursor = 0;
   const react = {
@@ -39,7 +41,15 @@ function harness(file, options = {}) {
     react,
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
     'react-i18next': { useTranslation: () => ({ t: (key) => key, i18n: { language: 'en' } }) },
-    'react-router-dom': { useNavigate: () => () => {}, useSearchParams: () => [new URLSearchParams(), () => {}], Link: 'Link' },
+    'react-router-dom': {
+      useNavigate: () => () => {},
+      useNavigationType: () => navigationType,
+      useSearchParams: () => [searchParams, (next, navigation) => {
+        searchParams = new URLSearchParams(next);
+        navigationType = navigation?.replace ? 'REPLACE' : 'PUSH';
+      }],
+      Link: 'Link',
+    },
     sonner: { toast: { success() {}, error() {}, info() {} } },
     '@/utils/format': {
       formatDate: (d) => String(d), formatPercent: String, formatPrice: String,
@@ -137,6 +147,9 @@ async function main() {
   tree = holding.render(undefined, holding.exports.RealHoldingsPage);
   const sorted = node(tree, 'HoldingsTable').props.holdings.map((h) => h.shares);
   assert.equal(JSON.stringify(sorted), JSON.stringify(['100', '10', '2']));
+  node(tree, 'HoldingsTable').props.onSort('shares');
+  tree = holding.render(undefined, holding.exports.RealHoldingsPage);
+  assert.equal(JSON.stringify(node(tree, 'HoldingsTable').props.holdings.map(h => h.shares)), JSON.stringify(['2', '10', '100']));
   results.push({ finding: 'holdings-numeric-string-sort', column: 'shares', direction: 'desc', actual: sorted, expected: ['100', '10', '2'] });
 
   // 4. Actual RealizedPlContent sums unlike currencies and labels the result USD.
