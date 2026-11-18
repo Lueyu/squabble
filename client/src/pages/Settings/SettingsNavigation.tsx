@@ -1,21 +1,25 @@
+import { useRef, useState } from 'react';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useToolConnectionCopy } from '@/features/tool-connections/tool-connection-copy';
 import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navigation';
-import { CONNECTION_SETTINGS, isConnectionSettingsSection, visibleSettingsSections, type SettingsSection } from './settings-navigation';
+import { isConnectionSettingsSection, visibleSettingsSections, type SettingsSection } from './settings-navigation';
 
 export default function SettingsNavigation({ active, localWorkspace, placement }: {
   active: SettingsSection;
   localWorkspace: boolean;
-  placement: 'sidebar' | 'page';
+  placement: 'rail' | 'page';
 }) {
   const { t } = useTranslation();
   const toolCopy = useToolConnectionCopy();
   const location = useLocation();
   const connections = isConnectionSettingsSection(active);
-  const otherSections = visibleSettingsSections(localWorkspace).filter(section => !isConnectionSettingsSection(section.id));
+  const sections = visibleSettingsSections(localWorkspace);
+  const [open, setOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const label = (section: SettingsSection) => section === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section}.title`);
 
   const link = (section: SettingsSection) => (
     <Link
@@ -25,19 +29,35 @@ export default function SettingsNavigation({ active, localWorkspace, placement }
         search: connections && isConnectionSettingsSection(section) ? location.search : '',
       }}
       state={connections && isConnectionSettingsSection(section) ? location.state : undefined}
+      onClick={() => setOpen(false)}
       aria-current={active === section ? 'page' : undefined}
     >
-      {section === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section}.title`)}
+      {label(section)}
     </Link>
   );
 
-  return <div className={`settings-navigation settings-navigation-${placement}`} role="group" aria-label={t('settingsNav.navigation')}>
-    <div className="settings-connection-links">{CONNECTION_SETTINGS.map(link)}</div>
-    <details className="settings-more-links" key={connections ? 'connections' : 'other'} open={!connections}>
-      <summary>{t('settingsNav.more')}<ChevronDown size={14} aria-hidden="true" /></summary>
-      <div>{otherSections.map(section => link(section.id))}</div>
-    </details>
-  </div>;
+  return <nav className={`settings-navigation settings-navigation-${placement}`} aria-label={t('settingsNav.navigation')}
+    onKeyDown={event => {
+      if (placement === 'page' && open && event.key === 'Escape') {
+        event.preventDefault();
+        setOpen(false);
+        toggleRef.current?.focus();
+      }
+    }}>
+    {placement === 'page'
+      ? <button ref={toggleRef} type="button" className="settings-category-toggle"
+          aria-expanded={open} aria-controls="settings-category-menu" onClick={() => setOpen(value => !value)}>
+          <span>{t('settingsNav.category')}</span><strong>{label(active)}</strong><ChevronDown size={16} aria-hidden="true" />
+        </button>
+      : <h2 className="settings-category-title">{t('settingsNav.category')}</h2>}
+    <div id={placement === 'page' ? 'settings-category-menu' : undefined} hidden={placement === 'page' && !open}
+      className="settings-category-list">
+      {(['research', 'personal', 'help'] as const).map(group => <div className="settings-category-group" key={group}>
+        <h3>{t(`settingsNav.groups.${group}`)}</h3>
+        {sections.filter(section => section.group === group).map(section => link(section.id))}
+      </div>)}
+    </div>
+  </nav>;
 }
 
 export function SettingsLocation({ active }: { active: SettingsSection }) {

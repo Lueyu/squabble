@@ -55,8 +55,10 @@ export default function ResearchWorkspacePage() {
   const roster = useQuery({ queryKey: ['agent-roster'], queryFn: agentRosterApi.list });
   const availableAgents = roster.data?.items?.filter(agent => agent.status === 'active') ?? [];
   const readyAgents = availableAgents.filter(agent => agent.availability !== 'unavailable');
-  const recommendedAgents = ['financials', 'bear', 'moderator'].flatMap(templateId => readyAgents.find(agent => agent.currentVersion.config.templateId === templateId) ?? []).slice(0, 3);
-  const chosenAgents = agentIds === null ? (recommendedAgents.length ? recommendedAgents : readyAgents.slice(0, 3)) : availableAgents.filter(agent => agentIds.includes(agent.id));
+  const customAgents = readyAgents.filter(agent => agent.origin !== 'builtin');
+  const defaultCandidates = customAgents.length ? customAgents : readyAgents;
+  const recommendedAgents = ['financials', 'bear', 'moderator'].flatMap(templateId => defaultCandidates.find(agent => agent.currentVersion.config.templateId === templateId) ?? []).slice(0, 3);
+  const chosenAgents = agentIds === null ? (recommendedAgents.length ? recommendedAgents : defaultCandidates.slice(0, 3)) : availableAgents.filter(agent => agentIds.includes(agent.id));
   const agentSelection = chosenAgents.map(agent => ({ agentId: agent.id, agentVersionId: agent.currentVersionId }));
   const moderators = chosenAgents.filter(agent => agent.currentVersion.config.templateId === 'moderator');
   const moderator = moderators[0] ?? chosenAgents[chosenAgents.length - 1];

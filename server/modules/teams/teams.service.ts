@@ -3,6 +3,7 @@ import { and, desc, eq, ilike, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { teams, teamDrafts, teamVersions } from '../../database/teams.schema';
+import type { TeamDatabase } from '../../database/team-context';
 import { TeamStore, versionView } from './team-store';
 import { parseTeam, requestKeySchema, revisionSchema, teamError, EMPTY_CONFIG, EMPTY_LAYOUT, uuidSchema } from './team-contract';
 import { displaySchema, layoutSchema, semanticSchema, normalizeSemanticConfig } from './team-graph';
@@ -10,6 +11,7 @@ import { teamCapabilities } from './team-config';
 import type { TeamDetail, TeamLayout, TeamSemanticConfig, TeamDisplay, TeamListResult } from '../../../shared/team-workspace.interface';
 import { TEAM_TEMPLATES } from '../../../shared/team-templates';
 import { instantiateOrganization, instantiateTemplate } from '../../../shared/team-template-instantiation';
+import { ensureBuiltinFriends } from '../../database/agent-roster-builtins';
 @Injectable()
 export class TeamsService {
     constructor(readonly store: TeamStore) { }
@@ -50,11 +52,23 @@ export class TeamsService {
         const last = rows[q.limit - 1];
         return { items, nextCursor: rows.length > q.limit && last ? Buffer.from(JSON.stringify({ id: last.id, at: last.updatedAt.toISOString() })).toString('base64url') : null, capabilities };
     }
+    // Called inside TeamStore.mutate after acquiring the owner lock and checking receipts.
+    private async ensureNameAvailable(tx: TeamDatabase, owner: string, name: string, previousName?: string) {
+        const [conflict] = await tx.select({ id: teams.id }).from(teams).where(and(
+            eq(teams.ownerId, owner),
+            sql `${teams.status} = 'active'`,
+            sql `lower(btrim(${teams.name})) = lower(btrim(${name}))`,
+            previousName === undefined ? undefined : sql `lower(btrim(${previousName})) <> lower(btrim(${name}))`,
+        )).limit(1);
+        if (conflict)
+            teamError('TEAM_NAME_CONFLICT');
+    }
     async create(owner: string, input: unknown) {
         const request = parseTeam(z.object({ requestKey: requestKeySchema, name: z.string().trim().min(1).max(80), description: z.string().max(2000).default(''), avatar: z.string().max(500).nullable().optional(), copyFromTeamVersionId: uuidSchema.optional(), templateId: z.string().max(80).optional() }).strict(), input);
         if (request.templateId && request.copyFromTeamVersionId)
             teamError('TEAM_INVALID_INPUT', 'Choose template or copy');
         return this.store.mutate(owner, null, 'create', request, async (tx) => {
+            await this.ensureNameAvailable(tx, owner, request.name);
             let config: TeamSemanticConfig = EMPTY_CONFIG, layout: TeamLayout = EMPTY_LAYOUT;
             let display: TeamDisplay = { name: request.name, avatar: request.avatar ?? null, departmentLabels: {}, roleLabels: {} };
             if (request.copyFromTeamVersionId) {
@@ -72,7 +86,15 @@ export class TeamsService {
                 if (!template)
                     teamError('TEAM_REFERENCE_NOT_FOUND');
                 const copy = instantiateTemplate(template);
-                config = copy.config;
+                const friends = await ensureBuiltinFriends(tx, owner);
+                const seats = new Map(copy.staffing?.map(slot => [slot.roleId, slot.recommendedTemplateId]));
+                config = { ...copy.config, roles: copy.config.roles.map(role => {
+                    const specialty = seats.get(role.id);
+                    if (!specialty)
+                        return role;
+                    const friend = friends.get(specialty)!;
+                    return { ...role, agentId: friend.agentId, agentVersionId: friend.id };
+                }) };
                 layout = copy.layout;
                 display = { ...copy.display, name: request.name, avatar: request.avatar ?? null };
             }
@@ -107,6 +129,7 @@ export class TeamsService {
                     const display = parseTeam(displaySchema, data.display);
                     if ([...Object.keys(display.roleLabels), ...Object.keys(display.departmentLabels)].some(k => !known.has(k)))
                         teamError('TEAM_INVALID_INPUT', 'Unknown label node');
+                    await this.ensureNameAvailable(tx, owner, display.name, team.name);
                     await tx.update(teams).set({ display, name: display.name, avatar: display.avatar, displayRevision: team.displayRevision + 1, updatedAt: new Date() }).where(eq(teams.id, id));
                 }
                 else {

@@ -32,7 +32,11 @@ function useAccountTeams(enabled: boolean) {
   });
 }
 
-export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'holdings' | 'transactions' }) {
+export function AccountAssetsPage({ real, mode, renderRealHoldings }: {
+  real: ReactNode;
+  mode: 'holdings' | 'transactions';
+  renderRealHoldings?: (context: { accountSelector: ReactNode; importPath: string; returnTo: string }) => ReactNode;
+}) {
   const { t, i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
   const { enabled: simple } = useSimpleExperience();
@@ -78,6 +82,18 @@ export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'hold
     </SelectContent>
   </Select>;
   const watchlist = id && assetHref('/watchlist', id, new URLSearchParams({ returnTo }).toString());
+
+  if (simple && realHoldings && renderRealHoldings) return <div className="portfolio-page space-y-4">
+    {renderRealHoldings({
+      accountSelector: <div className="min-w-0 space-y-1">
+        {selectAccount}
+        {accounts.isError && <p role="status" className="text-xs text-destructive">{t('assets.accountListUnavailable')}</p>}
+      </div>,
+      importPath,
+      returnTo,
+    })}
+    {onboarding}
+  </div>;
 
   if (simple) return <div className="portfolio-page space-y-5">
     {mode === 'holdings' && <header className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">

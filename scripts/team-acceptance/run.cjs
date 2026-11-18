@@ -92,7 +92,7 @@ async function runJourney(browser, sandbox, output, mode, evidence, suite) {
     evidence.connectionShot = connection.screenshot;
     evidence.defaultInputLimit = (await ownerApi('/api/llm-budget')).maxInputTokens;
     const heartbeat = model ? undefined : () => connection.beat();
-    stage('create team from saved friends');
+    stage(legacyUi ? 'create team from saved friends' : 'verify built-in staffing and publish team role edit');
     const team = await createTeam(work, sandbox, ownerApi, executor, 'Acceptance ' + mode, legacyUi, heartbeat);
     evidence.team = team;
     await assertHoldings(sandbox.sql, owner, team.accountId);
@@ -104,6 +104,10 @@ async function runJourney(browser, sandbox, output, mode, evidence, suite) {
     evidence.cycle = cycle;
     if (cycle.commissionId) {
       const detail = await ownerApi('/api/teams/' + team.id + '/commissions/' + cycle.commissionId);
+      if (team.editedSeat) {
+        const member = detail.members.find(item => item.roleId === team.editedSeat.id);
+        assert.equal(member?.responsibility, team.editedSeat.responsibility, 'Commission froze the published role edit');
+      }
       evidence.commission = { state: detail.state, lastError: detail.lastError, tasks: detail.tasks.map(task => ({
         key: task.key, state: task.state, reason: task.reason, attempts: task.attempts.map(attempt => ({
           id: attempt.id, state: attempt.state, kind: attempt.kind, error: attempt.error, dispatched: attempt.dispatched,

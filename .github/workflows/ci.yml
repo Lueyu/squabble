@@ -63,8 +63,12 @@ jobs:
           npm run build:client
           npm run ui:density
           node scripts/ui-probe/overview-layout-browser.cjs
+          node scripts/ui-probe/overview-layout-browser.cjs --real-only --output output/playwright/overview-real-only
+          node scripts/ui-probe/team-create-template-browser.cjs
           node scripts/ui-probe/team-organization-browser.cjs
+          node scripts/ui-probe/team-role-settings-browser.cjs
           node scripts/ui-probe/team-auto-run-browser.cjs
+          node scripts/ui-probe/settings-navigation-browser.cjs
 
       - name: Exercise the first-run team simulation journeys
         timeout-minutes: 10

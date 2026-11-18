@@ -55,7 +55,7 @@ test('create replay survives service restart, owner isolation and immutable hist
     const { AgentRosterService } = await import('./agent-roster.service');
     const restarted = new AgentRosterService(f.db);
     assert.deepEqual(await restarted.detail(f.owner, a.id), a);
-    assert.equal((await restarted.list(f.stranger, {})).items.length, 0);
+    assert.ok((await restarted.list(f.stranger, {})).items.every(item => item.origin === 'builtin' && item.id !== a.id));
     await assert.rejects(restarted.detail(f.stranger, a.id), errorIs('AGENT_NOT_FOUND'));
     await assert.rejects(restarted.create(f.owner, { ...input, name: 'Changed' }), errorIs('AGENT_REQUEST_KEY_CONFLICT'));
     const changed = await restarted.update(f.owner, a.id, { requestKey: 'update-one', expectedRevision: a.revision, instructions: '新的财务核对职责' });

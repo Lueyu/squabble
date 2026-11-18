@@ -18,6 +18,7 @@ import { executionReadiness } from '../local-agents/execution-readiness';
 import type { AgentProfile, AgentVersion, AgentExecutor, AgentSelection, AgentResolveOptions, AgentMemoryRecallOptions, AgentCouncilMember, AgentMemory, AgentMemoryScope } from '../../../shared/agent-roster.interface';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
 import { AGENT_TEMPLATES, LEGACY_AGENT_TEMPLATE_IDS, archiveSchema, assertCeiling, canonicalAgentToolId, parseCreate, parseRoster, prepareAgent, recommendedSchema, rosterError, rosterHash, scopeSchema, shareMemorySchema, snapshotMember, sourceKey, sourceSchema, updateSchema, uuid, writeMemorySchema } from './agent-roster.rules';
+import { ensureBuiltinFriends } from '../../database/agent-roster-builtins';
 
 type ProfileRow = typeof profiles.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
@@ -107,10 +108,28 @@ export class AgentRosterService {
     catch { rosterError('AGENT_SOURCE_UNAVAILABLE', 'A saved source was removed or is no longer authorized; choose its current version'); }
   }
 
-  private async view(tx: RosterDb, owner: string, row: ProfileRow): Promise<AgentProfile> {
+  private async builtinExecutor(tx: RosterDb, owner: string): Promise<AgentExecutor | null> {
+    const connections = await tx.select({ id: modelConnections.id }).from(modelConnections)
+      .where(and(eq(modelConnections.owner, owner), eq(modelConnections.testState, 'passed'))).limit(2);
+    const routes: AgentExecutor[] = connections.map(({ id }) => ({ executionMode: 'model', connectionId: id, model: 'slow' }));
+    const paired = (await this.locals?.status(owner))?.items ?? [];
+    for (const item of paired) {
+      if (executionReadiness(item).executable) routes.push({ executionMode: 'local', localAgentId: item.id });
+    }
+    if (routes.length) return routes.length === 1 ? routes[0] : null;
+    const legacy: AgentExecutor = { executionMode: 'model', model: 'slow' };
+    return await this.executorAvailable(tx, owner, legacy) ? legacy : null;
+  }
+
+  private async view(tx: RosterDb, owner: string, row: ProfileRow, resolveBuiltin = () => this.builtinExecutor(tx, owner)): Promise<AgentProfile> {
     const version = await this.versionRow(tx, owner, row.id, row.currentVersionId);
-    return { id: row.id, avatar: row.avatar, name: row.name, specialty: row.specialty, description: row.description, status: row.status as AgentProfile['status'], revision: row.revision,
-      currentVersionId: row.currentVersionId, currentVersion: versionView(version), availability: row.status === 'active' && await this.executorAvailable(tx, owner, version.config.executor) ? 'configured' : 'unavailable',
+    const builtin = version.config.origin === 'builtin';
+    const active = row.status === 'active';
+    const effectiveExecutor = builtin && active ? await resolveBuiltin() : null;
+    const configured = active && (builtin ? Boolean(effectiveExecutor) : await this.executorAvailable(tx, owner, version.config.executor));
+    return { ...(builtin ? { origin: 'builtin' as const } : {}), ...(effectiveExecutor ? { effectiveExecutor } : {}),
+      id: row.id, avatar: row.avatar, name: row.name, specialty: row.specialty, description: row.description, status: row.status as AgentProfile['status'], revision: row.revision,
+      currentVersionId: row.currentVersionId, currentVersion: versionView(version), availability: configured ? 'configured' : 'unavailable',
       createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
   }
 
@@ -123,9 +142,12 @@ export class AgentRosterService {
       try { cursor = parseRoster(z.object({ id: uuid, at: z.iso.datetime() }).strict(), JSON.parse(Buffer.from(q.cursor, 'base64url').toString())); }
       catch { rosterError('AGENT_INVALID_INPUT', 'Invalid page cursor'); }
     }
+    if (q.status !== 'archived') await this.db.transaction(tx => ensureBuiltinFriends(tx, owner));
     const rows = await this.db.select().from(profiles).where(and(eq(profiles.ownerId, owner), q.status === 'all' ? undefined : eq(profiles.status, q.status), q.q ? ilike(profiles.name, '%' + q.q + '%') : undefined,
       cursor ? sql`(${profiles.updatedAt},${profiles.id})<(${cursor.at}::timestamptz,${cursor.id}::uuid)` : undefined)).orderBy(desc(profiles.updatedAt), desc(profiles.id)).limit(q.limit + 1);
-    const items = await Promise.all(rows.slice(0, q.limit).map(row => this.view(this.db, owner, row)));
+    let builtinExecutor: Promise<AgentExecutor | null> | undefined;
+    const resolveBuiltin = () => builtinExecutor ??= this.builtinExecutor(this.db, owner);
+    const items = await Promise.all(rows.slice(0, q.limit).map(row => this.view(this.db, owner, row, resolveBuiltin)));
     const last = rows[q.limit - 1];
     return { items, nextCursor: rows.length > q.limit && last ? Buffer.from(JSON.stringify({ id: last.id, at: last.updatedAt.toISOString() })).toString('base64url') : null };
   }
@@ -158,6 +180,7 @@ export class AgentRosterService {
     return this.mutate(owner, 'update', request, id, async tx => {
       const row = await this.row(tx, owner, id, true); this.checkRevision(row, request.expectedRevision);
       const prior = await this.versionRow(tx, owner, id, row.currentVersionId);
+      if (prior.config.origin === 'builtin') rosterError('AGENT_BUILTIN_READ_ONLY', 'Built-in friends are read-only');
       const config = { ...prior.config, ...(request.templateId ? { templateId: request.templateId } : {}), ...(request.instructions ? { instructions: request.instructions } : {}),
         ...(request.executor ? { executor: request.executor } : {}), ...(request.allowedToolIds ? { allowedToolIds: request.allowedToolIds.map(canonicalAgentToolId) } : {}), ...(request.allowedSources ? { allowedSources: request.allowedSources } : {}),
         preferences: { ...prior.config.preferences, ...request.preferences } };
@@ -178,6 +201,8 @@ export class AgentRosterService {
     const request = parseRoster(archiveSchema, input);
     return this.mutate(owner, 'archive', request, id, async tx => {
       const row = await this.row(tx, owner, id, true); this.checkRevision(row, request.expectedRevision);
+      const version = await this.versionRow(tx, owner, id, row.currentVersionId);
+      if (version.config.origin === 'builtin') rosterError('AGENT_BUILTIN_READ_ONLY', 'Built-in friends are read-only');
       const [updated] = await tx.update(profiles).set({ status: 'archived', revision: row.revision + 1, updatedAt: new Date() }).where(and(eq(profiles.ownerId, owner), eq(profiles.id, id))).returning();
       return this.view(tx, owner, updated);
     });
@@ -205,12 +230,19 @@ export class AgentRosterService {
       rosterError('AGENT_INVALID_INPUT', 'Choose each friend only once in a discussion');
     parseRoster(z.array(sourceSchema).max(100), options.sourceRefs ?? []);
     const result: AgentCouncilMember[] = [];
+    let builtinExecutor: Promise<AgentExecutor | null> | undefined;
     for (const selection of selections) {
       const { profile, version } = await readAgentRosterVersion(tx, owner, selection.agentId, selection.agentVersionId, options);
-      await this.assertExecutorReference(tx, owner, version.config.executor);
-      if (!await this.executorAvailable(tx, owner, version.config.executor)) rosterError('AGENT_EXECUTOR_UNAVAILABLE', 'Repair this friend’s saved connection in Settings');
-      const member = snapshotMember(profile, version, selection);
-      if (version.config.executor.executionMode === 'a2a') member.a2aFingerprint = await readA2aConnectionFingerprint(tx, owner, version.config.executor.connectionId);
+      const executor = version.config.origin === 'builtin'
+        ? await (builtinExecutor ??= this.builtinExecutor(tx, owner))
+        : version.config.executor;
+      if (!executor) rosterError('AGENT_EXECUTOR_UNAVAILABLE', 'A built-in friend needs one unambiguous usable connection for personal research');
+      if (version.config.origin !== 'builtin') {
+        await this.assertExecutorReference(tx, owner, executor);
+        if (!await this.executorAvailable(tx, owner, executor)) rosterError('AGENT_EXECUTOR_UNAVAILABLE', 'Repair this friend’s saved connection in Settings');
+      }
+      const member = snapshotMember(profile, { ...version, config: { ...version.config, executor } }, selection);
+      if (executor.executionMode === 'a2a') member.a2aFingerprint = await readA2aConnectionFingerprint(tx, owner, executor.connectionId);
       result.push(member);
     }
     return result;

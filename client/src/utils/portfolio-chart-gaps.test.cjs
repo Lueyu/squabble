@@ -14,6 +14,55 @@ const point = (day, equityUsd, gaps = [], returnPct = null) => ({
 });
 const series = points => ({ accountId: 'real', points });
 
+test('the overview keeps real-only performance for a line, an isolated point, and no saved observations', t => {
+  const f = fixture();
+  const Overview = f.load('pages/Overview/PortfolioOverviewPage.tsx').default;
+  let option;
+  t.mock.method(ReactECharts.prototype, 'render', function () {
+    option = this.props.option;
+    return null;
+  });
+  function render(points) {
+    option = undefined;
+    const latest = points.at(-1);
+    f.state.queries.set('portfolio-comparison', { data: {
+      from: '2026-11-12T00:00:00Z', to: '2026-11-19T00:00:00Z',
+      granularity: 'observations',
+      series: [{
+        ...series(points), name: 'Real portfolio', kind: 'real', status: 'real',
+        createdAt: null, firstIncludedAt: null, colorIndex: -1,
+        valuationAsOf: latest?.timestamp ?? null, equityUsd: latest?.equityUsd ?? null,
+        returnPct: latest?.returnPct ?? null, strategyCount: 0, gaps: [],
+      }],
+    } });
+    return renderToStaticMarkup(React.createElement(MemoryRouter, {
+      initialEntries: ['/'],
+    }, React.createElement(Overview)));
+  }
+
+  const observations = [point(16, 100, [], 0), point(17, null, ['MISSING_OBSERVATION']), point(18, 105, [], 5)];
+  const line = render(observations);
+  assert.match(line, /Multiple valid observations/);
+  assert.match(line, /role="img"/);
+  assert.equal(option.series.length, 1);
+  assert.deepEqual([...structuredClone(option.series[0].data)], observations.map(item => [Date.parse(item.timestamp), item.returnPct]));
+  assert.equal(option.series[0].connectNulls, false);
+
+  const isolated = point(18, 100);
+  const single = render([isolated]);
+  assert.match(single, /One valid observation/);
+  assert.match(single, /role="img"/);
+  assert.deepEqual(structuredClone(option.series[0].data), [[Date.parse(isolated.timestamp), 100]]);
+  assert.ok(option.series[0].symbolSize(null, { dataIndex: 0 }) > 0);
+
+  const empty = render([]);
+  assert.match(empty, /aria-label="Account performance"/);
+  assert.match(empty, /No complete valuations in this period/);
+  assert.match(empty, /aria-label="Date range · Past week"/);
+  assert.doesNotMatch(empty, /\$0\.00/);
+  assert.equal(option, undefined);
+});
+
 test('weekly return axes handle one valid observation and distinguish fine ticks without changing chart data', (t) => {
   const f = fixture();
   const Chart = f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default;

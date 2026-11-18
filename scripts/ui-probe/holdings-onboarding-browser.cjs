@@ -53,8 +53,10 @@ async function check(browser, origin, { holdings, ready = false, existingState }
     const activeStep = setup.locator('[aria-current=step]');
     await page.goto(origin + real);
     const importLink = page.locator('main a[href^="/import?"]');
-    const simulation = page.getByRole('link', { name: 'Probe simulation', exact: true });
-    await simulation.waitFor();
+    const accountSelector = page.getByRole('combobox', { name: 'Switch asset account' });
+    await accountSelector.click();
+    await page.getByRole('option', { name: 'Probe simulation', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
     await importLink.first().waitFor();
 
     if (existingState === 'running') {
@@ -91,7 +93,10 @@ async function check(browser, origin, { holdings, ready = false, existingState }
     assert.equal(await page.evaluate(() => history.state.usr.returnTo), real);
     await page.goBack();
     await page.waitForURL(origin + real);
-    await setup.waitFor();
+    await page.getByRole('heading', { name: 'My real portfolio', exact: true }).waitFor();
+    await setup.waitFor().catch(async error => {
+      throw new Error('Setup is unavailable after returning to the real ledger: ' + await page.locator('main').innerText(), { cause: error });
+    });
 
     for (const target of [
       '/holdings?accountId=' + paperId, '/transactions?accountId=real', '/transactions?accountId=' + paperId, '/',

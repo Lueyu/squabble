@@ -35,15 +35,15 @@ async function openOrganization(page, url, suffix = '?panel=organization') {
 
 async function verifyLayout(page, mobile) {
   const organization = page.getByRole('heading', { name: /团队组织|Team organization/ });
-  const properties = page.getByRole('heading', { name: /岗位属性|Role properties/ });
+  const properties = page.getByRole('heading', { name: /岗位设置|Role settings/ });
   await organization.waitFor();
   await properties.waitFor();
-  await page.getByRole('button', { name: /保存草稿|Save draft/, exact: true }).waitFor();
+  await page.getByRole('button', { name: /^(保存岗位草稿|Save role draft)$/ }).waitFor();
   await page.getByRole('button', { name: /核对并发布版本|Review and publish version/ }).waitFor();
   assert.equal(await page.getByRole('navigation', { name: /团队工作区页面|Team workspace panels/ }).count(), 0);
-  assert.equal(await page.getByText(/容器宽度|Container width|Explicit model identifier/).count(), 0);
-  await page.getByRole('combobox', { name: /指派已有股友|Assign an existing friend/ }).waitFor();
-  assert.equal(await page.getByRole('combobox', { name: /执行连接|Executor connection/ }).isVisible(), false);
+  assert.equal(await page.getByText(/容器宽度|Container width|Explicit model identifier/).filter({ visible: true }).count(), 0, 'advanced controls start closed');
+  await page.getByText(/^(更换已指派股友|Replace assigned friend)$/).waitFor();
+  await page.getByRole('combobox', { name: /运行连接|Runtime connection/ }).waitFor();
   const grid = await organization.evaluate(element => ({
     width: document.documentElement.scrollWidth,
     viewport: innerWidth,
@@ -72,12 +72,131 @@ async function verifyCanvasKeyboard(page, tag) {
   await page.waitForFunction(() => document.activeElement?.matches('.react-flow__edge'));
 }
 
+async function verifyCanvasControls(page) {
+  const zoom = page.getByRole('button', { name: /恢复100%缩放|Reset zoom to 100%/ });
+  const fit = page.getByRole('button', { name: /适应画布|Fit canvas/ });
+  const canvas = page.locator('.team-canvas');
+  const role = name => canvas.locator('.react-flow__node-teamRole').filter({ has: page.getByText(name, { exact: true }) });
+  const reports = ['关键财务风险', '口径依据'].map(label =>
+    canvas.getByRole('button', { name: new RegExp(label) }).locator('.react-flow__edge-path'));
+  await Promise.all(reports.map(path => path.waitFor({ state: 'attached' })));
+  assert.notEqual(await reports[0].getAttribute('d'), await reports[1].getAttribute('d'), 'each manager has its own line');
+
+  await zoom.click();
+  await page.waitForFunction(() => document.querySelector('.team-zoom-tools button:nth-child(2)')?.textContent === '100%');
+  await page.getByRole('button', { name: /^放大$|^Zoom in$/ }).click();
+  await page.waitForFunction(() => parseInt(document.querySelector('.team-zoom-tools button:nth-child(2)')?.textContent, 10) > 100);
+  await page.getByRole('button', { name: /^缩小$|^Zoom out$/ }).click();
+  await page.waitForFunction(() => document.querySelector('.team-zoom-tools button:nth-child(2)')?.textContent === '100%');
+  await fit.click();
+  await page.waitForFunction(() => parseInt(document.querySelector('.team-zoom-tools button:nth-child(2)')?.textContent, 10) < 100);
+
+  const analyst = role('财报专家');
+  await analyst.locator('[data-persona]').waitFor();
+  const origin = new URL(page.url()).origin;
+  const detail = await (await page.request.get(origin + '/api/teams/' + TEAM_ID)).json();
+  const roster = await (await page.request.get(origin + '/api/agent-roster')).json();
+  const analystId = Object.keys(detail.display.roleLabels).find(id => detail.display.roleLabels[id] === '财报专家');
+  const binding = detail.draft.config.roles.find(item => item.id === analystId);
+  const friend = roster.items.find(item => item.id === binding.agentId);
+  assert.equal(await analyst.locator('[data-persona]').getAttribute('data-persona'), friend.avatar);
+  assert.equal(await analyst.locator('.team-role-identity p').textContent(), friend.name);
+  await analyst.click();
+  await page.locator('.team-canvas-footer').getByRole('button', { name: /岗位设置|Role settings/ }).click();
+  await page.waitForFunction(() => document.activeElement?.matches('.team-inspector h2'));
+  assert.equal(await page.getByRole('textbox', { name: /岗位名称|Role name/ }).inputValue(), '财报专家');
+
+  const viewport = canvas.locator('.react-flow__viewport');
+  const beforePan = await viewport.evaluate(element => element.style.transform);
+  const bounds = await canvas.boundingBox();
+  await page.mouse.move(bounds.x + 12, bounds.y + 16);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + 55, bounds.y + 43, { steps: 6 });
+  await page.mouse.up();
+  assert.notEqual(await viewport.evaluate(element => element.style.transform), beforePan);
+
+  const beforeWheel = await zoom.textContent();
+  await page.mouse.wheel(0, -120);
+  await page.waitForFunction(before => document.querySelector('.team-zoom-tools button:nth-child(2)')?.textContent !== before, beforeWheel);
+
+  await page.getByText(/^(组织工具|Organization tools)$/).click();
+  await page.getByRole('button', { name: /^(自动布局|Auto layout)$/ }).click();
+  await fit.click();
+  await page.waitForFunction(() => {
+    const box = id => {
+      const node = document.querySelector(`.react-flow__node[data-id="c0000000-0000-4000-8000-00000000000${id}"]`);
+      return node && getComputedStyle(node).visibility === 'visible' ? node.getBoundingClientRect() : null;
+    };
+    const analyst = box(2), lead = box(1), manager = box(3);
+    const canvas = document.querySelector('.team-canvas')?.getBoundingClientRect();
+    return analyst && lead && manager && canvas
+      && analyst.top >= lead.bottom && analyst.top >= manager.bottom
+      && [analyst, lead, manager, box(4)].every(node => node
+        && node.top >= canvas.top && node.bottom <= canvas.bottom && node.left >= canvas.left && node.right <= canvas.right);
+  });
+  await page.screenshot({ animations: 'disabled', path: path.join(EVIDENCE, 'team-org-multiple-managers.png') });
+}
+
+async function verifyParallelRelations(page, url) {
+  await page.route(url + '/api/teams/' + TEAM_ID, async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const original = body.draft.config.relations.find(edge => edge.responsibilityScope === '口径依据');
+    body.draft.config.relations.push(
+      { ...original, id: 'c0000000-0000-4000-8000-000000000201', kind: 'delegates_to', responsibilityScope: '平行委托' },
+      { ...original, id: 'c0000000-0000-4000-8000-000000000202', kind: 'reviews', responsibilityScope: '反向复核',
+        fromRoleId: original.toRoleId, toRoleId: original.fromRoleId },
+    );
+    await route.fulfill({ response, json: body });
+  });
+  await openOrganization(page, url);
+  await page.getByText(/^(组织工具|Organization tools)$/).click();
+  await page.getByRole('combobox', { name: /显示关系|Visible relations/ }).click();
+  await page.getByRole('option', { name: /^(全部关系|All relations)$/ }).click();
+  const edges = page.locator('.team-canvas').getByRole('button', { name: /口径依据|平行委托|反向复核/ });
+  const paths = edges.locator('.react-flow__edge-path');
+  await paths.nth(2).waitFor();
+  const routes = await paths.evaluateAll(elements => elements.map(path => {
+    const length = path.getTotalLength();
+    const from = path.getPointAtLength(0);
+    const to = path.getPointAtLength(length);
+    const middle = path.getPointAtLength(length / 2);
+    const markerId = path.getAttribute('marker-end')?.match(/^url\(['"]?#(.+?)['"]?\)$/)?.[1];
+    const marker = markerId ? document.getElementById(markerId) : null;
+    return { name: path.closest('.react-flow__edge').getAttribute('aria-label'), arrow: marker?.tagName === 'marker',
+      from: from.x, to: to.x, middle: middle.y };
+  }));
+  assert.equal(routes.length, 3);
+  assert.equal(routes.filter(route => !route.arrow).map(route => route.name).join(', '), '', 'each rendered route ends with a target arrow');
+  assert.ok(routes.every(route => route.name.includes('反向复核') ? route.from > route.to : route.from < route.to));
+  const lanes = routes.map(route => route.middle).sort((a, b) => a - b);
+  assert.ok(lanes[1] - lanes[0] >= 10 && lanes[2] - lanes[1] >= 10, 'same-row routes have visibly separated lanes');
+  const canvas = page.locator('.team-canvas');
+  for (const name of ['口径依据', '平行委托', '反向复核']) {
+    await canvas.scrollIntoViewIfNeeded();
+    const path = canvas.getByRole('button', { name: new RegExp(name) }).locator('.react-flow__edge-path');
+    const { x, y } = await path.evaluate(element => {
+      const middle = element.getPointAtLength(element.getTotalLength() / 2);
+      const point = middle.matrixTransform(element.getScreenCTM());
+      return { x: point.x, y: point.y };
+    });
+    await page.mouse.click(x, y);
+    await dialog(page).waitFor();
+    assert.equal(await scope(page).inputValue(), name);
+    await page.keyboard.press('Escape');
+    await dialog(page).waitFor({ state: 'hidden' });
+  }
+  await canvas.screenshot({ animations: 'disabled', path: path.join(EVIDENCE, 'team-org-parallel-relations.png') });
+}
+
 async function verifyMobileEditing(page, url, tag) {
   await page.getByRole('button', { name: /^(画布|Canvas)$/ }).tap();
   await page.locator('.team-canvas').waitFor();
   assert.equal(new URL(page.url()).searchParams.get('view'), 'canvas');
   await page.getByRole('button', { name: /^(列表|List)$/ }).tap();
   await page.getByRole('button', { name: /^财报专家 ·/ }).tap();
+  await page.locator('.team-canvas-footer').getByRole('button', { name: /岗位设置|Role settings/ }).tap();
+  await page.waitForFunction(() => document.activeElement?.matches('.team-inspector h2'));
   const name = page.getByRole('textbox', { name: /岗位名称|Role name/ });
   await name.fill('手机修改岗位');
   assert.equal(await page.getByRole('button', { name: /^手机修改岗位 ·/ }).isVisible(), true);
@@ -113,12 +232,12 @@ async function verifyMobileEditing(page, url, tag) {
 
   const [write] = await Promise.all([
     page.waitForRequest(request => request.method() === 'PUT' && new URL(request.url()).pathname.endsWith(TEAM_PATH + '/draft')),
-    page.getByRole('button', { name: /^(保存草稿|Save draft)$/ }).tap(),
+    page.getByRole('button', { name: /^(保存岗位草稿|Save role draft)$/ }).tap(),
   ]);
   const config = write.postDataJSON().config;
   assert.ok(hasScope(config, '并行汇报电子回归'));
   assert.ok(hasScope(config, '关键财务风险'));
-  await page.getByRole('button', { name: /^(保存草稿|Save draft)$/ }).waitFor();
+  await page.getByRole('button', { name: /^(保存岗位草稿|Save role draft)$/ }).waitFor();
   await page.getByRole('button', { name: /核对并发布版本|Review and publish version/ }).tap();
   await dialog(page).getByRole('heading', { name: /检查并发布配置|Review and publish configuration/ }).waitFor();
   const [review] = await Promise.all([
@@ -161,7 +280,7 @@ async function verifyArchived(page, url) {
 }
 
 async function main() {
-  const { server, url } = await start({ port: 0, dist: path.join(ROOT, 'dist/client') });
+  const { server, url } = await start({ port: 0, dist: process.env.TEAM_ORGANIZATION_CLIENT_DIST ?? path.join(ROOT, 'dist/client') });
   let browser;
   const results = [];
   try {
@@ -171,6 +290,7 @@ async function main() {
       const mobile = viewport.width < 700;
       const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height },
         hasTouch: mobile, colorScheme: viewport.dark ? 'dark' : 'light' });
+      await page.route('**/*', route => new URL(route.request().url()).origin === url ? route.continue() : route.abort());
       page.setDefaultTimeout(8000);
       const problems = [];
       page.on('pageerror', error => problems.push(error.message));
@@ -182,6 +302,10 @@ async function main() {
         await openOrganization(page, url);
         await verifyLayout(page, mobile);
         await page.screenshot({ animations: 'disabled', path: path.join(EVIDENCE, `team-org-${viewport.label}.png`) });
+        if (viewport.label === '1440x1080') {
+          await verifyCanvasControls(page);
+          await verifyParallelRelations(page, url);
+        }
         if (viewport.label === '1440x1080-dark') await verifyCanvasKeyboard(page, viewport.label);
         if (viewport.label === '390x844') await verifyMobileEditing(page, url, viewport.label);
         if (viewport.label === '390x844-dark') await verifyArchived(page, url);

@@ -206,7 +206,7 @@ test('formal blueprint preview blocks an unready participating seat', options, a
 test('legacy teams keep the historical division and its explicit proof mode', options, async () => {
   const f = await makeTeamFixture();
   try {
-    const t = await f.team();
+    const t = await f.team('Legacy structural preview fixture');
     const workPlans = new TeamWorkPlanPreviewService(f.store);
     const structural = await workPlans.preview(f.owner, t.team.id, { requestKey: randomUUID(), expectedSemanticRevision: t.team.semanticRevision, config: t.team.draft.config });
     assert.equal(structural.mode, 'legacy_v1');

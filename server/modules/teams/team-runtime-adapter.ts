@@ -32,20 +32,8 @@ export class TeamRuntimeAdapter {
                 const grants = await tx.select().from(teamSourceGrants).where(eq(teamSourceGrants.ownerId, owner));
                 const sources = role.sourceGrantIds.map(id => grants.find(grant => grant.id === id && grant.state === 'active'));
                 if (sources.some(source => !source)) throw new Error('TEAM_SCOPE_REVOKED');
-                const { version } = await readAgentRosterVersion(tx, owner, role.agentId, role.agentVersionId, { allowedToolIds: role.allowedToolIds,
+                await readAgentRosterVersion(tx, owner, role.agentId, role.agentVersionId, { allowedToolIds: role.allowedToolIds,
                     sourceRefs: sources.map(source => ({ kind: source!.sourceKind as ResearchSourceRef['kind'], id: source!.sourceId, revision: source!.sourceRevision, availability: 'available' })) });
-                const pinned = version.config.executor;
-                let matches = false;
-                if (pinned.executionMode === 'model' && role.executor.executionMode === 'model') {
-                    const [connection] = pinned.connectionId ? await tx.select().from(modelConnections).where(and(eq(modelConnections.owner, owner), eq(modelConnections.id, pinned.connectionId))) : [];
-                    matches = Boolean(connection && pinned.connectionId === role.executor.connectionId && pinned.model === (role.executor.tier ?? 'slow')
-                        && role.executor.model === (pinned.model === 'fast' ? connection.fastModel : connection.slowModel) && !Object.keys(role.executor.settings).length);
-                } else if (pinned.executionMode === 'local' && role.executor.executionMode === 'local') {
-                    matches = pinned.localAgentId === role.executor.localAgentId && canonicalHash(pinned.settings ?? {}) === canonicalHash(role.executor.settings);
-                } else if (pinned.executionMode === 'a2a' && role.executor.executionMode === 'a2a') {
-                    matches = pinned.connectionId === role.executor.connectionId;
-                }
-                if (!matches) throw new Error('TEAM_CAPABILITY_UNAVAILABLE');
             }
             if (role.executor.executionMode === 'model') {
                 if (Object.keys(role.executor.settings).length) {

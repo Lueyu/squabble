@@ -33,6 +33,8 @@ test('templates are editable unconfigured organizations with research provenance
     }
     // Staffing: one slot per seat, catalog specialty, stable role references.
     assert.equal(template.staffing.length, template.config.roles.length);
+    assert.equal(new Set(template.staffing.map(slot => slot.recommendedTemplateId)).size, template.config.roles.length,
+      `${template.id} needs a distinct built-in friend for every independent seat`);
     for (const slot of template.staffing) {
       assert.ok(ids.has(slot.roleId));
       assert.ok(catalog.has(slot.recommendedTemplateId));

@@ -1,9 +1,10 @@
 import { isAxiosError } from 'axios';
+import type { AiConnection } from '@/features/onboarding/onboarding-state';
 import { readTabRecovery, writeTabRecovery } from '@/utils/workspace-tab-recovery';
 import type { ModelConnection } from '@shared/model-connections.interface';
 import type { CreatePortfolioAccountRequest, PortfolioAccountSummary } from '@shared/portfolio-workspace.interface';
 import type { CustomSimulationCash, InvestmentPreviewRequest } from '@shared/investment-policy.interface';
-import type { BindingPreviewInput, ConfirmPreview, CreateTeamInput, TeamExecutor, TeamPublishPreviewInput, TeamSemanticConfig } from '@shared/team-workspace.interface';
+import type { BindingPreviewInput, ConfirmPreview, CreateTeamInput, TeamDraftInput, TeamExecutor, TeamPublishPreviewInput, TeamSemanticConfig } from '@shared/team-workspace.interface';
 
 /**
  * Template quick start: one reviewed confirmation chains the existing draft,
@@ -21,6 +22,7 @@ export interface QuickStartInput {
   name: string; description: string; avatar: string; templateId: string;
   seed: QuickStartSeed; accountName: string; connectionId: string | null;
   onboarding?: boolean;
+  templateRoute?: TemplateRoute;
   creationMode?: 'template' | 'blank' | 'copy'; copyFromTeamVersionId?: string;
   /** The user reviewed this exact frozen seed before the creation chain started. */
   reviewedSeed?: { previewId: string; requestKey: string };
@@ -41,6 +43,7 @@ export interface QuickStartKeySlots {
 }
 
 export interface StoredQuickStart {
+  draftRequest?: TeamDraftInput;
   savedAt: string; input: QuickStartInput; keys: QuickStartKeySlots; progress: QuickStartProgress;
   failureKind?: QuickStartFailureKind;
   initialSemanticRevision?: number;
@@ -76,10 +79,29 @@ export function applyQuickStartExecutors(config: TeamSemanticConfig, connection:
   return { ...config, roles: config.roles.map(role => { const executor = quickStartExecutor(connection, role.id === leadRoleId); return executor ? { ...role, participation: 'enabled' as const, executor } : role; }) };
 }
 
+type TemplateRoute = { kind: 'model'; connection: Pick<ModelConnection, 'id' | 'fastModel' | 'slowModel'> }
+  | { kind: 'local'; executor: Extract<TeamExecutor, { executionMode: 'local' }> };
+
+export function templateRouteFor(connection: AiConnection | null): TemplateRoute | undefined {
+  if (!connection) return undefined;
+  if (connection.kind === 'local') {
+    const local = connection.connection;
+    const settings = local.route?.mode === 'local' ? local.route.agentSettings : local.configuration;
+    return { kind: 'local', executor: { executionMode: 'local', localAgentId: local.connectionId, settings: { ...settings } } };
+  }
+  const { id, fastModel, slowModel } = connection.connection;
+  return { kind: 'model', connection: { id, fastModel, slowModel } };
+}
+
+export function configureTemplateRoute(config: TeamSemanticConfig, route: TemplateRoute): TeamSemanticConfig {
+  if (route.kind === 'model') return applyQuickStartExecutors(config, route.connection, config.defaults.leadRoleId);
+  return { ...config, roles: config.roles.map(role => ({ ...role, participation: 'enabled', executor: route.executor })) };
+}
+
 export function quickStartSteps(input: QuickStartInput): QuickStartStepId[] {
   const creating = input.seed.kind === 'cash' || input.seed.kind === 'holdings';
   return QUICK_START_STEP_IDS.filter(id =>
-    (id !== 'draft' || input.connectionId !== null) && (id !== 'account' || creating) && (id !== 'binding' || creating || input.seed.kind === 'existing'));
+    (id !== 'draft' || Boolean(input.templateRoute || input.connectionId)) && (id !== 'account' || creating) && (id !== 'binding' || creating || input.seed.kind === 'existing'));
 }
 
 export function initialQuickStartProgress(input: QuickStartInput): QuickStartProgress {
@@ -152,7 +174,7 @@ export function adoptCreatedAccount(accounts: PortfolioAccountSummary[], knownAc
   return created.length === 1 ? created[0].id : null;
 }
 
-export type QuickStartFailureKind = 'network' | 'server' | 'rejected' | 'recoverable-preview';
+export type QuickStartFailureKind = 'network' | 'server' | 'rejected' | 'recoverable-preview' | 'name-conflict';
 
 export function quickStartErrorCode(error: unknown): string | null {
   if (!isAxiosError(error) || !error.response) return null;
@@ -167,7 +189,7 @@ export function quickStartErrorCode(error: unknown): string | null {
 }
 
 /**
- * Expired or consumed previews are the only client-recoverable failure: a
+ * Expired or consumed previews allow a
  * fresh preview key is safe because the confirm request has not committed.
  * Plain local errors are deterministic rejections; everything else either
  * proves nothing was committed (4xx) or proves nothing at all (network, 5xx)
@@ -175,6 +197,7 @@ export function quickStartErrorCode(error: unknown): string | null {
  */
 export function quickStartFailureKind(error: unknown): QuickStartFailureKind {
   const code = quickStartErrorCode(error);
+  if (code === 'TEAM_NAME_CONFLICT' && isAxiosError(error) && error.response?.status === 409) return 'name-conflict';
   if (code === 'PREVIEW_EXPIRED' || code === 'TEAM_PREVIEW_STALE' || code === 'TEAM_PREVIEW_CONSUMED' || code === 'SOURCE_CHANGED_REPREVIEW') return 'recoverable-preview';
   if (!isAxiosError(error)) return 'rejected';
   if (!error.response) return 'network';

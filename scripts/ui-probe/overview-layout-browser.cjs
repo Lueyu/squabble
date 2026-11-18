@@ -7,6 +7,7 @@ const { chromium } = require('playwright');
 const { start } = require('./fixture-server.cjs');
 
 const args = process.argv.slice(2);
+const realOnly = args.includes('--real-only');
 const option = (name, fallback) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback;
 const dist = path.resolve(option('--dist', path.join(__dirname, '../../dist/client')));
 const output = path.resolve(option('--output', 'output/playwright/overview-accounts'));
@@ -29,7 +30,7 @@ function point(timestamp, equityUsd, returnPct, gaps = []) {
 
 async function fictionalRoutes(context, origin, language) {
   const zh = language === 'zh-CN';
-  const accounts = [paperA, paperB, pendingPaper].map((id, index) => ({
+  const accounts = (realOnly ? [] : [paperA, paperB, pendingPaper]).map((id, index) => ({
     id,
     name: (zh ? ['青岚模拟账户', '长期模拟账户', '待估值模拟账户'] : ['Fictional Alpha', 'Fictional Long View', 'Fictional Waiting'])[index],
     status: 'paused',
@@ -85,13 +86,15 @@ async function fictionalRoutes(context, origin, language) {
       const b = [point(outside, 1000, 0), point('2026-11-12T02:10:00.000Z', 1002, 0.2), point(paperTime, 1010, 1)];
       const waiting = [point(paperTime, null, null, ['INCOMPLETE_VALUATION'])];
       const series = [{ id: 'real', name: 'Real portfolio', status: 'real', createdAt: null }, ...accounts].map((account, index) => {
-        const points = [real, a, b, waiting][index].filter(item => item.timestamp >= from);
+        const visible = [real, a, b, waiting][index].filter(item => item.timestamp >= from);
+        const points = realOnly && period === '1D' ? visible.slice(-1).map(item => ({ ...item, returnPct: null }))
+          : realOnly && period === '1M' ? [] : visible;
         const latest = points.at(-1);
         return {
           accountId: account.id, name: account.name, kind: index === 0 ? 'real' : 'simulation', status: account.status,
           createdAt: account.createdAt, firstIncludedAt: [null, first, outside, null][index], colorIndex: index - 1,
-          valuationAsOf: latest.equityUsd === null ? null : latest.timestamp,
-          equityUsd: latest.equityUsd, returnPct: latest.returnPct, returnFrom: points[0].timestamp,
+          valuationAsOf: latest?.equityUsd != null ? latest.timestamp : null,
+          equityUsd: latest?.equityUsd ?? null, returnPct: latest?.returnPct ?? null, returnFrom: points[0]?.timestamp ?? null,
           strategyCount: 0, points, gaps: points.flatMap(item => item.gaps),
         };
       });
@@ -117,6 +120,18 @@ async function fictionalRoutes(context, origin, language) {
       reports: { initial: null, latestDiscussion: null, history: [] },
     } });
     if (pathname === '/api/import/batches' || pathname === '/api/import/history') return route.fulfill({ json: [] });
+    if (pathname === '/api/portfolio/holdings') return route.fulfill({ json: { items: [
+      { id: 'known', ticker: '600000', company: 'Fictional priced holding', market: 'CN', currency: 'CNY',
+        shares: '400', buyPrice: '31.20', currentPrice: '32.10', updatedAt: to },
+      { id: 'unknown', ticker: 'EXMP', company: 'Fictional unpriced holding', market: 'US', currency: 'USD',
+        shares: '80', buyPrice: '42.20', currentPrice: null, updatedAt: to },
+    ], total: 2 } });
+    if (pathname === '/api/quote/batch') return route.fulfill({ json: { items: [
+      { symbol: '600000', market: 'CN', currency: 'CNY', price: '32.10', quoteAt: to },
+    ] } });
+    if (pathname === '/api/cash') return route.fulfill({ json: { items: [
+      { id: 'fixture-cash', currency: 'CNY', balance: '9170', reconciliationStatus: 'confirmed', updatedAt: to },
+    ] } });
     if (pathname === '/api/import/commit' && route.request().method() === 'POST') {
       imports.push(route.request().postDataJSON());
       return route.fulfill({ json: { receiptId: 'fictional-import', created: 1, updated: 0, skipped: 0, failed: [] } });
@@ -235,21 +250,54 @@ async function verifyJourneys(page, base, scenario, language, label) {
   const realName = word('我的实仓', 'My real portfolio');
   await page.getByRole('link', { name: word('查看持仓 · ', 'View holdings · ') + realName }).click();
   await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === 'real');
-  const real = page.getByRole('region', { name: realName });
-  await real.getByRole('button').first().waitFor();
+  const real = page.getByRole('region', { name: word('持仓明细', 'Position details'), exact: true });
+  await real.getByRole('rowheader', { name: 'Fictional priced holding · 600000' }).waitFor();
+  const unpriced = real.getByRole('row').filter({ hasText: 'Fictional unpriced holding' });
+  assert.equal(await unpriced.getByText('—', { exact: true }).count(), 4);
+  await unpriced.getByText(word('暂无报价', 'No quote'), { exact: true }).waitFor();
+  await real.locator('tbody time[datetime="' + to + '"]').waitFor();
+  assert.equal((await geometry(page)).horizontalOverflow, false, 'real holdings fit the viewport');
+  const tableScroll = real.getByRole('region', { name: word('持仓明细表，可横向滚动', 'Position details table, scrollable horizontally') });
+  if (label.startsWith('390-')) {
+    assert.equal(await tableScroll.evaluate(element => {
+      element.scrollLeft = element.scrollWidth;
+      const reachedEnd = element.scrollLeft > 0 && element.scrollLeft + element.clientWidth >= element.scrollWidth - 1;
+      element.scrollLeft = 0;
+      return reachedEnd;
+    }), true, 'all columns are available inside the narrow table');
+  }
   assert.equal(new URL(page.url()).search, '?accountId=real', 'opening the real account must not navigate a second time to write default filters');
   await page.screenshot({ path: path.join(output, label + '-real-holdings.png'), animations: 'disabled' });
   assert.equal(scenario.seen.some(url => url.pathname === '/api/multi-agent/runs' && url.searchParams.get('status') === 'awaiting_human'), false);
-  const filters = page.locator('details').filter({ has: page.getByText(word('筛选与管理持仓', 'Filter and manage holdings'), { exact: true }) });
-  await filters.locator('summary').press('Enter');
-  const search = filters.getByRole('textbox');
+  const search = page.getByRole('textbox', { name: word('搜索名称或代码', 'Search name or ticker') });
   await search.pressSequentially('unmatched-ticker');
   await page.waitForURL(url => url.searchParams.get('q') === 'unmatched-ticker');
-  assert.equal(await real.getByRole('button').count(), 0);
+  await real.getByRole('table').waitFor({ state: 'detached' });
+  assert.equal(await real.getByRole('rowheader').count(), 0);
   await search.fill('');
-  await real.getByRole('button').first().waitFor();
+  await real.getByRole('rowheader').first().waitFor();
   assert.equal(new URL(page.url()).search, '?accountId=real');
-  await filters.locator('summary').press('Enter');
+  await page.getByRole('combobox', { name: word('币种', 'Currency') }).selectOption('USD');
+  await page.waitForURL(url => url.searchParams.get('currency') === 'USD');
+  await real.getByRole('rowheader', { name: 'Fictional priced holding · 600000' }).waitFor({ state: 'detached' });
+  assert.equal(await real.getByRole('rowheader').count(), 1);
+  await page.getByRole('button', { name: word('重置', 'Reset'), exact: true }).click();
+  await page.waitForURL(url => url.search === '?accountId=real');
+  await real.getByRole('rowheader', { name: 'Fictional priced holding · 600000' }).waitFor();
+  assert.equal(await real.getByRole('rowheader').count(), 2);
+
+  for (const [action, dialogName] of [
+    [word('录入交易', 'Record a trade'), word('添加交易记录', 'Add transaction')],
+    [word('调整现金', 'Adjust cash'), word('核对账户现金', 'Confirm account cash')],
+  ]) {
+    await page.getByRole('button', { name: action, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: dialogName });
+    await dialog.waitFor();
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'hidden' });
+  }
+  assert.equal(await page.getByRole('link', { name: word('查看操作记录', 'View ledger activity') }).getAttribute('href'),
+    '/transactions?accountId=real');
 
   await page.getByRole('link', { name: word('导入持仓', 'Import holdings'), exact: true }).click();
   await page.waitForURL(base + '/import?accountId=real');
@@ -271,7 +319,7 @@ async function verifyJourneys(page, base, scenario, language, label) {
     const selector = page.getByRole('combobox', { name: word('切换资产账户', 'Switch asset account') });
     await link.or(selector).first().waitFor();
     if (await selector.isVisible()) {
-      await selector.press('Enter');
+      await selector.click();
       await page.getByRole('option', { name, exact: true }).click();
     } else {
       await link.press('Enter');
@@ -317,6 +365,51 @@ async function verifyJourneys(page, base, scenario, language, label) {
   assert.equal(scenario.imports.length, 1);
 }
 
+async function verifyRealOnly(page, language, label) {
+  const zh = language === 'zh-CN';
+  const panel = page.getByRole('region', { name: zh ? '账户表现' : 'Account performance' });
+  const rangeButton = panel.getByRole('button', { name: zh ? /^统计区间/ : /^Date range/ });
+  const range = page.getByRole('combobox', { name: zh ? '统计区间' : 'Date range' });
+  const plot = panel.locator('.portfolio-chart svg').first();
+  const cases = [
+    ['1W', zh ? '多次有效观测' : 'Multiple valid observations', true],
+    ['1D', zh ? '仅一次有效观测' : 'One valid observation', true],
+    ['1M', zh ? '暂无有效观测' : 'No valid observations', false],
+  ];
+  for (const [period, heading, hasPlot] of cases) {
+    if (period !== '1W') {
+      await rangeButton.click();
+      await range.selectOption(period);
+      await page.keyboard.press('Escape');
+    }
+    await panel.getByRole('heading', { name: heading }).waitFor();
+    if (hasPlot) await plot.waitFor();
+    else {
+      await plot.waitFor({ state: 'detached' });
+      assert.doesNotMatch(await panel.textContent(), /\$0\.00/);
+    }
+    assert.equal((await geometry(page)).horizontalOverflow, false, period + ' remains within the viewport');
+    await panel.screenshot({ path: path.join(output, label + '-real-' + period + '.png'), animations: 'disabled' });
+  }
+  await rangeButton.click();
+  await range.selectOption('1W');
+  await page.keyboard.press('Escape');
+  const chartData = page.getByRole('combobox', { name: zh ? '图表口径' : 'Chart data' });
+  for (const [value, heading] of [
+    ['return', zh ? '账户收益率' : 'Account returns'],
+    ['equity', zh ? '账户资产金额' : 'Account equity'],
+    ['reference', zh ? '持仓参考市值' : 'Holdings lookback'],
+    ['auto', zh ? '多次有效观测' : 'Multiple valid observations'],
+  ]) {
+    const controls = value === 'return' ? rangeButton : panel.getByRole('button', { name: zh ? /^选择账户/ : /^Select accounts/ });
+    await controls.click();
+    await chartData.selectOption(value);
+    await page.keyboard.press('Escape');
+    await panel.getByRole('heading', { name: heading, exact: true }).waitFor();
+    await plot.waitFor();
+  }
+}
+
 async function run() {
   fs.mkdirSync(output, { recursive: true });
   const fixture = await start({ port: 0, dist });
@@ -343,15 +436,18 @@ async function run() {
             const page = await context.newPage();
             const errors = [];
             page.on('pageerror', error => errors.push(error.message));
-            await page.goto(fixture.url + '/?accountIds=' + paperA);
+            await page.goto(fixture.url + (realOnly ? '/' : '/?accountIds=' + paperA));
             await page.evaluate(() => document.fonts.ready);
             await page.locator('.portfolio-chart svg').first().waitFor();
             await page.getByText(title, { exact: true }).waitFor();
             const metrics = await geometry(page);
             checkGeometry(metrics);
             await page.screenshot({ path: path.join(output, label + '-overview.png'), animations: 'disabled' });
-            await page.getByText(language === 'zh-CN' ? '我的账户' : 'My accounts', { exact: true }).scrollIntoViewIfNeeded();
-            if ((width === 1440 || width === 390) && theme === 'light') await verifyJourneys(page, fixture.url, scenario, language, label);
+            if (realOnly) await verifyRealOnly(page, language, label);
+            else {
+              await page.getByText(language === 'zh-CN' ? '我的账户' : 'My accounts', { exact: true }).scrollIntoViewIfNeeded();
+              if ((width === 1440 || width === 390) && theme === 'light') await verifyJourneys(page, fixture.url, scenario, language, label);
+            }
             if (width === 390) {
               await page.getByRole('button', { name: language === 'en' ? 'Open navigation' : '打开导航', exact: true }).click();
               const opened = await geometry(page);

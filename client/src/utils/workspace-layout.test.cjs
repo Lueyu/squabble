@@ -94,7 +94,7 @@ for (const width of [1440, 1024, 1023, 768, 390]) {
     } finally { page.dom.window.close(); }
   });
 
-  test(`settings nests its navigation within the primary shell at ${width}px`, () => {
+  test(`settings keeps its navigation beside the primary shell at ${width}px`, () => {
     const assets = shell('/holdings', width), settings = shell('/settings/models', width);
     try {
       for (const page of [assets, settings]) {
@@ -109,11 +109,12 @@ for (const width of [1440, 1024, 1023, 768, 390]) {
         ['.app-nav-link', ['paddingLeft', 'paddingRight', 'minHeight', 'justifyContent']],
         ['.app-nav-link svg', ['width', 'height']], ['.app-footer-actions', ['flexDirection']],
       ]) for (const property of properties) assert.equal(settings.style(selector)[property], assets.style(selector)[property], `${selector} ${property} must stay consistent`);
-      assert.equal(settings.element('.settings-sidebar'), null);
-      assert.equal(settings.style('.app-nav .settings-navigation-sidebar').display, width >= 768 ? 'grid' : 'none');
-      assert.equal(settings.style('.settings-navigation-page').display, width >= 768 ? 'none' : 'flex');
-      assert.ok(settings.element('.app-nav .settings-navigation-sidebar a[href="/settings/models"][aria-current="page"]'));
-      assert.ok(settings.element('.app-nav .settings-navigation-sidebar a[href="/settings/agents"]'));
+      assert.equal(settings.element('.app-sidebar .settings-navigation'), null);
+      assert.equal(settings.element('.app-sidebar + .settings-navigation-rail'), settings.element('.settings-navigation-rail'));
+      assert.equal(settings.style('.settings-navigation-rail').display === 'none', width < 768);
+      assert.equal(settings.style('.settings-navigation-page').display, width >= 768 ? 'none' : 'block');
+      assert.ok(settings.element('.settings-navigation-rail a[href="/settings/models"][aria-current="page"]'));
+      assert.ok(settings.element('.settings-navigation-rail a[href="/settings/agents"]'));
       assert.equal(settings.element('.settings-navigation a[href="/settings/security"]'), null);
     } finally { assets.dom.window.close(); settings.dom.window.close(); }
   });

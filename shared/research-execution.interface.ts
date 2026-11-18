@@ -7,6 +7,7 @@ export type FailureStage = 'preflight' | 'dispatch' | 'runtime' | 'parse';
 export interface SafeFailure { code: string; stage: FailureStage; fieldPath?: string; expectedType?: string; actualType?: string;
   exitCode?: number; outputBytes?: number; stderrBytes?: number; terminalEvent?: boolean; recoveries: RecoveryAction[] }
 export interface ResearchExecutionReadiness { connectionId: string; provider: string; name: string; connected: boolean; busy: boolean;
+  supportsTeamResearch?: boolean;
   configuration?: NativeAgentConfiguration; models?: NativeAgentModel[]; reasoningEfforts?: string[];
   state: 'not_connected' | 'login_required' | 'configuration_required' | 'busy' | 'ready' | 'unknown'; executable: boolean;
   effectiveModel: { id?: string; provider?: string; source: 'override' | 'default' | 'unknown'; verified: boolean };

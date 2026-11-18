@@ -5,6 +5,26 @@ import { compactEvidencePromptEnvelope, containsEvidencePromptMetadata, evidence
 import { byteExcerpt, type CouncilEvidence } from './council.rules';
 import type { EvidenceSourceMetadata } from '../../../shared/research-evidence.interface';
 
+/** Losslessly factor repeated columns in the frozen account when its full JSON would exceed the request budget. */
+export function compactFrozenTeamAccount(content: string): string {
+  const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+  let snapshot: unknown;
+  try { snapshot = JSON.parse(content); } catch { return content; }
+  if (!record(snapshot)) return content;
+  const rows = snapshot.holdings;
+  if (!Array.isArray(rows) || rows.length < 2 || snapshot.holdingColumns !== undefined || snapshot.holdingDefaults !== undefined) return content;
+  if (!rows.every(record)) return content;
+  const fields = Object.keys(rows[0]);
+  if (!rows.every(row => Object.keys(row).length === fields.length && fields.every(field => Object.hasOwn(row, field)))) return content;
+
+  const defaults = Object.fromEntries(fields.filter(field => rows.every(row => row[field] === rows[0][field]))
+    .map(field => [field, rows[0][field]]));
+  const columns = fields.filter(field => !Object.hasOwn(defaults, field));
+  const packed = JSON.stringify({ ...snapshot, holdingDefaults: defaults, holdingColumns: columns,
+    holdings: rows.map(row => columns.map(field => row[field])) });
+  return Buffer.byteLength(packed) < Buffer.byteLength(content) ? packed : content;
+}
+
 /** Whole short entries use Unicode code points, not UTF-8 bytes or UTF-16 code units. */
 export function handoffEvidenceExcerpt(point: string, maxBytes: number): string {
   return [...point].length <= 60 ? point : byteExcerpt(point, maxBytes);

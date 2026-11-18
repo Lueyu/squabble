@@ -17,6 +17,7 @@ export function executionReadiness(item: LocalAgentConnection, settings?: Native
     source: settings?.model ? 'override' : model ? 'default' : 'unknown', verified: Boolean(model),
     ...(item.provider === 'opencode' && model?.includes('/') ? { provider: model.split('/')[0] } : {}) };
   const base = { connectionId: item.id, provider: item.provider, name: item.name, connected: item.connected, busy: item.busy, effectiveModel,
+    supportsTeamResearch: item.researchTools?.mode === 'mcp' && item.researchTools.reason === 'supported',
     ...(settings?{configuration:settings}:{}),...(item.models?{models:item.models}:{}),...(item.reasoningEfforts?{reasoningEfforts:item.reasoningEfforts}:{}) };
   if (!item.connected) return { ...base, state: 'not_connected', executable: false };
   if (item.state === 'login_required') return { ...base, state: 'login_required', executable: false,

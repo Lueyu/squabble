@@ -323,7 +323,7 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
   async resolveMembers(owner: string, selections?: AgentSelection[]): Promise<{ members: CouncilMember[]; executors: ActualExecutor[] }> {
     if (selections && !this.roster) throw new BadRequestException('AGENT_ROSTER_UNAVAILABLE');
     if (this.roster) {
-      const chosen = selections ?? (await this.roster.list(owner, {})).items.filter(row => row.status === 'active').slice(0, 3).map(row => ({ agentId: row.id, agentVersionId: row.currentVersionId }));
+      const chosen = selections ?? (await this.roster.list(owner, {})).items.filter(row => row.status === 'active' && row.origin !== 'builtin').slice(0, 3).map(row => ({ agentId: row.id, agentVersionId: row.currentVersionId }));
       if (chosen.length) {
         const resolved = await this.roster.resolveMembers(owner, chosen);
         const managers = resolved.filter(member => member.role === 'manager');

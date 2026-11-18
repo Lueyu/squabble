@@ -12,6 +12,8 @@ export type TeamExecutor =
 export interface TeamDepartment { id: string; parentDepartmentId: string | null; purpose: string }
 export interface TeamRole {
   agentId?: string; agentVersionId?: string;
+  /** Additional instructions frozen with this team role's published revision. */
+  workingInstructions?: string;
   id: string; departmentId: string | null; participation: 'placeholder' | 'enabled';
   responsibility: string; expectedOutput: string; executor: TeamExecutor | null;
   allowedToolIds: string[]; sourceGrantIds: string[];
@@ -216,5 +218,5 @@ export interface TeamSourceGrant {
 }
 export interface TeamSourceGrantInput { requestKey: string; expectedScopeRevision: number; sourceRef: ResearchSourceRef }
 export interface TeamRevisionInput { requestKey: string; expectedScopeRevision: number; reason: string }
-export const TEAM_ERROR_CODES = ['TEAM_INVALID_INPUT', 'TEAM_GRAPH_INVALID', 'TEAM_NOT_FOUND', 'TEAM_REFERENCE_NOT_FOUND', 'TEAM_REVISION_CONFLICT', 'TEAM_REQUEST_KEY_CONFLICT', 'TEAM_PREVIEW_STALE', 'TEAM_PREVIEW_CONSUMED', 'TEAM_BINDING_CONFLICT', 'TEAM_REAPPROVAL_REQUIRED', 'TEAM_EXECUTION_UNCERTAIN', 'TEAM_CAPABILITY_UNAVAILABLE', 'TEAM_PLAN_INVALID', 'TEAM_SOURCE_UNAVAILABLE', 'TEAM_SCOPE_REVOKED', 'TEAM_BUDGET_BLOCKED', 'TEAM_DEPENDENCY_UNAVAILABLE'] as const;
+export const TEAM_ERROR_CODES = ['TEAM_INVALID_INPUT', 'TEAM_GRAPH_INVALID', 'TEAM_NOT_FOUND', 'TEAM_REFERENCE_NOT_FOUND', 'TEAM_REVISION_CONFLICT', 'TEAM_REQUEST_KEY_CONFLICT', 'TEAM_NAME_CONFLICT', 'TEAM_PREVIEW_STALE', 'TEAM_PREVIEW_CONSUMED', 'TEAM_BINDING_CONFLICT', 'TEAM_REAPPROVAL_REQUIRED', 'TEAM_EXECUTION_UNCERTAIN', 'TEAM_CAPABILITY_UNAVAILABLE', 'TEAM_PLAN_INVALID', 'TEAM_SOURCE_UNAVAILABLE', 'TEAM_SCOPE_REVOKED', 'TEAM_BUDGET_BLOCKED', 'TEAM_DEPENDENCY_UNAVAILABLE'] as const;
 export type TeamErrorCode = (typeof TEAM_ERROR_CODES)[number];

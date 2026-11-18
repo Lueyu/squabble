@@ -124,7 +124,7 @@ async function importHoldings(work, legacyUi) {
     const activeStep = page.getByRole('list', { name: 'Setup progress', exact: true })
       .locator('[aria-current=step]').filter({ hasText: 'Import holdings' });
     await activeStep.waitFor();
-    const importLink = page.locator('main header').getByRole('link', { name: 'Import holdings', exact: true });
+    const importLink = page.getByRole('main').getByRole('link', { name: 'Import holdings', exact: true });
     const target = new URL(await importLink.getAttribute('href'), page.url());
     assert.equal(target.pathname, '/import');
     assert.equal(target.searchParams.get('accountId'), 'real');
@@ -224,16 +224,19 @@ async function companionSetup(work, sandbox, ownerApi, legacyUi) {
 async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi, heartbeat) {
   const { TEAM_TEMPLATES } = require('../../dist/shared/team-templates.js');
   const template = TEAM_TEMPLATES[0];
-  const templateIds = [...new Set(template.staffing.map(seat => seat.recommendedTemplateId))];
-  for (const templateId of templateIds) {
-    await ownerApi('/api/agent-roster', {
-      method: 'POST', body: { requestKey: randomUUID(), templateId, executor,
-        instructions: 'Read the frozen fictional portfolio and cite the assigned evidence.',
-        preferences: { language: 'en' }, allowedToolIds: [], allowedSources: [] },
-    });
+  let friends;
+  if (legacyUi) {
+    const templateIds = [...new Set(template.staffing.map(seat => seat.recommendedTemplateId))];
+    for (const templateId of templateIds) {
+      await ownerApi('/api/agent-roster', {
+        method: 'POST', body: { requestKey: randomUUID(), templateId, executor,
+          instructions: 'Read the frozen fictional portfolio and cite the assigned evidence.',
+          preferences: { language: 'en' }, allowedToolIds: [], allowedSources: [] },
+      });
+    }
+    friends = (await ownerApi('/api/agent-roster')).items;
+    assert.equal(friends.length, templateIds.length, 'The roster exists before team creation');
   }
-  const { items: friends } = await ownerApi('/api/agent-roster');
-  assert.equal(friends.length, templateIds.length, 'The roster exists before team creation');
   const { page, visit, capture } = work;
   if (legacyUi) {
     await visit('/teams');
@@ -244,7 +247,10 @@ async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi, hea
   }
   const dialog = legacyUi ? page.getByRole('dialog') : page.locator('main');
   await dialog.getByLabel(legacyUi ? 'Team name *' : 'Team name', { exact: true }).fill(name);
-  if (!legacyUi) await dialog.getByRole('combobox', { name: 'Organization starting point', exact: true }).selectOption(template.id);
+  if (!legacyUi) {
+    await dialog.getByRole('button', { name: template.name.en, exact: true }).click();
+    await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+  }
   await dialog.getByLabel('CNY virtual capital', { exact: true }).fill('1000');
   await dialog.getByLabel('HKD virtual capital', { exact: true }).fill('500');
   await dialog.getByRole('button', { name: 'Preview positions and virtual capital', exact: true }).click();
@@ -256,32 +262,63 @@ async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi, hea
   await dialog.getByRole('checkbox').check();
   const created = responseFor(page, '/api/teams');
   await confirm.click();
-  const { id } = await accepted(await created);
+  const creation = await accepted(await created);
+  const { id } = creation;
   await page.waitForURL(url => url.pathname === '/teams/' + id);
   let detail = await ownerApi('/api/teams/' + id);
-  if (!detail.publishedVersion.config.roles.some(role => role.agentId)) {
-    if (legacyUi) {
-      await page.getByRole('button', { name: 'Apply suggested friends', exact: true }).click();
-      await page.getByRole('button', { name: 'Save and review publication', exact: true }).click();
-    } else {
-      await page.waitForURL('**panel=organization**');
-      const layout = page.getByRole('group', { name: 'Organization view', exact: true });
-      await layout.getByRole('button', { name: 'List', exact: true }).click();
-      const outline = page.getByRole('region', { name: 'Organization list', exact: true });
-      for (const role of detail.publishedVersion.config.roles) {
-        await heartbeat?.();
-        const source = template.config.roles.find(seat => seat.responsibility === role.responsibility);
-        const specialty = template.staffing.find(seat => seat.roleId === source?.id)?.recommendedTemplateId;
-        const friend = friends.find(item => item.currentVersion.config.templateId === specialty);
-        assert.ok(friend, 'Saved friend for the reviewed template role');
-        const label = detail.display.roleLabels[role.id];
-        await outline.getByRole('button', { name: label + ' · Placeholder · inactive', exact: true }).click();
-        await page.getByRole('combobox', { name: 'Assign an existing friend', exact: true }).click();
-        await page.getByRole('option', { name: friend.name, exact: true }).click();
+  if (!legacyUi) {
+    friends = (await ownerApi('/api/agent-roster')).items;
+    for (const config of [creation.draft.config, detail.publishedVersion.config]) {
+      assert.equal(config.roles.length, template.staffing.length);
+      for (const slot of template.staffing) {
+        const source = template.config.roles.find(role => role.id === slot.roleId);
+        const seats = config.roles.filter(role => role.responsibility === source.responsibility);
+        assert.equal(seats.length, 1, source.responsibility);
+        const [seat] = seats;
+        const prototype = friends.find(friend => friend.id === seat.agentId);
+        assert.ok(prototype, 'Missing assigned friend for ' + source.responsibility);
+        assert.equal(prototype.currentVersion.config.origin, 'builtin');
+        assert.equal(prototype.currentVersion.config.templateId, slot.recommendedTemplateId);
+        assert.equal(seat.agentVersionId, prototype.currentVersion.id);
       }
-      if (page.viewportSize().width > 390) await layout.getByRole('button', { name: 'Canvas', exact: true }).click();
-      await page.getByRole('button', { name: 'Review and publish version', exact: true }).click();
     }
+  }
+  if (!legacyUi) {
+    const unavailable = detail.publishedVersion.config.roles.filter(role => role.participation !== 'enabled' || !role.executor);
+    assert.deepEqual(unavailable.map(role => ({
+      role: detail.display.roleLabels[role.id], agentId: role.agentId,
+      participation: role.participation, executor: role.executor,
+    })), [], 'Published fixed-template seats must be runnable before authorization');
+    const connectionKey = executor.executionMode === 'local' ? 'localAgentId' : 'connectionId';
+    for (const role of detail.publishedVersion.config.roles) {
+      assert.equal(role.executor.executionMode, executor.executionMode, 'Published role executor mode');
+      assert.equal(role.executor[connectionKey], executor[connectionKey], 'Published role uses the verified connection');
+    }
+  }
+  let editedSeat;
+  if (!legacyUi) {
+    const seat = detail.publishedVersion.config.roles[0];
+    const label = detail.display.roleLabels[seat.id];
+    const layout = page.getByRole('group', { name: 'Organization view', exact: true });
+    if (new URL(page.url()).searchParams.get('panel') !== 'organization') {
+      await visit('/teams/' + id + '?panel=organization');
+    }
+    await layout.getByRole('button', { name: 'List', exact: true }).click();
+    const outline = page.getByRole('region', { name: 'Organization list', exact: true });
+    const search = outline.getByRole('textbox', { name: 'Find roles or departments' });
+    if (await search.isVisible()) await search.fill(label);
+    const friendName = friends.find(friend => friend.id === seat.agentId).name;
+    await outline.getByRole('button', { name: label + ' · ' + friendName + ' · ' }).click();
+    editedSeat = { id: seat.id, responsibility: seat.responsibility + ' Verify fictional acceptance holdings.' };
+    await page.getByRole('textbox', { name: 'Role responsibility', exact: true }).fill(editedSeat.responsibility);
+    await heartbeat?.();
+    await page.getByRole('button', { name: 'Review and publish version', exact: true }).click();
+  }
+  if (legacyUi && !detail.publishedVersion.config.roles.some(role => role.agentId)) {
+    await page.getByRole('button', { name: 'Apply suggested friends', exact: true }).click();
+    await page.getByRole('button', { name: 'Save and review publication', exact: true }).click();
+  }
+  if (editedSeat || (legacyUi && !detail.publishedVersion.config.roles.some(role => role.agentId))) {
     const publication = page.getByRole('dialog');
     await publication.getByRole('button', { name: 'Check configuration', exact: true }).click();
     await publication.getByRole('checkbox').check();
@@ -289,13 +326,21 @@ async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi, hea
     await publication.waitFor({ state: 'hidden' });
     detail = await ownerApi('/api/teams/' + id);
   }
+  if (editedSeat) {
+    assert.equal(detail.publishedVersion.config.roles.find(role => role.id === editedSeat.id)?.responsibility, editedSeat.responsibility);
+    const after = (await ownerApi('/api/agent-roster')).items;
+    for (const friend of friends) {
+      assert.deepEqual(after.find(item => item.id === friend.id)?.currentVersion, friend.currentVersion,
+        'Team publication changed roster prototype ' + friend.id);
+    }
+  }
   assert.ok(detail.accountId);
   const roleAgentIds = detail.publishedVersion.config.roles.filter(role => role.participation === 'enabled').map(role => role.agentId);
   assert.ok(roleAgentIds.length >= 2 && roleAgentIds.every(id => friends.some(friend => friend.id === id)));
   assert.equal((await ownerApi('/api/agent-roster')).items.length, friends.length, 'Team creation did not duplicate friends');
   const [account] = await sandbox.sql`select owner, name from paper_accounts where id = ${detail.accountId}`;
   assert.ok(account);
-  return { id, accountId: detail.accountId, accountName: account.name, seedShot, roleAgentIds };
+  return { id, accountId: detail.accountId, accountName: account.name, seedShot, roleAgentIds, editedSeat };
 }
 
 async function startTeam(work, ownerApi, team, { loseResponse = false, heartbeat, legacyUi } = {}) {
@@ -307,7 +352,7 @@ async function startTeam(work, ownerApi, team, { loseResponse = false, heartbeat
     await org.click();
     await page.waitForURL('**panel=organization**');
   }
-  await page.getByRole('button', { name: 'Save draft', exact: true }).waitFor();
+  await page.getByRole('button', { name: /^Save (role )?draft$/u }).waitFor();
   const configShot = await capture('configuration');
   const back = page.getByRole('link', { name: 'Back to run overview', exact: true });
   if (await back.isVisible()) await back.click();
@@ -432,10 +477,13 @@ async function observeLedger(work, team, { state, now, fill, trade }, { requireR
     const real = selector.getByRole('link', { name: 'My real portfolio', exact: true });
     await real.press('Enter');
     await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === 'real');
-    await real.and(page.locator('a[aria-current=page]')).waitFor();
-    await page.getByRole('region', { name: 'My real portfolio', exact: true }).getByText(ticker, { exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'My real portfolio', exact: true }).waitFor();
+    await page.getByRole('region', { name: 'Position details', exact: true }).getByRole('rowheader', { name: 'Acceptance sample · ' + ticker, exact: true }).waitFor();
+    const accountPicker = page.getByRole('combobox', { name: 'Switch asset account', exact: true });
+    assert.equal(await accountPicker.innerText(), 'My real portfolio');
+    await accountPicker.press('Enter');
+    await page.getByRole('option', { name: team.accountName, exact: true }).press('Enter');
     const paper = selector.getByRole('link', { name: team.accountName, exact: true });
-    await paper.press('Enter');
     await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === team.accountId);
     await paper.and(page.locator('a[aria-current=page]')).waitFor();
   } else {

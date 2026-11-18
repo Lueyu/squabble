@@ -44,7 +44,7 @@ export function OnboardingConnectionStep({ children, navigation, headingRef }: {
           ? (zh ? '本地 Agent 可用' : 'Local agent is ready')
           : (zh ? '模型 API 测试已通过' : 'Model API test passed')}</p>
         <div className="space-y-4 border-t pt-4">
-          <p className="text-sm">{zh ? '为团队指派已有股友，并使用这条连接研究模拟持仓。' : 'Assign your saved agents and use this connection to research the paper portfolio.'}</p>
+          <p className="text-sm">{zh ? '选择团队模板后，股友会自动就位。' : 'Choose a team template to start with its assigned friends.'}</p>
           <Button asChild><Link to={TEAM_ONBOARDING_PATH}>{zh ? '新建团队模拟盘' : 'Set up a team simulation'}</Link></Button>
         </div>
       </CardContent>

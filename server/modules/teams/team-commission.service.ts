@@ -23,6 +23,7 @@ import type { BlueprintCommissionPreviewInput, TeamBudget, TeamCommission, TeamC
 import type { TeamRunAuthority } from '../../../shared/team-run.interface';
 import { assertTeamRunAuthority } from '../../database/team-run-authority';
 import { teamRunCycles } from '../../database/team-run.schema';
+import { builtinTeamInstructions } from '../../database/agent-roster-builtins';
 import { readAgentRosterVersion } from '../../database/agent-roster-context';
 import { readA2aConnectionFingerprint } from '../../database/a2a-agent-context';
 export function commissionContext(row: CommissionRow): TeamExecutionContext {
@@ -129,7 +130,8 @@ export class TeamCommissionService {
                     member.rosterAgentId = role.agentId; member.rosterAgentVersionId = role.agentVersionId;
                     member.avatar = profile.avatar;
                     member.agentName = profile.name;
-                    member.agentInstructions = agentWorkingInstructions(agentVersion.config);
+                    member.agentInstructions = [builtinTeamInstructions(agentVersion.config) ?? agentWorkingInstructions(agentVersion.config), role.workingInstructions]
+                        .filter(Boolean).join('\n\n');
                 }
             }
             const warnings = hasLocal ? [{ code: 'TEAM_EXTERNAL_COST_UNKNOWN', message: 'Call count is bounded; external provider fees remain unknown' }] : [];

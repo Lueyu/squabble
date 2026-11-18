@@ -161,15 +161,13 @@ function Layout() {
               <div key={group.label} className="app-nav-group">
                 <div className="app-nav-label">{group.label}</div>
                 {group.items.map((item) => item.path === '/settings' ? (
-                  <div key={item.path} className="app-settings-navigation">
-                    <Link to="/settings" onClick={() => setMobileOpen(false)}
+                  <Link key={item.path} to="/settings" title={t('settingsNav.title')} aria-label={t('settingsNav.title')}
+                      aria-current={inSettings ? 'location' : undefined} onClick={() => setMobileOpen(false)}
                       className={`app-nav-link flex items-center px-3 py-2 text-sm transition-colors ${inSettings
                         ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
                         : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}`}>
                       <Settings size={18} aria-hidden="true" /><span>{t('settingsNav.title')}</span>
                     </Link>
-                    {settingsSection && <SettingsNavigation active={settingsSection} localWorkspace={localWorkspace} placement="sidebar" />}
-                  </div>
                 ) : (
               <NavLink
                 key={item.path}
@@ -227,6 +225,8 @@ function Layout() {
           </div>
         </div>
       </aside>
+
+      {settingsSection && <SettingsNavigation active={settingsSection} localWorkspace={localWorkspace} placement="rail" />}
 
       {/* Mobile overlay */}
       {mobileOpen && (
