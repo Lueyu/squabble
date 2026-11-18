@@ -2,12 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { TeamStore } from './team-store';
+import { decisionHistoryViews, TeamStore } from './team-store';
 import { teamCommissions, teamDecisions, teamResearchLinks, teamAccountBindings } from '../../database/teams.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import { researchTheses, researchThesisVersions, researchMemories } from '../../database/research-memory.schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
+import { reportVersionVisibility } from '../../database/report-source-fence';
 import { sourceFingerprint } from '../../database/team-source-context';
 import { parseTeam, requestKeySchema, revisionSchema, sourceRefSchema, teamError, uuidSchema, pageFields, decodeTeamCursor, encodeTeamCursor } from './team-contract';
 import type { TeamDecisionBasis, ResearchSourceRef } from '../../../shared/team-workspace.interface';
@@ -24,8 +25,11 @@ export class TeamDecisionService {
     async list(owner: string, id: string, query: unknown) {
         await this.store.detail(owner, id);
         const request = parseTeam(z.object({ ...pageFields, accountId: uuidSchema.optional(), proposalId: uuidSchema.optional() }).strict(), query), cursor = decodeTeamCursor(request.cursor);
-        const rows = await this.store.db.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.teamId, id), request.accountId ? eq(teamDecisions.accountId, request.accountId) : undefined, request.proposalId ? eq(teamDecisions.proposalId, request.proposalId) : undefined, cursor ? sql `(${teamDecisions.createdAt},${teamDecisions.id})<(${cursor.at}::timestamptz,${cursor.id}::uuid)` : undefined)).orderBy(desc(teamDecisions.createdAt), desc(teamDecisions.id)).limit(request.limit + 1);
-        return { items: rows.slice(0, request.limit).map(row => ({ ...row, createdAt: row.createdAt.toISOString() })), nextCursor: rows.length > request.limit ? encodeTeamCursor(rows[request.limit - 1]) : null };
+        return this.store.db.transaction(async tx => {
+            const rows = await tx.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.teamId, id), request.accountId ? eq(teamDecisions.accountId, request.accountId) : undefined, request.proposalId ? eq(teamDecisions.proposalId, request.proposalId) : undefined, cursor ? sql `(${teamDecisions.createdAt},${teamDecisions.id})<(${cursor.at}::timestamptz,${cursor.id}::uuid)` : undefined)).orderBy(desc(teamDecisions.createdAt), desc(teamDecisions.id)).limit(request.limit + 1);
+            const items = await decisionHistoryViews(rows.slice(0, request.limit), reportVersionVisibility(tx, owner));
+            return { items, nextCursor: rows.length > request.limit ? encodeTeamCursor(rows[request.limit - 1]) : null };
+        });
     }
     private async verify(tx: TeamDatabase, owner: string, id: string, basis: TeamDecisionBasis, event: string) {
         const [commission] = await tx.select().from(teamCommissions).where(and(eq(teamCommissions.ownerId, owner), eq(teamCommissions.teamId, id), eq(teamCommissions.id, basis.commissionId)));

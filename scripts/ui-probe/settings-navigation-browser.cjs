@@ -59,6 +59,8 @@ async function exercise(page, url, mobile) {
 
   await page.goto(pathName('/settings?from=probe#local-agents'), { waitUntil: 'domcontentloaded' });
   await page.waitForURL('**/settings/agents?from=probe#local-agents');
+  assert.equal(await page.locator('.app-user-block .sr-only').textContent(), mobile ? '本地工作区' : 'Local workspace');
+  assert.equal(await page.locator('.app-logout').count(), 0);
   assert.equal(await agent.getAttribute('aria-current'), 'page');
   assert.equal(await page.locator(mobile ? '.settings-navigation-sidebar' : '.settings-navigation-page').isVisible(), false);
   assert.equal(await page.locator('.settings-navigation a[href="/settings/security"]').count(), 0);
@@ -116,10 +118,27 @@ async function exercise(page, url, mobile) {
   assert.equal(await agent.getAttribute('aria-current'), 'page');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
 
-  await page.goto(pathName('/settings/security'), { waitUntil: 'domcontentloaded' });
-  await page.waitForURL('**/settings/models');
+  await page.goto(pathName('/settings/security?from=bookmark#saved'), { waitUntil: 'domcontentloaded' });
+  await page.waitForURL('**/settings/models?from=bookmark#saved');
   await scope.locator('a[href^="/settings/models"][aria-current="page"]').waitFor();
   assert.equal(await model.getAttribute('aria-current'), 'page');
+  assert.equal(await page.locator('#current-password').count(), 0);
+  await page.goBack();
+  await page.waitForURL('**/settings/agents?from=probe#local-agents');
+
+  await page.route('**/api/auth/mode', route => route.fulfill({ json: { mode: 'account' } }));
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { id: 'fixture-user', username: 'fixture', displayName: 'Fixture user' } }));
+  await page.evaluate(() => localStorage.setItem('sq-at', 'fixture-session'));
+  await page.goto(pathName('/settings/agents'));
+  await more.click();
+  await scope.locator('a[href="/settings/security"]').click();
+  await page.waitForURL('**/settings/security');
+  await page.locator('#current-password').waitFor();
+  await page.reload();
+  await page.locator('#current-password').waitFor();
+  assert.equal(await scope.locator('a[href="/settings/security"]').getAttribute('aria-current'), 'page');
+  await page.locator('.app-user-block[title="Fixture user"]').waitFor({ state: 'attached' });
+  assert.equal(await page.locator('.app-logout').count(), 1);
 }
 
 async function main() {

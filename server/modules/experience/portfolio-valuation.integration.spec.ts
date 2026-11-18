@@ -74,6 +74,79 @@ test('five-minute collection persists real and paused paper facts; stale sources
   assert.equal(Number(counts[0].trades),0);assert.equal(Number(counts[0].orders),0);assert.equal(Number(counts[0].research),0);
 }));
 
+test('failed minute capture retries on the next tick and publishes its provider quote once', async () => fixture(async (db, client) => {
+  const owner = randomUUID(), first = new Date('2026-11-05T16:01:00Z'), retry = new Date('2026-11-05T16:01:30Z');
+  const [account] = await db.insert(paperAccounts).values({ owner, createdAt: first, cashBalance: '100' }).returning();
+  await db.insert(paperPositions).values({ owner, accountId: account.id, ticker: 'ACME', shares: '2', openedAt: first });
+  await client`ALTER TABLE paper_equity_observations ADD CHECK (captured_at <> TIMESTAMPTZ '2026-11-05T16:01:00Z')`;
+  let requests = 0;
+  const quote = { getValuationQuote: async () => {
+    requests++;
+    return { symbol: 'ACME', market: 'US', currency: 'USD', price: '110', quoteAt: first.toISOString(),
+      tradingDate: '2026-11-05', source: 'fixture' };
+  } };
+  const market = { getSnapshot: async () => ({ corporateActionsChecked: true, corporateActions: [] }) };
+  const sampler = new PortfolioValuationScheduler(db, new PortfolioMetricsService(db, quote as never), market as never);
+  const accountClaim = () => db.select().from(portfolioValuationClaims).where(and(
+    eq(portfolioValuationClaims.accountKey, account.id), eq(portfolioValuationClaims.slot, minuteValuationSlot(first))));
+  await sampler.tick(first);
+  const [failed] = await accountClaim();
+  assert.equal(failed.completed, false);
+  assert.equal((await db.select().from(paperEquityObservations)).length, 0);
+
+  await sampler.tick(retry);
+  await sampler.tick(retry);
+  const points = await db.select().from(paperEquityObservations);
+  assert.equal(points.length, 1);
+  assert.equal(points[0].capturedAt.toISOString(), retry.toISOString());
+  assert.equal(points[0].equityUsd, '320');
+  assert.equal(points[0].marketQuotes[0].quoteAt, first.toISOString());
+  const [completed] = await accountClaim();
+  assert.equal(completed.completed, true);
+  assert.notEqual(completed.token, failed.token);
+  assert.equal(requests, 1);
+}));
+
+test('a late capture failure preserves the successor lease until its worker completes', async () => fixture(async db => {
+  const owner = randomUUID(), at = new Date('2026-11-05T16:01:00Z'), slot = minuteValuationSlot(at);
+  const make = () => new PortfolioValuationScheduler(db, new PortfolioMetricsService(db), {} as never);
+  let started!: (token: string) => void, release!: () => void;
+  const acquired = new Promise<string>(resolve => { started = resolve; });
+  const barrier = new Promise<void>(resolve => { release = resolve; });
+  const old = make().collect(owner, 'real', at, async token => {
+    started(token);
+    await barrier;
+    throw new Error('capture failed after takeover');
+  }, slot);
+  const oldToken = await acquired;
+  let unexpectedAcquisitions = 0;
+  const compete = () => make().collect(owner, 'real', at, async () => { unexpectedAcquisitions++; }, slot);
+  const readClaim = () => db.select().from(portfolioValuationClaims).where(eq(portfolioValuationClaims.owner, owner));
+  let successorToken: string | undefined, successorExpiry: Date | undefined;
+  try {
+    await compete();
+    assert.equal(unexpectedAcquisitions, 0, 'a silent worker retains its unexpired lease');
+    await db.update(portfolioValuationClaims).set({ leaseUntil: new Date(0) }).where(eq(portfolioValuationClaims.token, oldToken));
+    await make().collect(owner, 'real', at, async token => {
+      successorToken = token;
+      const [claim] = await readClaim();
+      successorExpiry = claim.leaseUntil;
+      release();
+      await old;
+      await compete();
+    }, slot);
+  } finally {
+    release();
+    await old;
+  }
+  const [completed] = await readClaim();
+  assert.equal(unexpectedAcquisitions, 0, 'a late failure cannot release a live successor');
+  assert.notEqual(completed.token, oldToken);
+  assert.equal(completed.token, successorToken);
+  assert.deepEqual(completed.leaseUntil, successorExpiry);
+  assert.equal(completed.completed, true);
+}));
+
 test('expired claim takeover fences the original writer and additive migration is repeatable without deleting facts',async()=>fixture(async(db,client)=>{
   const owner=randomUUID(),at=new Date('2026-11-05T16:00:00Z');
   await db.insert(cashAccounts).values({owner,currency:'USD',balance:'100',reconciliationStatus:'confirmed'});
@@ -343,7 +416,7 @@ test('a provider 429 persists one unknown and cooldown across instances before f
   await db.insert(cashAccounts).values({ owner, currency: 'USD', balance: '100', reconciliationStatus: 'confirmed' });
   const requests: number[] = [];
   const start = Date.parse('2026-11-05T16:00:00Z');
-  for (const minute of [0, 1, 2, 5, 9, 10, 11, 14, 15, 16]) {
+  for (const minute of [0, 1, 1.5, 2, 5, 9, 10, 11, 14, 15, 16]) {
     const at = new Date(start + minute * 60_000);
     const http = { get: (url: string) => {
       assert.match(url, /usMinute\/query/u, 'throttling cannot fan out to a second source');

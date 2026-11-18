@@ -1,7 +1,6 @@
-import { HttpException } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import type { TeamRunConfiguration, TeamRunCycle, TeamRunFill, TeamRunResearch, TeamRunResearchResult, TeamRunWindow } from '../../../shared/team-run.interface';
-import { assertReportVersionSources } from '../../database/report-source-fence';
+import { reportVersionVisibility } from '../../database/report-source-fence';
 import type { TeamDatabase } from '../../database/team-context';
 import { tradingMarketSchedule } from '../paper-trading/trading-market.calendar';
 
@@ -75,13 +74,9 @@ export async function recentTeamResearch(tx: TeamDatabase, owner: string, teamId
     LEFT JOIN team_run_cycles cycle ON cycle.commission_id = c.id AND cycle.team_id = c.team_id AND cycle.owner_id = c.owner_id
     WHERE l.owner_id = ${owner} AND l.team_id = ${teamId} AND l.kind = 'report_version' AND l.relation = 'produced'
     ORDER BY v.created_at DESC, v.id DESC LIMIT 8`);
+  const canRead = reportVersionVisibility(tx, owner);
   for (const candidate of candidates) {
-    try {
-      await assertReportVersionSources(tx, owner, [{ versionId: candidate.versionId }], new Date());
-    } catch (error) {
-      if (error instanceof HttpException && [400, 404, 409, 422].includes(error.getStatus())) continue;
-      throw error;
-    }
+    if (!await canRead(candidate.versionId)) continue;
     const { policyRevision, appliedAt, publishedAt, ...report } = candidate;
     return { report: { ...report, publishedAt: new Date(publishedAt).toISOString(),
       applied: policyRevision !== null && appliedAt ? { revision: policyRevision, at: new Date(appliedAt).toISOString() } : null }, visibilityLimited: false };

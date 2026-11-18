@@ -98,6 +98,14 @@ async function fictionalRoutes(context, origin, language) {
       return route.fulfill({ json: { currency: 'USD', period, from, to, granularity: 'observations',
         methodology: 'saved_valuations_no_external_flows', series } });
     }
+    if (pathname === '/api/portfolio-history') {
+      if (url.searchParams.get('period') === '1D') return route.fulfill({ status: 503, json: {} });
+      const date = '2026-11-13';
+      const quote = { date, valueUsd: 9875, knownValueUsd: 9875, coveredPositions: 1, totalPositions: 1,
+        priceAsOf: [{ ticker: 'FICT', date, source: 'fictional-close' }], fxAsOf: [], gaps: [] };
+      return route.fulfill({ json: { refreshing: false, series: [{ accountId: 'real', points: [quote], gaps: [],
+        coverage: { completePoints: 1, totalPoints: 1, coveredPositions: 1, totalPositions: 1 } }] } });
+    }
     if (pathname === '/api/daily-workspace/research') return route.fulfill({ json: {
       date: url.searchParams.get('date'), timezone: 'Asia/Shanghai', latest: null,
       reports: [{ versionId: 'fictional-daily', sessionId: 'fictional-session', title, createdAt: to, readAt: to,
@@ -182,12 +190,38 @@ async function verifyJourneys(page, base, scenario, language, label) {
   await page.getByRole('region', { name: word('历史估值数据', 'Historical valuation data') }).getByRole('table').waitFor();
   assert.ok(await page.getByRole('rowheader', { name: b.name }).count() > 0, 'second simulation renders actual chart rows');
   await history.press('Enter');
+  async function selectChartData(value) {
+    await choose.press('Enter');
+    await page.getByRole('combobox', { name: word('图表口径', 'Chart data') }).selectOption(value);
+    await page.keyboard.press('Escape');
+    await choose.and(page.locator(':focus')).waitFor();
+  }
+  assert.equal(scenario.seen.some(url => url.pathname === '/api/portfolio-history'), false);
+  await selectChartData('reference');
+  const sources = page.getByText(word('查看参考市值与历史价格来源', 'View reference values and price sources'), { exact: true });
+  await sources.press('Enter');
+  const referenceRow = page.getByRole('row').filter({ has: page.getByRole('cell', { name: '2026-11-13', exact: true }) });
+  await referenceRow.getByRole('cell', { name: /9,875\.00/ }).waitFor();
+  await referenceRow.locator('summary').press('Enter');
+  await referenceRow.getByText('FICT · 2026-11-13 · fictional-close', { exact: true }).waitFor();
+  const historyUrl = scenario.seen.find(url => url.pathname === '/api/portfolio-history');
+  assert.equal(historyUrl.searchParams.get('period'), '1W');
+  assert.deepEqual(historyUrl.searchParams.get('accountIds').split(',').sort(), ['real', paperA, paperB, pendingPaper].sort());
+  await sources.press('Enter');
   const intradayResponse = page.waitForResponse(response => {
     const url = new URL(response.url());
     return url.pathname === '/api/ai-investment/comparison' && url.searchParams.get('period') === '1D' && response.ok();
   });
   await page.getByRole('button', { name: word('日内', 'Intraday'), exact: true }).click();
   await intradayResponse;
+  await page.getByRole('alert').filter({ hasText: word('历史行情暂时无法读取', 'Historical prices are unavailable') }).waitFor();
+  await selectChartData('equity');
+  await page.getByRole('heading', { name: word('账户资产金额', 'Account equity'), exact: true }).waitFor();
+  await history.press('Enter');
+  await page.getByRole('cell', { name: /10,120\.00/ }).waitFor();
+  await history.press('Enter');
+  await selectChartData('return');
+  await page.getByRole('heading', { name: word('账户收益率', 'Account returns'), exact: true }).waitFor();
   await inclusion(paperA).waitFor({ state: 'detached' });
   await page.locator('.portfolio-chart svg').first().waitFor();
   assert.equal(await inclusion(paperA).count(), 0, 'intraday never dates inception at its first visible observation');
@@ -196,7 +230,7 @@ async function verifyJourneys(page, base, scenario, language, label) {
   await page.waitForURL(base + '/daily');
   await page.getByText('Fictional published daily body').waitFor();
   await page.goBack();
-  await page.waitForURL('**period=1D');
+  await page.waitForURL(url => url.pathname === '/' && url.searchParams.get('period') === '1D' && url.searchParams.get('metric') === 'return');
 
   const realName = word('我的实仓', 'My real portfolio');
   await page.getByRole('link', { name: word('查看持仓 · ', 'View holdings · ') + realName }).click();
@@ -245,7 +279,10 @@ async function verifyJourneys(page, base, scenario, language, label) {
 
   await page.getByRole('link', { name: word('管理模拟账户', 'Manage simulation accounts'), exact: true }).click();
   await page.waitForURL(base + '/holdings/accounts');
-  await page.getByRole('link', { name: word('管理账户', 'Manage account'), exact: true }).first().waitFor();
+  const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: b.name, exact: true }) });
+  assert.equal(await card.getByRole('link', { name: word('管理账户', 'Manage account'), exact: true }).getAttribute('href'), '/holdings/accounts/' + paperB);
+  await card.getByRole('link', { name: word('查看持仓', 'View holdings'), exact: true }).click();
+  await page.getByRole('region', { name: b.name }).getByText('PAPERB').waitFor();
   await page.goto(base + '/paper?status=paused');
   await page.waitForURL(base + '/holdings/accounts?status=paused');
   await page.getByRole('button', { name: word(/^已暂停/, /^Paused/) }).waitFor();
@@ -257,7 +294,13 @@ async function verifyJourneys(page, base, scenario, language, label) {
   await page.locator('#asset-order-' + orderId).waitFor();
   await page.goto(base + '/paper?investmentStrategyId=fictional-draft#investment-strategy');
   await page.waitForURL(base + '/holdings/accounts?investmentStrategyId=fictional-draft#investment-strategy');
-  assert.equal(await page.locator('a[href="/paper/' + paperA + '/strategies?investmentStrategyId=fictional-draft"]').count(), 2);
+  const strategyCard = page.getByRole('article').filter({ has: page.getByRole('heading', { name: a.name, exact: true }) });
+  const strategyHref = '/paper/' + paperA + '/strategies?investmentStrategyId=fictional-draft';
+  for (const name of [a.name, word('选择此账户', 'Choose account')]) {
+    const link = strategyCard.getByRole('link', { name, exact: true });
+    await link.waitFor({ state: 'visible' });
+    assert.equal(await link.getAttribute('href'), strategyHref);
+  }
   await page.goto(base + '/import?accountId=' + paperA);
   await page.getByRole('heading', { name: word('模拟盘不支持实仓导入', 'Simulation accounts do not support real-portfolio imports') }).waitFor();
   assert.equal(scenario.imports.length, 1);

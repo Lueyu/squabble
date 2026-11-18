@@ -91,12 +91,13 @@ async function runJourney(browser, sandbox, output, mode, evidence, suite) {
       : { executionMode: 'local', localAgentId };
     evidence.connectionShot = connection.screenshot;
     evidence.defaultInputLimit = (await ownerApi('/api/llm-budget')).maxInputTokens;
+    const heartbeat = model ? undefined : () => connection.beat();
     stage('create team from saved friends');
-    const team = await createTeam(work, sandbox, ownerApi, executor, 'Acceptance ' + mode, legacyUi);
+    const team = await createTeam(work, sandbox, ownerApi, executor, 'Acceptance ' + mode, legacyUi, heartbeat);
     evidence.team = team;
     await assertHoldings(sandbox.sql, owner, team.accountId);
     stage('review and start');
-    const run = await startTeam(work, ownerApi, team, { legacyUi, loseResponse: model, heartbeat: model ? undefined : () => connection.beat() });
+    const run = await startTeam(work, ownerApi, team, { legacyUi, loseResponse: model, heartbeat });
     evidence.startup = run;
     stage('settle research');
     const cycle = await waitForResearch(sandbox, ownerApi, run.runPath, model ? undefined : connection);
@@ -207,6 +208,10 @@ async function main() {
     await modelApi(local.reportPath, { status: 404 });
     await modelApi('/api/ai-investment/accounts/' + local.team.accountId + '/assets', { status: 404 });
     await localApi('/api/ai-investment/accounts/' + model.team.accountId + '/assets', { status: 404 });
+    if (!suite.legacyUi) {
+      await localApi(model.run.runPath + '/fills', { status: 404 });
+      await modelApi(local.run.runPath + '/research', { status: 404 });
+    }
     assert.ok(evidence.modelCalls.some(call => call.rejected));
     assert.ok(evidence.modelCalls.some(call => call.task === 'summary' && !call.rejected));
     if (suite.automatic) assert.ok(evidence.modelCalls.some(call => call.executionPlan === 'price_lte'));

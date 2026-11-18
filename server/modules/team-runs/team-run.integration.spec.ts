@@ -470,3 +470,43 @@ test('run overview keeps the exact report, policy installation and historical fi
     assert.deepEqual(await f.runs.fills(f.owner, f.teamId), rows);
   } finally { await f.dispose(); }
 });
+
+test('revoking a frozen source grant removes report and decision actions while preserving the exact delivery receipts', options, async () => {
+  const f = await setup();
+  try {
+    const input = await f.documents.submit(f.owner, { idempotencyKey: randomUUID(), title: 'Commission input', kind: 'deep',
+      content: 'Source facts', sections: [{ id: 'summary', title: 'Source', content: 'Source facts' }], availableAt: new Date(Date.now() - 1000).toISOString() });
+    const ref = { kind: 'report_version' as const, id: input.id, revision: String(input.version), availability: 'available' as const };
+    const manual = await f.commission([ref]);
+    await f.worker.runOnce();
+    const { version, commission, attemptId } = await deliverReport(f, manual.created.commissionId);
+    const teamId = commission.teamId;
+    const decision = await f.decisions.create(f.owner, teamId, { requestKey: randomUUID(), commissionId: commission.id,
+      expectedProposalRevision: 0, event: 'observe', reason: 'Retain evidence for review',
+      basis: { teamVersionId: commission.teamVersionId, bindingId: commission.bindingId, bindingRevision: commission.bindingRevision,
+        commissionId: commission.id, sessionId: commission.sessionId, cycleId: commission.cycleId, workKey: commission.plan.work[0].workKey,
+        acceptedAttemptId: attemptId, reportVersionId: version.id, thesisVersions: [], sourceRefs: [ref] } });
+    const receipt = async () => {
+      const detail = await f.commissions.detail(f.owner, teamId, commission.id);
+      const link = detail.links.find(item => item.kind === 'report_version' && item.targetId === version.id);
+      assert.ok(link);
+      assert.equal(link.attemptId, attemptId);
+      const page = await f.decisions.list(f.owner, teamId, { proposalId: decision.proposalId });
+      assert.equal(page.items[0].id, decision.id);
+      assert.equal(page.items[0].basis.reportVersionId, version.id);
+      assert.equal(page.items[0].reportAvailable, link.reportAvailable);
+      assert.equal(detail.decisions.find(item => item.id === decision.id)?.reportAvailable, link.reportAvailable);
+      return link;
+    };
+    const before = await receipt();
+    assert.equal(before.reportAvailable, true);
+    assert.equal((await f.runs.research(f.owner, teamId)).report?.versionId, version.id);
+    const [grantId] = commission.members[0].sourceGrantIds;
+    const revoked = await f.sources.revoke(f.owner, teamId, grantId, { requestKey: randomUUID(),
+      expectedScopeRevision: commission.scopeRevision, reason: 'Withdraw this research input' });
+    assert.deepEqual(await receipt(), { ...before, reportAvailable: false });
+    assert.equal((await f.runs.research(f.owner, teamId)).report, null);
+    await f.sources.grant(f.owner, teamId, { requestKey: randomUUID(), expectedScopeRevision: revoked.scopeRevision, sourceRef: ref });
+    assert.deepEqual(await receipt(), { ...before, reportAvailable: false });
+  } finally { await f.dispose(); }
+});

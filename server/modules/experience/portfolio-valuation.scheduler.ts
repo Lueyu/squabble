@@ -177,6 +177,11 @@ export class PortfolioValuationScheduler implements OnModuleInit, OnModuleDestro
         return acquired?.token === claim.token;
     }
 
+    private async release(claim: Claim): Promise<void> {
+        await this.db.update(portfolioValuationClaims).set({ leaseUntil: sql`clock_timestamp()` })
+            .where(and(this.claimToken(claim), eq(portfolioValuationClaims.completed, false)));
+    }
+
     private async withSourceLease(work: (mayDispatch: () => boolean) => Promise<void>): Promise<void> {
         const claim = { owner: schedulerOwner, accountKey: schedulerAccount, slot: sourceLeaseSlot, token: randomUUID() };
         const deadline = performance.now() + VALUATION_SLOT_MS;
@@ -184,7 +189,7 @@ export class PortfolioValuationScheduler implements OnModuleInit, OnModuleDestro
         try {
             await work(() => performance.now() < deadline);
         } finally {
-            await this.db.update(portfolioValuationClaims).set({ leaseUntil: sql`clock_timestamp()` }).where(this.claimToken(claim));
+            await this.release(claim);
         }
     }
 
@@ -193,12 +198,14 @@ export class PortfolioValuationScheduler implements OnModuleInit, OnModuleDestro
         if (!await this.acquire(claim)) return;
         try {
             await work(claim.token);
-            await this.db.update(portfolioValuationClaims).set({ completed: true }).where(
-                and(this.claimToken(claim), gt(portfolioValuationClaims.leaseUntil, sql`clock_timestamp()`)));
         } catch {
-            // Infrastructure errors leave the account slot retryable after lease expiry.
-            this.logger.warn('Portfolio valuation slot waiting after failed capture');
+            this.logger.warn('Portfolio valuation capture failed');
+            await this.release(claim).catch(() => this.logger.warn('Portfolio valuation lease release failed'));
+            return;
         }
+        await this.db.update(portfolioValuationClaims).set({ completed: true }).where(
+            and(this.claimToken(claim), gt(portfolioValuationClaims.leaseUntil, sql`clock_timestamp()`)))
+            .catch(() => this.logger.warn('Portfolio valuation completion could not be confirmed'));
     }
 
     private async corporateActions(position: HeldSymbol, at: Date, policy: ValuationSourcePolicy) {

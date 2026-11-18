@@ -3,13 +3,16 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TeamListResult } from '@shared/team-workspace.interface';
+import { fetchHoldings } from '@/api';
 import { portfolioWorkspaceApi, portfolioWorkspaceKeys } from '@/api/portfolio-workspace';
 import http from '@/api/http';
 import { useSimpleExperience } from '@/hooks/use-simple-experience';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { readAssetAccount, assetHref, holdingsHref, SIMULATION_ACCOUNTS_PATH } from './account-context';
 import { simulationAccountPath } from '@/utils/portfolio-workspace';
+import GuidedOnboarding from '@/features/onboarding/GuidedOnboarding';
+import { IMPORT_ONBOARDING_PATH } from '@/features/onboarding/onboarding-state';
+import { readAssetAccount, assetHref, holdingsHref, SIMULATION_ACCOUNTS_PATH } from './account-context';
 import PaperAccountAssets from './PaperAccountAssets';
 
 /** Ownership comes from team bindings; companion presentation metadata is never a team. */
@@ -40,6 +43,8 @@ export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'hold
   try { id = readAssetAccount(location.search).id; } catch { /* Explicit invalid context is rendered below. */ }
   const accounts = useQuery({ queryKey: portfolioWorkspaceKeys.accounts, queryFn: portfolioWorkspaceApi.accounts, retry: false });
   const teams = useAccountTeams(id !== null && id !== 'real');
+  const realHoldings = id === 'real' && mode === 'holdings';
+  const holdings = useQuery({ queryKey: ['holdings'], queryFn: fetchHoldings, enabled: realHoldings, retry: false });
   const selected = accounts.data?.find(item => item.id === id);
   const team = teams.data?.find(item => item.accountId === id && item.binding?.state === 'active');
   useEffect(() => {
@@ -47,6 +52,9 @@ export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'hold
   }, [id, location.search]);
 
   const returnTo = location.pathname + location.search + location.hash;
+  const importPath = realHoldings && holdings.isSuccess && !holdings.data.length
+    ? IMPORT_ONBOARDING_PATH : '/import?accountId=real';
+  const onboarding = realHoldings && <GuidedOnboarding holdings={holdings} returnTo={returnTo} />;
   const realName = zh ? '我的实仓' : 'My real portfolio';
   const activeAccounts = (accounts.data ?? []).filter(item => item.status !== 'archived' || item.id === id);
   const choices = [
@@ -74,7 +82,7 @@ export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'hold
   if (simple) return <div className="portfolio-page space-y-5">
     {mode === 'holdings' && <header className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
       <h1 className="text-2xl font-semibold tracking-tight sm:text-[32px]">{t('holdings.title')}</h1>
-      {id === 'real' && <Button asChild><Link to="/import?accountId=real" state={{ returnTo }}>
+      {id === 'real' && <Button asChild><Link to={importPath} state={{ returnTo }}>
         {zh ? '导入持仓' : 'Import holdings'}
       </Link></Button>}
     </header>}
@@ -108,6 +116,7 @@ export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'hold
         {selected && <Button asChild size="sm" variant="ghost"><Link to={simulationAccountPath(id)} state={{ returnTo }}>{zh ? '账户设置' : 'Account settings'}</Link></Button>}
       </div>
     </div>}
+    {onboarding}
     {content}
   </div>;
 
@@ -121,10 +130,11 @@ export function AccountAssetsPage({ real, mode }: { real: ReactNode; mode: 'hold
       {id && <div className="flex flex-wrap gap-2">
         <Button asChild size="sm" variant="outline"><Link to={assetHref(mode === 'holdings' ? '/transactions' : '/holdings', id)} state={{ returnTo }}>{t(mode === 'holdings' ? 'assets.ledger' : 'assets.viewAssets')}</Link></Button>
         {watchlist && <Button asChild size="sm" variant="ghost"><Link to={watchlist} state={{ returnTo }}>{t('assets.watchlist')}</Link></Button>}
-        {id === 'real' && <Button asChild size="sm" variant="ghost"><Link to="/import?accountId=real" state={{ returnTo }}>{t('assets.import')}</Link></Button>}
+        {id === 'real' && <Button asChild size="sm" variant="ghost"><Link to={importPath} state={{ returnTo }}>{t('assets.import')}</Link></Button>}
         {team && <Button asChild size="sm" variant="ghost"><Link to={'/teams/' + encodeURIComponent(team.id)} state={{ returnTo }}>{t('assets.openTeam')}</Link></Button>}
       </div>}
     </section>
+    {onboarding}
     {content}
   </div>;
 }

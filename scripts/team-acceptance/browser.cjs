@@ -115,11 +115,28 @@ async function signIn(work, username) {
 
 async function importHoldings(work, legacyUi) {
   const { page, visit, capture } = work;
-  if (legacyUi) await visit('/import?accountId=real');
-  else await page.getByRole('link', { name: 'Import my holdings', exact: true }).click();
-  await page.getByRole('button', { name: 'CSV File', exact: true }).click();
+  if (legacyUi) {
+    await visit('/import?accountId=real');
+    await page.getByRole('button', { name: 'CSV File', exact: true }).click();
+  } else {
+    await page.getByRole('link', { name: 'View holdings · My real portfolio', exact: true }).click();
+    await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === 'real');
+    const activeStep = page.getByRole('list', { name: 'Setup progress', exact: true })
+      .locator('[aria-current=step]').filter({ hasText: 'Import holdings' });
+    await activeStep.waitFor();
+    const importLink = page.locator('main header').getByRole('link', { name: 'Import holdings', exact: true });
+    const target = new URL(await importLink.getAttribute('href'), page.url());
+    assert.equal(target.pathname, '/import');
+    assert.equal(target.searchParams.get('accountId'), 'real');
+    assert.equal(target.searchParams.get('onboarding'), '1');
+    await capture('holdings-before-import');
+    await importLink.click();
+    await page.waitForURL(target.href);
+    await page.getByRole('heading', { name: 'Import my holdings', exact: true }).waitFor();
+    await activeStep.waitFor();
+  }
   await page.locator('input[type=file][accept=".csv,text/csv"]').setInputFiles(importFile);
-  await page.getByRole('cell', { name: ticker, exact: true }).waitFor();
+  await page.getByText(ticker, { exact: true }).waitFor();
   const shot = await capture('import-review');
   await page.getByRole('button', { name: 'Save holdings', exact: true }).click();
   if (legacyUi) await page.getByText(/Your holdings are saved/iu).waitFor();
@@ -130,7 +147,7 @@ async function importHoldings(work, legacyUi) {
 async function modelSetup(work, providers, legacyUi) {
   const { page, visit, capture } = work;
   if (legacyUi) await visit('/settings/models');
-  else await page.getByRole('link', { name: 'Model API', exact: true }).click();
+  else await page.getByRole('link', { name: 'Model API', exact: true }).filter({ visible: true }).first().click();
   await page.getByRole('button', { name: 'Add connection', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Connection name').fill(modelName);
@@ -204,7 +221,7 @@ async function companionSetup(work, sandbox, ownerApi, legacyUi) {
   };
 }
 
-async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi) {
+async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi, heartbeat) {
   const { TEAM_TEMPLATES } = require('../../dist/shared/team-templates.js');
   const template = TEAM_TEMPLATES[0];
   const templateIds = [...new Set(template.staffing.map(seat => seat.recommendedTemplateId))];
@@ -227,10 +244,11 @@ async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi) {
   }
   const dialog = legacyUi ? page.getByRole('dialog') : page.locator('main');
   await dialog.getByLabel(legacyUi ? 'Team name *' : 'Team name', { exact: true }).fill(name);
-  if (!legacyUi) await dialog.getByLabel('Organization starting point', { exact: true }).selectOption(template.id);
+  if (!legacyUi) await dialog.getByRole('combobox', { name: 'Organization starting point', exact: true }).selectOption(template.id);
   await dialog.getByLabel('CNY virtual capital', { exact: true }).fill('1000');
   await dialog.getByLabel('HKD virtual capital', { exact: true }).fill('500');
   await dialog.getByRole('button', { name: 'Preview positions and virtual capital', exact: true }).click();
+  if (!legacyUi) await dialog.getByText('View positions in the snapshot', { exact: true }).press('Enter');
   await dialog.getByText(ticker, { exact: true }).waitFor();
   const seedShot = await capture('seed-review');
   const confirm = dialog.getByRole('button', { name: 'Create team and independent paper account', exact: true });
@@ -242,8 +260,28 @@ async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi) {
   await page.waitForURL(url => url.pathname === '/teams/' + id);
   let detail = await ownerApi('/api/teams/' + id);
   if (!detail.publishedVersion.config.roles.some(role => role.agentId)) {
-    await page.getByRole('button', { name: 'Apply suggested friends', exact: true }).click();
-    await page.getByRole('button', { name: 'Save and review publication', exact: true }).click();
+    if (legacyUi) {
+      await page.getByRole('button', { name: 'Apply suggested friends', exact: true }).click();
+      await page.getByRole('button', { name: 'Save and review publication', exact: true }).click();
+    } else {
+      await page.waitForURL('**panel=organization**');
+      const layout = page.getByRole('group', { name: 'Organization view', exact: true });
+      await layout.getByRole('button', { name: 'List', exact: true }).click();
+      const outline = page.getByRole('region', { name: 'Organization list', exact: true });
+      for (const role of detail.publishedVersion.config.roles) {
+        await heartbeat?.();
+        const source = template.config.roles.find(seat => seat.responsibility === role.responsibility);
+        const specialty = template.staffing.find(seat => seat.roleId === source?.id)?.recommendedTemplateId;
+        const friend = friends.find(item => item.currentVersion.config.templateId === specialty);
+        assert.ok(friend, 'Saved friend for the reviewed template role');
+        const label = detail.display.roleLabels[role.id];
+        await outline.getByRole('button', { name: label + ' · Placeholder · inactive', exact: true }).click();
+        await page.getByRole('combobox', { name: 'Assign an existing friend', exact: true }).click();
+        await page.getByRole('option', { name: friend.name, exact: true }).click();
+      }
+      if (page.viewportSize().width > 390) await layout.getByRole('button', { name: 'Canvas', exact: true }).click();
+      await page.getByRole('button', { name: 'Review and publish version', exact: true }).click();
+    }
     const publication = page.getByRole('dialog');
     await publication.getByRole('button', { name: 'Check configuration', exact: true }).click();
     await publication.getByRole('checkbox').check();
@@ -263,12 +301,18 @@ async function createTeam(work, sandbox, ownerApi, executor, name, legacyUi) {
 async function startTeam(work, ownerApi, team, { loseResponse = false, heartbeat, legacyUi } = {}) {
   const { page, capture } = work;
   const runPath = '/api/teams/' + team.id + '/run-agreement';
-  const org = page.getByRole('navigation', { name: 'Team workspace panels', exact: true }).getByRole('button', { name: 'Configure team', exact: true });
-  await org.click();
-  await page.waitForURL('**panel=organization**');
+  const org = page.getByRole('button', { name: 'Configure team', exact: true })
+    .or(page.getByRole('link', { name: 'Configure team', exact: true })).first();
+  if (new URL(page.url()).searchParams.get('panel') !== 'organization') {
+    await org.click();
+    await page.waitForURL('**panel=organization**');
+  }
   await page.getByRole('button', { name: 'Save draft', exact: true }).waitFor();
   const configShot = await capture('configuration');
-  await page.getByRole('navigation', { name: 'Team workspace panels', exact: true }).getByRole('button', { name: 'Overview', exact: true }).click();
+  const back = page.getByRole('link', { name: 'Back to run overview', exact: true });
+  if (await back.isVisible()) await back.click();
+  else await page.getByRole('navigation', { name: 'Team workspace panels', exact: true })
+    .getByRole('button', { name: 'Overview', exact: true }).click();
   await page.getByRole('button', { name: 'Set up automatic runs', exact: true }).click();
   await page.getByLabel('Main market').selectOption('US');
   await heartbeat?.();
@@ -322,6 +366,11 @@ async function startTeam(work, ownerApi, team, { loseResponse = false, heartbeat
     await start.press('Enter');
     await page.getByRole('button', { name: /^Pause (team|run)$/u }).waitFor();
   }
+  if (!legacyUi) {
+    await page.getByText('Waiting for first research', { exact: true }).waitFor();
+    await page.getByText('No paper fills yet', { exact: true }).waitFor();
+    await page.getByText('No published research yet', { exact: true }).waitFor();
+  }
   const status = await ownerApi(runPath);
   assert.equal(status.agreement.state, 'running');
   assert.equal(status.agreement.accountId, team.accountId);
@@ -351,24 +400,52 @@ async function observeLedger(work, team, { state, now, fill }, { requireRunEvide
   await visit('/?accountIds=' + team.accountId);
   await page.getByRole('heading', { name: 'Investment overview', exact: true }).waitFor();
   await page.getByText(team.accountName, { exact: true }).first().waitFor();
+  if (requireRunEvidence && state === 'filled') {
+    const chart = page.getByRole('region', { name: 'Account performance', exact: true });
+    const accountButton = (count) => chart.getByRole('button', { name: 'Select accounts (' + count + ')', exact: true });
+    await accountButton(2).press('Enter');
+    const choice = page.getByRole('checkbox', { name: team.accountName, exact: true });
+    assert.equal(await choice.isChecked(), true);
+    await choice.press('Space');
+    await accountButton(1).waitFor();
+    await choice.press('Space');
+    await accountButton(2).waitFor();
+    await choice.press('Escape');
+    const period = chart.getByRole('group', { name: 'Comparison period', exact: true });
+    for (const label of ['Intraday', 'Past week']) {
+      const button = period.getByRole('button', { name: label, exact: true });
+      await button.press('Enter');
+      await button.and(page.locator('button[aria-pressed=true]')).waitFor();
+    }
+  }
   const screenshots = [await capture(state === 'gap' ? 'overview-gap' : 'overview')];
-  if (state === 'gap') return screenshots;
+  if (state === 'gap') return { screenshots };
   await visit('/holdings?accountId=' + team.accountId);
-  const selector = page.getByRole('combobox', { name: 'Switch asset account', exact: true });
-  await selector.press('Enter');
-  await page.getByRole('option', { name: 'Real portfolio', exact: true }).press('Enter');
-  await page.waitForURL('**/holdings?accountId=real');
-  await selector.press('Enter');
-  await page.getByRole('option', { name: new RegExp(team.accountName, 'u') }).press('Enter');
-  await page.waitForURL('**/holdings?accountId=' + team.accountId);
+  if (requireRunEvidence) {
+    const selector = page.getByRole('navigation', { name: 'Switch asset account', exact: true });
+    await selector.getByRole('link', { name: 'My real portfolio', exact: true }).press('Enter');
+    await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === 'real');
+    const paper = selector.getByRole('link', { name: team.accountName, exact: true });
+    await paper.press('Enter');
+    await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === team.accountId);
+    await paper.and(page.locator('a[aria-current=page]')).waitFor();
+  } else {
+    const selector = page.getByRole('combobox', { name: 'Switch asset account', exact: true });
+    await selector.press('Enter');
+    await page.getByRole('option', { name: 'Real portfolio', exact: true }).press('Enter');
+    await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === 'real');
+    await selector.press('Enter');
+    await page.getByRole('option', { name: new RegExp(team.accountName, 'u') }).press('Enter');
+    await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === team.accountId);
+  }
   screenshots.push(await capture('account-switch'));
 
-
+  let teamRunFills;
   if (requireRunEvidence) {
     const fillsPath = '/api/teams/' + team.id + '/run-agreement/fills';
-    const rows = await ownerApi(fillsPath);
+    teamRunFills = await ownerApi(fillsPath);
     if (application) {
-      assert.deepEqual(rows.map(row => ({
+      assert.deepEqual(teamRunFills.map(row => ({
         id: row.id, accountId: row.accountId, orderId: row.orderId, ticker: row.ticker,
         side: row.side, quantity: Number(row.quantity), price: Number(row.price), at: row.createdAt,
       })), [{
@@ -376,7 +453,7 @@ async function observeLedger(work, team, { state, now, fill }, { requireRunEvide
         side: fill.side, quantity: fill.quantity, price: Number(fill.price), at: fill.created_at.toISOString(),
       }]);
     } else {
-      assert.deepEqual(rows, [], 'TeamRun fills exclude the independent rule trade');
+      assert.deepEqual(teamRunFills, [], 'TeamRun fills exclude the independent rule trade');
     }
 
     const fills = page.getByRole('region', { name: 'Paper fills', exact: true });
@@ -385,7 +462,7 @@ async function observeLedger(work, team, { state, now, fill }, { requireRunEvide
       await page.route(outage, route => route.abort('failed'));
       try {
         await visit('/teams/' + team.id + '?panel=overview');
-        await fills.getByText('Fills are temporarily unavailable', { exact: true }).waitFor();
+        await fills.getByRole('alert').filter({ hasText: 'Fills are temporarily unavailable' }).waitFor();
         await page.getByRole('region', { name: 'Recent research', exact: true })
           .getByRole('link', { name: 'Read full report', exact: true }).waitFor();
         screenshots.push(await capture('fills-read-error'));
@@ -398,10 +475,12 @@ async function observeLedger(work, team, { state, now, fill }, { requireRunEvide
       const target = new URL(await ledger.getAttribute('href'), page.url());
       assert.equal(target.searchParams.get('accountId'), team.accountId);
       assert.equal(target.searchParams.get('tradeId'), fill.id);
-      await fills.getByRole('link', { name: new RegExp(ticker, 'u') }).waitFor();
+      const row = fills.getByRole('link', { name: new RegExp(ticker, 'u') });
+      await row.getByText('Buy ' + fill.quantity, { exact: true }).waitFor();
+      await row.getByText('Fill price ' + fill.price + ' USD', { exact: true }).waitFor();
       screenshots.push(await capture('team-fills'));
       await ledger.click();
-      await page.locator('#asset-trade-' + fill.id).getByText(new RegExp(ticker, 'u')).waitFor();
+      await page.waitForURL(target.href);
     } else {
       await visit('/teams/' + team.id + '?panel=overview');
       await fills.getByText('No paper fills yet', { exact: true }).waitFor();
@@ -409,10 +488,12 @@ async function observeLedger(work, team, { state, now, fill }, { requireRunEvide
       screenshots.push(await capture('unattributed-fill-absent'));
     }
   }
-  await visit('/transactions?accountId=' + team.accountId + '&tradeId=' + fill.id);
+  if (!requireRunEvidence || !application) {
+    await visit('/transactions?accountId=' + team.accountId + '&tradeId=' + fill.id);
+  }
   await page.locator('#asset-trade-' + fill.id).getByText(new RegExp(ticker, 'u')).waitFor();
   screenshots.push(await capture('ledger'));
-  return screenshots;
+  return { screenshots, teamRunFills };
 }
 
 async function inspectNarrow(browser, sandbox, output, result) {
@@ -428,14 +509,16 @@ async function inspectNarrow(browser, sandbox, output, result) {
     assert.equal(await page.locator('html').evaluate(html => html.classList.contains('dark')), true);
     shots.overview = await capture('overview');
     await visit('/holdings?accountId=' + team.accountId);
-    await page.getByRole('combobox', { name: '切换资产账户', exact: true }).waitFor();
+    await page.getByRole('navigation', { name: '切换资产账户', exact: true })
+      .or(page.getByRole('combobox', { name: '切换资产账户', exact: true })).waitFor();
     shots.holdings = await capture('holdings');
     await visit('/teams/' + team.id + '?panel=overview');
-    await page.getByRole('heading', { name: '已暂停', exact: true }).waitFor();
+    await page.getByRole('heading', { name: /^(已暂停|自动研究和模拟交易已暂停)$/u }).waitFor();
     shots.run = await capture('run');
     await page.getByRole('button', { name: '配置团队', exact: true }).click();
     await page.waitForURL('**panel=organization**');
-    await page.getByRole('button', { name: '添加岗位', exact: true }).waitFor();
+    await page.getByRole('heading', { name: '团队组织', exact: true })
+      .or(page.getByRole('button', { name: /^(添加|新增)岗位$/u })).first().waitFor();
     shots.config = await capture('configuration');
 
     const visitEntry = async (path) => {

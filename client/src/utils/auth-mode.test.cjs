@@ -16,7 +16,7 @@ function load(file, imports = {}, globals = {}) {
   const output = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  vm.runInNewContext(output, { exports, require: id => imports[id] ?? unknown, ...globals });
+  vm.runInNewContext(output, { exports, require: id => imports[id] ?? unknown, URLSearchParams, ...globals });
   return exports;
 }
 const language = { useTranslation: () => ({ t: key => key, i18n: { language: 'en' } }) };
@@ -132,6 +132,7 @@ test('local sidebar replaces account identity and logout with the workspace labe
       '../hooks/use-theme': { useTheme: () => ({ theme: 'light' }), useAppearanceScope: () => {} },
       '@/api/http': { hasSession: () => true }, '@/api/auth-mode': { getAuthMode: () => mode },
       '@/hooks/use-simple-experience': { useSimpleExperience: () => ({ enabled: false }) },
+      '@/pages/Settings/settings-navigation': load('pages/Settings/settings-navigation.ts'),
       '@/features/navigation/workspace-navigation': load('features/navigation/workspace-navigation.ts'),
       '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
     });
@@ -178,24 +179,39 @@ test('workspace status and failed initialization have Chinese and English copy',
 test('local settings hides account security on desktop and mobile and redirects old security links', () => {
   const navigation = load('pages/Settings/settings-navigation.ts');
   for (const mode of ['local', 'account']) {
+    const location = { pathname: '/settings/security', hash: '#saved', search: '?from=bookmark', state: { from: '/' } };
+    const redirects = [];
     const imports = { react, 'react/jsx-runtime': { jsx, jsxs: jsx }, 'react-i18next': language,
       '@/api/auth-mode': { getAuthMode: () => mode }, './settings-navigation': navigation,
       '@/features/tool-connections/tool-connection-copy': { useToolConnectionCopy: () => ({ title: 'Tools', description: 'Tools settings' }) },
       '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
-      'react-router-dom': { NavLink: 'NavLink', useNavigate: () => () => {} },
+      'react-router-dom': { Link: 'Link', useLocation: () => location, useNavigate: () => (...args) => redirects.push(args) },
     };
-    const menu = nodes(load('pages/Settings/SettingsNavigation.tsx', imports).default({ active: 'models' }));
-    assert.equal(menu.some(node => node.props?.to === '/settings/security'), mode === 'account');
-    assert.equal(menu.some(node => node.props?.value === 'security'), mode === 'account');
-    const redirects = [];
+    const SettingsNavigation = load('pages/Settings/SettingsNavigation.tsx', imports).default;
     const page = load('pages/Settings/SettingsPage.tsx', { ...imports,
+      './SettingsNavigation': { default: SettingsNavigation },
       react: { ...react, useEffect: effect => effect() },
-      'react-router-dom': { useLocation: () => ({ pathname: '/settings/security', hash: '', search: '' }),
-        useNavigate: () => (...args) => redirects.push(args) },
     });
-    const panels = nodes(page.default()).filter(node => node.props?.role === 'region');
-    assert.equal(panels.some(node => node.key === 'security'), mode === 'account');
-    if (mode === 'local') assert.equal(redirects[0][0].pathname, '/settings/models');
+    const tree = nodes(page.default());
+    const active = mode === 'account' ? 'security' : 'models';
+    const menu = tree.find(node => node.type === SettingsNavigation);
+    assert.equal(menu.props.localWorkspace, mode === 'local');
+    assert.equal(menu.props.placement, 'page');
+    for (const placement of ['sidebar', 'page']) {
+      const links = nodes(SettingsNavigation({ ...menu.props, placement })).filter(node => node.type === 'Link');
+      assert.equal(links.some(link => link.props.to.pathname === '/settings/security'), mode === 'account');
+      assert.equal(links.find(link => link.props['aria-current'] === 'page').props.to.pathname, `/settings/${active}`);
+    }
+    assert.deepEqual(tree.filter(node => node.props?.role === 'region').map(node => node.key), [active]);
+    assert.equal(redirects.length, mode === 'local' ? 1 : 0);
+    if (mode === 'local') {
+      const [target, options] = redirects[0];
+      assert.equal(target.pathname, '/settings/models');
+      assert.equal(target.search, location.search);
+      assert.equal(target.hash, location.hash);
+      assert.equal(options.replace, true);
+      assert.equal(options.state, location.state);
+    }
   }
 });
 

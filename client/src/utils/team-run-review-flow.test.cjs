@@ -22,6 +22,8 @@ test('recent cycle links use the actual team history route and the budget is lab
 
 test('expired run preview is explicitly renewed, unknown renewal keeps its exact key, and renewed terms require confirmation', async () => {
   const f = fixture({ realQuery: true }); let sequence = 0;
+  f.load('api/auth-mode.ts').setAuthMode('local');
+  window.sessionStorage.clear();
   f.state.randomUUID = () => 'intent-' + ++sequence;
   const api = f.load('api/team-runs.ts').teamRunsApi;
   const calls = []; let renewalUncertain = true; let agreement = null;
@@ -44,7 +46,15 @@ test('expired run preview is explicitly renewed, unknown renewal keeps its exact
   const settle = () => React.act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
   const button = name => [...document.querySelectorAll('button')].find(item => item.textContent === name);
   async function click(name) { const item = button(name); assert.ok(item, name); assert.equal(item.disabled, false); await React.act(async () => item.click()); await settle(); }
-  async function acknowledge() { await React.act(async () => document.querySelector('[role="checkbox"][aria-label="Confirm reviewed run rules"]').click()); await settle(); }
+  async function acknowledge() {
+    const checkbox = document.querySelector('[role="checkbox"][aria-label="Confirm reviewed run rules"]');
+    assert.ok(checkbox, 'The reviewed preview must offer explicit consent');
+    assert.equal(checkbox.getAttribute('aria-checked'), 'false');
+    assert.equal(button('Confirm and start').disabled, true);
+    await React.act(async () => checkbox.click());
+    await settle();
+    assert.equal(checkbox.getAttribute('aria-checked'), 'true');
+  }
   try {
     await React.act(async () => root.render(React.createElement(QueryClientProvider, { client }, React.createElement(MemoryRouter, null, React.createElement(TeamRunPanel, { zh: false, team: { id: 'team', currentVersionId: 'version', bindingRevision: 1, binding: { id: 'binding' }, status: 'active', publishedVersion: { config: { roles: [{ participation: 'enabled', agentId: 'agent', agentVersionId: 'agent-version', executor: { executionMode: 'model' } }] } } } })))));
     await settle();
@@ -61,10 +71,12 @@ test('expired run preview is explicitly renewed, unknown renewal keeps its exact
     assert.notEqual(previews[0][1].requestKey, previews[1][1].requestKey);
     assert.deepEqual(previews[1][1], previews[2][1]);
     assert.match(document.body.textContent, /Reviewed analyst/);
-    assert.equal(button('Confirm and start').disabled, true);
+    assert.deepEqual(calls.map(([op]) => op), ['preview', 'confirm', 'preview', 'preview']);
     await acknowledge();
     await click('Confirm and start');
-    assert.equal(calls.filter(([op]) => op === 'start').length, 1);
+    assert.deepEqual(calls.map(([op]) => op), ['preview', 'confirm', 'preview', 'preview', 'confirm', 'start']);
+    assert.equal(calls[4][1].previewId, 'renewed');
+    assert.equal(calls[4][1].previewHash, previews[2][1].requestKey);
     assert.match(document.body.textContent, /Running automatically/);
   } finally { await React.act(async () => root.unmount()); client.clear(); }
 });

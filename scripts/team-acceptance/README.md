@@ -20,9 +20,11 @@ and advertises the MCP transport capability required by team research. It sends
 structured replies to real commands. The test requires a date covered by the
 bundled US calendar.
 
-The desktop user registers, imports holdings, tests a model connection after
-one rejection, creates a team with saved friends, and explicitly authorizes a
-run. The browser loses the first successful startup response. The test checks
+The desktop user registers, opens Holdings from the investment overview, and
+uses the header import link. The test checks that empty real holdings open
+the guided import. The user tests a model connection after one rejection,
+creates a team with saved friends, and explicitly authorizes a run. The
+browser loses the first successful startup response. The test checks
 the exact retry payload and persisted agreement revision. The accepted model
 summary proposes a fixed order and cites the actual frozen team-account
 evidence ID. The test requires an applied cycle and records the report version,

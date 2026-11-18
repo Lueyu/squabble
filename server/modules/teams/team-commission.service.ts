@@ -9,9 +9,10 @@ import { paperPositions } from '../../database/schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { llmBudgetSettings } from '../../database/llm-budget.schema';
 import { assertTeamExecutionInTransaction, type TeamDatabase } from '../../database/team-context';
+import { reportVersionVisibility } from '../../database/report-source-fence';
 import { sourceFingerprint } from '../../database/team-source-context';
 import { freezeTeamMemberGrants } from '../../database/team-member-sources';
-import { TeamStore, type CommissionRow, unknownCost } from './team-store';
+import { TeamStore, type CommissionRow, decisionHistoryViews, unknownCost } from './team-store';
 import { TeamRuntimeAdapter } from './team-runtime-adapter';
 import { budgetSchema, commissionFields, compileTeamPlan, semanticHash } from './team-graph';
 import { canonicalHash, COMPILER_VERSION, compareDecimal, confirmSchema, parseTeam, requestKeySchema, revisionSchema, moneySchema, sourceRefSchema, teamError, uuidSchema, pageFields, decodeTeamCursor, encodeTeamCursor } from './team-contract';
@@ -207,21 +208,27 @@ export class TeamCommissionService {
     }
     async detail(owner: string, id: string, commissionId: string) {
         const row = await this.row(this.store.db, owner, id, commissionId);
-        // Keep audit identities even when their report version was removed or its source was withdrawn.
-        const links = await this.store.db.select({ ...getTableColumns(teamResearchLinks),
-            reportAvailable: sql<boolean | null>`CASE WHEN ${teamResearchLinks.kind} = 'report_version' THEN EXISTS (
-                SELECT 1 FROM research_document_versions v
-                JOIN council_reports r ON r.owner = v.owner AND r.research_version_id = v.id
-                JOIN council_sessions s ON s.owner = r.owner AND s.id = r.session_id
-                WHERE v.owner = ${owner} AND v.id::text = ${teamResearchLinks.targetId}
-                  AND v.version::text = ${teamResearchLinks.targetRevision} AND v.deleted_at IS NULL AND v.revoked_at IS NULL
-                  AND v.available_at <= now() AND s.id = ${row.sessionId} AND s.team_commission_id = ${row.id}
-                  AND s.deleted_at IS NULL AND r.publication_outcome = 'succeeded'
-            ) END`,
-        }).from(teamResearchLinks).where(and(eq(teamResearchLinks.ownerId, owner), eq(teamResearchLinks.teamId, id), eq(teamResearchLinks.commissionId, commissionId)));
-        const decisions = await this.store.db.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.teamId, id), eq(teamDecisions.accountId, row.accountId), eq(teamDecisions.commissionId, commissionId)));
-        const tasks = row.sessionId ? await this.store.db.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner), eq(councilResearchTasks.sessionId, row.sessionId))) : [];
-        return { ...await this.view(this.store.db, row), links, decisions: decisions.map(d => ({ ...d, createdAt: d.createdAt.toISOString() })), tasks };
+        return this.store.db.transaction(async tx => {
+            // Keep audit identities even when their report version was removed or its source was withdrawn.
+            const links = await tx.select({ ...getTableColumns(teamResearchLinks),
+                reportAvailable: sql<boolean | null>`CASE WHEN ${teamResearchLinks.kind} = 'report_version' THEN EXISTS (
+                    SELECT 1 FROM research_document_versions v
+                    JOIN council_reports r ON r.owner = v.owner AND r.research_version_id = v.id
+                    JOIN council_sessions s ON s.owner = r.owner AND s.id = r.session_id
+                    WHERE v.owner = ${owner} AND v.id::text = ${teamResearchLinks.targetId}
+                      AND v.version::text = ${teamResearchLinks.targetRevision} AND v.deleted_at IS NULL AND v.revoked_at IS NULL
+                      AND v.available_at <= now() AND s.id = ${row.sessionId} AND s.team_commission_id = ${row.id}
+                      AND s.deleted_at IS NULL AND r.publication_outcome = 'succeeded'
+                ) END`,
+            }).from(teamResearchLinks).where(and(eq(teamResearchLinks.ownerId, owner), eq(teamResearchLinks.teamId, id), eq(teamResearchLinks.commissionId, commissionId)));
+            const canRead = reportVersionVisibility(tx, owner);
+            for (const link of links) {
+                if (link.reportAvailable) link.reportAvailable = await canRead(link.targetId);
+            }
+            const decisions = await tx.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.teamId, id), eq(teamDecisions.accountId, row.accountId), eq(teamDecisions.commissionId, commissionId)));
+            const tasks = row.sessionId ? await tx.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner), eq(councilResearchTasks.sessionId, row.sessionId))) : [];
+            return { ...await this.view(tx, row), links, decisions: await decisionHistoryViews(decisions, canRead), tasks };
+        });
     }
     async control(owner: string, id: string, commissionId: string, kind: 'cancel' | 'recover' | 'budget-limit', input: unknown) {
         parseTeam(uuidSchema, commissionId);

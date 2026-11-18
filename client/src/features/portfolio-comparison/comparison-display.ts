@@ -113,12 +113,13 @@ export function historicalReferenceSeries(
         returnPct: null,
         gaps: point.gaps,
       })) ?? [];
-    const last = points.filter((point) => point.equityUsd !== null).at(-1);
+    const lastIndex = points.reduce((latest, point, index) => point.equityUsd === null ? latest : index, -1);
+    const source = reference?.points[lastIndex];
     return {
       ...account,
       points,
-      equityUsd: last?.equityUsd ?? null,
-      valuationAsOf: last?.timestamp ?? null,
+      equityUsd: points[lastIndex]?.equityUsd ?? null,
+      valuationAsOf: source?.timestamp ?? source?.date ?? null,
       returnPct: null,
       returnFrom: null,
       gaps: reference?.gaps ?? ['HISTORY_PENDING'],

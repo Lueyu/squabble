@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { makeTeamFixture } from '../teams/team-test.fixture';
 import { AgentRosterService } from '../agent-roster/agent-roster.service';
+import { commissionContext } from '../teams/team-commission.service';
 import { TeamRunService } from './team-run.service';
 import { TeamRunScheduler } from './team-run.scheduler';
 import { TeamRunDelivery } from './team-run.delivery';
@@ -78,7 +79,7 @@ export async function deliverReport(f: Awaited<ReturnType<typeof setup>>, commis
         reviewedText: text, numericEvidence: [{ field: 'trigger.price', value: 100, quote: '100' }, { field: 'quantity', value: 10, quote: '10' }] } } : {}) }] } };
   const version = await f.documents.submit(f.owner, { idempotencyKey: randomUUID(), title: 'Fictional accepted report', kind: 'council', source: { type: 'council', id: report.id },
     content: 'Fictional readable report', sections: [{ id: 'execution-strategy', title: 'Execution proposal', content: text }],
-    availableAt: new Date(Date.now() - 1000).toISOString(), snapshot: { executionPlan: executionPlan as never, evidence: [{ id: 'fixture-e1', content: 'Fictional bound proposal evidence' }] } });
+    availableAt: new Date(Date.now() - 1000).toISOString(), snapshot: { teamExecutionContext: commissionContext(commission), executionPlan: executionPlan as never, evidence: [{ id: 'fixture-e1', content: 'Fictional bound proposal evidence' }] } });
   await f.db.update(councilReports).set({ researchVersionId: version.id }).where(eq(councilReports.id, report.id));
   await f.db.update(councilSessions).set({ status: 'completed' }).where(eq(councilSessions.id, commission.sessionId!));
   await f.worker.project(commission.id);

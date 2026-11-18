@@ -153,7 +153,7 @@ test('real external friend executes through roster, ordinary Council and frozen 
     assert.equal(members[0].a2aFingerprint?.cardHash, f.connection.cardHash);
     const documents = new ResearchDocumentsService(f.db);
     const llm = { validateConnectionIds: async (_owner: string, ids: string[]) => { assert.deepEqual(ids, []); },
-      isConfigured: async () => { throw new Error('A2A must never enter model transport'); }, getInputLimit: async () => 32000 };
+      isConfigured: async () => { throw new Error('A2A must never enter model transport'); }, getInputLimit: async (owner: string) => (await budget.getSettings(owner)).maxInputTokens };
     const council = new CouncilService(f.db, llm as never, { collectEvidence: async () => [] } as never,
       { getPortfolioContext: async () => ({ totalValue: 0, cash: 0, holdings: [] }) } as never,
       { listRuns: async () => ({ items: [] }) } as never, undefined, budget, undefined, undefined, documents, undefined, external);

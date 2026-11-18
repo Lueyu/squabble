@@ -63,8 +63,8 @@ export function dailyResearchPrompt(phase:string, overallDaily = false):string {
 }
 
 /** Proposed parameters are not market facts and never become authority without investor confirmation. */
-export function reportExecutionPlanPrompt(context: 'daily' | 'team' | 'team-model' = 'daily'):string {
-  if (context === 'team-model') return [
+export function reportExecutionPlanPrompt(context: 'daily' | 'team' | 'team-remote' = 'daily'):string {
+  if (context === 'team-remote') return [
     'executionPlan:{schemaVersion:1,parameterOrigin:"ai_proposed",strategy:{title,body,timezone,startsAt,endsAt,entries:[{id,text,sourceKeys:[],directive?:{ticker,side,trigger:{kind,price?,text?},quantity?,positionPct?,minPrice?,maxPrice?,stopLossPrice?,reviewedText,numericEvidence:[{field,value,quote}]}}],limits?:{maxPositionPct,maxDailyIncreasePct,maxDailyTurnoverPct,minCashPct?,maxGrossExposurePct?,maxOrderPct?}},evidenceIds:[],gaps:[],noTradeReason?}.',
     'Side buy|sell. Trigger price_lte|price_gte|always|semantic. Use ISO dates, supplied timezone and bounded expiry. Give rationale, risks and exact shares or target TOTAL position. Max 8 entries, ~600 chars each, body <1200, proposal <=12000.',
     'reviewedText equals entry.text. Quote the exact proposal token for every numeric field. Suggested numbers are proposals, never facts or user limits. Use cited facts and actual holdings/cash. Flag gaps. No invented facts, amounts or default stops. Never grant semanticAuthorized. If unjustified, give noTradeReason, recheck condition and zero directives. Team review only: no installation or orders.',

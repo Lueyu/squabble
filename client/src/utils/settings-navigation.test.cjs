@@ -63,11 +63,13 @@ test('canonicalizing the settings entry keeps previously visited form panels mou
       '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
       '@/features/tool-connections/tool-connection-copy': { useToolConnectionCopy: () => ({ title: 'Tools', description: 'Tools settings' }) },
     };
-    vm.runInNewContext(output, { exports, require: name => imports[name] ?? {} });
+    vm.runInNewContext(output, { exports, require: name => imports[name] ?? {}, URLSearchParams });
     const tree = exports.default();
     const panels = nodes(tree).filter(node => node.props?.role === 'region');
-    assert.ok(panels.some(node => node.key === 'models'), 'The model draft must stay mounted during redirect');
-    assert.ok(panels.some(node => node.key === 'budget'), 'The budget draft must stay mounted during redirect');
+    const active = hash === '#research-budget' ? 'budget' : 'models';
+    assert.deepEqual(Object.fromEntries(panels.map(node => [node.key, node.props.hidden])), {
+      models: active !== 'models', budget: active !== 'budget',
+    });
   }
 });
 

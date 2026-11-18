@@ -234,7 +234,7 @@ export default function PortfolioComparisonPanel({
                 {value == null ? '—' : metric === 'return' ? percent.format(value / 100) : money.format(value)}
               </dd>
               {asOf && <dd className="text-xs text-muted-foreground">
-                {text('截至', 'As of')}{' '}<time dateTime={asOf}>{formatComparisonTime(asOf, language)}</time>
+                {text('截至', 'As of')}{' '}<time dateTime={asOf}>{reference && asOf.length === 10 ? asOf : formatComparisonTime(asOf, language)}</time>
               </dd>}
               {!reference && metric === 'equity' && account.currentMark && <dd className="text-xs text-muted-foreground">{currentAccountBasis(account, zh)}</dd>}
               {!reference && account.kind === 'simulation' && account.firstIncludedAt === null && <dd className="text-xs text-muted-foreground">

@@ -203,6 +203,7 @@ export interface DecisionInput {
   reason: string; proposedPolicyDraftId?: string;
 }
 export interface TeamDecision {
+  reportAvailable?: boolean | null;
   id: string; teamId: string; accountId: string; commissionId: string | null;
   proposalId: string; proposalRevision: number;
   event: DecisionInput['event'] | 'requires_reapproval' | 'applied' | 'continue_policy';

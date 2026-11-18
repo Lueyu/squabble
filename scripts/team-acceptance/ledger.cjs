@@ -92,6 +92,7 @@ async function verifyLedger(sandbox, ownerApi, owner, team, observe, application
     if (application) {
       assert.equal(tradeLink?.teamId, team.id);
       assert.equal(tradeLink?.commissionId, application.commissionId);
+      assert.equal(tradeLink?.decision?.id, application.decisionId);
       assert.equal(tradeLink?.decision?.basis.reportVersionId, application.reportVersionId);
       assert.equal(tradeLink?.attemptId, application.acceptedAttemptId);
     } else {
@@ -115,7 +116,9 @@ async function verifyLedger(sandbox, ownerApi, owner, team, observe, application
     assert.ok(paper.points.every(point => point.timestamp.slice(0, 10) >= paper.createdAt.slice(0, 10)));
     evidence.valid = valid;
     evidence.tradeLink = tradeLink;
-    evidence.pictures = await observe({ state: 'filled', now: at, fill });
+    const browserEvidence = await observe({ state: 'filled', now: at, fill });
+    evidence.pictures = browserEvidence.screenshots;
+    evidence.teamRunFills = browserEvidence.teamRunFills;
 
     const gapAt = new Date(at.getTime() + 5 * 60_000);
     mock.timers.setTime(gapAt.getTime());
@@ -130,7 +133,7 @@ async function verifyLedger(sandbox, ownerApi, owner, team, observe, application
     const gapComparison = (await ownerApi(comparisonPath)).series.find(series => series.accountId === accountId);
     assert.equal(gapComparison.points.find(point => point.timestamp === gapAt.toISOString()).equityUsd, null);
     evidence.gap = gap;
-    evidence.gapPictures = await observe({ state: 'gap', now: gapAt, fill });
+    evidence.gapPictures = (await observe({ state: 'gap', now: gapAt, fill })).screenshots;
   } finally {
     providers.missingQuotes = false;
     providers.marketAt = null;

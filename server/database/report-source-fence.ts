@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, NotFoundException } from '@nestjs/common';
 import { researchDocumentVersions } from './research-documents.schema';
 import { analysis, deepReport, portfolioAnalysisRuns } from './schema';
 import { councilReports, councilSessions } from './council.schema';
@@ -167,4 +167,24 @@ export async function assertReportVersionSources(tx: Pick<TeamDatabase, 'select'
     for (const ref of references)
         await inspect(ref, 0);
     return [...complete.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// A read response can cite one immutable version in several delivery and decision receipts.
+// Scope memoization to that response so the next read observes source revocations.
+export function reportVersionVisibility(tx: Pick<TeamDatabase, 'select'>, owner: string) {
+    const checked = new Map<string, boolean>();
+    const at = new Date();
+    return async (versionId: string): Promise<boolean> => {
+        const previous = checked.get(versionId);
+        if (previous !== undefined) return previous;
+        try {
+            await assertReportVersionSources(tx, owner, [{ versionId }], at);
+            checked.set(versionId, true);
+            return true;
+        } catch (error) {
+            if (!(error instanceof HttpException) || ![400, 404, 409, 422].includes(error.getStatus())) throw error;
+            checked.set(versionId, false);
+            return false;
+        }
+    };
 }

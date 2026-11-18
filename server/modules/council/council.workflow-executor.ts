@@ -101,7 +101,7 @@ export class CouncilWorkflowExecutor {
     const { db, memory } = this.deps;
     await this.deps.validateReferences?.(row);
     const teamContext = row.checkpoint?.teamContext;
-    const teamModel = teamContext && member.executionMode !== 'local' && member.executionMode !== 'a2a';
+    const compactTeamInput = teamContext && member.executionMode !== 'local';
     const sourceRefs = teamContext && task.workKey ? teamWorkInputs(teamContext.plan, task.workKey,
       (teamContext.inputSnapshot.inputRefs ?? []) as import('../../../shared/team-workspace.interface').ResearchSourceRef[]) : [];
     if (teamContext && task.workKey) row = { ...row, evidenceSnapshot: teamVisibleEvidence(teamContext, task.workKey, tasks, row.evidenceSnapshot) };
@@ -162,7 +162,7 @@ export class CouncilWorkflowExecutor {
       !review ? row.language === 'en' ? '180–300 main words; summary 300–450. Preserve evidence.'
         : '通常300–600字，总结500–800字；保留事实、依据、风险与分歧，不凑字数。' : '',
       batch.length ? 'This is a batch review. Instead return ONLY {reviews:[{taskId,submittedAttemptId,accepted:boolean,feedback:string}]}, one independent verdict per submitted task. Copy exact task and submission IDs. Passing one task does not imply passing another.' : '',
-      teamContext && !review && task.key === 'summary' ? reportExecutionPlanPrompt(teamModel ? 'team-model' : 'team') : '',
+      teamContext && !review && task.key === 'summary' ? reportExecutionPlanPrompt(compactTeamInput ? 'team-remote' : 'team') : '',
       !review && task.key === 'summary' ? 'Set researchStance:"positive|balanced|cautious" from findings.' : '',
       !review && task.key === 'summary' ? '1–5 thesisCandidates:{claim,supportingEvidence:[{evidenceId}],opposingEvidence:[],assumptions:[],indicators:[],invalidationConditions:[],boundaryOrigin:stated|proposed|unknown,evidenceRelations:[{evidenceId,role:support|refute|qualify}],horizon?:{startAt?,endAt?,reviewAt?}}. Scoped IDs,ISO dates; no invention/endorsement. monitorConditions?:[{conditionIndex,metric:price|sma20|rsi14|volumeRatio,unit:USD|HKD|CNY|points|ratio,operator:lt|lte|gt|gte,threshold,validFrom,validUntil,evidenceIds,rationale}]. Deliberate revision: supersedes?:{thesisId,version,reason}. Unknown conditions=[],boundaryOrigin=unknown.' : '',
       !review && task.key === 'valuation' ? 'Return valuationScenario:{metric:"earnings|revenue|book_value",multiples:{bear:number,base:number,bull:number}}. Justify assumptions; app calculates total equity value. Never invent inputs, per-share targets or upside.' : '',
@@ -172,21 +172,21 @@ export class CouncilWorkflowExecutor {
     ].filter(Boolean).join('\n');
     const input = {
       task: { id: task.id, key: task.key, ...(task.assignment ? { assignment: task.assignment } : {}) },
-      ...(teamContext && (!teamModel || sourceDocuments.length) ? {
-        sourceDocuments: teamModel ? sourceDocuments.map(({ ref, content }) => ({ ref, content })) : sourceDocuments,
+      ...(teamContext && (!compactTeamInput || sourceDocuments.length) ? {
+        sourceDocuments: compactTeamInput ? sourceDocuments.map(({ ref, content }) => ({ ref, content })) : sourceDocuments,
       } : {}),
       // The complete account and positions already travel as citable frozen owner evidence.
       ...(teamContext ? {
-        ...(!teamModel ? { teamInput: teamContext.inputSnapshot } : {}),
-        ...(!teamModel || task.assignment?.objective !== teamContext.plan.objective ? { objective: teamContext.plan.objective } : {}),
+        ...(!compactTeamInput ? { teamInput: teamContext.inputSnapshot } : {}),
+        ...(!compactTeamInput || task.assignment?.objective !== teamContext.plan.objective ? { objective: teamContext.plan.objective } : {}),
         dataCutoffAt: teamContext.dataCutoffAt,
       } : {}),
-      ticker: row.ticker, ...(!teamModel || row.checkpoint!.workflow!.peers.length ? { peers: row.checkpoint!.workflow!.peers } : {}), member: { name: member.name,
+      ticker: row.ticker, ...(!compactTeamInput || row.checkpoint!.workflow!.peers.length ? { peers: row.checkpoint!.workflow!.peers } : {}), member: { name: member.name,
         ...(member.instructions ? { instructions: row.checkpoint?.teamContext || member.rosterAgentId ? member.instructions : member.instructions.slice(0, 500) } : {}) },
       ...(messages.length ? { steering: messages.slice(-1).map(m => m.content) } : {}), memory: '',
       // Existing task pins survive deployments and retries. Skills carry no additional permissions.
       skills: task.skills, ...(task.reason ? { feedback: task.reason } : {}),
-      ...(!teamModel || toolResults.length ? { readOnlyToolResults: toolResults.map(item => ({
+      ...(!compactTeamInput || toolResults.length ? { readOnlyToolResults: toolResults.map(item => ({
         name: item.name, status: item.result.status, errorCode: item.result.errorCode, data: excerptToolData(item.result.data), excerpts: true,
       })) } : {}),
       submitted: review ? batch.length ? batch.map(t => ({ taskId: t.id,
@@ -194,7 +194,7 @@ export class CouncilWorkflowExecutor {
         requirement: instructions[t.key], delivery: t.delivery })) : task.delivery : undefined,
       handoffs: tasks.filter(t => (task.workKey ? task.dependencyWorkKeys?.includes(t.workKey ?? '') : task.dependencies.includes(t.key)) && t.delivery).map(t => ({ key: t.key, state: t.state,
         reason: t.reason,
-        conclusion: teamModel ? t.delivery!.conclusion : t.delivery!.conclusion.slice(0, 800), evidenceIds: t.delivery!.evidenceIds,
+        conclusion: compactTeamInput ? t.delivery!.conclusion : t.delivery!.conclusion.slice(0, 800), evidenceIds: t.delivery!.evidenceIds,
         thesisCandidates: t.delivery!.thesisCandidates,
         computedValuation: t.delivery!.valuation ? excerptToolData(compactValuationHandoff(t.delivery!.valuation.data)) : undefined,
         evidencePoints: t.delivery!.response.evidencePoints,
@@ -212,12 +212,16 @@ export class CouncilWorkflowExecutor {
         })),
       excerpts: true,
     };
-    const requestSize = (promptSystem: string, promptInput: unknown): number => member.executionMode === 'local'
-      ? Buffer.byteLength(`${promptSystem}\n${JSON.stringify(promptInput)}`, 'utf8')
-      : estimateInputTokens(jsonChatMessages([{ role: 'system', content: promptSystem }, { role: 'user', content: JSON.stringify(promptInput) }]));
+    const requestSize = (promptSystem: string, promptInput: unknown): number => {
+      const payload = JSON.stringify(promptInput);
+      const externalPrompt = promptSystem + '\n' + payload;
+      if (member.executionMode === 'local') return Buffer.byteLength(externalPrompt, 'utf8');
+      if (member.executionMode === 'a2a') return estimateInputTokens([{ role: 'user', content: externalPrompt }]);
+      return estimateInputTokens(jsonChatMessages([{ role: 'system', content: promptSystem }, { role: 'user', content: payload }]));
+    };
     const handoffs = input.handoffs;
     const compact = (length: number) => ({
-      ...(!teamModel || toolResults.length ? { readOnlyToolResults: toolResults.map(item => ({
+      ...(!compactTeamInput || toolResults.length ? { readOnlyToolResults: toolResults.map(item => ({
         name: item.name, status: item.result.status, errorCode: item.result.errorCode,
         data: length === 60 ? compactPeerComparison(excerptToolData(item.result.data, length)) : excerptToolData(item.result.data, length), excerpts: true,
       })) } : {}),
@@ -227,7 +231,7 @@ export class CouncilWorkflowExecutor {
           const data = item.result.data as { evidenceId?: string } | undefined;
           return data?.evidenceId ? [{ id: data.evidenceId, data: excerptToolData(data, length) }] : [];
         })),
-      ...compactHandoffs(teamModel ? handoffs : handoffs.map(h => ({ ...h, conclusion: byteExcerpt(h.conclusion, length),
+      ...compactHandoffs(compactTeamInput ? handoffs : handoffs.map(h => ({ ...h, conclusion: byteExcerpt(h.conclusion, length),
         // A short fact is a whole entry in every language; only longer prose uses byte excerpts.
         evidencePoints: h.evidencePoints.map(point => handoffEvidenceExcerpt(point, length)) }))),
     });
@@ -252,7 +256,7 @@ export class CouncilWorkflowExecutor {
         ...excerptedContext.input.evidence.filter(item => !ownerIds.has(item.id))] } } : excerptedContext;
     // Team sessions already carry the exact objective. Include thread material when it adds context.
     const thread = threadPromptContext(row);
-    if (hasThreadContext(row) && (!teamModel || row.scene !== 'portfolio_daily'
+    if (hasThreadContext(row) && (!compactTeamInput || row.scene !== 'portfolio_daily'
       || thread.title !== teamContext.plan.objective || thread.subject !== teamContext.plan.objective
       || thread.period || thread.pinnedReports.length || thread.parentDiscussion.length || thread.continuationSummary)) {
       Object.assign(promptContext.input, { thread });

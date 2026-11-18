@@ -9,6 +9,8 @@ const { MemoryRouter } = require('react-router-dom');
 module.exports = function fixture({ realQuery = false } = {}) {
   const state = { language: 'en', simpleExperience: true, queries: new Map(), requests: [] };
   const cache = new Map();
+  const queryResult = ({ queryKey }) => state.queries.get(JSON.stringify(queryKey)) ??
+    state.queries.get(queryKey[0]) ?? { data: undefined, isPending: false };
   function load(relative) {
     const filename = path.isAbsolute(relative) ? relative : path.resolve(__dirname, '..', relative);
     if (cache.has(filename)) return cache.get(filename).exports;
@@ -19,7 +21,8 @@ module.exports = function fixture({ realQuery = false } = {}) {
       if (id === '@/hooks/use-simple-experience') return { useSimpleExperience: () => ({ enabled: state.simpleExperience }) };
       if (id === '@tanstack/react-query' && realQuery) return require(id);
       if (id === '@tanstack/react-query') return {
-        useQuery: options => state.queries.get(JSON.stringify(options.queryKey)) ?? state.queries.get(options.queryKey[0]) ?? { data: undefined, isPending: false },
+        useQuery: queryResult,
+        useQueries: ({ queries }) => queries.map(queryResult),
         useMutation: options => state.mutationFactory ? state.mutationFactory(options) : state.mutation ?? ({ isPending: false, mutateAsync: async () => {}, mutate() {} }),
         useQueryClient: () => ({ invalidateQueries() {}, setQueryData() {}, async cancelQueries() {} }),
       };

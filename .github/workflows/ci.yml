@@ -66,6 +66,31 @@ jobs:
           node scripts/ui-probe/team-organization-browser.cjs
           node scripts/ui-probe/team-auto-run-browser.cjs
 
+      - name: Exercise the first-run team simulation journeys
+        timeout-minutes: 10
+        env:
+          SQU_ACCEPTANCE_DATABASE_URL: postgres://postgres:test-only@127.0.0.1:55491/squ_acceptance_test
+        run: |
+          npm run build:server
+          fixture_db=$(docker run --rm -d --network host \
+            -e POSTGRES_DB=squ_acceptance_test -e POSTGRES_PASSWORD=test-only \
+            postgres:16-alpine -p 55491 -c listen_addresses=127.0.0.1)
+          trap 'docker stop "$fixture_db" >/dev/null' EXIT
+          for attempt in {1..30}; do
+            if pg_isready -h 127.0.0.1 -p 55491 -d squ_acceptance_test; then break; fi
+            sleep 1
+          done
+          npm run test:team-acceptance
+
+      - name: Save team journey screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: team-journey-screenshots
+          path: output/playwright/team-acceptance/*/*.png
+          if-no-files-found: ignore
+          retention-days: 3
+
       - name: Initialize isolated integration database
         env:
           PGPASSWORD: test-only

@@ -80,53 +80,61 @@ test('fixed cohort remains visible before a zero-coverage tail while exclusions 
   assert.equal(result.returnPct, null);
 });
 
-test('overview automatically shows available imported-position history and fills current account amounts', async () => {
+test('overview shows recorded returns, current equity and dated holdings references in the selected chart', () => {
   const React = require('react');
-  const { createRoot } = require('react-dom/client');
+  const { renderToStaticMarkup } = require('react-dom/server');
   const { MemoryRouter } = require('react-router-dom');
   const { JSDOM } = require('jsdom');
-  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/' });
-  const previous = { window: global.window, document: global.document, act: global.IS_REACT_ACT_ENVIRONMENT };
-  global.window = dom.window; global.document = dom.window.document; global.IS_REACT_ACT_ENVIRONMENT = true;
-  const root = createRoot(document.getElementById('root'));
-  try {
-    const f = fixture();
-    f.state.queries.set('portfolio-comparison', { data: { series: [{ accountId: 'real', name: 'Real', kind: 'real', colorIndex: -1, status: 'real',
-      points: [], gaps: [], equityUsd: null, returnPct: null, strategyCount: 0,
-      currentMark: { valueUsd: 240, basis: 'holdings_market_value', asOf: '2026-11-10T10:00:00Z', gaps: [] },
-    }] } });
-    f.state.queries.set('portfolio-history', { data: { refreshing: false, series: [{ accountId: 'real', coverage: { totalPositions: 1 }, gaps: [],
-      points: [{ date: '2026-11-09', valueUsd: 220, gaps: [] }, { date: '2026-11-10', valueUsd: 240, gaps: [] }],
-    }] } });
-    f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default = ({ series }) => React.createElement('output', null, series[0]?.points.map(p => p.equityUsd).join(','));
-    const Page = f.load('pages/Overview/PortfolioOverviewPage.tsx').default;
-    await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Page))));
-    assert.equal(document.querySelector('output').textContent, '220,240');
-    assert.match(document.body.textContent, /Current holdings lookback/);
-    assert.match(document.querySelector('.portfolio-account-value').textContent, /240/);
-    assert.match(document.querySelector('.portfolio-account-card').textContent, /Cash unconfirmed/);
-    const saved = [...document.querySelectorAll('button')].find(b => b.textContent === 'Account records');
-    await React.act(async () => saved.click());
-    assert.equal(document.querySelector('output').textContent, '');
-    assert.match(document.querySelector('.portfolio-account-value').textContent, /240/);
-    const account = f.state.queries.get('portfolio-comparison').data.series[0];
-    account.points = [{ timestamp: '2026-11-09T10:00:00Z', date: '2026-11-09', equityUsd: 200, returnPct: 10, gaps: [] }];
-    account.returnPct = 10;
-    await React.act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Return %').click());
-    const returnCaption = document.querySelector('.portfolio-performance-figures .portfolio-performance-asof').textContent;
-    assert.match(returnCaption, /Period return · Account records/);
-    assert.match(returnCaption, /11\/9\/2026/);
-    assert.doesNotMatch(returnCaption, /11\/10\/2026|Cash unconfirmed/);
-    await React.act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Current holdings lookback').click());
-    f.state.queries.set('portfolio-history', { isError: true, data: undefined });
-    await React.act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Compare').click());
-    assert.equal(document.querySelector('output').textContent, '');
-    const records = [...document.querySelectorAll('button')].find(b => b.textContent === 'Account records');
-    assert.ok(records, 'history failure must leave a direct route back to saved account records');
-    await React.act(async () => records.click());
-    assert.equal(document.querySelector('output').textContent, '200');
-  } finally {
-    await React.act(async () => root.unmount()); dom.window.close();
-    global.window = previous.window; global.document = previous.document; global.IS_REACT_ACT_ENVIRONMENT = previous.act;
+  const f = fixture();
+  const observed = '2026-11-09T10:00:00Z';
+  const current = '2026-11-10T10:00:00Z';
+  f.state.queries.set('portfolio-comparison', { data: { granularity: 'observations', series: [{
+    accountId: 'real', name: 'Real', kind: 'real', colorIndex: -1, status: 'real',
+    points: [{ timestamp: observed, date: '2026-11-09', equityUsd: 200, returnPct: 10, gaps: [] }],
+    gaps: [], equityUsd: 200, returnPct: 10, valuationAsOf: observed,
+    currentMark: { valueUsd: 240, basis: 'holdings_market_value', asOf: current, gaps: [] },
+  }] } });
+  const latestPrice = { date: '2026-11-10', valueUsd: 220, gaps: [] };
+  f.state.queries.set('portfolio-history', { data: { series: [{ accountId: 'real', coverage: { completePoints: 2 }, gaps: [],
+    points: [{ date: '2026-11-09', valueUsd: 210, gaps: [] }, latestPrice,
+      { date: '2026-11-11', valueUsd: null, gaps: ['PRICE_MISSING:FICT'] }],
+  }] } });
+  const Page = f.load('pages/Overview/PortfolioOverviewPage.tsx').default;
+  function overview(url) {
+    return JSDOM.fragment(renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [url] }, React.createElement(Page))));
   }
+  const panel = page => page.querySelector('section[aria-label="Account performance"]');
+  const defaultPage = overview('/');
+  assert.deepEqual([...defaultPage.querySelectorAll('h2')].map(node => node.textContent), [
+    'Account returns', 'My accounts', 'Today’s investment daily',
+  ]);
+  assert.ok(defaultPage.querySelector('a[href="/holdings?accountId=real"]'));
+  assert.ok(defaultPage.querySelector('a[href="/daily"]'));
+  const returns = panel(defaultPage);
+  assert.match(returns.querySelector('dl').textContent, /\+10\.00%/);
+  assert.equal(returns.querySelector('time').dateTime, observed);
+  assert.equal(returns.querySelector('summary').textContent, 'View historical valuations');
+
+  const equity = panel(overview('/?basis=records&metric=equity'));
+  assert.equal(equity.querySelector('h2').textContent, 'Account equity');
+  assert.match(equity.querySelector('dl').textContent, /\$240\.00/);
+  assert.match(equity.querySelector('dl').textContent, /Holdings value · Cash unconfirmed/);
+  assert.equal(equity.querySelector('time').dateTime, current);
+
+  const reference = panel(overview('/?basis=reference'));
+  assert.equal(reference.querySelector('h2').textContent, 'Holdings lookback');
+  assert.match(reference.querySelector('dl').textContent, /\$220\.00/);
+  assert.equal(reference.querySelector('time').dateTime, '2026-11-10');
+  assert.doesNotMatch(reference.querySelector('time').textContent, /\d:\d/);
+  assert.equal(reference.querySelector('summary').textContent, 'View reference values and price sources');
+  assert.match(reference.textContent, /Excludes cash, trades and dividends/);
+  latestPrice.timestamp = '2026-11-10T07:35:00Z';
+  const quoteTime = panel(overview('/?basis=reference')).querySelector('time');
+  assert.equal(quoteTime.dateTime, latestPrice.timestamp);
+  assert.match(quoteTime.textContent, /15:35/);
+
+  f.state.queries.set('portfolio-history', { isError: true });
+  const unavailable = panel(overview('/?basis=reference'));
+  assert.match(unavailable.querySelector('[role="alert"]').textContent, /Historical prices are unavailable/);
+  assert.equal(unavailable.querySelector('dd').textContent, '—');
 });
