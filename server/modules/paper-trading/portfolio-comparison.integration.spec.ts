@@ -110,8 +110,8 @@ test('comparison reads owned saved observations, preserves gaps and performs no 
     assert.equal(changed.returnPct,null);assert.ok(changed.gaps.includes('CASH_FLOW_OR_BASELINE_CHANGED'));
 
     const [newPaper, awaitingPaper] = await db.insert(paperAccounts).values([
-      { owner, name: 'New simulation', createdAt: new Date('2026-11-17T01:00:00Z') },
-      { owner, name: 'Awaiting complete valuation', createdAt: new Date('2026-11-17T01:00:00Z') },
+      { id: '00000000-0000-4000-8000-000000000002', owner, name: 'New simulation', createdAt: new Date('2026-11-17T01:00:00Z') },
+      { id: '00000000-0000-4000-8000-000000000001', owner, name: 'Awaiting complete valuation', createdAt: new Date('2026-11-17T01:00:00Z') },
     ]).returning();
     await db.insert(paperSnapshots).values([
       { owner, accountId: newPaper.id, snapshotDate: '2026-11-17', valuedAt: new Date('2026-11-17T00:59:00Z'), equity: '100', cash: '100' },
@@ -132,9 +132,12 @@ test('comparison reads owned saved observations, preserves gaps and performs no 
     ]);
     const asOf = new Date('2026-11-19T02:00:00Z');
     const month = await service.read(owner, '1M', [newPaper.id, awaitingPaper.id].join(','), asOf);
-    assert.equal(month.series[0].firstIncludedAt, included);
-    assert.ok(month.series[0].points.some(point => point.timestamp === included && point.equityUsd === 100), 'hourly reduction retains the actual inclusion observation');
-    assert.equal(month.series[1].firstIncludedAt, null, 'missing timestamps and partial known value give no inclusion evidence');
+    const observedAccount = month.series.find(item => item.accountId === newPaper.id);
+    const awaitingAccount = month.series.find(item => item.accountId === awaitingPaper.id);
+    assert.ok(observedAccount && awaitingAccount);
+    assert.equal(observedAccount.firstIncludedAt, included);
+    assert.ok(observedAccount.points.some(point => point.timestamp === included && point.equityUsd === 100), 'hourly reduction retains the actual inclusion observation');
+    assert.equal(awaitingAccount.firstIncludedAt, null, 'missing timestamps and partial known value give no inclusion evidence');
     const intradayView = await service.read(owner, '1D', newPaper.id, asOf);
     assert.equal(intradayView.series[0].firstIncludedAt, included, 'the earliest fact is independent of window');
     assert.deepEqual(intradayView.series[0].points.map(point => point.timestamp), ['2026-11-19T01:40:00.000Z']);
