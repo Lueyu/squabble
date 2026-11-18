@@ -25,9 +25,12 @@ export function nextRunWindow(configuration: TeamRunConfiguration, cycles: TeamR
 // An execution can settle after an account handoff. Its commission's immutable binding
 // and the actual ledger row identify the original team, independently of today's binding.
 export async function recentTeamFills(db: TeamDatabase, owner: string, teamId: string): Promise<TeamRunFill[]> {
-  const rows = await db.execute<TeamRunFill & Record<string, unknown>>(sql`SELECT DISTINCT
+  const rows = await db.execute<TeamRunFill & Record<string, unknown>>(sql`
+    WITH fills AS (
+    SELECT DISTINCT
     t.id, t.order_id AS "orderId", t.account_id AS "accountId", a.name AS "accountName",
-    t.ticker, t.market, t.side, t.quantity::text, t.price::text, o.currency, t.created_at AS "createdAt"
+    t.ticker, t.market, t.side, t.quantity::text, t.price::text, o.currency,
+    t.created_at AS "createdAt", o.filled_at AS "filledAt"
     FROM team_research_links l
     JOIN team_commissions c ON c.id = l.commission_id AND c.team_id = l.team_id AND c.owner_id = l.owner_id
     JOIN team_account_bindings b ON b.id = c.binding_id AND b.owner_id = c.owner_id
@@ -47,8 +50,13 @@ export async function recentTeamFills(db: TeamDatabase, owner: string, teamId: s
     JOIN paper_accounts a ON a.id = t.account_id AND a.owner = t.owner
     WHERE l.owner_id = ${owner} AND l.team_id = ${teamId} AND l.kind = 'trade' AND l.relation = 'executed'
       AND l.metadata_json->>'sourceKind' = 'order'
-    ORDER BY "createdAt" DESC, t.id DESC LIMIT 2`);
-  return rows.map(row => ({ ...row, createdAt: new Date(row.createdAt).toISOString() }));
+    )
+    SELECT * FROM fills ORDER BY coalesce("filledAt", "createdAt") DESC, id DESC LIMIT 2`);
+  return rows.map(row => ({
+    ...row,
+    createdAt: new Date(row.createdAt).toISOString(),
+    filledAt: row.filledAt == null ? null : new Date(row.filledAt).toISOString(),
+  }));
 }
 
 export async function recentTeamResearch(tx: TeamDatabase, owner: string, teamId: string): Promise<TeamRunResearchResult> {

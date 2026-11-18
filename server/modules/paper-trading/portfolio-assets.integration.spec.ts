@@ -23,9 +23,23 @@ test('asset reads preserve account isolation, native cash, null marks and the en
     const [secret] = await client`INSERT INTO paper_accounts(owner,name) VALUES(${foreign},'PRIVATE') RETURNING id`;
     await client`INSERT INTO paper_positions(owner,account_id,ticker,market,currency,shares,avg_cost) VALUES(${owner},${a.id},'FICT','HK','HKD',2.5,0),(${owner},${b.id},'OTHER','US','USD',9,10)`;
     await client`INSERT INTO simulation_cash(owner,account_id,currency,available,frozen,unsettled,availability_known) VALUES(${owner},${a.id},'HKD',123.45,2,3,true),(${owner},${a.id},'CNY',0,0,0,false)`;
+    const recent = [
+      { filledAt: '2026-11-12T16:00:00.000Z', createdAt: '2026-11-12T16:05:00.000Z' },
+      { filledAt: null, createdAt: '2026-11-12T15:30:00.000Z' },
+      { filledAt: '2026-11-12T15:00:00.000Z', createdAt: '2026-11-12T16:40:00.000Z' },
+    ];
+    const recentIds: string[] = [];
     for (let i = 0; i < 23; i++) {
-      const [order] = await client`INSERT INTO paper_orders(owner,account_id,ticker,side,quantity,status) VALUES(${owner},${a.id},'FICT','buy',1,'filled') RETURNING id`;
-      await client`INSERT INTO paper_trades(owner,account_id,order_id,ticker,side,quantity,price,cash_after) VALUES(${owner},${a.id},${order.id},'FICT','buy',1,10,100)`;
+      const { filledAt, createdAt } = recent[i] ?? { filledAt: null, createdAt: '2026-11-12T14:00:00.000Z' };
+      const [order] = await client`INSERT INTO paper_orders(owner,account_id,ticker,side,quantity,status,filled_at)
+        VALUES(${owner},${a.id},'FICT','buy',1,'filled',${filledAt}) RETURNING id`;
+      const [trade] = await client`INSERT INTO paper_trades(owner,account_id,order_id,ticker,side,quantity,price,cash_after,created_at)
+        VALUES(${owner},${a.id},${order.id},'FICT','buy',1,10,100,${createdAt}) RETURNING id`;
+      if (i < recent.length) recentIds.push(trade.id);
+      if (i === 0) {
+        await client`INSERT INTO paper_trades(owner,account_id,order_id,ticker,side,quantity,price,cash_after,created_at)
+          VALUES(${owner},${b.id},${order.id},'OTHER','buy',1,10,100,${createdAt})`;
+      }
     }
     const before = await client`SELECT (SELECT count(*)::int FROM paper_snapshots) AS nav, (SELECT count(*)::int FROM simulation_settlements) AS settlement, (SELECT sum(available) FROM simulation_cash) AS cash`;
     const service = new PortfolioAssetsService(drizzle(client));
@@ -41,6 +55,12 @@ test('asset reads preserve account isolation, native cash, null marks and the en
     assert.equal(result.cash.find(item => item.currency === 'CNY')?.available, null);
     assert.equal(result.orders.length, 23, 'ledger must not silently truncate to the 20 overview actions');
     assert.equal(result.trades.length, 23);
+    assert.deepEqual(result.trades.slice(0, recent.length).map(trade => trade.id), recentIds);
+    assert.deepEqual(result.trades.slice(0, recent.length).map(({ filledAt, createdAt }) => ({ filledAt, createdAt })), recent);
+    const other = await service.read(owner, b.id);
+    assert.deepEqual(other.trades.map(({ ticker, filledAt, createdAt }) => ({ ticker, filledAt, createdAt })), [
+      { ticker: 'OTHER', filledAt: null, createdAt: recent[0].createdAt },
+    ], 'A trade stays readable without borrowing a fill time from another account');
     await service.read(owner, a.id);
     await assert.rejects(service.read(owner, secret.id), /ACCOUNT_NOT_FOUND/);
     await assert.rejects(service.read(owner, randomUUID()), /ACCOUNT_NOT_FOUND/);

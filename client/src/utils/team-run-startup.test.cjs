@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { AxiosError } = require('axios');
 const { JSDOM } = require('jsdom');
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/teams/team' });
 for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'HTMLFormElement', 'FormData', 'CustomEvent', 'DocumentFragment', 'getComputedStyle', 'Element', 'Node', 'Event']) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key], writable: true });
@@ -75,17 +76,38 @@ test('an unstaffed blueprint work cannot appear ready just because the lead is e
   assert.equal([...new JSDOM(html).window.document.querySelectorAll('button')].find(button => button.textContent === 'Set up automatic runs').disabled, true);
 });
 
-test('startup previews exact terms before confirmation, then retries an unknown confirm with the same frozen intent', async () => {
+test('unknown confirmation and startup responses preserve the reviewed intent and recover in either language', async () => {
   const f = fixture({ realQuery: true }); let sequence = 0;
   f.load('api/auth-mode.ts').setAuthMode('local');
   window.sessionStorage.clear();
   f.state.randomUUID = () => `intent-${++sequence}`;
   const api = f.load('api/team-runs.ts').teamRunsApi;
-  const calls = []; let lost = true; let agreement = null;
+  const calls = [];
+  let lostConfirm = true;
+  let lostStart = true;
+  let agreement = null;
   api.status = async () => ({ agreement, recentCycles: [] });
   api.preview = async (_id, input) => { calls.push(['preview', input]); return { previewId: 'preview', previewHash: 'hash', expiresAt: '2099-01-01T00:00:00Z', result: { accountId: 'reviewed-account', members: [{ label: 'Actual reviewed analyst' }], configuration: { ...input, budget, cadence: { delayMinutes: 60 } } } }; };
-  api.confirm = async (_id, input) => { calls.push(['confirm', input]); if (lost) { lost = false; throw new Error('Lost confirmation'); } agreement = { id: 'agreement', revision: 1, state: 'confirmed', accountId: 'reviewed-account', configuration: { budget, market: 'CN', cadence: { delayMinutes: 60 } }, members: [] }; return agreement; };
-  api.start = async (_id, input) => { calls.push(['start', input]); return agreement = { ...agreement, state: 'running' }; };
+  api.confirm = async (_id, input) => {
+    calls.push(['confirm', input]);
+    agreement ??= { id: 'agreement', revision: 1, state: 'confirmed', accountId: 'reviewed-account', configuration: { budget, market: 'CN', cadence: { delayMinutes: 60 } }, members: [] };
+    if (lostConfirm) {
+      lostConfirm = false;
+      throw new AxiosError('Network Error', 'ERR_NETWORK');
+    }
+    return agreement;
+  };
+  api.start = async (_id, input) => {
+    calls.push(['start', input]);
+    agreement = { ...agreement, state: 'running', revision: 2 };
+    if (lostStart) {
+      lostStart = false;
+      throw new AxiosError('Service unavailable', 'ERR_BAD_RESPONSE', undefined, undefined, {
+        status: 503, data: { code: 'TEAM_PREVIEW_STALE' },
+      });
+    }
+    return agreement;
+  };
   const { TeamRunPanel } = f.load('features/teams/TeamRunPanel.tsx');
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } });
   const root = createRoot(document.getElementById('root'));
@@ -108,12 +130,28 @@ test('startup previews exact terms before confirmation, then retries an unknown 
     assert.match(document.body.textContent, /First research at startup/);
     await React.act(async () => document.querySelector('[role="checkbox"][aria-label="Confirm reviewed run rules"]').click());
     await click('Confirm and start');
+    assert.equal(document.querySelector('[role="alert"]').textContent,
+      'Startup outcome is unknown. Use “Check this startup” to verify the original request.');
+    assert.deepEqual(calls.map(row => row[0]), ['preview', 'confirm']);
+    assert.doesNotMatch(document.body.textContent, /Edit run options/);
     await React.act(async () => root.render(null));
-    await React.act(async () => { root.render(React.createElement(QueryClientProvider, { client }, React.createElement(MemoryRouter, null, React.createElement(TeamRunPanel, { team, zh: false })))); await new Promise(resolve => setTimeout(resolve, 30)); });
-    assert.equal(calls.filter(row => row[0] === 'confirm').length, 1);
-    await click('Check this startup');
+    await React.act(async () => {
+      root.render(React.createElement(QueryClientProvider, { client }, React.createElement(MemoryRouter, null, React.createElement(TeamRunPanel, { team, zh: true }))));
+      await new Promise(resolve => setTimeout(resolve, 30));
+    });
+    assert.deepEqual(calls.map(row => row[0]), ['preview', 'confirm']);
+    await click('核对本次启动');
+    assert.equal(document.querySelector('[role="alert"]').textContent,
+      '暂未确认启动结果。请选择「核对本次启动」核对原请求。');
     assert.deepEqual(calls.map(row => row[0]), ['preview', 'confirm', 'confirm', 'start']);
     assert.deepEqual(calls[1], calls[2]);
+    assert.doesNotMatch(document.body.textContent, /重新核对运行规则|修改运行选项/);
+    await click('核对本次启动');
+    assert.deepEqual(calls.map(row => row[0]), ['preview', 'confirm', 'confirm', 'start', 'start']);
+    assert.deepEqual(calls[3], calls[4]);
+    assert.equal(calls[4][1].expectedRevision, 1);
+    assert.match(document.body.textContent, /暂停运行/);
+    assert.equal(document.querySelector('[role="alert"]'), null);
   } finally { await React.act(async () => root.unmount()); client.clear(); }
 });
 

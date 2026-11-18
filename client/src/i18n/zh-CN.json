@@ -60,6 +60,7 @@
     "filledPrice": "成交价格",
     "notFilled": "未记录成交时间",
     "createdAt": "创建于",
+    "recordedAt": "入库时间",
     "noOrders": "此账户尚无订单记录。",
     "fills": "模拟成交账本",
     "recordedFillPrice": "账本成交价",

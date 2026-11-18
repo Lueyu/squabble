@@ -15,7 +15,7 @@ import type { TeamDetail } from '@shared/team-workspace.interface';
 import type { TradingMarket } from '@shared/trading-market.interface';
 import type { TeamRunAgreement, TeamRunAgreementPreview, TeamRunCycle } from '@shared/team-run.interface';
 import { automaticRunBudget, requiredRunCalls } from './team-run-setup';
-import { executeRunSetup, fetchRunSetupPreview, readRunSetup, runSetupNeedsReview, saveRunSetup, type RunSetupRecord } from './team-run-recovery';
+import { executeRunSetup, fetchRunSetupPreview, readRunSetup, runSetupNeedsReview, runSetupOutcomeUnknown, saveRunSetup, type RunSetupRecord } from './team-run-recovery';
 export interface TeamRunPanelProps {
   team: TeamDetail; zh: boolean;
   onConfigure?: () => void; onPublish?: () => void; onBind?: () => void;
@@ -79,7 +79,14 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, memberS
     if (!agreement) throw new Error('Missing agreement');
     if (setupBlocked || action !== 'pause' && !stateKnown) throw new Error('Read the current run status first');
     return teamRunsApi[action](team.id, { requestKey: intent.current.keyFor({ action, id: agreement.id, revision: agreement.revision }), expectedRevision: agreement.revision });
-  }, onSuccess: async () => { setPauseReview(false); setError(''); await refresh(); }, onError: failure => setError(friendlyError(failure, zh, { zh: '操作结果尚未确认，请先核对运行状态，再使用相同操作继续。', en: 'The result is not confirmed. Check the run state before continuing the same action.' })) });
+  }, onSuccess: async () => { setPauseReview(false); setError(''); await refresh(); }, onError: (failure, action) => {
+    if (action === 'start' && runSetupOutcomeUnknown(failure)) {
+      void status.refetch();
+      setError(zh ? '暂未确认启动结果。请先核对运行状态，再决定是否重试。' : 'Startup outcome is unknown. Check the run state before trying again.');
+      return;
+    }
+    setError(friendlyError(failure, zh, { zh: '操作结果尚未确认，请先核对运行状态，再使用相同操作继续。', en: 'The result is not confirmed. Check the run state before continuing the same action.' }));
+  } });
   const enable = useMutation({ retry: false, mutationFn: async () => {
     if (!canSetup && !canRecover) throw new Error('Read the current team and run status first');
     if (reviewRequired) throw new Error('Refresh the review first');
@@ -98,6 +105,11 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, memberS
     setError('');
     await refresh();
   }, onError: failure => {
+    void status.refetch();
+    if (runSetupOutcomeUnknown(failure)) {
+      setError(zh ? '暂未确认启动结果。请选择「核对本次启动」核对原请求。' : 'Startup outcome is unknown. Use “Check this startup” to verify the original request.');
+      return;
+    }
     if (runSetupNeedsReview(failure)) {
       if (setupRecord.current) {
         setupRecord.current.reviewRequired = true;
@@ -106,8 +118,7 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, memberS
       setReviewRequired(true);
       setAck(false);
     }
-    void status.refetch();
-    setError(friendlyError(failure, zh, { zh: '启动尚未完成。已保存本次请求；结果未知时继续会核对原请求。预览过期时请重新核对，再确认。', en: 'Startup is incomplete. The request is retained; an unknown result retries the original request. Refresh an expired review before confirming again.' }));
+    setError(friendlyError(failure, zh, { zh: '启动尚未完成，请核对运行状态。', en: 'Startup is incomplete. Check the run state.' }));
   } });
   const renew = useMutation({ retry: false, mutationFn: async () => {
     if (!canSetup) throw new Error('Read the current team and run status first');
@@ -115,8 +126,12 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, memberS
     renewalRecord.current ??= prepareSetupForReview();
     return fetchRunSetupPreview(team.id, renewalRecord.current);
   }, onSuccess: record => { setupRecord.current = record; renewalRecord.current = null; setPreview(record.preview ?? null); confirmAttempted.current = false; setReviewRequired(false); setAck(false); setError(''); }, onError: failure => {
+    if (runSetupOutcomeUnknown(failure)) {
+      setError(zh ? '暂未收到运行规则预览。重试会核对同一请求。' : 'The run rules preview could not be verified. Retry to check the same request.');
+      return;
+    }
     const responseStatus = (failure as { response?: { status?: number } })?.response?.status;
-    if (runSetupNeedsReview(failure) || responseStatus && responseStatus >= 400 && responseStatus < 500 && responseStatus !== 408 && responseStatus !== 429) {
+    if (runSetupNeedsReview(failure) || responseStatus && responseStatus >= 400 && responseStatus < 500) {
       renewalRecord.current = null;
       saveRunSetup(team.id, setupRecord.current);
     }

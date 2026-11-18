@@ -29,7 +29,7 @@ async function readFill(sql, owner, accountId, expectedAt, ruler) {
   const fills = await sql`
     select t.id, t.account_id, t.owner, t.ticker, t.quantity::int, t.price, t.side, t.created_at,
       o.id as order_id, o.filled_at, o.filled_price, o.status, o.source, o.risk_check
-    from paper_trades t join paper_orders o on o.id = t.order_id and o.account_id = t.account_id
+    from paper_trades t join paper_orders o on o.id = t.order_id and o.owner = t.owner and o.account_id = t.account_id
     where t.owner = ${owner} and t.account_id = ${accountId}`;
   assert.equal(fills.length, 1, 'One actual fill for the approved account');
   const [fill] = fills;
@@ -39,6 +39,7 @@ async function readFill(sql, owner, accountId, expectedAt, ruler) {
   assert.equal(fill.status, 'filled');
   assert.equal(fill.source, 'agent');
   assert.equal(fill.filled_at.toISOString(), expectedAt.toISOString());
+  assert.notEqual(fill.created_at.toISOString(), fill.filled_at.toISOString(), 'The market fill and the database insert use different clocks');
   assert.equal(Number(fill.price), Number(fill.filled_price));
   assert.ok(Number(fill.price) >= price && Number(fill.price) < 85, 'Simulated execution uses the quoted price and slippage');
   const signals = await sql`
@@ -116,7 +117,7 @@ async function verifyLedger(sandbox, ownerApi, owner, team, observe, application
     assert.ok(paper.points.every(point => point.timestamp.slice(0, 10) >= paper.createdAt.slice(0, 10)));
     evidence.valid = valid;
     evidence.tradeLink = tradeLink;
-    const browserEvidence = await observe({ state: 'filled', now: at, fill });
+    const browserEvidence = await observe({ state: 'filled', now: at, fill, trade: assets.trades[0] });
     evidence.pictures = browserEvidence.screenshots;
     evidence.teamRunFills = browserEvidence.teamRunFills;
 

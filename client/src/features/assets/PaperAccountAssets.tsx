@@ -159,7 +159,24 @@ export default function PaperAccountAssets({ accountId, accountName, archived, m
       <p className="text-sm text-muted-foreground">{t('assets.paperLedgerHint')}</p>
       {orderId && !data.orders.some(order => order.id === orderId) && <p role="status" className="rounded-xl bg-muted p-4 text-sm">{t('assets.orderNotInAccount')}</p>}
       <section className="space-y-3"><h2 className="font-semibold">{t('assets.orders')}</h2>{data.orders.filter(order => filter(order.ticker)).map(order => <article key={order.id} id={`asset-order-${order.id}`} className="rounded-xl border p-4"><div className="flex flex-wrap justify-between gap-2"><strong>{order.ticker} · {t(order.side === 'buy' ? 'assets.buy' : 'assets.sell')} {number(order.quantity)}</strong><span>{t(`assets.orderStatus.${order.status}`, { defaultValue: order.status })}</span></div><p className="mt-2 text-sm text-muted-foreground">{t('assets.filledPrice')}: {money(order.filledPrice, order.currency)} · {order.filledAt ? new Date(order.filledAt).toLocaleString(i18n.language) : t('assets.notFilled')}</p>{order.reason && <p className="mt-2 break-words text-sm">{order.reason}</p>}<p className="mt-2 text-xs text-muted-foreground">{t('assets.createdAt')} {new Date(order.createdAt).toLocaleString(i18n.language)}</p><ExecutionProvenance entries={data.executionProvenance?.filter(item => item.kind === 'order' && item.targetId === order.id)} /></article>)}{!data.orders.length && <p className="text-sm text-muted-foreground">{t('assets.noOrders')}</p>}</section>
-      <section className="space-y-3"><h2 className="font-semibold">{t('assets.fills')}</h2>{data.trades.filter(trade => filter(trade.ticker)).map(trade => <article key={trade.id} id={`asset-trade-${trade.id}`} className="rounded-xl border p-4"><div className="flex flex-wrap justify-between gap-2"><strong>{trade.ticker} · {t(trade.side === 'buy' ? 'assets.buy' : 'assets.sell')} {number(trade.quantity)}</strong><time>{new Date(trade.createdAt).toLocaleString(i18n.language)}</time></div><p className="mt-2 text-sm">{t('assets.recordedFillPrice')}: {number(trade.price)} · {t('assets.recordedFee')}: {number(trade.fee)}</p><p className="mt-1 text-sm text-muted-foreground">{t('assets.realizedPl')}: {number(trade.realizedPl)}</p><ExecutionProvenance entries={data.executionProvenance?.filter(item => item.kind === 'trade' && item.targetId === trade.id)} /></article>)}{!data.trades.length && <p className="text-sm text-muted-foreground">{t('assets.noFills')}</p>}</section>
+      <section className="space-y-3">
+        <h2 className="font-semibold">{t('assets.fills')}</h2>
+        {data.trades.filter(trade => filter(trade.ticker)).map(trade => {
+          const at = trade.filledAt ?? trade.createdAt;
+          return <article key={trade.id} id={`asset-trade-${trade.id}`} className="rounded-xl border p-4">
+            <div className="flex flex-wrap justify-between gap-2">
+              <strong>{trade.ticker} · {t(trade.side === 'buy' ? 'assets.buy' : 'assets.sell')} {number(trade.quantity)}</strong>
+              <span>{trade.filledAt == null && `${t('assets.recordedAt')} `}
+                <time dateTime={at}>{new Date(at).toLocaleString(i18n.language)}</time>
+              </span>
+            </div>
+            <p className="mt-2 text-sm">{t('assets.recordedFillPrice')}: {number(trade.price)} · {t('assets.recordedFee')}: {number(trade.fee)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{t('assets.realizedPl')}: {number(trade.realizedPl)}</p>
+            <ExecutionProvenance entries={data.executionProvenance?.filter(item => item.kind === 'trade' && item.targetId === trade.id)} />
+          </article>;
+        })}
+        {!data.trades.length && <p className="text-sm text-muted-foreground">{t('assets.noFills')}</p>}
+      </section>
     </>}
   </div>;
 }

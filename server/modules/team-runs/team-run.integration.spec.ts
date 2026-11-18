@@ -429,23 +429,41 @@ test('run overview keeps the exact report, policy installation and historical fi
     const [decision] = await f.db.select().from(teamDecisions).where(eq(teamDecisions.id, cycle.decisionId!));
     const ref = { decisionId: decision.id, proposalId: decision.proposalId, proposalRevision: decision.proposalRevision };
     const signal = randomUUID();
-    const [order] = await f.db.insert(paperOrders).values({ owner: f.owner, accountId: f.account.id, ticker: 'TEST', side: 'buy', quantity: '7' }).returning();
+    const filledAt = new Date('2026-11-12T16:00:00Z');
+    const createdAt = new Date('2026-11-12T16:05:00Z');
+    const [order] = await f.db.insert(paperOrders).values({ owner: f.owner, accountId: f.account.id, ticker: 'TEST',
+      side: 'buy', quantity: '7', status: 'filled', filledAt }).returning();
     await recordTeamSignalLinks(f.db, f.owner, { ...DEFAULT_INVESTMENT_CONFIG, teamDecisionRefs: [ref] }, signal);
     await copyTeamExecutionLinks(f.db, f.owner, 'signal', signal, 'order', order.id);
     const [fill, wrongAccount] = await f.db.insert(paperTrades).values([f.account.id, other.account.id].map(accountId => ({
-      owner: f.owner, accountId, ticker: 'TEST', side: 'buy', quantity: '7', price: '13.25', orderId: order.id, cashAfter: '800',
+      owner: f.owner, accountId, ticker: 'TEST', side: 'buy', quantity: '7', price: '13.25', orderId: order.id, cashAfter: '800', createdAt,
     }))).returning();
     await copyTeamExecutionLinks(f.db, f.owner, 'order', order.id, 'trade', fill.id);
     await copyTeamExecutionLinks(f.db, f.owner, 'order', order.id, 'trade', wrongAccount.id);
     const [link] = await f.db.select().from(teamResearchLinks).where(eq(teamResearchLinks.targetId, fill.id));
     await f.db.insert(teamResearchLinks).values({ ...link, id: randomUUID(), targetRevision: 'legacy duplicate' });
+    const legacy = { id: randomUUID(), filledAt: null, createdAt: new Date('2026-11-12T15:30:00Z') };
+    const earlier = { id: randomUUID(), filledAt: new Date('2026-11-12T15:00:00Z'), createdAt: new Date('2026-11-12T16:40:00Z') };
+    for (const item of [legacy, earlier]) {
+      const [extraOrder] = await f.db.insert(paperOrders).values({ owner: f.owner, accountId: f.account.id, ticker: 'TEST',
+        side: 'buy', quantity: '1', status: 'filled', filledAt: item.filledAt }).returning();
+      await copyTeamExecutionLinks(f.db, f.owner, 'signal', signal, 'order', extraOrder.id);
+      await f.db.insert(paperTrades).values({ id: item.id, owner: f.owner, accountId: f.account.id, orderId: extraOrder.id,
+        ticker: 'TEST', side: 'buy', quantity: '1', price: '13.25', cashAfter: '800', createdAt: item.createdAt });
+      await copyTeamExecutionLinks(f.db, f.owner, 'order', extraOrder.id, 'trade', item.id);
+    }
     const replacement = await f.team('Handover recipient');
     const handover = await f.versions.bindingPreview(f.owner, replacement.team.id, { requestKey: randomUUID(), action: 'assign',
       accountId: f.account.id, teamVersionId: replacement.version.id, expectedBindingRevision: 0,
       expectedAccountBindingId: commission.bindingId, executionChoice: 'keep_confirmed_rules', acknowledgePendingReapproval: true });
     await f.versions.binding(f.owner, replacement.team.id, { requestKey: randomUUID(), previewId: handover.previewId, previewHash: handover.previewHash });
     const rows = await f.runs.fills(f.owner, f.teamId);
-    assert.deepEqual(rows.map(row => [row.id, row.accountId, row.quantity, row.price]), [[fill.id, f.account.id, '7', '13.25']]);
+    assert.deepEqual(rows.map(row => [row.id, row.accountId, row.quantity, row.price]), [
+      [fill.id, f.account.id, '7', '13.25'], [legacy.id, f.account.id, '1', '13.25'],
+    ]);
+    assert.deepEqual(rows.map(row => [row.filledAt, row.createdAt]), [
+      [filledAt.toISOString(), createdAt.toISOString()], [null, legacy.createdAt.toISOString()],
+    ]);
     assert.deepEqual(await f.runs.fills(f.owner, replacement.team.id), []);
     for (let pass = 0; pass < 8; pass++) {
       await f.worker.runOnce();

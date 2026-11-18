@@ -49,6 +49,7 @@ export interface TeamRunStatus {
 export interface TeamRunFill {
   id: string; accountId: string; accountName: string; orderId: string;
   ticker: string; market: string; side: string; quantity: string; price: string; currency: string; createdAt: string;
+  filledAt: string | null;
 }
 export interface TeamRunResearch {
   versionId: string; version: number; commissionId: string; title: string;

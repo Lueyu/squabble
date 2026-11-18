@@ -349,9 +349,15 @@ async function startTeam(work, ownerApi, team, { loseResponse = false, heartbeat
     await start.press('Enter');
     const first = await lost.promise;
     assert.equal(first.state, 'running');
-    const outcome = page.getByRole('alert').filter({ hasText: /Cannot reach the model service|unknown result|outcome unknown|startup is incomplete|check the result/iu });
-    await outcome.waitFor();
+    const outcome = legacyUi
+      ? page.getByRole('alert').filter({ hasText: /Cannot reach the model service|unknown result|outcome unknown|startup is incomplete|check the result/iu })
+      : page.getByRole('alert').filter({ hasText: /^Startup outcome is unknown\. Use “Check this startup” to verify the original request\.$/u });
     const displayedFeedback = await outcome.innerText();
+    if (!legacyUi) {
+      assert.equal(await page.getByRole('button', { name: 'Check this startup', exact: true }).count(), 1);
+      assert.equal(await page.getByRole('button', { name: 'Edit run options', exact: true }).count(), 0);
+    }
+    assert.equal(payloads.length, 1);
     await capture('startup-unknown');
     if (!legacyUi) await page.reload();
     const retry = legacyUi ? start : page.getByRole('button', { name: 'Check this startup', exact: true });
@@ -394,7 +400,7 @@ async function waitForResearch(sandbox, ownerApi, runPath, companion) {
   assert.fail('Timed out waiting for the real team research receipt: ' + JSON.stringify(status?.recentCycles));
 }
 
-async function observeLedger(work, team, { state, now, fill }, { requireRunEvidence, application, ownerApi }) {
+async function observeLedger(work, team, { state, now, fill, trade }, { requireRunEvidence, application, ownerApi }) {
   const { page, visit, capture } = work;
   await page.clock.setFixedTime(now);
   await visit('/?accountIds=' + team.accountId);
@@ -441,16 +447,18 @@ async function observeLedger(work, team, { state, now, fill }, { requireRunEvide
   screenshots.push(await capture('account-switch'));
 
   let teamRunFills;
+  const filledAt = fill.filled_at.toISOString();
   if (requireRunEvidence) {
+    assert.equal(trade.filledAt, filledAt, 'Account assets expose the matched order fill time');
     const fillsPath = '/api/teams/' + team.id + '/run-agreement/fills';
     teamRunFills = await ownerApi(fillsPath);
     if (application) {
       assert.deepEqual(teamRunFills.map(row => ({
         id: row.id, accountId: row.accountId, orderId: row.orderId, ticker: row.ticker,
-        side: row.side, quantity: Number(row.quantity), price: Number(row.price), at: row.createdAt,
+        side: row.side, quantity: Number(row.quantity), price: Number(row.price), filledAt: row.filledAt, createdAt: row.createdAt,
       })), [{
         id: fill.id, accountId: team.accountId, orderId: fill.order_id, ticker,
-        side: fill.side, quantity: fill.quantity, price: Number(fill.price), at: fill.created_at.toISOString(),
+        side: fill.side, quantity: fill.quantity, price: Number(fill.price), filledAt, createdAt: fill.created_at.toISOString(),
       }]);
     } else {
       assert.deepEqual(teamRunFills, [], 'TeamRun fills exclude the independent rule trade');
@@ -478,6 +486,13 @@ async function observeLedger(work, team, { state, now, fill }, { requireRunEvide
       const row = fills.getByRole('link', { name: new RegExp(ticker, 'u') });
       await row.getByText('Buy ' + fill.quantity, { exact: true }).waitFor();
       await row.getByText('Fill price ' + fill.price + ' USD', { exact: true }).waitFor();
+      const teamTime = await page.evaluate(at => new Intl.DateTimeFormat('en', {
+        timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        hourCycle: 'h23', timeZoneName: 'short',
+      }).format(new Date(at)), filledAt);
+      const teamTimestamp = row.locator('time[datetime="' + filledAt + '"]');
+      await teamTimestamp.waitFor();
+      assert.equal(await teamTimestamp.textContent(), teamTime);
       screenshots.push(await capture('team-fills'));
       await ledger.click();
       await page.waitForURL(target.href);
@@ -491,7 +506,14 @@ async function observeLedger(work, team, { state, now, fill }, { requireRunEvide
   if (!requireRunEvidence || !application) {
     await visit('/transactions?accountId=' + team.accountId + '&tradeId=' + fill.id);
   }
-  await page.locator('#asset-trade-' + fill.id).getByText(new RegExp(ticker, 'u')).waitFor();
+  const ledgerRow = page.locator('[data-account-id="' + team.accountId + '"] #asset-trade-' + fill.id);
+  await ledgerRow.getByText(new RegExp(ticker, 'u')).waitFor();
+  if (requireRunEvidence) {
+    const ledgerTime = await page.evaluate(at => new Date(at).toLocaleString('en'), filledAt);
+    const ledgerTimestamp = ledgerRow.locator('time[datetime="' + filledAt + '"]');
+    await ledgerTimestamp.waitFor();
+    assert.equal(await ledgerTimestamp.textContent(), ledgerTime);
+  }
   screenshots.push(await capture('ledger'));
   return { screenshots, teamRunFills };
 }

@@ -1,3 +1,4 @@
+import { isAxiosError } from 'axios';
 import { teamRunsApi } from '@/api/team-runs';
 import { readTabRecovery, workspaceOwnerScope, writeTabRecovery } from '@/utils/workspace-tab-recovery';
 import type { TeamRunAgreement, TeamRunAgreementInput, TeamRunAgreementPreview } from '@shared/team-run.interface';
@@ -22,6 +23,12 @@ export function saveRunSetup(teamId: string, record: RunSetupRecord | null): voi
   if (!writeTabRecovery(`team-run.${teamId}`, record) && record) {
     throw new Error('This browser could not retain the team startup request');
   }
+}
+
+export function runSetupOutcomeUnknown(error: unknown): boolean {
+  if (!isAxiosError(error)) return false;
+  const status = error.response?.status;
+  return status === undefined || status === 408 || status === 429 || status >= 500;
 }
 
 export function runSetupNeedsReview(error: unknown): boolean {

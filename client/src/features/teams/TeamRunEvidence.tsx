@@ -52,7 +52,11 @@ export function TeamRunEvidence({ teamId, teamName, market, zh }: {
         {zh ? `最近 ${items.length} 笔` : `${items.length} recent ${items.length === 1 ? 'fill' : 'fills'}`}</small>
         <ul>{items.map(fill => <li key={fill.id}>
           <Link className="run-fill" to={teamLedgerHref(fill.accountId, { kind: 'trade', targetId: fill.id })}>
-            <span><strong>{fill.ticker}</strong><small>{runTime(fill.createdAt, market ?? fill.market, zh)}{!oneAccount && ' · ' + fill.accountName}</small></span>
+            <span><strong>{fill.ticker}</strong><small>
+              {fill.filledAt == null && (zh ? '入库时间 ' : 'Recorded at ')}
+              <time dateTime={fill.filledAt ?? fill.createdAt}>{runTime(fill.filledAt ?? fill.createdAt, fill.market, zh)}</time>
+              {!oneAccount && ' · ' + fill.accountName}
+            </small></span>
             <span><strong>{fill.side === 'buy' ? (zh ? '买入' : 'Buy') : fill.side === 'sell' ? (zh ? '卖出' : 'Sell') : fill.side} {fill.quantity}</strong>
               <small>{zh ? '成交价' : 'Fill price'} {fill.price} {fill.currency}</small></span>
           </Link></li>)}</ul>
