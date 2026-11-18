@@ -1,16 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/hooks/use-theme';
 import type {
   PortfolioComparisonMetric,
+  PortfolioComparisonPeriod,
   PortfolioComparisonSeries,
   PortfolioComparisonView,
 } from '@shared/portfolio-comparison.interface';
 import type { PortfolioHistorySeries } from '@shared/portfolio-history.interface';
 import { referenceHistoryPoint } from './comparison-display';
 import {
-  chartAccountColor,
+  accountColor,
+  comparisonInclusionPoint,
+  formatComparisonTime,
   comparisonGapBridges,
   comparisonGapLabel,
   comparisonLineData,
@@ -29,7 +32,9 @@ interface Props {
   partialAccountIds?: string[];
   granularity?: PortfolioComparisonView['granularity'];
   referenceGranularity?: 'observations' | 'hourly';
-  onSelectAccount?: (accountId: string) => void;
+  period: PortfolioComparisonPeriod;
+  annotation?: ReactNode;
+  window?: Pick<PortfolioComparisonView, 'from' | 'to'>;
 }
 
 export default function PortfolioComparisonChart({
@@ -41,12 +46,13 @@ export default function PortfolioComparisonChart({
   partialAccountIds,
   granularity,
   referenceGranularity,
-  onSelectAccount,
+  period,
+  annotation,
+  window: comparisonWindow,
 }: Props) {
   const { i18n } = useTranslation();
   const { theme } = useTheme();
   const zh = i18n.language.startsWith('zh');
-  const dark = theme === 'dark';
   const timeWindow = useMemo(() => comparisonTimeWindow(series), [series]);
   const singleObservation =
     timeWindow !== null && timeWindow.first === timeWindow.last;
@@ -54,167 +60,157 @@ export default function PortfolioComparisonChart({
     .flatMap(point => point.timestamp && Number.isFinite(Date.parse(point.timestamp))
       ? [{ accountId: item.accountId, timestamp: Date.parse(point.timestamp) }] : [])) ?? [], [historySeries]);
   const referenceIntraday = reference && quoteTimestamps.length > 0;
-  const intraday =
-    referenceIntraday || (!reference &&
-    (granularity === 'observations' || granularity === 'hourly'
-      || (timeWindow !== null && timeWindow.last - timeWindow.first < 2 * 86400000)));
+  const intraday = reference ? referenceIntraday : period === '1D';
   const chartTheme = typeof window !== 'undefined' && typeof document !== 'undefined'
     ? window.getComputedStyle(document.querySelector('.portfolio-comparison') ?? document.documentElement)
     : undefined;
-  const foreground = chartTheme?.getPropertyValue('--foreground').trim() || undefined;
-  const warningColor = chartTheme?.getPropertyValue('--warning').trim() || undefined;
-  const option = useMemo(
-    () => ({
-      animationDuration: 200,
-      aria: {
-        enabled: true,
-        description: reference
+  const token = (name: string) => chartTheme?.getPropertyValue(name).trim() || undefined;
+  const foreground = token('--popover-foreground');
+  const warning = token('--warning');
+  const muted = token('--muted-foreground');
+  const border = token('--border');
+  const popover = token('--popover');
+  const card = token('--card');
+  const option = {
+    animation: false,
+    aria: {
+      enabled: true,
+      description: reference
+        ? zh
+          ? '按当前持仓回看历史价格的参考市值，不含现金，不代表实际收益。浅色虚线连接缺失区间，警示虚线连接价格口径或跳变待核实区间；区间估值仍未知。'
+          : 'Current-position historical reference value, excluding cash, not actual returns. Faint dashes mark missing intervals; warning dashes link unverified price conventions or jumps. Interval valuations remain unknown.'
+        : zh
+          ? '实仓与模拟账户的已存估值。缺失估值与收益率留空。垂直虚线指示模拟账户的首次完整估值。'
+          : 'Saved real and simulation valuations. Missing observations leave gaps. Vertical dashes mark the first complete valuation for a simulation account.',
+    },
+    grid: { top: 16, left: 46, right: 16, bottom: 30 },
+    tooltip: {
+      formatter: (params: unknown) => comparisonTooltip(params, i18n.language, metric, reference, quoteTimestamps, series),
+      trigger: 'axis',
+      renderMode: 'richText',
+      confine: true,
+      backgroundColor: popover,
+      borderColor: border,
+      textStyle: { color: foreground, fontSize: 12 },
+      valueFormatter: (value: unknown) =>
+        value == null
           ? zh
-            ? '按当前持仓回看历史价格的参考市值，不含现金，不代表实际收益。浅色虚线连接缺失区间，警示虚线连接价格口径或跳变待核实区间；区间估值仍未知。'
-            : 'Current-position historical reference value, excluding cash, not actual returns. Faint dashes mark missing intervals; warning dashes link unverified price conventions or jumps. Interval valuations remain unknown.'
-          : zh
-            ? '实仓与模拟账户的已存估值。资产金额的浅色虚线仅连接缺少观察的区间，不代表新增估值；收益率缺失与财务口径变化仍断线。'
-            : 'Saved real and simulation valuations. Faint dashed equity links mark missing observations without adding valuations. Missing returns and financial discontinuities remain broken.',
+            ? '暂无估值'
+            : 'No valuation'
+          : metric === 'return'
+            ? `${Number(value).toFixed(2)}%`
+            : new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', {
+                style: 'currency',
+                currency: 'USD',
+                maximumFractionDigits: 2,
+              }).format(Number(value)),
+    },
+    xAxis: {
+      type: 'time',
+      boundaryGap: false,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { show: false },
+      min: singleObservation ? timeWindow.first - 3600000 : undefined,
+      max: singleObservation ? timeWindow.first + 3600000 : undefined,
+      minInterval: (reference ? referenceGranularity : granularity) === 'hourly'
+        ? 3600000 : intraday ? 60000 : 86400000,
+      axisLabel: {
+        show: !singleObservation,
+        showMaxLabel: true,
+        color: muted,
+        hideOverlap: true,
+        fontSize: 12,
+        formatter: (value: number) =>
+          reference
+            ? referenceDateLabel(value, i18n.language, referenceIntraday)
+            : new Intl.DateTimeFormat(zh ? 'zh-CN' : 'en-US', {
+                timeZone: 'Asia/Shanghai',
+                ...(intraday
+                  ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
+                  : { month: '2-digit', day: '2-digit' }),
+              }).format(value),
       },
-      grid: { top: 16, left: 6, right: 66, bottom: 36 },
-      tooltip: {
-        formatter: (params: unknown) => comparisonTooltip(params, i18n.language, metric, reference, quoteTimestamps, series),
-        trigger: 'axis',
-        renderMode: 'richText',
-        confine: true,
-        backgroundColor: dark ? '#202b28' : '#fff',
-        borderColor: dark ? '#42524c' : '#dce5e0',
-        textStyle: { color: dark ? '#e5ede8' : '#263e36', fontSize: 13 },
-        valueFormatter: (value: unknown) =>
-          value == null
-            ? zh
-              ? '暂无估值'
-              : 'No valuation'
-            : metric === 'return'
-              ? `${Number(value).toFixed(2)}%`
-              : new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', {
-                  style: 'currency',
-                  currency: 'USD',
-                  maximumFractionDigits: 2,
-                }).format(Number(value)),
+    },
+    yAxis: {
+      type: 'value',
+      position: 'left',
+      scale: true,
+      splitNumber: compact ? 3 : 4,
+      axisLabel: {
+        color: muted,
+        fontSize: 12,
+        formatter: (value: number) =>
+          metric === 'return'
+            ? `${value > 0 ? '+' : ''}${Number(value.toFixed(1))}%`
+            : new Intl.NumberFormat('en-US', {
+                notation: 'compact',
+                style: 'currency',
+                currency: 'USD',
+                maximumFractionDigits: 1,
+              }).format(value),
       },
-      xAxis: {
-        type: 'time',
-        boundaryGap: false,
-        axisLine: { show: false },
-        axisTick: { show: false },
-        splitLine: { show: false },
-        min: singleObservation ? timeWindow.first - 3600000 : undefined,
-        max: singleObservation ? timeWindow.first + 3600000 : undefined,
-        minInterval: (reference ? referenceGranularity : granularity) === 'hourly'
-          ? 3600000 : intraday ? 60000 : 86400000,
-        axisLabel: {
-          show: !singleObservation,
-          color: dark ? '#a6b8ae' : '#65796f',
-          hideOverlap: true,
-          fontSize: 12,
-          formatter: (value: number) =>
-            reference
-              ? referenceDateLabel(value, i18n.language, referenceIntraday)
-              : new Intl.DateTimeFormat(zh ? 'zh-CN' : 'en-US', {
-                  month: '2-digit',
-                  day: '2-digit',
-                  ...(intraday
-                    ? ({ hour: '2-digit', minute: '2-digit' } as const)
-                    : {}),
-                }).format(value),
+      splitLine: { lineStyle: { color: border } },
+    },
+    series: series.flatMap((item) => {
+      const color = accountColor(item.accountId, item.colorIndex, chartTheme);
+      const inclusion = reference ? undefined : comparisonInclusionPoint(item, metric, comparisonWindow);
+      const symbols = new Set(comparisonSymbolIndices(item, metric));
+      const name = (item.kind === 'real' ? (zh ? '实仓' : 'Real portfolio') : item.name)
+        + (partialAccountIds?.includes(item.accountId)
+          ? (zh ? ' · 部分持仓' : ' · Partial holdings') : '');
+      const observed = {
+        id: item.accountId,
+        name,
+        type: 'line',
+        data: comparisonLineData(item, metric),
+        connectNulls: false,
+        smooth: false,
+        showSymbol: true,
+        symbol: 'circle',
+        symbolSize: (_value: unknown, params: { dataIndex: number }) =>
+          inclusion && inclusion === item.points[params.dataIndex] ? 8 : symbols.has(params.dataIndex) ? 7 : 0,
+        z: 2,
+        lineStyle: {
+          width: item.kind === 'real' ? 2.8 : 2.2,
+          color,
+          type:
+            item.kind === 'real' || item.colorIndex % 3 === 0
+              ? 'solid'
+              : item.colorIndex % 3 === 1
+                ? 'dashed'
+                : 'dotted',
         },
-      },
-      yAxis: {
-        type: 'value',
-        position: 'right',
-        scale: true,
-        splitNumber: compact ? 3 : 4,
-        axisLabel: {
-          color: dark ? '#a6b8ae' : '#65796f',
-          fontSize: 12,
-          formatter: (value: number) =>
-            metric === 'return'
-              ? `${value > 0 ? '+' : ''}${Number(value.toFixed(1))}%`
-              : new Intl.NumberFormat('en-US', {
-                  notation: 'compact',
-                  style: 'currency',
-                  currency: 'USD',
-                  maximumFractionDigits: 1,
-                }).format(value),
-        },
-        splitLine: { lineStyle: { color: dark ? '#2c3c34' : '#e3ebe6' } },
-      },
-      series: series.flatMap((item) => {
-        const color = chartAccountColor(item.accountId, item.colorIndex, dark, foreground);
-        const symbols = new Set(comparisonSymbolIndices(item, metric));
-        const name = (item.kind === 'real' ? (zh ? '实仓' : 'Real portfolio') : item.name)
-          + (partialAccountIds?.includes(item.accountId)
-            ? (zh ? ' · 部分持仓' : ' · Partial holdings') : '');
-        const observed = {
-          id: item.accountId,
-          name,
-          type: 'line',
-          data: comparisonLineData(item, metric),
-          connectNulls: false,
-          smooth: false,
-          showSymbol: true,
-          symbol: 'circle',
-          symbolSize: (_value: unknown, params: { dataIndex: number }) => symbols.has(params.dataIndex) ? 7 : 0,
-          z: 2,
-          lineStyle: {
-            width: item.kind === 'real' ? 2.8 : 2.2,
-            color,
-            type:
-              item.kind === 'real' || item.colorIndex % 3 === 0
-                ? 'solid'
-                : item.colorIndex % 3 === 1
-                  ? 'dashed'
-                  : 'dotted',
-          },
-          itemStyle: { color },
-          emphasis: { focus: 'series' },
-        };
-        const bridges = comparisonGapBridges(item, metric, reference).map((bridge, index) => ({
-          id: `${bridge.kind === 'warning' ? 'warning' : 'gap'}-bridge:${item.accountId}:${index}`,
-          name,
-          type: 'line',
-          data: bridge.data,
-          connectNulls: false,
-          smooth: false,
-          showSymbol: false,
+        itemStyle: { color, borderColor: card, borderWidth: 1.5 },
+        emphasis: { focus: 'series', scale: 1.5 },
+        ...(inclusion && { markLine: {
           silent: true,
-          tooltip: { show: false },
-          lineStyle: bridge.kind === 'warning'
-            ? { color: warningColor ?? color, width: 2, type: [8, 4], opacity: 0.95 }
-            : { color, width: 1.5, type: 'dashed', opacity: 0.55 },
-          emphasis: { disabled: true },
-          animation: false,
-          z: 1,
-        }));
-        return [observed, ...bridges];
-      }),
+          symbol: ['none', 'none'],
+          label: { show: false },
+          lineStyle: { color, type: 'dashed', opacity: 0.65 },
+          data: [{ xAxis: Date.parse(inclusion.timestamp) }],
+        } }),
+      };
+      const bridges = (reference ? comparisonGapBridges(item, metric, reference) : []).map((bridge, index) => ({
+        id: `${bridge.kind === 'warning' ? 'warning' : 'gap'}-bridge:${item.accountId}:${index}`,
+        name,
+        type: 'line',
+        data: bridge.data,
+        connectNulls: false,
+        smooth: false,
+        showSymbol: false,
+        silent: true,
+        tooltip: { show: false },
+        lineStyle: bridge.kind === 'warning'
+          ? { color: warning ?? color, width: 2, type: [8, 4], opacity: 0.95 }
+          : { color, width: 1.5, type: 'dashed', opacity: 0.55 },
+        emphasis: { disabled: true },
+        animation: false,
+        z: 1,
+      }));
+      return [observed, ...bridges];
     }),
-    [
-      series,
-      metric,
-      compact,
-      dark,
-      zh,
-      timeWindow,
-      singleObservation,
-      intraday,
-      reference,
-      i18n.language,
-      partialAccountIds,
-      granularity,
-      foreground,
-      warningColor,
-      quoteTimestamps,
-      referenceIntraday,
-      referenceGranularity,
-    ],
-  );
+  };
   const hasValues = series.some((item) =>
     item.points.some(
       (point) =>
@@ -243,12 +239,12 @@ export default function PortfolioComparisonChart({
         <p>
           {series.length === 0
             ? zh
-              ? '点击上方图例或比较设置，显示至少一个账户。'
-              : 'Use the legend or comparison settings to show at least one account.'
+              ? '使用「选择账户」显示要比较的账户。'
+              : 'Use Select accounts to choose which accounts to display.'
             : metric === 'return'
               ? zh
-                ? '收益率需要有效起点与完整资金记录。可以切换到资产金额查看。'
-                : 'Returns need a valid starting value and cash-flow history. Switch to equity to view available observations.'
+                ? '收益率需要有效起点与完整资金记录。可在「选择账户」中切换到资产金额。'
+                : 'Returns need a valid starting value and cash-flow history. Account equity is available in chart options.'
               : reference
                 ? zh
                   ? '可先查看当前持仓金额；不会为缺失价格添加虚构数据点。'
@@ -273,17 +269,9 @@ export default function PortfolioComparisonChart({
         <ReactECharts
           option={option}
           notMerge
+          key={theme}
           style={{ height: '100%', width: '100%' }}
           opts={{ renderer: 'svg' }}
-          onEvents={{
-            click: (event: { seriesId?: string }) => {
-              if (
-                event.seriesId &&
-                series.some((item) => item.accountId === event.seriesId)
-              )
-                onSelectAccount?.(event.seriesId);
-            },
-          }}
         />
       </div>
       {singleObservation && (
@@ -299,9 +287,10 @@ export default function PortfolioComparisonChart({
           {reference
             ? referenceIntraday ? new Date(timeWindow.first).toLocaleString(i18n.language)
               : series[0]?.points[0]?.date
-            : new Date(timeWindow.first).toLocaleString(i18n.language)}
+            : formatComparisonTime(timeWindow.first, i18n.language)}
         </p>
       )}
+      {annotation}
       <HistoricalValuations
         series={series}
         reference={reference}
@@ -408,9 +397,7 @@ function HistoricalValuations({
                       <time dateTime={reference && !evidence?.timestamp ? point.date : point.timestamp}>
                         {reference
                           ? evidence?.timestamp ? new Date(point.timestamp).toLocaleString(i18n.language) : point.date
-                          : new Date(point.timestamp).toLocaleString(
-                              i18n.language,
-                            )}
+                          : formatComparisonTime(point.timestamp, i18n.language, true)}
                       </time>
                     </td>
                     <td>

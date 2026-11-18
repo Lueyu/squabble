@@ -17,7 +17,11 @@ export function comparisonPeriodStart(period: PortfolioComparisonPeriod, at: Dat
 }
 
 /** Keep observed timestamps. Missing intervals get a null separator, never interpolation. */
-export function comparisonObservations(input: SavedComparisonObservation[], granularity: 'observations' | 'hourly' | 'daily'): PortfolioComparisonPoint[] {
+export function comparisonObservations(
+  input: SavedComparisonObservation[],
+  granularity: 'observations' | 'hourly' | 'daily',
+  firstIncludedAt?: string | null,
+): PortfolioComparisonPoint[] {
   const sorted = input.filter(point => Number.isFinite(Date.parse(point.timestamp)))
     .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   const unique = new Map<string, SavedComparisonObservation>();
@@ -38,6 +42,8 @@ export function comparisonObservations(input: SavedComparisonObservation[], gran
   }
   // Keep the actual return origin even when it precedes the first daily close.
   if (opening && !samples.includes(opening)) samples.push(opening);
+  const firstIncluded = firstIncludedAt ? unique.get(firstIncludedAt) : undefined;
+  if (firstIncluded && !samples.includes(firstIncluded)) samples.push(firstIncluded);
   samples.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   const result: PortfolioComparisonPoint[] = [];
   for (const [index, point] of samples.entries()) {

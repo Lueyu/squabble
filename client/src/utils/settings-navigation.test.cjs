@@ -28,6 +28,14 @@ test('every settings destination supports direct navigation and trailing slashes
   }
 });
 
+test('both connection pages are direct destinations and account security follows auth mode', () => {
+  assert.deepEqual(Array.from(navigation.CONNECTION_SETTINGS), ['agents', 'models']);
+  assert.equal(navigation.resolveSettingsSection('/settings/security', '', true), 'models');
+  assert.equal(navigation.resolveSettingsSection('/settings/security', '', false), 'security');
+  assert.equal(navigation.visibleSettingsSections(true).some(section => section.id === 'security'), false);
+  assert.equal(navigation.visibleSettingsSections(false).some(section => section.id === 'security'), true);
+});
+
 test('explicit routes win over old hashes and unknown routes are not silently accepted', () => {
   assert.equal(navigation.resolveSettingsSection('/settings/security', '#research-budget'), 'security');
   assert.equal(navigation.resolveSettingsSection('/settings/missing'), null);

@@ -10,7 +10,7 @@
  * under `api/`, and shared layout under `components/Layout.tsx`.
  */
 import React, { useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { getAuthMode } from './api/auth-mode';
 import { initAgentAPI } from './utils/agent-api';
 
@@ -54,6 +54,8 @@ import { TeamWorkspacePage } from './pages/Teams/TeamWorkspacePage';
 import TelemetryPage from './features/telemetry/TelemetryPage';
 import TelemetryRunPage from './features/telemetry/TelemetryRunPage';
 import { useSimpleExperience } from './hooks/use-simple-experience';
+import { assetHref, SIMULATION_ACCOUNTS_PATH } from './features/assets/account-context';
+import { simulationAccountPath, simulationStrategyPath } from './utils/portfolio-workspace';
 
 function ExperienceRoute({
   current,
@@ -73,19 +75,41 @@ function ExperienceRoute({
 }
 
 function SimulationsRoute() {
-  const { hash } = useLocation();
-  return (
-    <ExperienceRoute
-      current={
-        hash === '#notifications' ? (
-          <Navigate to="/settings/notifications" replace />
-        ) : (
-          <SimulationAccountsPage />
-        )
-      }
-      legacy={<PaperPage />}
-    />
-  );
+  const { search, hash, state } = useLocation();
+  const params = new URLSearchParams(search);
+  const sourceVersion = params.get('sourceReportVersionId');
+  const requestedAccounts = params.getAll('accountId');
+  const accountId = requestedAccounts.length === 1 && requestedAccounts[0] !== 'real' ? requestedAccounts[0] : null;
+  let destination = { pathname: SIMULATION_ACCOUNTS_PATH, search, hash };
+  if (hash === '#notifications') {
+    destination = { pathname: '/settings/notifications', search, hash: '' };
+  } else if (params.get('draft') === '1' && sourceVersion && !params.has('strategyId')) {
+    destination = { pathname: '/analysis/reports/' + encodeURIComponent(sourceVersion), search, hash: '#report-strategy' };
+  } else if (accountId && params.get('investmentStrategyId')) {
+    destination = { pathname: simulationStrategyPath(accountId), search, hash };
+  } else if (accountId && (params.get('orderId') || params.get('tradeId'))) {
+    destination = { pathname: '/transactions', search, hash };
+  }
+  return <ExperienceRoute
+    current={<Navigate to={destination} state={state} replace />}
+    legacy={<PaperPage />}
+  />;
+}
+
+function LegacySimulationAccountRoute() {
+  const { accountId = '' } = useParams();
+  const { search, hash, state } = useLocation();
+  const params = new URLSearchParams(search);
+  const tab = params.get('tab');
+  if (tab === 'trades' || (!tab && (params.has('orderId') || params.has('tradeId')))) {
+    params.delete('tab');
+    return <Navigate replace to={assetHref('/transactions', accountId, params.toString()) + hash} state={state} />;
+  }
+  if (tab === 'holdings') {
+    params.delete('tab');
+    return <Navigate replace to={assetHref('/holdings', accountId, params.toString()) + hash} state={state} />;
+  }
+  return <Navigate replace to={{ pathname: simulationAccountPath(accountId), search, hash }} state={state} />;
 }
 
 function ReportsRoute() {
@@ -160,6 +184,8 @@ const RoutesComponent = () => {
         <Route path="teams" element={<TeamsPage />} />
         <Route path="teams/:id" element={<TeamWorkspacePage />} />
         <Route path="holdings" element={<HoldingsPage />} />
+        <Route path="holdings/accounts" element={<SimulationAccountsPage />} />
+        <Route path="holdings/accounts/:accountId" element={<SimulationAccountPage />} />
         <Route path="daily" element={<DailyReportPage />} />
         <Route path="research" element={<ResearchWorkspacePage />} />
         <Route path="research/portfolio" element={<SimpleAnalysisPage />} />
@@ -181,7 +207,7 @@ const RoutesComponent = () => {
           path="strategies/interviews/:interviewId"
           element={<StrategyInterviewPage />}
         />
-        <Route path="paper/:accountId" element={<SimulationAccountPage />} />
+        <Route path="paper/:accountId" element={<LegacySimulationAccountRoute />} />
         <Route
           path="paper/:accountId/strategies"
           element={<AccountStrategyCombinationPage />}

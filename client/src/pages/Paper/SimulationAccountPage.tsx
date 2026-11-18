@@ -44,7 +44,7 @@ import DecisionCard from './DecisionCard';
 import { limitLabels } from './StartInvestmentCard';
 import PortfolioComparisonPanel from '@/features/portfolio-comparison/PortfolioComparisonPanel';
 import { accountColor } from '@/features/portfolio-comparison/comparison-chart-options';
-import { holdingsHref } from '@/features/assets/account-context';
+import { holdingsHref, SIMULATION_ACCOUNTS_PATH } from '@/features/assets/account-context';
 import CompanionIdentity from '@/features/companions/CompanionIdentity';
 import AccountCompanionEditor from '@/features/companions/AccountCompanionEditor';
 
@@ -196,7 +196,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
             {zh ? '重试' : 'Retry'}
           </Button>
           <Button asChild variant="ghost">
-            <Link to="/paper">{zh ? '返回账户列表' : 'Back to accounts'}</Link>
+            <Link to={SIMULATION_ACCOUNTS_PATH}>{zh ? '返回账户列表' : 'Back to accounts'}</Link>
           </Button>
         </div>
       </div>
@@ -209,7 +209,7 @@ function SimulationAccountDetail({ accountId }: { accountId: string }) {
       <header className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
-            to="/paper"
+            to={SIMULATION_ACCOUNTS_PATH}
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft size={14} />

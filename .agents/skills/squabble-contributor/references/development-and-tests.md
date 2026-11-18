@@ -30,7 +30,7 @@ existing instance, not `npm run dev` or an ignored temporary helper.
 
 ## Choose checks by changed behavior
 
-Overview alignment and five-minute capture: run the `portfolio-valuation` and
+Overview alignment and market-session valuation capture: run the `portfolio-valuation` and
 `portfolio-sampling` experience suites, `quote/us-observed-quote.spec.ts`,
 `portfolio-history/*spec.ts` and paper comparison suites against disposable
 `EXPERIENCE_TEST_DATABASE_URL`, `HISTORY_TEST_DATABASE_URL` and
@@ -293,15 +293,20 @@ Run `team-create-account-workflow.test.cjs`, `team-quick-start-flow.test.cjs`, `
 
 ## Organization editor usability regression
 
-The organization editor uses an explicit `view=canvas|list` preference, a compact
-outline, and a responsive property dialog. `team-staffing.ts` owns the shared
-button/drop draft assignment command; this never grants tools or dispatches
-research. New template coordinates are parent-relative; do not reinterpret saved
-user layouts. Run the team-editor-navigation, team-staffing and team-flow client
-behavior tests plus `scripts/ui-probe/team-organization-browser.cjs` against its
-fictional server after a Web build. Inspect actual deep/light-theme screenshots,
-mobile editing, relationship properties and friend assignment; container presence
-is insufficient. See `docs/team-organization-redesign/ui-repair-plan.zh-CN.md`.
+The organization editor uses an explicit `view=canvas|list` preference and inline
+properties. Canvas edges, role properties, legacy relation links and graph
+validation open the same relation editor. `team-staffing.ts` owns draft
+assignment from the roster tools and canvas drop. Relation and staffing edits
+use the draft undo history. Template coordinates and stored positions are
+parent-relative.
+
+After a Web build, run `node scripts/ui-probe/team-organization-browser.cjs` for
+desktop and mobile organization actions and
+`node scripts/ui-probe/settings-navigation-browser.cjs` for the integrated
+settings navigation and both connection forms. The probes use a loopback
+fixture and write screenshots under `dist/ui-probe`. For publication
+persistence and revision checks, run the focused team publication integration
+test with a disposable `TEAM_TEST_DATABASE_URL`.
 
 The durable Council workflow fixture fixes only initial archive jobs as due and
 uses a read cutoff after both the host and database clocks. Docker/Windows clock

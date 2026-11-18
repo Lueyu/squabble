@@ -86,7 +86,7 @@ test('repeated captures of an identical quote cannot hide its price discontinuit
   assert.ok(points.at(-1)!.gaps.includes('PRICE_DISCONTINUITY_UNVERIFIED:FICT'));
 });
 
-test('five-minute and hourly reduction retain both provider changes inside one slot', () => {
+test('minute and hourly reduction retain both provider changes inside one legacy slot', () => {
   const rows = [quote('10', '2026-11-10T14:55:00Z'),
     quote('10.5', '2026-11-10T15:01:00Z', 'different:basis'),
     quote('11', '2026-11-10T15:04:00Z')];
@@ -169,3 +169,12 @@ for (const quoteAt of ['2026-11-10T21:00:00Z', '2026-11-10T21:00:01Z']) {
     assert.equal(points[0].priceAsOf[0].timestamp, new Date(quoteAt).toISOString());
   });
 }
+
+test('the day and week observation path retains ordinary minute marks within an old five-minute bucket', () => {
+  const minutes = [1, 2, 3].map(minute => '2026-11-10T15:0' + minute + ':00.000Z');
+  const rows = minutes.map((timestamp, index) => quote(String(10 + index / 10), timestamp));
+  assert.deepEqual(intradayReferencePoints(positions.slice(0, 1), rows, [], from, to, 'observations')
+    .map(point => point.timestamp), minutes);
+  assert.deepEqual(intradayReferencePoints(positions.slice(0, 1), rows, [], from, to, 'hourly')
+    .map(point => point.timestamp), [minutes[2]]);
+});

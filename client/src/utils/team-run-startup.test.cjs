@@ -77,6 +77,8 @@ test('an unstaffed blueprint work cannot appear ready just because the lead is e
 
 test('startup previews exact terms before confirmation, then retries an unknown confirm with the same frozen intent', async () => {
   const f = fixture({ realQuery: true }); let sequence = 0;
+  f.load('api/auth-mode.ts').setAuthMode('local');
+  window.sessionStorage.clear();
   f.state.randomUUID = () => `intent-${++sequence}`;
   const api = f.load('api/team-runs.ts').teamRunsApi;
   const calls = []; let lost = true; let agreement = null;
@@ -106,7 +108,10 @@ test('startup previews exact terms before confirmation, then retries an unknown 
     assert.match(document.body.textContent, /First research at startup/);
     await React.act(async () => document.querySelector('[role="checkbox"][aria-label="Confirm reviewed run rules"]').click());
     await click('Confirm and start');
-    await click('Confirm and start');
+    await React.act(async () => root.render(null));
+    await React.act(async () => { root.render(React.createElement(QueryClientProvider, { client }, React.createElement(MemoryRouter, null, React.createElement(TeamRunPanel, { team, zh: false })))); await new Promise(resolve => setTimeout(resolve, 30)); });
+    assert.equal(calls.filter(row => row[0] === 'confirm').length, 1);
+    await click('Check this startup');
     assert.deepEqual(calls.map(row => row[0]), ['preview', 'confirm', 'confirm', 'start']);
     assert.deepEqual(calls[1], calls[2]);
   } finally { await React.act(async () => root.unmount()); client.clear(); }
@@ -114,6 +119,8 @@ test('startup previews exact terms before confirmation, then retries an unknown 
 
 test('startup mode edits require a new preview and call limits fit the actual six-role work plan', async () => {
   const f = fixture({ realQuery: true }); let sequence = 0;
+  f.load('api/auth-mode.ts').setAuthMode('local');
+  window.sessionStorage.clear();
   f.state.randomUUID = () => `intent-${++sequence}`;
   const api = f.load('api/team-runs.ts').teamRunsApi;
   const calls = [];
@@ -145,6 +152,8 @@ test('startup mode edits require a new preview and call limits fit the actual si
 
 test('a definitive preview denial releases editable fields and uses a new reviewed intent', async () => {
   const f = fixture({ realQuery: true }); let sequence = 0;
+  f.load('api/auth-mode.ts').setAuthMode('local');
+  window.sessionStorage.clear();
   f.state.randomUUID = () => `intent-${++sequence}`;
   const api = f.load('api/team-runs.ts').teamRunsApi;
   const previews = [];

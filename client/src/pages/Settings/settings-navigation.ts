@@ -13,15 +13,24 @@ export const SETTINGS_SECTIONS = [
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]['id'];
-export const SETTINGS_GROUPS = ['research', 'personal', 'help'] as const;
+export const CONNECTION_SETTINGS = ['agents', 'models'] as const;
+
+export function isConnectionSettingsSection(section: SettingsSection): boolean {
+  return section === 'agents' || section === 'models';
+}
+
+export function visibleSettingsSections(localWorkspace: boolean) {
+  return SETTINGS_SECTIONS.filter(section => !localWorkspace || section.id !== 'security');
+}
 
 /** Keep saved links from the former single-page settings screen working. */
-export function resolveSettingsSection(pathname: string, hash = ''): SettingsSection | null {
+export function resolveSettingsSection(pathname: string, hash = '', localWorkspace = false): SettingsSection | null {
   const path = pathname.replace(/\/+$/u, '');
   if (path === '/settings') {
     if (hash === '#research-budget') return 'budget';
     if (hash === '#local-agents') return 'agents';
     return 'models';
   }
-  return SETTINGS_SECTIONS.find(section => path === `/settings/${section.id}`)?.id ?? null;
+  const section = SETTINGS_SECTIONS.find(section => path === `/settings/${section.id}`)?.id ?? null;
+  return localWorkspace && section === 'security' ? 'models' : section;
 }

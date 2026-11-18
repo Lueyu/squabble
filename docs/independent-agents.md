@@ -1,10 +1,10 @@
 # My agents and automatic teams
 
-Start with three steps: **import holdings → meet your agents → create your team**. Open the research room later when you have a specific question.
+Start by importing your holdings. Connect a local agent or a model API in Settings, then use your existing agents to create a paper team. Open the research room later when you have a specific question.
 
 ## Getting started
 
-Confirm holdings and cash on the overview. Team setup reviews positions, cash and snapshot time before creating an independent paper account. Missing inputs must be completed first; opening prices prefer live quotes and otherwise fall back to the holding's recorded price, so a temporarily unavailable public quote does not block team creation. Later changes to real holdings never overwrite that paper ledger.
+Review your recorded holdings and cash on the Holdings page. Team setup reviews positions, cash and snapshot time before creating an independent paper account. Missing inputs must be completed first; opening prices prefer live quotes and otherwise fall back to the holding's recorded price, so a temporarily unavailable public quote does not block team creation. Later changes to real holdings never overwrite that paper ledger.
 
 Connect your model service or installed local assistant once. Agents reuse that connection. Saving and checking a model connection explicitly sends one short, potentially billable request; adding agent profiles does not invoke a model.
 

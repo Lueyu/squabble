@@ -36,6 +36,8 @@ function csvPage() {
       confirmMappedImport: async value => { calls.push(['commit', value]); return { created: 1, skipped: 0, failed: [], receiptId: 'saved-receipt' }; },
     },
     './ImportSavedNextSteps': { ImportSavedNextSteps },
+    '@/utils/workspace-tab-recovery': { workspaceOwnerScope: () => 'local' },
+    './import-continuation': { readCsvImportRecovery: () => null, saveCsvImportRecovery: () => true },
     papaparse: require('papaparse'),
     sonner: { toast: { warning() {}, info() {}, success() {}, error() {} } },
   };
@@ -51,7 +53,7 @@ function csvPage() {
   return { calls, render() { cursor = 0; refCursor = 0; return mod.exports.CsvImport(); } };
 }
 function nodes(tree) { return Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...nodes(tree.props?.children)] : []; }
-function content(tree) { return Array.isArray(tree) ? tree.map(content).join('') : tree && typeof tree === 'object' ? content(tree.props?.children) : tree == null ? '' : String(tree); }
+function content(tree) { return Array.isArray(tree) ? tree.map(content).join('') : tree && typeof tree === 'object' ? content(tree.props?.children) : tree == null || typeof tree === 'boolean' ? '' : String(tree); }
 function loadedCsv() {
   const page = csvPage();
   nodes(page.render()).find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files: [{ name: 'fictional.csv', content: 'ticker,shares,avgcost\nFICT,2,20' }] } });
@@ -79,25 +81,26 @@ test('CSV research is an explicit action using the durable import handoff and it
   assert.deepEqual(page.calls[1], ['navigate', '/research/portfolio']);
 });
 
-test('saved import continuation preserves an editor return target while direct import offers friends first', () => {
+test('saved import continuation preserves an editor return target and opens connection setup', () => {
   const f = fixture();
   const { ImportSavedNextSteps } = f.load('pages/Import/ImportSavedNextSteps.tsx');
   const render = entry => renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [entry] }, React.createElement(ImportSavedNextSteps)));
   const direct = render('/import?accountId=real');
-  assert.match(direct, /href="\/friends"/);
-  assert.match(direct, /Next: meet your agents/);
+  assert.match(direct, /href="\/settings\/agents\?onboarding=1"/);
+  assert.match(direct, /Connect a research service/);
   const contextual = render({ pathname: '/import', search: '?accountId=real', state: { returnTo: '/holdings?accountId=real&q=FICT#cash' } });
   assert.match(contextual, /href="\/holdings\?accountId=real&amp;q=FICT#cash"/);
   assert.match(contextual, /Return to previous page/);
-  assert.match(contextual, /href="\/friends"/);
+  assert.match(contextual, /href="\/settings\/agents\?onboarding=1"/);
   assert.match(render('/import?accountId=real&returnTo=%2Fholdings%3FaccountId%3Dreal%26q%3DFICT%23cash'), /href="\/holdings\?accountId=real&amp;q=FICT#cash"/);
   const unsafe = render('/import?returnTo=%2F%2Fevil.test');
   assert.doesNotMatch(unsafe, /evil\.test/);
   f.state.language = 'zh-CN';
-  assert.match(render('/import?accountId=real'), /下一步：认识股友/);
+  assert.match(render('/import?accountId=real'), /连接研究服务/);
 });
 
-async function importDom(kind, { failure = new Error('Lost response'), settleOnRead = false } = {}, run) {
+async function importDom(kind, { failure = new Error('Lost response'), settleOnRead = false, onboarding = false } = {}, run) {
+  window.sessionStorage.clear();
   const records = new Map(['one', 'two'].map(id => [id, {
     id, revision: 3, status: 'completed', createdAt: '2026-11-06T00:00:00Z',
     executor: { executor: 'local', agentId: 'fixture' }, receipts: [],
@@ -135,7 +138,7 @@ async function importDom(kind, { failure = new Error('Lost response'), settleOnR
     },
   };
   const query = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
-  const ui = tag => ({ children, ...props }) => React.createElement(tag, props, children);
+  const ui = tag => ({ children, asChild, ...props }) => asChild ? children : React.createElement(tag, props, children);
   const imports = {
     react: React, 'react/jsx-runtime': require('react/jsx-runtime'),
     '@tanstack/react-query': require('@tanstack/react-query'),
@@ -157,26 +160,41 @@ async function importDom(kind, { failure = new Error('Lost response'), settleOnR
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '..', relative), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText + extra, {
       module: mod, exports: mod.exports, require: name => dependencies[name] ?? {}, Date, Map, Set,
       crypto: { randomUUID: () => `fixture-${++sequence}` },
-      localStorage: window.localStorage,
+      window, localStorage: window.localStorage,
       FileReader: class { readAsText(file) { this.result = file.content; this.onload(); } },
     }); return mod.exports;
   };
   imports['@/api/import-batches'] = compile('api/import-batches.ts', '', { './http': { __esModule: true, default: http } });
+  imports['@/utils/workspace-tab-recovery'] = compile('utils/workspace-tab-recovery.ts', '', {
+    '@/api/auth-mode': { getAuthMode: () => 'local' },
+  });
+  imports['./import-continuation'] = compile('pages/Import/import-continuation.ts');
+  imports['@/features/onboarding/OnboardingStepper'] = compile('features/onboarding/OnboardingStepper.tsx');
   imports['./ScreenshotImport'] = compile('pages/Import/ScreenshotImport.tsx');
   const Component = kind === 'csv' ? compile('pages/Import/ImportPage.tsx', '\nexports.CsvImport = CsvImport;').CsvImport
     : kind === 'hub' ? compile('pages/Import/ImportPage.tsx', '\nexports.RealImportPage = RealImportPage;').RealImportPage : imports['./ScreenshotImport'].default;
-  const root = createRoot(document.getElementById('root'));
+  let root = createRoot(document.getElementById('root'));
   const flush = () => React.act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
   const button = text => [...document.querySelectorAll('button')].find(node => node.textContent.trim() === text);
   const click = async text => { const node = button(text); assert.ok(node, `Missing ${text}`); assert.equal(node.disabled, false, `${text} should be enabled`); await React.act(async () => node.click()); await flush(); };
   const change = async (node, value) => React.act(async () => { Object.getOwnPropertyDescriptor(node.tagName === 'SELECT' ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype, 'value').set.call(node, value); node.dispatchEvent(new window.Event(node.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); });
-  try {
-    await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: query }, React.createElement(MemoryRouter, { initialEntries: ['/import?accountId=real'] }, React.createElement(Component)))));
+  const mount = async () => {
+    const entry = onboarding ? '/import?accountId=real&onboarding=1' : '/import?accountId=real';
+    await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: query }, React.createElement(MemoryRouter, { initialEntries: [entry] }, React.createElement(Component, { onboarding })))));
     await flush();
-    if (kind === 'hub') await click('import.csvFile');
+  };
+  const reload = async () => {
+    await React.act(async () => root.unmount());
+    root = createRoot(document.getElementById('root'));
+    await mount();
+    for (let attempt = 0; attempt < 10 && !button('核对本次保存结果'); attempt++) await flush();
+  };
+  try {
+    await mount();
+    if (kind === 'hub' && !onboarding) await click('import.csvFile');
     if (kind === 'csv' || kind === 'hub') await React.act(async () => { const input = document.querySelector('input[type=file]'); Object.defineProperty(input, 'files', { configurable: true, value: [{ name: 'fictional.csv', content: 'ticker,shares,avgcost\nFICT,2,20' }] }); input.dispatchEvent(new window.Event('change', { bubbles: true })); });
     for (let attempt = 0; kind === 'screenshot' && attempt < 15 && (!button('保存持仓') || button('保存持仓').disabled); attempt++) await flush();
-    await run({ calls, messages, button, click, change, query });
+    await run({ calls, messages, button, click, change, query, reload });
   } finally { await React.act(async () => root.unmount()); query.clear(); }
 }
 
@@ -244,6 +262,21 @@ for (const kind of ['csv', 'screenshot']) test(`${kind} recovering an explicit r
     assert.deepEqual(commits[0].input, commits[1].input);
     assert.equal(commits[1].input.analyze, true);
     assert.ok(calls.some(call => call.method === 'NAVIGATE' && call.destination === '/research/portfolio'));
+  });
+});
+
+for (const kind of ['hub', 'screenshot']) test(`${kind} reload retains the exact save attempt and advances only after its receipt`, async () => {
+  await importDom(kind, { onboarding: true }, async ({ calls, click, reload, button }) => {
+    assert.equal(button('保存并开始研究'), undefined);
+    await click('保存持仓');
+    assert.doesNotMatch(document.body.textContent, /Saved next steps/);
+    await reload();
+    assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+    await click('核对本次保存结果');
+    const commits = calls.filter(call => call.method === 'POST' && call.url.endsWith('/commit'));
+    assert.equal(commits.length, 2);
+    assert.deepEqual(commits[1], commits[0]);
+    assert.match(document.body.textContent, /Saved next steps/);
   });
 });
 

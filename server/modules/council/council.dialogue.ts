@@ -5,7 +5,7 @@ import { readableResearch } from '../../../shared/research-reading';
 import { byteExcerpt, type CouncilEvidence, type CouncilOpinion, parseOpinion } from './council.rules';
 import type { CouncilCheckpoint, DialogueTurn, ResearchRequest } from './council.types';
 import { parseDailyReverseCheck } from './council.daily';
-import { parseReportExecutionPlan } from '../paper-trading/report-execution-plan';
+import { readModelExecutionPlan } from '../paper-trading/report-execution-plan';
 import { thesisCandidateSchema } from '../research-memory/research-memory.requests';
 import { normalizeThesisContent, validateThesisReferences } from '../research-memory/research-memory.theses';
 
@@ -105,16 +105,8 @@ export function parseContribution(value: unknown, validIds: Set<string>, turn: D
   }
   const stance = ['positive', 'balanced', 'cautious'].includes(String(data.researchStance))
     ? data.researchStance as NonNullable<CouncilReport['researchStance']> : 'balanced';
-  let executionPlan:DiscussionContribution['executionPlan'];
-  let executionPlanError:DiscussionContribution['executionPlanError'];
-  if(turn.phase==='summary'&&!candidate){
-    if(data.executionPlan===undefined)executionPlanError='missing';
-    else try{
-      if(!data.executionPlan||typeof data.executionPlan!=='object'||!('parameterOrigin' in data.executionPlan)
-        ||data.executionPlan.parameterOrigin!=='ai_proposed')throw new Error('MODEL_PROPOSAL_ORIGIN_INVALID');
-      executionPlan=parseReportExecutionPlan(data.executionPlan,validIds);
-    }catch{executionPlanError='invalid';}
-  }
+  const { executionPlan, executionPlanError } = turn.phase === 'summary' && !candidate
+    ? readModelExecutionPlan(data.executionPlan, validIds) : {};
   const opinion:CouncilOpinion|null = turn.phase === 'summary'
     ? candidate ? { ...parseOpinion({ ...data, summary: content }, validIds), summary: reportContent }
       : { decision: 'wait' as const, summary: reportContent, dissent: strings(data.dissent, 8),

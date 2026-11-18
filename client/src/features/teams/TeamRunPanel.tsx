@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import AnimalAvatar from '@/components/AnimalAvatar';
+import { TeamRunEvidence, runTime } from './TeamRunEvidence';
+import './team-run-overview.css';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { teamRunsApi } from '@/api/team-runs';
@@ -9,42 +13,34 @@ import { createRequestIntent } from '@/utils/simple-experience';
 import { friendlyError } from '@/utils/error-message';
 import type { TeamDetail } from '@shared/team-workspace.interface';
 import type { TradingMarket } from '@shared/trading-market.interface';
-import type { TeamRunAgreement, TeamRunAgreementInput, TeamRunAgreementPreview } from '@shared/team-run.interface';
+import type { TeamRunAgreement, TeamRunAgreementPreview, TeamRunCycle } from '@shared/team-run.interface';
 import { automaticRunBudget, requiredRunCalls } from './team-run-setup';
-
-export interface RunSetupRecord {
-  key: string; payload: Omit<TeamRunAgreementInput, 'requestKey'>;
-  preview?: TeamRunAgreementPreview; agreement?: TeamRunAgreement;
-}
+import { executeRunSetup, fetchRunSetupPreview, readRunSetup, runSetupNeedsReview, saveRunSetup, type RunSetupRecord } from './team-run-recovery';
 export interface TeamRunPanelProps {
   team: TeamDetail; zh: boolean;
   onConfigure?: () => void; onPublish?: () => void; onBind?: () => void;
-  setupBlocked?: boolean;
+  setupBlocked?: boolean; memberSettings?: ReactNode;
 }
-export function runSetupNeedsReview(error: unknown): boolean {
-  const data = (error as { response?: { data?: { code?: string; message?: string; error?: { code?: string; message?: string } } | string } })?.response?.data;
-  const code = typeof data === 'string' ? data : data?.error?.code ?? data?.code ?? data?.error?.message ?? data?.message;
-  return ['TEAM_PREVIEW_STALE', 'TEAM_PREVIEW_CONSUMED', 'PREVIEW_EXPIRED', 'SOURCE_CHANGED_REPREVIEW', 'TEAM_REAPPROVAL_REQUIRED'].includes(code ?? '');
-}
-/** Retain exact preview, confirmation and start identities after an unknown response. */
-export async function executeRunSetup(teamId: string, record: RunSetupRecord, api: Pick<typeof teamRunsApi, 'preview' | 'confirm' | 'start'> = teamRunsApi): Promise<TeamRunAgreement> {
-  record.preview ??= await api.preview(teamId, { ...record.payload, requestKey: `${record.key}:preview` });
-  record.agreement ??= await api.confirm(teamId, { requestKey: `${record.key}:confirm`, previewId: record.preview.previewId, previewHash: record.preview.previewHash });
-  return api.start(teamId, { requestKey: `${record.key}:start`, expectedRevision: record.agreement.revision });
-}
-
-export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, setupBlocked = false }: TeamRunPanelProps) {
+export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, memberSettings, setupBlocked = false }: TeamRunPanelProps) {
   const client = useQueryClient(); const intent = useRef(createRequestIntent(() => crypto.randomUUID()));
-  const [setup, setSetup] = useState(false); const [daily, setDaily] = useState(''); const [amountLimited, setAmountLimited] = useState(false); const [market, setMarket] = useState<TradingMarket>('CN'); const [immediate, setImmediate] = useState(true); const [ack, setAck] = useState(false); const [error, setError] = useState('');
+  const [pauseReview, setPauseReview] = useState(false);
+  const [retained] = useState(() => readRunSetup(team.id));
+  const [setup, setSetup] = useState(Boolean(retained));
+  const [daily, setDaily] = useState(retained?.payload.budget.daily.costUsd ?? '');
+  const [amountLimited, setAmountLimited] = useState(Boolean(retained?.payload.budget.daily.costUsd));
+  const [market, setMarket] = useState<TradingMarket>(retained?.payload.market ?? 'CN');
+  const [immediate, setImmediate] = useState(retained?.payload.initialRun !== 'scheduled');
+  const [ack, setAck] = useState(Boolean(retained?.authorized && !retained.reviewRequired));
+  const [error, setError] = useState('');
   const status = useQuery({ queryKey: ['team-run', team.id], queryFn: () => teamRunsApi.status(team.id), refetchInterval: 15_000, retry: false });
   const agreement = status.data?.agreement;
   const externalFeesUnknown = team.publishedVersion?.config.roles.filter(role => role.participation === 'enabled').some(role => role.executor?.executionMode !== 'model') ?? true;
-  const setupRecord = useRef<RunSetupRecord | null>(null);
-  const renewalRecord = useRef<RunSetupRecord | null>(null);
-  const [reviewRequired, setReviewRequired] = useState(false);
-  const [preview, setPreview] = useState<TeamRunAgreementPreview | null>(null);
+  const setupRecord = useRef<RunSetupRecord | null>(retained?.preview ? retained : null);
+  const renewalRecord = useRef<RunSetupRecord | null>(retained && !retained.preview ? retained : null);
+  const [reviewRequired, setReviewRequired] = useState(Boolean(retained?.reviewRequired));
+  const [preview, setPreview] = useState<TeamRunAgreementPreview | null>(retained?.preview ?? null);
   const [now, setNow] = useState(Date.now());
-  const confirmAttempted = useRef(false);
+  const confirmAttempted = useRef(Boolean(retained?.authorized));
   const stateKnown = Boolean(status.data) && !status.isPending && !status.isError;
   const config = team.publishedVersion?.config ?? team.draft?.config;
   const roles = config?.roles.filter(role => role.participation === 'enabled') ?? [];
@@ -63,6 +59,7 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, setupBl
   const published = Boolean(team.currentVersionId && team.publishedVersion);
   const bound = Boolean(team.binding && team.binding.state !== 'released' && team.binding.state !== 'superseded' && team.binding.state !== 'archived');
   const canSetup = stateKnown && !setupBlocked && team.status !== 'archived' && team.capabilities?.researchEnabled !== false && published && bound && membersReady;
+  const canRecover = stateKnown && !setupBlocked && Boolean(setupRecord.current?.authorized);
   const callLimit = config ? requiredRunCalls(config) : 8;
   const expired = Boolean(preview && Date.parse(preview.expiresAt) <= now);
   useEffect(() => {
@@ -82,9 +79,9 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, setupBl
     if (!agreement) throw new Error('Missing agreement');
     if (setupBlocked || action !== 'pause' && !stateKnown) throw new Error('Read the current run status first');
     return teamRunsApi[action](team.id, { requestKey: intent.current.keyFor({ action, id: agreement.id, revision: agreement.revision }), expectedRevision: agreement.revision });
-  }, onSuccess: refresh, onError: failure => setError(friendlyError(failure, zh, { zh: '操作结果尚未确认，请先核对运行状态，再使用相同操作继续。', en: 'The result is not confirmed. Check the run state before continuing the same action.' })) });
+  }, onSuccess: async () => { setPauseReview(false); setError(''); await refresh(); }, onError: failure => setError(friendlyError(failure, zh, { zh: '操作结果尚未确认，请先核对运行状态，再使用相同操作继续。', en: 'The result is not confirmed. Check the run state before continuing the same action.' })) });
   const enable = useMutation({ retry: false, mutationFn: async () => {
-    if (!canSetup) throw new Error('Read the current team and run status first');
+    if (!canSetup && !canRecover) throw new Error('Read the current team and run status first');
     if (reviewRequired) throw new Error('Refresh the review first');
     if (!ack) throw new Error('Review the run rules first');
     if (!setupRecord.current?.preview) throw new Error('Preview the actual run rules first');
@@ -92,8 +89,23 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, setupBl
     if (expired && !confirmAttempted.current) throw new Error('Refresh the expired review first');
     confirmAttempted.current = true;
     return executeRunSetup(team.id, setupRecord.current);
-  }, onSuccess: async () => { setSetup(false); setupRecord.current = null; setPreview(null); confirmAttempted.current = false; await refresh(); }, onError: failure => {
-    if (runSetupNeedsReview(failure)) { setReviewRequired(true); setAck(false); }
+  }, onSuccess: async () => {
+    saveRunSetup(team.id, null);
+    setSetup(false);
+    setupRecord.current = null;
+    setPreview(null);
+    confirmAttempted.current = false;
+    setError('');
+    await refresh();
+  }, onError: failure => {
+    if (runSetupNeedsReview(failure)) {
+      if (setupRecord.current) {
+        setupRecord.current.reviewRequired = true;
+        saveRunSetup(team.id, setupRecord.current);
+      }
+      setReviewRequired(true);
+      setAck(false);
+    }
     void status.refetch();
     setError(friendlyError(failure, zh, { zh: '启动尚未完成。已保存本次请求；结果未知时继续会核对原请求。预览过期时请重新核对，再确认。', en: 'Startup is incomplete. The request is retained; an unknown result retries the original request. Refresh an expired review before confirming again.' }));
   } });
@@ -101,12 +113,13 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, setupBl
     if (!canSetup) throw new Error('Read the current team and run status first');
     // A definitive rejection permits a new preview. A lost renewal response keeps its new exact key.
     renewalRecord.current ??= prepareSetupForReview();
-    const record = renewalRecord.current;
-    record.preview ??= await teamRunsApi.preview(team.id, { ...record.payload, requestKey: `${record.key}:preview` });
-    return record;
+    return fetchRunSetupPreview(team.id, renewalRecord.current);
   }, onSuccess: record => { setupRecord.current = record; renewalRecord.current = null; setPreview(record.preview ?? null); confirmAttempted.current = false; setReviewRequired(false); setAck(false); setError(''); }, onError: failure => {
     const responseStatus = (failure as { response?: { status?: number } })?.response?.status;
-    if (runSetupNeedsReview(failure) || responseStatus && responseStatus >= 400 && responseStatus < 500 && responseStatus !== 408 && responseStatus !== 429) renewalRecord.current = null;
+    if (runSetupNeedsReview(failure) || responseStatus && responseStatus >= 400 && responseStatus < 500 && responseStatus !== 408 && responseStatus !== 429) {
+      renewalRecord.current = null;
+      saveRunSetup(team.id, setupRecord.current);
+    }
     setError(friendlyError(failure, zh, { zh: '核对尚未完成，输入保留。再次读取会保留结果未知的请求。', en: 'The review is unconfirmed. Inputs are retained; retry keeps an unknown request identity.' }));
   } });
   function prepareSetupForReview(): RunSetupRecord {
@@ -115,23 +128,87 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, setupBl
   }
   const states: Record<string, string> = zh ? { confirmed: '已准备，等待启动', running: '自动运行中', paused: '已暂停', suspended: '需要处理' } : { confirmed: 'Ready to start', running: 'Running automatically', paused: 'Paused', suspended: 'Needs attention' };
   const cycles: Record<string, string> = zh ? { reserved: '已预留额度', researching: '正在研究', processing: '正在核对判断', applied: '模拟执行规则已应用', observed: '本轮继续观察', blocked: '本轮需要处理', uncertain: '结果待核对', cancelled: '已取消' } : { reserved: 'Budget reserved', researching: 'Researching', processing: 'Checking decisions', applied: 'Paper rules applied', observed: 'Observing', blocked: 'Needs attention', uncertain: 'Outcome unknown', cancelled: 'Cancelled' };
-  return <section className="space-y-5 rounded-xl border bg-card p-5 sm:p-6">
-    <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-xl font-semibold">{agreement ? states[agreement.state] : (zh ? '让团队自动工作' : 'Let your team work')}</h2><p className="text-sm text-muted-foreground mt-2">{agreement ? (zh ? `主市场 ${agreement.configuration.market} · 每个交易日收盘后 ${agreement.configuration.cadence.delayMinutes} 分钟研究。` : `${agreement.configuration.market} · Research ${agreement.configuration.cadence.delayMinutes} minutes after each trading close.`) : (zh ? '完成成员、发布和模拟账户设置，再预览并确认自动运行规则。' : 'Complete members, publication and a paper account, then preview and confirm automatic run rules.')}</p></div>{agreement?.state === 'running' ? <Button variant="outline" disabled={control.isPending || setupBlocked} onClick={() => control.mutate('pause')}>{zh ? '暂停团队' : 'Pause team'}</Button> : agreement?.state === 'paused' ? <Button disabled={control.isPending || !stateKnown || setupBlocked} onClick={() => control.mutate('resume')}>{zh ? '恢复运行' : 'Resume'}</Button> : stateKnown && (!agreement || agreement.state === 'suspended') ? <Button disabled={!canSetup} onClick={() => { setAck(false); setSetup(true); }}>{zh ? '设置并启动自动运行' : 'Set up automatic runs'}</Button> : null}</div>
-    {status.isPending && <p role="status" className="text-sm text-muted-foreground">{zh ? '正在读取运行状态…' : 'Reading run state…'}</p>}
+  const cycleLabel = (cycle: TeamRunCycle) => cycle.state === 'applied' && cycle.policyRevision == null
+    ? (zh ? '应用修订待核对' : 'Policy revision unverified') : cycles[cycle.state] ?? cycle.state;
+  const latest = status.data?.recentCycles[0];
+  const current = latest && latest.agreementRevision >= (status.data?.confirmationRevision ?? 0) ? latest : undefined;
+  const next = status.data?.nextWindow;
+  const windowOpen = next?.kind === 'after_close' && Date.parse(next.at) <= Date.now();
+  const windowText = next?.kind === 'after_close' ? runTime(next.at, agreement?.configuration.market, zh)
+    : next?.kind === 'first' ? (zh ? '等待调度' : 'Awaiting scheduler')
+    : next?.kind === 'after_cycle' ? (zh ? '等待当前周期结算' : 'After the current cycle settles')
+    : agreement?.state === 'paused' ? (zh ? '已暂停' : 'Paused')
+    : agreement?.state !== 'running' ? (zh ? '尚未排期' : 'Unscheduled')
+    : (zh ? '时间待确认' : 'Time to be confirmed');
+  const cadence = agreement?.configuration.cadence.delayMinutes;
+  const marketLabel = agreement && ({ CN: zh ? 'A 股' : 'CN', HK: zh ? '港股' : 'HK', US: zh ? '美股' : 'US' })[agreement.configuration.market];
+  function headline(): string {
+    if (status.isPending) return zh ? '正在读取运行状态…' : 'Reading run state…';
+    if (status.isError && !agreement) return zh ? '请重新读取运行状态' : 'Reload the run state';
+    if (team.status === 'archived') return zh ? '团队已归档' : 'Team archived';
+    if (agreement?.state === 'paused') return zh ? '自动研究和模拟交易已暂停' : 'Automatic research and paper trading are paused';
+    if (agreement?.state === 'suspended') return zh ? '重新核对成员、账户与运行规则' : 'Review members, account and run rules';
+    if (agreement?.state === 'confirmed') return zh ? '规则已确认，等待启动' : 'Rules confirmed and ready to start';
+    if (agreement?.state === 'running') {
+      if (current?.state === 'blocked') return zh ? '核对受阻周期' : 'Review the blocked cycle';
+      if (current?.state === 'uncertain') return zh ? '先核对原请求' : 'Check the original request';
+      if (current && ['reserved', 'researching', 'processing'].includes(current.state)) return cycles[current.state];
+      if (next?.kind === 'first') return zh ? '首轮研究等待调度' : 'Waiting for first research';
+      if (windowOpen) return zh ? '研究窗口已到，等待调度' : 'Research window open, awaiting scheduler';
+      return zh ? '等待下一轮盘后研究' : 'Waiting for the next after-close research';
+    }
+    if (!membersReady) return zh ? '先完成岗位配员' : 'Assign the required seats';
+    if (!published) return zh ? '发布团队配置' : 'Publish the team configuration';
+    if (!bound) return zh ? '关联模拟账户' : 'Link a paper account';
+    if (team.capabilities?.researchEnabled === false) return zh ? '团队研究尚未启用' : 'Team research is disabled';
+    return zh ? '核对并授权运行规则' : 'Review and authorize run rules';
+  }
+  const historyHref = latest?.commissionId
+    ? `/teams/${encodeURIComponent(team.id)}?panel=history&commissionId=${encodeURIComponent(latest.commissionId)}`
+    : `/teams/${encodeURIComponent(team.id)}?panel=history`;
+  return <section className="run-overview">
+    <div className="run-hero" data-tone={agreement?.state === 'running' ? 'active' : 'neutral'}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="run-badge" data-running={agreement?.state === 'running'}>
+          {agreement ? states[agreement.state] : stateKnown ? (zh ? '准备中' : 'Preparing') : (zh ? '状态待核对' : 'Checking status')}
+        </span>
+        {agreement?.state === 'running' && !pauseReview && <Button variant="outline" disabled={setupBlocked || control.isPending} onClick={() => setPauseReview(true)}>{zh ? '暂停运行' : 'Pause run'}</Button>}
+        {agreement?.state === 'paused' && <Button disabled={control.isPending || !stateKnown || setupBlocked} onClick={() => control.mutate('resume')}>{zh ? '恢复运行' : 'Resume'}</Button>}
+        {stateKnown && (!agreement || agreement.state === 'suspended') && !setup && <Button disabled={!canSetup} onClick={() => { setAck(false); setSetup(true); }}>{zh ? '设置并启动自动运行' : 'Set up automatic runs'}</Button>}
+        {agreement?.state === 'confirmed' && !setup && <Button disabled={control.isPending || !stateKnown || setupBlocked} onClick={() => control.mutate('start')}>{zh ? '启动已确认的规则' : 'Start confirmed rules'}</Button>}
+      </div>
+      <h2>{headline()}</h2>
+      {pauseReview && agreement?.state === 'running' && <div className="space-y-2" role="group" aria-label={zh ? '核对暂停范围' : 'Review pause scope'}>
+        <p>{status.data?.accountName} · {zh ? '停止后续自动研究和全部模拟交易，包括保护单。在途委托继续按实际回执结算。' : 'Stop future research and all paper trading, including protective orders. In-flight work settles against its receipts.'}</p>
+        <div className="flex flex-wrap gap-2"><Button disabled={control.isPending || setupBlocked} onClick={() => control.mutate('pause')}>{zh ? '确认暂停' : 'Confirm pause'}</Button>
+          <Button variant="outline" disabled={control.isPending} onClick={() => setPauseReview(false)}>{zh ? '返回' : 'Back'}</Button></div>
+      </div>}
+      {next?.kind === 'first' ? <p>{zh ? '协议已启动，尚无本次授权的自动周期。' : 'The agreement has started. Its first cycle has yet to be recorded.'}</p>
+        : agreement && <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          {agreement.members.slice(0, 6).map(member => <AnimalAvatar key={member.memberId} avatar={member.avatar} role="researcher" className="size-[30px]" />)}
+          <span>{status.data?.accountName ?? (zh ? '模拟账户' : 'Paper account')} · {agreement.members.length} {zh ? '位股友' : agreement.members.length === 1 ? 'member' : 'members'}</span>
+        </div>}
+      {agreement && <dl className="grid gap-4 border-t pt-3 sm:grid-cols-2">
+        {next?.kind !== 'first' && <div><dt>{zh ? '下次研究窗口 · 按规则预计' : 'Next research window · estimated'}</dt><dd className="font-semibold">{windowText}</dd></div>}
+        <div><dt>{next?.kind === 'first' ? (zh ? '后续研究窗口' : 'Future research window') : (zh ? '运行节奏' : 'Cadence')}</dt><dd className="font-semibold">{zh ? `${marketLabel}交易日收盘后 ${cadence === 60 ? '1 小时' : cadence + ' 分钟'}` : `${cadence === 60 ? '1 hour' : cadence + ' minutes'} after each ${marketLabel} trading close`}</dd></div>
+      </dl>}
+      {latest && <div className="flex flex-wrap items-baseline justify-between gap-2 border-t pt-3 text-sm">
+        <span>{zh ? '最近周期' : 'Latest cycle'} · {latest.tradingDate} · {cycleLabel(latest)}</span>
+        <Link className="underline" to={historyHref}>{zh ? '查看周期记录' : 'View cycle history'}</Link>
+        {current?.lastError && ['blocked', 'uncertain'].includes(current.state) && <p className="w-full break-words" role="status">{current.lastError}</p>}
+      </div>}
+      {agreement?.state === 'suspended' && <p role="status">{agreement.suspensionReason === 'AGENT_ARCHIVED_SETTLEMENT_ONLY'
+        ? (zh ? '股友已归档，请调整成员并重新确认规则。' : 'An agent was archived. Update the team and review its rules.')
+        : (zh ? '原授权已挂起。核对当前版本、成员与账户后，可重新授权。' : 'The agreement is suspended. Review the team version, members and account before authorizing it again.')}</p>}
+      {status.isError && <p role="alert" className="text-sm text-muted-foreground">{zh ? '暂时无法更新运行状态，上次读取的信息已保留。' : 'Run state could not refresh. The last saved view is retained.'}<button className="underline ml-2" onClick={() => void status.refetch()}>{zh ? '重新读取' : 'Reload'}</button></p>}
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    </div>
     {!setup && (!published || !bound || !membersReady) && team.status !== 'archived' && <div className="rounded-lg border p-4 space-y-3" aria-label={zh ? '自动运行准备' : 'Automatic run readiness'}>
       <h3 className="font-medium">{zh ? '完成这些设置即可启动' : 'Complete these steps to start'}</h3>
       {!membersReady && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm">{zh ? (missingMembers.length ? `${missingMembers.length} 个启用岗位尚未关联可执行的股友版本。` : '先为团队配置至少一位可执行股友。') : (missingMembers.length ? `${missingMembers.length} enabled seats need a saved agent version and executor.` : 'Configure at least one enabled agent with an executor.')}</p>{onConfigure && <Button variant="outline" disabled={setupBlocked} onClick={onConfigure}>{zh ? '配置成员' : 'Configure members'}</Button>}</div>}
       {!published && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm">{zh ? '自动运行使用已发布的固定团队版本。' : 'Automatic runs use a published, fixed team version.'}</p>{onPublish && <Button variant="outline" disabled={setupBlocked} onClick={onPublish}>{zh ? '发布团队版本' : 'Publish team version'}</Button>}</div>}
       {!bound && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm">{zh ? '选择或新建本团队使用的模拟账户。' : 'Choose or create the paper account this team will manage.'}</p>{onBind && <Button variant="outline" disabled={setupBlocked || !published} onClick={onBind}>{zh ? '关联模拟盘' : 'Link paper account'}</Button>}</div>}
     </div>}
-    {agreement?.state === 'confirmed' && !setup && <Button disabled={control.isPending || !stateKnown || setupBlocked} onClick={() => control.mutate('start')}>{zh ? '启动已确认的规则' : 'Start confirmed rules'}</Button>}
-    {agreement?.state === 'paused' && <Button variant="ghost" disabled={!canSetup} onClick={() => { setAmountLimited(agreement.configuration.budget.daily.costUsd !== null); setDaily(agreement.configuration.budget.daily.costUsd ?? ''); setMarket(agreement.configuration.market); setImmediate(agreement.configuration.initialRun === 'immediate'); setAck(false); setSetup(true); }}>{zh ? '调整运行规则' : 'Adjust run rules'}</Button>}
-    {status.isError && <p role="alert" className="text-sm text-muted-foreground">{zh ? '暂时无法更新运行状态，上次读取的信息已保留。' : 'Run state could not refresh. The last saved view is retained.'}<button className="underline ml-2" onClick={() => void status.refetch()}>{zh ? '重新读取' : 'Reload'}</button></p>}
-    {agreement && <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{zh ? '研究预算上限' : 'Research budget cap'}</p><RunBudgetLimits budget={agreement.configuration.budget} zh={zh} /><p className="text-xs text-muted-foreground">{zh ? '这是预算上限，实际消费尚未汇总。' : 'These are caps, not recorded spending; actual spending is not summarized here.'}</p></div><div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{zh ? '成员' : 'Members'}</p><p className="font-medium">{agreement.members.length} {zh ? '位已有股友' : 'saved agents'}</p><p className="text-xs text-muted-foreground">{zh ? '固定版本，团队记忆隔离' : 'Pinned versions; isolated team memory'}</p></div><div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{zh ? '模拟账户' : 'Paper account'}</p><Button asChild size="sm" variant="ghost"><Link to={`/holdings?accountId=${encodeURIComponent(agreement.accountId)}`}>{zh ? '查看持仓与成交' : 'View holdings and fills'}</Link></Button><p className="text-xs text-muted-foreground">{zh ? '保持独立账本' : 'Independent ledger'}</p></div>{agreement.configuration.workPlanProof && <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{zh ? '研究分工' : 'Research division'}</p><p className="font-medium">{agreement.configuration.workPlanProof.mode === 'blueprint_v1' ? (zh ? '工作蓝图 v1 · 已发布组织分工' : 'Work blueprint v1 · published division') : agreement.configuration.workPlanProof.mode === 'manual_custom' ? (zh ? '仅本次自定义分工' : 'Custom division for this run') : (zh ? '旧版分工：独立研究 + 负责人汇总' : 'Legacy division: independent research plus lead summary')}</p><p className="text-xs text-muted-foreground">{zh ? '协议固定此分工；发布新团队版本后需重新确认运行规则。' : 'The agreement freezes this division; publish a new team version and reconfirm the run rules to change it.'}</p></div>}</div>}
-    {agreement?.externalCostUnknown && <p className="text-xs text-amber-700">{zh ? '部分助手的实际费用未知；调用次数受限，上述金额不代表外部账单的保证上限。' : 'Some actual fees are unknown. Calls are bounded; the amounts do not guarantee an external bill cap.'}</p>}
-    {agreement?.state === 'suspended' && <p role="alert" className="text-sm">{agreement.suspensionReason === 'AGENT_ARCHIVED_SETTLEMENT_ONLY' ? (zh ? '股友已归档：已停止新研究与自动模拟执行，已派发研究可继续结算。请调整成员后重新确认。' : 'An agent was archived. New research and automatic paper execution stopped; dispatched research may settle. Update members and confirm again.') : (zh ? '团队版本、账户、权限或运行条件已变化，自动工作已停止。请检查后重新确认规则。' : 'Team, account, permissions or run conditions changed. Automatic work stopped. Review the setup and confirm new rules.')}</p>}
-    <div><h3 className="font-medium mb-3">{zh ? '最近做了什么' : 'Recent work'}</h3>{!status.data?.recentCycles.length && <p className="text-sm text-muted-foreground">{agreement?.state === 'running' && agreement.configuration.initialRun === 'immediate' ? (zh ? '已启用首轮研究，正在等待调度器领取；后续按每日收盘节奏运行。' : 'First research is enabled and waiting for the scheduler; later research follows the daily close.') : (zh ? '还没有已记录的自动周期。确认启动后按所选首轮方式和每日节奏运行。' : 'No automatic cycle is recorded yet. Confirmed startup follows the selected first-run mode and daily cadence.')}</p>}<ul className="space-y-3">{status.data?.recentCycles.slice(0, 6).map(cycle => <li className="rounded-lg border p-3 text-sm" key={cycle.id}><div className="flex justify-between gap-3"><strong>{cycles[cycle.state] ?? cycle.state}</strong><span>{cycle.tradingDate}</span></div>{cycle.commissionId && <Link className="underline text-primary block mt-2" to={`/teams/${encodeURIComponent(team.id)}?panel=history&commissionId=${encodeURIComponent(cycle.commissionId)}`}>{zh ? '查看原判断与执行记录' : 'View original decision and execution'}</Link>}{cycle.lastError && <details className="text-xs text-muted-foreground mt-2"><summary>{zh ? '处理详情' : 'Details'}</summary>{cycle.lastError}</details>}</li>)}</ul></div>
-    <p className="text-xs text-muted-foreground">{zh ? '暂停会停止后续研究及全部模拟交易，包括保护单；在途任务会显示实际取消或结算状态。' : 'Pausing stops future research and all paper trades, including protective orders. In-flight tasks retain their real cancellation or settlement state.'}</p>
     {setup && <div className="space-y-3 border-t pt-4">
       <h3 className="font-semibold">{zh ? '核对运行规则' : 'Review run rules'}</h3>
       <p className="text-sm">{zh ? `每轮最多 ${callLimit} 次调用，包含工作与复核，使单轮研究能有限完成。不额外设置团队每日或每月调用上限，已有全局和账户限制仍生效。` : `Up to ${callLimit} calls/run, including work and reviews, to keep each cycle finite. No extra team daily/monthly call cap; existing global and account limits still apply.`}</p>
@@ -144,15 +221,38 @@ export function TeamRunPanel({ team, zh, onConfigure, onPublish, onBind, setupBl
       {(reviewRequired || expired && !confirmAttempted.current) && <div className="space-y-2 text-sm" role="alert"><p>{zh ? '预览已过期或运行条件变化，请重新读取并确认。' : 'The preview expired or run conditions changed. Refresh it and confirm again.'}</p><Button variant="outline" disabled={!canSetup || renew.isPending || enable.isPending} onClick={() => renew.mutate()}>{zh ? '重新核对运行规则' : 'Refresh run review'}</Button></div>}
       {preview && !reviewRequired && <>
         <RunReview preview={preview} zh={zh} />
-        {!confirmAttempted.current && <Button variant="ghost" disabled={enable.isPending || renew.isPending} onClick={() => { setupRecord.current = null; renewalRecord.current = null; setPreview(null); setAck(false); setError(''); }}>{zh ? '修改运行选项' : 'Edit run options'}</Button>}
+        {!confirmAttempted.current && <Button variant="ghost" disabled={enable.isPending || renew.isPending} onClick={() => { saveRunSetup(team.id, null); setupRecord.current = null; renewalRecord.current = null; setPreview(null); setAck(false); setError(''); }}>{zh ? '修改运行选项' : 'Edit run options'}</Button>}
         <label className="flex gap-3 text-sm"><Checkbox aria-label={zh ? '确认已核对的运行规则' : 'Confirm reviewed run rules'} checked={ack} disabled={enable.isPending || expired && !confirmAttempted.current} onCheckedChange={value => setAck(value === true)} /><span>{zh ? '我已核对以上实际成员、模拟账户、额度和首轮方式，允许在此范围内自动研究与模拟交易；新判断将替换此模拟账户的执行组合，保留我的草稿。' : 'I confirm scope, the actual members, paper account, limits and startup mode above, and allow automatic research and paper trades. New decisions replace this paper account’s execution combination and preserve my drafts.'}</span></label>
-        <Button disabled={!canSetup || !ack || enable.isPending || renew.isPending || expired && !confirmAttempted.current} onClick={() => enable.mutate()}>{enable.isPending ? (zh ? '正在核对…' : 'Checking…') : (zh ? '确认并启动' : 'Confirm and start')}</Button>
+        {retained?.authorized && setupRecord.current?.key === retained.key && <p role="status" className="text-sm text-muted-foreground">
+          {zh ? '上次已确认授权，请核对原启动请求。' : 'Consent was recorded. Check the original startup request.'}
+        </p>}
+        <Button disabled={(!canSetup && !canRecover) || !ack || enable.isPending || renew.isPending || expired && !confirmAttempted.current} onClick={() => enable.mutate()}>
+          {enable.isPending ? (zh ? '正在核对…' : 'Checking…') : canRecover ? (zh ? '核对本次启动' : 'Check this startup') : (zh ? '确认并启动' : 'Confirm and start')}
+        </Button>
       </>}
     </div>}
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+
+    <TeamRunEvidence teamId={team.id} teamName={team.name} market={agreement?.configuration.market} zh={zh} />
+    <details className="run-disclosure"><summary>{zh ? '运行规则、额度与版本' : 'Run rules, budget and versions'}</summary>
+      <div className="space-y-3">
+      {agreement?.state === 'paused' && <Button variant="ghost" disabled={!canSetup} onClick={() => { setAmountLimited(agreement.configuration.budget.daily.costUsd !== null); setDaily(agreement.configuration.budget.daily.costUsd ?? ''); setMarket(agreement.configuration.market); setImmediate(agreement.configuration.initialRun === 'immediate'); setAck(false); setSetup(true); }}>{zh ? '调整运行规则' : 'Adjust run rules'}</Button>}
+    {agreement?.suspensionReason && <p>{agreement.suspensionReason}</p>}
+    {agreement && <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{zh ? '研究预算上限' : 'Research budget cap'}</p><RunBudgetLimits budget={agreement.configuration.budget} zh={zh} /><p className="text-xs text-muted-foreground">{zh ? '这是预算上限，实际消费尚未汇总。' : 'These are caps, not recorded spending; actual spending is not summarized here.'}</p></div><div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{zh ? '成员' : 'Members'}</p><p className="font-medium">{agreement.members.length} {zh ? '位已有股友' : 'saved agents'}</p><p className="text-xs text-muted-foreground">{zh ? '固定版本，团队记忆隔离' : 'Pinned versions; isolated team memory'}</p></div><div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{zh ? '模拟账户' : 'Paper account'}</p><Button asChild size="sm" variant="ghost"><Link to={`/holdings?accountId=${encodeURIComponent(agreement.accountId)}`}>{zh ? '查看持仓与成交' : 'View holdings and fills'}</Link></Button><p className="text-xs text-muted-foreground">{zh ? '保持独立账本' : 'Independent ledger'}</p></div>{agreement.configuration.workPlanProof && <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{zh ? '研究分工' : 'Research division'}</p><p className="font-medium">{agreement.configuration.workPlanProof.mode === 'blueprint_v1' ? (zh ? '工作蓝图 v1 · 已发布组织分工' : 'Work blueprint v1 · published division') : agreement.configuration.workPlanProof.mode === 'manual_custom' ? (zh ? '仅本次自定义分工' : 'Custom division for this run') : (zh ? '旧版分工：独立研究 + 负责人汇总' : 'Legacy division: independent research plus lead summary')}</p><p className="text-xs text-muted-foreground">{zh ? '协议固定此分工；发布新团队版本后需重新确认运行规则。' : 'The agreement freezes this division; publish a new team version and reconfirm the run rules to change it.'}</p></div>}</div>}
+    {agreement?.externalCostUnknown && <p className="text-xs text-amber-700">{zh ? '部分助手的实际费用未知；调用次数受限，上述金额不代表外部账单的保证上限。' : 'Some actual fees are unknown. Calls are bounded; the amounts do not guarantee an external bill cap.'}</p>}
+      {agreement && <p className="text-xs text-muted-foreground">{zh ? '运行协议修订' : 'Agreement revision'} {agreement.revision} · {agreement.configuration.teamVersionId}</p>}
+    <div><h3 className="font-medium mb-3">{zh ? '最近做了什么' : 'Recent work'}</h3>{stateKnown && !status.data?.recentCycles.length && <p className="text-sm text-muted-foreground">{agreement?.state === 'running' && agreement.configuration.initialRun === 'immediate' ? (zh ? '已启用首轮研究，正在等待调度器领取；后续按每日收盘节奏运行。' : 'First research is enabled and waiting for the scheduler; later research follows the daily close.') : (zh ? '还没有已记录的自动周期。确认启动后按所选首轮方式和每日节奏运行。' : 'No automatic cycle is recorded yet. Confirmed startup follows the selected first-run mode and daily cadence.')}</p>}<ul className="space-y-3">{status.data?.recentCycles.slice(0, 6).map(cycle => <li className="rounded-lg border p-3 text-sm" key={cycle.id}><div className="flex justify-between gap-3"><strong>{cycleLabel(cycle)}</strong><span>{cycle.tradingDate}</span></div>{cycle.commissionId && <Link className="underline text-primary block mt-2" to={`/teams/${encodeURIComponent(team.id)}?panel=history&commissionId=${encodeURIComponent(cycle.commissionId)}`}>{zh ? '查看原判断与执行记录' : 'View original decision and execution'}</Link>}{cycle.lastError && <details className="text-xs text-muted-foreground mt-2"><summary>{zh ? '处理详情' : 'Details'}</summary>{cycle.lastError}</details>}</li>)}</ul></div>
+    <p className="text-xs text-muted-foreground">{zh ? '暂停会停止后续研究及全部模拟交易，包括保护单；在途任务会显示实际取消或结算状态。' : 'Pausing stops future research and all paper trades, including protective orders. In-flight tasks retain their real cancellation or settlement state.'}</p>
+      </div>
+    </details>
+    <details className="run-disclosure"><summary>{zh ? '成员与账户设置' : 'Member and account settings'}</summary>
+      <div className="flex flex-wrap gap-2">
+        {onConfigure && <Button variant="outline" onClick={onConfigure}>{zh ? '配置团队' : 'Configure team'}</Button>}
+        {onBind && <Button variant="outline" disabled={!published || setupBlocked} onClick={onBind}>{zh ? '账户设置' : 'Account settings'}</Button>}
+        <Button asChild variant="outline"><Link to={historyHref}>{zh ? '研究与交付' : 'Research and delivery'}</Link></Button>
+      </div>{memberSettings}
+    </details>
   </section>;
 }
-
 /** Render the exact server-reviewed agreement rather than the editable proposed values. */
 function RunBudgetLimits({ budget, zh }: { budget: TeamRunAgreement['configuration']['budget']; zh: boolean }) {
   const money = (value: string | null): string => value === null ? (zh ? '无金额上限' : 'No amount cap') : `${value} USD`;

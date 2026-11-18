@@ -80,6 +80,11 @@ function prepareMarket(market: Market, start: number, end: number) {
     if (session && at < session.closesAt) return at - quoteAt <= 45 * minute;
     if (at - quoteAt > 7 * day) return false;
     const close = closes[lastIndex(closes, at)];
+    // A market still in its trading day can carry a real pre-break mark while
+    // the other market trades. The pre-break quote never creates a new point.
+    if (session && (!close || session.closesAt > close.at)) {
+      return quoteAt >= session.closesAt - 15 * minute && quoteAt <= session.closesAt;
+    }
     // These are already observed quote facts, not a daily bar awaiting its
     // reporting buffer. Keep the genuine quote timestamp at/after official close.
     return Boolean(close && quoteAt >= close.at && quoteAt <= close.at + 2 * minute);
@@ -206,6 +211,5 @@ export function intradayReferencePoints(
     point.gaps = [...gaps];
     points.push(point);
   }
-  const sampled = reducePoints(points, 5 * minute);
-  return granularity === 'observations' ? sampled : reducePoints(sampled, 60 * minute);
+  return reducePoints(points, granularity === 'observations' ? minute : 60 * minute);
 }

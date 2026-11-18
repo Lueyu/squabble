@@ -3,99 +3,36 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { makeTeamFixture } from '../teams/team-test.fixture';
-import { AgentRosterService } from '../agent-roster/agent-roster.service';
 import { TeamRunService } from './team-run.service';
 import { TeamRunScheduler } from './team-run.scheduler';
 import { TeamRunDelivery } from './team-run.delivery';
 import { TradingMarketService } from '../paper-trading/trading-market.service';
-import { ResearchDocumentsService } from '../research-documents/research-documents.service';
-import { UserInvestmentStrategyService } from '../paper-trading/user-investment-strategy.service';
-import { InvestmentPolicyService } from '../paper-trading/investment-policy.service';
-import { PortfolioWorkspaceService } from '../paper-trading/portfolio-workspace.service';
-import { SimulationExperimentsService } from '../paper-trading/simulation-experiments.service';
 import { TeamCommissionWorker } from '../teams/team-commission.worker';
-import { teamCommissions, teamDecisions } from '../../database/teams.schema';
+import { copyTeamExecutionLinks, recordTeamSignalLinks } from '../../database/team-execution-links';
+import { researchDocumentVersions } from '../../database/research-documents.schema';
+import { DEFAULT_INVESTMENT_CONFIG } from '../paper-trading/investment-policy.rules';
+import { teamCommissions, teamDecisions, teamResearchLinks } from '../../database/teams.schema';
 import { teamRunAgreements, teamRunCycles } from '../../database/team-run.schema';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { councilReports, councilSessions } from '../../database/council.schema';
-import { paperAccounts, paperOrders } from '../../database/schema';
+import { paperAccounts, paperOrders, paperTrades } from '../../database/schema';
 import { investmentPolicies } from '../../database/investment-policy.schema';
 import { portfolioCombinationDrafts, portfolioStrategyAssignments } from '../../database/portfolio-workspace.schema';
 import { strategyMandates } from '../../database/strategy-mandates.schema';
 import { assertTeamRunAuthority } from '../../database/team-run-authority';
 import { assertTeamExecutionInTransaction, lockTeamOwner } from '../../database/team-context';
-import type { TeamRunAgreementInput } from '../../../shared/team-run.interface';
 import { CouncilService } from '../council/council.service';
 import { TeamRuntimeAdapter } from '../teams/team-runtime-adapter';
 import { TeamCommissionService, commissionContext } from '../teams/team-commission.service';
 import { assertTeamRunCommissionAuthority } from '../../database/team-run-authority';
+import { setup, acceptedReport, deliverReport } from './team-run-test.fixture';
 
 const options = { skip: !process.env.TEAM_TEST_DATABASE_URL };
-async function setup(initialRun?: 'immediate' | 'scheduled', market: TeamRunAgreementInput['market'] = 'CN', budget?: TeamRunAgreementInput['budget']) {
-  const f = await makeTeamFixture(), team = await f.team(), roster = new AgentRosterService(f.db);
-  const friend = await roster.create(f.owner, { requestKey: randomUUID(), name: 'Fictional analyst', instructions: 'Frozen base instructions',
-    executor: { executionMode: 'model', connectionId: f.connection.id, model: 'slow' }, allowedToolIds: [], allowedSources: [] });
-  const config = structuredClone(team.version.config);
-  config.roles[0].agentId = friend.id; config.roles[0].agentVersionId = friend.currentVersionId;
-  const saved = await f.service.save(f.owner, team.team.id, 'draft', { requestKey: randomUUID(), expectedSemanticRevision: team.team.semanticRevision, config });
-  const pp = await f.versions.publishPreview(f.owner, team.team.id, { requestKey: randomUUID(), expectedSemanticRevision: saved.semanticRevision });
-  const published = await f.versions.publish(f.owner, team.team.id, { requestKey: randomUUID(), previewId: pp.previewId, previewHash: pp.previewHash });
-  const account = await f.account();
-  const bp = await f.versions.bindingPreview(f.owner, team.team.id, { requestKey: randomUUID(), action: 'assign', accountId: account.id,
-    teamVersionId: published.version.id, expectedBindingRevision: 0, expectedAccountBindingId: null, executionChoice: 'keep_confirmed_rules', acknowledgePendingReapproval: true });
-  const binding = await f.versions.binding(f.owner, team.team.id, { requestKey: randomUUID(), previewId: bp.previewId, previewHash: bp.previewHash });
-  const documents = new ResearchDocumentsService(f.db);
-  const strategies = new UserInvestmentStrategyService(f.db, documents, { json: async () => { throw new Error('No provider call authorized in fictional fixture'); } } as never);
-  const policies = new InvestmentPolicyService(f.db, new SimulationExperimentsService(f.db, {} as never, {} as never), strategies);
-  const workspace = new PortfolioWorkspaceService(f.db, policies, strategies);
-  const runs = new TeamRunService(f.store, f.commissions), delivery = new TeamRunDelivery(runs, f.decisions, strategies, workspace);
-  const scheduler = new TeamRunScheduler(runs, new TradingMarketService({} as never), f.commissions, delivery);
-  const input: TeamRunAgreementInput = { requestKey: randomUUID(), teamVersionId: published.version.id, bindingId: binding.binding!.id,
-    expectedBindingRevision: binding.team.bindingRevision, objective: 'Fictional portfolio review', market,
-    ...(initialRun ? { initialRun } : {}), budget: {
-      perRun: { budgetMode: 'cost_and_calls', ceiling: { amount: '1', currency: 'USD' }, callLimit: 2, paidRevisionLimit: 0 },
-      daily: { costUsd: '1', calls: 2 }, monthly: { costUsd: '2', calls: 4 } }, replacementPolicy: { kind: 'replace_combination', allocationPct: 50 }, inputRefs: [] };
-  if (budget) input.budget = budget;
-  const preview = await runs.preview(f.owner, team.team.id, input);
-  const agreement = await runs.confirm(f.owner, team.team.id, { requestKey: randomUUID(), previewId: preview.previewId, previewHash: preview.previewHash });
-  const running = await runs.control(f.owner, team.team.id, 'start', { requestKey: randomUUID(), expectedRevision: agreement.revision });
-  return { ...f, teamId: team.team.id, friend, roster, workspace, documents, strategies, runs, delivery, scheduler, running, account, initialPreview: preview,
-    worker: new TeamCommissionWorker(f.store, f.runtime, f.commissions), input };
-}
-async function acceptedReport(f: Awaited<ReturnType<typeof setup>>, noTrade = false, now = new Date('2026-11-12T09:00:00Z')) {
-  await f.scheduler.runOnce(now);
-  await f.worker.runOnce();
-  const [cycle] = await f.db.select().from(teamRunCycles).where(eq(teamRunCycles.agreementId, f.running.id));
-  assert.ok(cycle.commissionId, JSON.stringify(cycle));
-  const [commission] = await f.db.select().from(teamCommissions).where(eq(teamCommissions.id, cycle.commissionId));
-  const attemptId = randomUUID();
-  const [task] = await f.db.insert(councilResearchTasks).values({ owner: f.owner, sessionId: commission.sessionId!, cycleId: commission.cycleId!, revision: 1,
-    key: 'summary', position: 0, memberId: commission.members[0].memberId, dependencies: [], state: 'accepted', skills: [], workKey: commission.plan.work[0].workKey,
-    acceptedAttemptId: attemptId, attempts: [{ id: attemptId, revision: 1, kind: 'work', startedAt: new Date().toISOString(), state: 'succeeded', dispatched: true, messageId: randomUUID() }] }).returning();
-  const coverage = { goal: 'comprehensive' as const, cycleId: commission.cycleId!, revision: 1, complete: true,
-    tasks: [{ id: task.id, key: 'summary' as const, state: 'accepted' as const, acceptedAttemptId: attemptId }] };
-  const [report] = await f.db.insert(councilReports).values({ owner: f.owner, sessionId: commission.sessionId!, revision: 1, version: 1,
-    decision: 'wait', summary: 'Fictional research only', dissent: [], nextReviewCondition: 'Next review', publicationOutcome: 'succeeded', engine: 'llm', evidence: [], coverage }).returning();
-  const text = 'AI proposal: AAPL at 100 buy 10 shares';
-  const executionPlan = { schemaVersion: 1, parameterOrigin: noTrade ? 'system_observation' : 'ai_proposed', evidenceIds: noTrade ? [] : ['fixture-e1'], gaps: [], ...(noTrade ? { noTradeReason: 'Fictional observation only' } : {}),
-    strategy: { title: 'Fictional plan', body: text, timezone: 'Asia/Shanghai', startsAt: new Date(Date.now() - 60000).toISOString(), endsAt: new Date(Date.now() + 86400000).toISOString(),
-      ...(!noTrade ? { limits: { maxPositionPct: 10, maxOrderPct: 5, maxDailyIncreasePct: 5, maxDailyTurnoverPct: 20, minCashPct: 10, maxGrossExposurePct: 90 } } : {}),
-      entries: [{ id: 'fictional', text, ticker: 'AAPL', sourceKeys: [], ...(!noTrade ? { directive: { ticker: 'AAPL', side: 'buy', trigger: { kind: 'price_lte', price: 100 }, quantity: 10,
-        reviewedText: text, numericEvidence: [{ field: 'trigger.price', value: 100, quote: '100' }, { field: 'quantity', value: 10, quote: '10' }] } } : {}) }] } };
-  const version = await f.documents.submit(f.owner, { idempotencyKey: randomUUID(), title: 'Fictional accepted report', kind: 'council', source: { type: 'council', id: report.id },
-    content: 'Fictional readable report', sections: [{ id: 'execution-strategy', title: 'Execution proposal', content: text }],
-    availableAt: new Date(Date.now() - 1000).toISOString(), snapshot: { executionPlan: executionPlan as never, evidence: [{ id: 'fixture-e1', content: 'Fictional bound proposal evidence' }] } });
-  await f.db.update(councilReports).set({ researchVersionId: version.id }).where(eq(councilReports.id, report.id));
-  await f.db.update(councilSessions).set({ status: 'completed' }).where(eq(councilSessions.id, commission.sessionId!));
-  await f.worker.project(commission.id);
-  return { cycle, commission, version, attemptId };
-}
 
 test('explicit immediate startup reserves once before close and preserves the frozen agreement choice', options, async () => {
   const f = await setup('immediate');
   try {
-    assert.equal(f.initialPreview.result.configuration.initialRun, 'immediate');
+    assert.deepEqual(f.initialPreview.result.configuration, f.running.configuration);
     assert.equal(f.running.configuration.initialRun, 'immediate');
     const restarted = new TeamRunScheduler(f.runs, new TradingMarketService({} as never), f.commissions, f.delivery);
     await Promise.all([
@@ -126,7 +63,7 @@ test('unknown native fees preserve automatic next-dispatch authority while an un
     const [cycle] = await f.db.select().from(teamRunCycles).where(eq(teamRunCycles.agreementId, f.running.id));
     const [commission] = await f.db.select().from(teamCommissions).where(eq(teamCommissions.id, cycle.commissionId!));
     const attempt = { id: randomUUID(), revision: 1, kind: 'work' as const, startedAt: new Date().toISOString(),
-      state: 'running' as const, dispatched: true, remoteTaskId: randomUUID(), externalUsageUnknown: true };
+      state: 'running' as const, dispatched: true, messageId: randomUUID(), remoteTaskId: randomUUID(), externalUsageUnknown: true };
     const [task] = await f.db.insert(councilResearchTasks).values({ owner: f.owner, sessionId: commission.sessionId!,
       cycleId: commission.cycleId!, revision: 1, key: 'summary', position: 0, memberId: commission.members[0].memberId,
       dependencies: [], state: 'running', skills: [], workKey: commission.plan.work[0].workKey, attempts: [attempt] }).returning();
@@ -470,4 +407,66 @@ test('automatic-team archive stops new authority while its already dispatched Co
     assert.equal((await f.db.select().from(teamDecisions)).filter(decision => ['adopt', 'applied'].includes(decision.event)).length, 0);
     assert.equal((await f.db.select().from(paperAccounts).where(eq(paperAccounts.id, f.account.id)))[0].botEnabled, false);
   } finally { release(); await Promise.allSettled([...((council as unknown as { jobs: Map<string, Promise<void>> }).jobs.values())]); await f.dispose(); }
+});
+
+test('run overview keeps the exact report, policy installation and historical fill independent through handover and deletion', options, async () => {
+  const f = await setup('immediate');
+  try {
+    assert.deepEqual(await f.runs.fills(f.owner, f.teamId), []);
+    assert.equal((await f.runs.research(f.owner, f.teamId)).report, null);
+    const { version, commission } = await acceptedReport(f);
+    await f.scheduler.runOnce(new Date('2026-11-12T09:00:00Z'));
+    const [cycle] = await f.db.select().from(teamRunCycles);
+    assert.equal(cycle.state, 'applied', cycle.lastError ?? '');
+    const report = (await f.runs.research(f.owner, f.teamId)).report;
+    assert.equal(report?.versionId, version.id);
+    assert.equal(report.commissionId, commission.id);
+    assert.equal(report.applied?.revision, cycle.policyRevision);
+    assert.equal(report.source, 'automatic');
+    assert.deepEqual(await f.runs.fills(f.owner, f.teamId), [], 'Installation cannot create a fill in the read model');
+
+    const other = await f.commission();
+    const [decision] = await f.db.select().from(teamDecisions).where(eq(teamDecisions.id, cycle.decisionId!));
+    const ref = { decisionId: decision.id, proposalId: decision.proposalId, proposalRevision: decision.proposalRevision };
+    const signal = randomUUID();
+    const [order] = await f.db.insert(paperOrders).values({ owner: f.owner, accountId: f.account.id, ticker: 'TEST', side: 'buy', quantity: '7' }).returning();
+    await recordTeamSignalLinks(f.db, f.owner, { ...DEFAULT_INVESTMENT_CONFIG, teamDecisionRefs: [ref] }, signal);
+    await copyTeamExecutionLinks(f.db, f.owner, 'signal', signal, 'order', order.id);
+    const [fill, wrongAccount] = await f.db.insert(paperTrades).values([f.account.id, other.account.id].map(accountId => ({
+      owner: f.owner, accountId, ticker: 'TEST', side: 'buy', quantity: '7', price: '13.25', orderId: order.id, cashAfter: '800',
+    }))).returning();
+    await copyTeamExecutionLinks(f.db, f.owner, 'order', order.id, 'trade', fill.id);
+    await copyTeamExecutionLinks(f.db, f.owner, 'order', order.id, 'trade', wrongAccount.id);
+    const [link] = await f.db.select().from(teamResearchLinks).where(eq(teamResearchLinks.targetId, fill.id));
+    await f.db.insert(teamResearchLinks).values({ ...link, id: randomUUID(), targetRevision: 'legacy duplicate' });
+    const replacement = await f.team('Handover recipient');
+    const handover = await f.versions.bindingPreview(f.owner, replacement.team.id, { requestKey: randomUUID(), action: 'assign',
+      accountId: f.account.id, teamVersionId: replacement.version.id, expectedBindingRevision: 0,
+      expectedAccountBindingId: commission.bindingId, executionChoice: 'keep_confirmed_rules', acknowledgePendingReapproval: true });
+    await f.versions.binding(f.owner, replacement.team.id, { requestKey: randomUUID(), previewId: handover.previewId, previewHash: handover.previewHash });
+    const rows = await f.runs.fills(f.owner, f.teamId);
+    assert.deepEqual(rows.map(row => [row.id, row.accountId, row.quantity, row.price]), [[fill.id, f.account.id, '7', '13.25']]);
+    assert.deepEqual(await f.runs.fills(f.owner, replacement.team.id), []);
+    for (let pass = 0; pass < 8; pass++) {
+      await f.worker.runOnce();
+      const [prepared] = await f.db.select({ sessionId: teamCommissions.sessionId }).from(teamCommissions)
+        .where(eq(teamCommissions.id, other.created.commissionId));
+      if (prepared.sessionId) break;
+    }
+    const manual = await deliverReport(f, other.created.commissionId);
+    const manualReport = (await f.runs.research(f.owner, other.team.id)).report;
+    assert.equal(manualReport?.source, 'manual');
+    assert.equal(manualReport.versionId, manual.version.id);
+    assert.equal((await f.runs.research(f.owner, f.teamId)).report?.versionId, version.id);
+    await f.db.update(councilSessions).set({ deletedAt: new Date() }).where(eq(councilSessions.id, manual.commission.sessionId!));
+    assert.equal((await f.runs.research(f.owner, other.team.id)).report, null);
+    await assert.rejects(f.runs.fills(f.stranger, f.teamId), /TEAM_NOT_FOUND/);
+    await assert.rejects(f.runs.research(f.stranger, f.teamId), /TEAM_NOT_FOUND/);
+
+    await f.db.update(researchDocumentVersions).set({ deletedAt: new Date() }).where(eq(researchDocumentVersions.id, version.id));
+    assert.equal((await f.runs.research(f.owner, f.teamId)).report, null);
+    const history = await f.commissions.detail(f.owner, f.teamId, commission.id);
+    assert.equal(history.links.find(item => item.targetId === version.id)?.reportAvailable, false);
+    assert.deepEqual(await f.runs.fills(f.owner, f.teamId), rows);
+  } finally { await f.dispose(); }
 });

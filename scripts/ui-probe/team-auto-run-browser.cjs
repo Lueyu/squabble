@@ -75,6 +75,8 @@ async function installRoutes(context, origin, base, seedBase) {
       detail.binding = { id: 'fixture-binding', teamId, accountId, teamVersionId: versionId, state: 'active' };
       return answer({ team: current(), binding: detail.binding });
     }
+    if (p === `/api/teams/${teamId}/run-agreement/fills` && method === 'GET') return answer([]);
+    if (p === `/api/teams/${teamId}/run-agreement/research` && method === 'GET') return answer({ report: null, visibilityLimited: false });
     if (p === `/api/teams/${teamId}/run-agreement` && method === 'GET') return answer({ agreement: null, recentCycles: [] });
     if (p === `/api/teams/${teamId}/run-agreement/preview` && method === 'POST') {
       return answer(preview({ configuration: body, accountId, members: [{ label: 'Snapshot analyst' }, { label: 'Snapshot reviewer' }] }));
@@ -146,7 +148,7 @@ async function main() {
         await page.getByRole('dialog').getByRole('checkbox').check();
         await page.getByRole('button', { name: 'Create team and independent paper account', exact: true }).click();
         await page.waitForURL(`**/teams/${teamId}?panel=overview`);
-        await page.getByRole('heading', { name: 'Staff the team first', exact: true }).waitFor();
+        await page.getByRole('heading', { name: 'Assign the required seats', exact: true }).waitFor();
         assert.equal(f.requests.filter(item => item.path === '/api/teams' && item.method === 'POST').length, 1);
         assert.equal(f.requests.filter(item => item.path === '/api/ai-investment/accounts' && item.method === 'POST').length, 1);
         await shot('created-readiness');

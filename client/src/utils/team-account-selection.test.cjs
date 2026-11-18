@@ -78,10 +78,11 @@ test('paper holdings render their own nullable ledger values and expose no real 
   assert.match(html, /assets.costNotRecorded/); assert.match(html, /assets.incompleteValuation/);
   assert.doesNotMatch(html, /AddHoldingDialog|\/import|\/paper\/a\//);
 });
-test('asset section tabs carry the same account, retain a global watchlist return path and hide paper imports', () => {
+test('the unified account controls carry the same account, retain a global watchlist return path and hide paper imports', () => {
   const f = fixture();
-  const { WorkspaceSectionTabs } = f.load('features/navigation/WorkspaceNavigationBar.tsx');
-  const html = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: ['/holdings?accountId=b&q=FICT'] }, React.createElement(WorkspaceSectionTabs)));
+  const { AccountAssetsPage } = f.load('features/assets/AccountAssetsPage.tsx');
+  const html = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: ['/holdings?accountId=b&q=FICT'] },
+    React.createElement(AccountAssetsPage, { mode: 'holdings', real: null })));
   assert.match(html, /\/transactions\?accountId=b/);
   assert.match(html, /\/watchlist\?returnTo=%2Fholdings%3FaccountId%3Db%26q%3DFICT&amp;accountId=b/);
   assert.doesNotMatch(html, /href="\/import/);

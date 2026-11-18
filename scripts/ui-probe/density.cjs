@@ -30,6 +30,16 @@ async function run(options = {}) {
       await context.route('**/*', async route => {
         const url = new URL(route.request().url());
         if (url.origin !== fixture.url) return route.abort();
+        if (url.pathname === '/api/ai-investment/comparison') {
+          const response = await route.fetch();
+          const data = await response.json();
+          const real = data.series[0];
+          real.points[0].returnPct = 0;
+          real.points.push({ ...real.points[0], timestamp: '2026-11-13T01:05:00.000Z', equityUsd: 12210, returnPct: 0.08 });
+          real.returnPct = 0.08;
+          return route.fulfill({ json: data });
+        }
+        if (url.pathname === '/api/daily-workspace/research') return route.fulfill({ json: { reports: [], latest: null } });
         if (url.pathname === '/api/teams') return route.fulfill({ json: {
           items: [{ id: 'density-team', name: 'Fictional ready team', status: 'active', accountId: null }],
           total: 1, capabilities: { workspaceEnabled: true, researchEnabled: true },

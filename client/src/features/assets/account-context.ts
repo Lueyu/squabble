@@ -17,6 +17,8 @@ export function assetHref(path: string, id: string, search = ''): string {
   return `${path}?${params}`;
 }
 
+export const SIMULATION_ACCOUNTS_PATH = '/holdings/accounts';
+
 export const holdingsHref = (id: string) => assetHref('/holdings', id);
 
 /** No placeholder data: switching keys must immediately remove the previous account's rows. */

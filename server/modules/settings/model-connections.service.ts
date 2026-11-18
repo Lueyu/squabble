@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { modelConnections } from '../../database/model-connections.schema';
 import { decryptSecret, encryptSecret, normalizePublicLlmBaseUrl } from './settings-security';
@@ -37,6 +38,8 @@ export class ModelConnectionsService {
     const key = this.decrypt(row);
     return { id: row.id, name: row.name, baseUrl: row.baseUrl, fastModel: row.fastModel,
       slowModel: row.slowModel, hasApiKey: Boolean(key), available: Boolean(key),
+      ...(key && row.testState ? { testState: row.testState } : {}),
+      ...(key && row.testedAt ? { testedAt: row.testedAt.toISOString() } : {}),
       ...(key ? { maskedApiKey: `••••${key.slice(-4)}` } : { needsReentry: true }) };
   }
 
@@ -61,9 +64,40 @@ export class ModelConnectionsService {
     return { source: 'user', baseUrl: row.baseUrl, fastModel: row.fastModel, slowModel: row.slowModel, apiKey: key };
   }
 
+  async beginTest(owner: string, id: string): Promise<string> {
+    const attemptId = randomUUID();
+    const row = await this.row(owner, id);
+    if (!this.decrypt(row)) throw new BadRequestException('Model connection unavailable; re-enter its API key in Settings');
+    const [claimed] = await this.db.update(modelConnections)
+      .set({ testAttemptId: attemptId, testState: 'pending', testedAt: null })
+      .where(and(eq(modelConnections.owner, owner), eq(modelConnections.id, id), eq(modelConnections.apiKeyEnc, row.apiKeyEnc),
+        eq(modelConnections.baseUrl, row.baseUrl), eq(modelConnections.fastModel, row.fastModel), eq(modelConnections.slowModel, row.slowModel)))
+      .returning({ id: modelConnections.id });
+    if (!claimed) throw new BadRequestException('Model connection changed. Reload its settings before testing.');
+    return attemptId;
+  }
+
+  private pendingTest(owner: string, id: string, attemptId: string) {
+    return and(eq(modelConnections.owner, owner), eq(modelConnections.id, id),
+      eq(modelConnections.testAttemptId, attemptId), eq(modelConnections.testState, 'pending'));
+  }
+
+  async isTestCurrent(owner: string, id: string, attemptId: string): Promise<boolean> {
+    const [row] = await this.db.select({ id: modelConnections.id }).from(modelConnections)
+      .where(this.pendingTest(owner, id, attemptId));
+    return Boolean(row);
+  }
+
+  async finishTest(owner: string, id: string, attemptId: string, ok: boolean): Promise<boolean> {
+    const [row] = await this.db.update(modelConnections)
+      .set({ testState: ok ? 'passed' : 'failed', testedAt: ok ? new Date() : null })
+      .where(this.pendingTest(owner, id, attemptId)).returning({ id: modelConnections.id });
+    return Boolean(row);
+  }
+
   async save(owner: string, input: SaveModelConnection, id?: string): Promise<ModelConnection> {
     if (!input || typeof input !== 'object') throw new BadRequestException('Enter model connection settings');
-    const existing = id ? await this.row(owner, id) : null;
+    if (id && !UUID.test(id)) throw new BadRequestException('Invalid model connection ID');
     const name = boundedText(input.name, 'connection name', 60);
     const fastModel = boundedText(input.fastModel, 'fast model ID', 120);
     const slowModel = boundedText(input.slowModel, 'slow model ID', 120);
@@ -71,24 +105,28 @@ export class ModelConnectionsService {
     try { baseUrl = await normalizePublicLlmBaseUrl(input.baseUrl); }
     catch { throw new BadRequestException('API base URL must use a public HTTPS host'); }
     const key = input.apiKey === undefined || input.apiKey === '' ? null : boundedText(input.apiKey, 'API key', 4096);
-    if (!key && (!existing || !this.decrypt(existing))) throw new BadRequestException('Enter an API key');
-    if (!key && existing && baseUrl !== existing.baseUrl) {
-      throw new BadRequestException('Enter a new API key when changing the model endpoint');
-    }
-    const apiKeyEnc = key ? encryptSecret(key, this.secret()) : existing.apiKeyEnc;
-    const values = { name, baseUrl, fastModel, slowModel, apiKeyEnc, updatedAt: new Date() };
+    const values = { name, baseUrl, fastModel, slowModel, updatedAt: new Date() };
     const saved = await this.db.transaction(async tx => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`model-connections:${owner}`}))`);
       if (id) {
-        const [updated] = await tx.update(modelConnections).set(values)
-          .where(and(eq(modelConnections.owner, owner), eq(modelConnections.id, id))).returning();
-        if (!updated) throw new NotFoundException('Model connection not found');
+        const owned = and(eq(modelConnections.owner, owner), eq(modelConnections.id, id));
+        const [existing] = await tx.select().from(modelConnections).where(owned).for('update');
+        if (!existing) throw new NotFoundException('Model connection not found');
+        if (!key && !this.decrypt(existing)) throw new BadRequestException('Enter an API key');
+        if (!key && baseUrl !== existing.baseUrl) throw new BadRequestException('Enter a new API key when changing the model endpoint');
+        const changed = key || baseUrl !== existing.baseUrl || fastModel !== existing.fastModel || slowModel !== existing.slowModel;
+        const [updated] = await tx.update(modelConnections).set({
+          ...values,
+          apiKeyEnc: key ? encryptSecret(key, this.secret()) : existing.apiKeyEnc,
+          ...(changed ? { testAttemptId: null, testState: null, testedAt: null } : {}),
+        }).where(owned).returning();
         return updated;
       }
+      if (!key) throw new BadRequestException('Enter an API key');
       const [counts] = await tx.select({ count: sql<number>`count(*)` }).from(modelConnections)
         .where(eq(modelConnections.owner, owner));
       if (Number(counts.count) >= 8) throw new BadRequestException('Keep at most eight additional model connections');
-      const [created] = await tx.insert(modelConnections).values({ ...values, owner }).returning();
+      const [created] = await tx.insert(modelConnections).values({ ...values, owner, apiKeyEnc: encryptSecret(key, this.secret()) }).returning();
       return created;
     });
     return this.publicRow(saved);

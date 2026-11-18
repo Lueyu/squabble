@@ -1,0 +1,4 @@
+ALTER TABLE model_connections
+  ADD COLUMN IF NOT EXISTS test_attempt_id UUID,
+  ADD COLUMN IF NOT EXISTS test_state VARCHAR(12),
+  ADD COLUMN IF NOT EXISTS tested_at TIMESTAMPTZ;

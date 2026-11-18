@@ -75,12 +75,12 @@ export function portfolioWorkspaceError(
 }
 
 export const simulationAccountPath = (accountId: string) =>
-  `/paper/${encodeURIComponent(accountId)}`;
+  `/holdings/accounts/${encodeURIComponent(accountId)}`;
 export const simulationStrategyPath = (
   accountId: string,
   strategyId?: string,
 ) =>
-  `${simulationAccountPath(accountId)}/strategies${strategyId ? `?investmentStrategyId=${encodeURIComponent(strategyId)}` : ''}`;
+  `/paper/${encodeURIComponent(accountId)}/strategies${strategyId ? `?investmentStrategyId=${encodeURIComponent(strategyId)}` : ''}`;
 
 /** Canonical selection identity prevents a previous response authorizing edited inputs. */
 export function combinationIdentity(

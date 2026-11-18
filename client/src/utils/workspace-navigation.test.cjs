@@ -28,7 +28,7 @@ test('investment and holdings are distinct primary roots while retained deep lin
   assert.equal(new Set(primary.map(row => row.path)).size, primary.length);
   assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').section, 'telemetry');
   assert.equal(resolveWorkspaceRoute('/telemetry/runs/research%3Aexample', 'en').parent, '/telemetry?view=runs');
-  assert.equal(resolveWorkspaceRoute('/paper/account-1/strategies', 'en').parent, '/paper/account-1');
+  assert.equal(resolveWorkspaceRoute('/paper/account-1/strategies', 'en').parent, '/holdings/accounts/account-1');
   assert.equal(resolveWorkspaceRoute('/teams/team-a', 'en').section, 'teams');
   assert.equal(resolveWorkspaceRoute('/teams/team-a', 'en').parent, '/teams');
   assert.equal(resolveWorkspaceRoute('/holdings', 'zh-CN').title, '持仓');
@@ -71,11 +71,11 @@ test('search reaches holdings, saved daily reports and simulation accounts in ei
   const { workspaceDestinations } = navigation();
   for (const language of ['en', 'zh-CN']) {
     const destinations = workspaceDestinations(language);
-    for (const path of ['/holdings', '/daily', '/paper', '/friends'])
+    for (const path of ['/holdings', '/daily', '/holdings/accounts', '/friends'])
       assert.ok(destinations.some(row => row.path === path), `${language} search must include ${path}`);
     assert.equal(new Set(destinations.map(row => row.path)).size, destinations.length);
   }
-  assert.equal(workspaceDestinations('zh-CN').find(row => row.path === '/paper').label, '模拟账户');
+  assert.equal(workspaceDestinations('zh-CN').find(row => row.path === '/holdings/accounts').label, '模拟账户');
 });
 
 test('back restores the original page key and forward branches discard obsolete visits', () => {

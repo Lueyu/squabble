@@ -43,7 +43,7 @@ export class PortfolioComparisonService {
         requested && !requested.includes('real') ? []
           : tx.select().from(portfolioValuePoints).where(realFilter).orderBy(asc(portfolioValuePoints.capturedAt)),
         tx.select().from(portfolioValuePoints).where(and(eq(portfolioValuePoints.owner, owner), lte(portfolioValuePoints.capturedAt, at))).orderBy(desc(portfolioValuePoints.capturedAt)).limit(1),
-        ids.length ? tx.select().from(paperSnapshots).where(and(eq(paperSnapshots.owner, owner), inArray(paperSnapshots.accountId, ids), or(isNull(paperSnapshots.valuedAt), lte(paperSnapshots.valuedAt, at)))).orderBy(asc(paperSnapshots.snapshotDate)) : [],
+        ids.length ? tx.select().from(paperSnapshots).where(and(eq(paperSnapshots.owner, owner), inArray(paperSnapshots.accountId, ids), or(isNull(paperSnapshots.valuedAt), lte(paperSnapshots.valuedAt, at)))).orderBy(asc(paperSnapshots.valuedAt)) : [],
         ids.length ? tx.select().from(simulationSeeds).where(and(eq(simulationSeeds.owner, owner), inArray(simulationSeeds.accountId, ids))) : [],
         ids.length ? tx.select().from(investmentPolicies).where(and(eq(investmentPolicies.owner, owner), inArray(investmentPolicies.accountId, ids))) : [],
         ids.length ? tx.select().from(simulationValuationBaselines).where(and(eq(simulationValuationBaselines.owner, owner), inArray(simulationValuationBaselines.accountId, ids))) : [],
@@ -63,7 +63,7 @@ export class PortfolioComparisonService {
         }));
         const points = comparisonObservations(observations, granularity);
         const latest = latestReal[0];
-        series.push(this.summary({ accountId: 'real', name: 'Real portfolio', kind: 'real', colorIndex: -1, status: 'real', createdAt: null,
+        series.push(this.summary({ accountId: 'real', name: 'Real portfolio', kind: 'real', colorIndex: -1, status: 'real', createdAt: null, firstIncludedAt: null,
           valuationAsOf: latest?.capturedAt.toISOString() ?? null, equityUsd: latest?.complete ? finite(latest.totalValueUsd) : null,
           strategyCount: 0, points, gaps: latest && !latest.complete ? ['INCOMPLETE_VALUATION'] : [] }));
       }
@@ -95,14 +95,22 @@ export class PortfolioComparisonService {
             &&!row.gaps.some(gap=>/^(?:CASH_|HOLDING_INVALID|ACCOUNT_CHANGED|CORPORATE_ACTION)/u.test(gap))?`simulation:${account.id}`:null,
           gaps:[...row.gaps,...(!row.complete?['INCOMPLETE_VALUATION']:[])],
         })));
+        // Opening previews can predate the account. They establish a return baseline,
+        // while inclusion requires a complete valuation recorded for the account.
+        const createdAt = account.createdAt.getTime();
+        const firstSnapshot = rows.find(row =>
+          row.valuedAt && row.valuedAt.getTime() >= createdAt && finite(row.equity) !== null);
+        const firstCaptureWithEquity = captured.find(row =>
+          row.capturedAt.getTime() >= createdAt && row.complete && !row.estimated && finite(row.equityUsd) !== null);
+        const firstIncludedAt = firstSnapshot?.valuedAt?.toISOString() ?? firstCaptureWithEquity?.capturedAt.toISOString() ?? null;
         if (seedAt && trustedOpening && !observations.some(point => point.timestamp === seedAt)) {
           observations.push({ timestamp: seedAt, date: paperRiskDay(new Date(seedAt), policy?.baseConfig.timezone ?? 'Asia/Shanghai'), equityUsd: finite(seed.initialEquityUsd), continuity: `simulation:${account.id}`, gaps: [] });
         }
         const valid = observations.filter(point => Date.parse(point.timestamp) <= at.getTime()).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
         const latest = valid.at(-1);
-        const points = comparisonObservations(valid.filter(point => Date.parse(point.timestamp) >= from.getTime()), granularity);
+        const points = comparisonObservations(valid.filter(point => Date.parse(point.timestamp) >= from.getTime()), granularity, firstIncludedAt);
         series.push(this.summary({ accountId: account.id, name: account.name, kind: 'simulation', colorIndex: accounts.findIndex(item => item.id === account.id),
-          status: !account.isActive ? 'archived' : policy?.status ?? (account.botEnabled ? 'running' : 'paused'), createdAt: account.createdAt.toISOString(),
+          status: !account.isActive ? 'archived' : policy?.status ?? (account.botEnabled ? 'running' : 'paused'), createdAt: account.createdAt.toISOString(), firstIncludedAt,
           valuationAsOf: latest?.equityUsd !== null ? latest?.timestamp ?? null : null, equityUsd: latest?.equityUsd ?? null,
           strategyCount: policy?.baseConfig.portfolio?.filter(item => item.enabled).length ?? (policy?.baseConfig.userStrategy ? 1 : 0),
           points, gaps: latest?.gaps ?? ['NO_OBSERVATIONS'] }));

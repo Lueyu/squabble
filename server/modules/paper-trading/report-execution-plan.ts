@@ -13,6 +13,21 @@ const inputSchema = z.object({
   noTradeReason: z.string().trim().min(1).max(2000).optional(),
 }).strict();
 
+export function readModelExecutionPlan(raw: unknown, evidenceIds: Set<string>): {
+  executionPlan?: ReportExecutionPlan;
+  executionPlanError?: 'missing' | 'invalid';
+} {
+  if (raw === undefined) return { executionPlanError: 'missing' };
+  if (!raw || typeof raw !== 'object' || !('parameterOrigin' in raw) || raw.parameterOrigin !== 'ai_proposed') {
+    return { executionPlanError: 'invalid' };
+  }
+  try {
+    return { executionPlan: parseReportExecutionPlan(raw, evidenceIds) };
+  } catch {
+    return { executionPlanError: 'invalid' };
+  }
+}
+
 /** Numeric evidence binds suggested parameters to exact proposal text; it does not prove market facts. */
 export function parseReportExecutionPlan(raw: unknown, validEvidenceIds: Set<string>, now = new Date()): ReportExecutionPlan {
   // Archived derived fields are never trusted when a published plan is revalidated.

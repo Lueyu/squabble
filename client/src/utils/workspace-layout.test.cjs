@@ -39,7 +39,8 @@ function shell(pathname, width) {
   f.load('api/auth-mode.ts').getAuthMode = () => 'local';
   f.load('features/navigation/use-workspace-navigation.ts').useWorkspaceNavigation = () => ({ goBack() {} });
   const navigation = f.load('features/navigation/WorkspaceNavigationBar.tsx');
-  const SettingsNavigation = f.load('pages/Settings/SettingsNavigation.tsx').default;
+  const settingsNavigation = f.load('pages/Settings/SettingsNavigation.tsx');
+  const SettingsNavigation = settingsNavigation.default;
   const children = ({ children }) => React.createElement(React.Fragment, null, children);
   const noop = () => null;
   const imports = {
@@ -55,6 +56,8 @@ function shell(pathname, width) {
     '@/features/navigation/workspace-navigation': f.load('features/navigation/workspace-navigation.ts'),
     '@/features/navigation/use-workspace-navigation': { useWorkspaceNavigation() {} },
     '@/features/navigation/WorkspaceNavigationBar': navigation,
+    '@/pages/Settings/SettingsNavigation': settingsNavigation,
+    '@/pages/Settings/settings-navigation': f.load('pages/Settings/settings-navigation.ts'),
     '@/features/navigation/WorkspaceSearch': { WorkspaceSearch: noop },
     '@/features/teams/team-draft-storage': f.load('features/teams/team-draft-storage.ts'),
     '@/components/AppearancePicker': { AppearancePicker: noop },
@@ -68,7 +71,7 @@ function shell(pathname, width) {
   }).outputText;
   vm.runInNewContext(output, { exports: exported, require: id => imports[id] ?? require(id) });
   const content = pathname.startsWith('/settings')
-    ? React.createElement('div', { className: 'settings-shell' }, React.createElement(SettingsNavigation, { active: 'models' }), React.createElement('article', { className: 'settings-content' }, 'Model configuration'))
+    ? React.createElement('div', { className: 'settings-shell' }, React.createElement(SettingsNavigation, { active: 'models', localWorkspace: true, placement: 'page' }), React.createElement('article', { className: 'settings-content' }, 'Model configuration'))
     : React.createElement('article', { className: 'fixture-page' }, 'Saved holdings');
   const html = renderToStaticMarkup(React.createElement(router.MemoryRouter, { initialEntries: [pathname] },
     React.createElement(router.Routes, null, React.createElement(router.Route, { element: React.createElement(exported.default) },
@@ -91,7 +94,7 @@ for (const width of [1440, 1024, 1023, 768, 390]) {
     } finally { page.dom.window.close(); }
   });
 
-  test(`settings adds secondary navigation without changing the primary shell at ${width}px`, () => {
+  test(`settings nests its navigation within the primary shell at ${width}px`, () => {
     const assets = shell('/holdings', width), settings = shell('/settings/models', width);
     try {
       for (const page of [assets, settings]) {
@@ -106,14 +109,17 @@ for (const width of [1440, 1024, 1023, 768, 390]) {
         ['.app-nav-link', ['paddingLeft', 'paddingRight', 'minHeight', 'justifyContent']],
         ['.app-nav-link svg', ['width', 'height']], ['.app-footer-actions', ['flexDirection']],
       ]) for (const property of properties) assert.equal(settings.style(selector)[property], assets.style(selector)[property], `${selector} ${property} must stay consistent`);
-      assert.equal(settings.style('.settings-sidebar').display, width >= 1024 ? 'flex' : 'none');
-      assert.equal(settings.style('.settings-mobile-navigation').display, width >= 1024 ? 'none' : 'block');
-      assert.ok(settings.element('.settings-menu-link[aria-current="page"]'));
+      assert.equal(settings.element('.settings-sidebar'), null);
+      assert.equal(settings.style('.app-nav .settings-navigation-sidebar').display, width >= 768 ? 'grid' : 'none');
+      assert.equal(settings.style('.settings-navigation-page').display, width >= 768 ? 'none' : 'flex');
+      assert.ok(settings.element('.app-nav .settings-navigation-sidebar a[href="/settings/models"][aria-current="page"]'));
+      assert.ok(settings.element('.app-nav .settings-navigation-sidebar a[href="/settings/agents"]'));
+      assert.equal(settings.element('.settings-navigation a[href="/settings/security"]'), null);
     } finally { assets.dom.window.close(); settings.dom.window.close(); }
   });
 
   test(`asset section navigation shares the content gutter at ${width}px`, () => {
-    const page = shell('/holdings', width);
+    const page = shell('/watchlist', width);
     try {
       const tabs = page.element('.workspace-section-tabs');
       assert.equal(tabs.parentElement, page.element('.fixture-page').parentElement);

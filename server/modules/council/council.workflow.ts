@@ -11,6 +11,7 @@ import { planResearchTasks } from './council.tasks';
 import { teamTaskPlan } from './council.team';
 import { CouncilScheduler } from './council.scheduler';
 import { CouncilWorkflowExecutor, type WorkflowExecutorDependencies } from './council.workflow-executor';
+import { readModelExecutionPlan } from '../paper-trading/report-execution-plan';
 import { CouncilWorkflowStore } from './council.workflow-store';
 import type { CouncilEvidence, CouncilOpinion } from './council.rules';
 
@@ -134,6 +135,15 @@ export class CouncilWorkflow {
         const coverage: ResearchCoverage = { goal: row.checkpoint!.workflow!.goal, cycleId: row.checkpoint!.cycleId, revision,
           complete: tasks.every(t => t.state === 'accepted' && t.delivery && !t.delivery.gaps.length),
           tasks: tasks.map(({ id: taskId, key, state, acceptedAttemptId }) => ({ id: taskId, key, state, acceptedAttemptId })) };
+        if (row.checkpoint?.teamContext) {
+          const proposal = summary.delivery.executionPlan;
+          if (proposal) {
+            const gaps = coverage.complete ? proposal.gaps : ['Team research coverage is incomplete.', ...proposal.gaps].slice(0, 40);
+            Object.assign(coverage, readModelExecutionPlan({ ...proposal, gaps }, new Set(row.evidenceSnapshot.map(item => item.id))));
+          } else {
+            coverage.executionPlanError = summary.delivery.executionPlanError ?? 'missing';
+          }
+        }
         const partial = !coverage.complete ? row.language === 'en' ? 'Incomplete research: unresolved tasks or evidence gaps remain.\n\n' : '研究尚不完整：仍有未完成任务或关键资料缺口。\n\n' : '';
         const response = summary.delivery.response;
         await this.callbacks.publish(row, { decision: 'wait', summary: partial + [response.thesis,

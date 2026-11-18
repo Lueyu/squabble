@@ -19,16 +19,21 @@ import { holdings, watchlist } from '@server/database/schema';
 import type { QuoteResponse, Market, Currency } from '@shared/api.interface';
 import { tradingMarketDate } from '../paper-trading/trading-market.calendar';
 import { tencentObservedUsQuote } from './us-observed-quote';
+import type { TradingTicker } from '../../../shared/trading-market.interface';
+import { throwOnValuationThrottle } from './valuation-rate-limit';
 
 function quoteReading(market: Market, previousClose: number, source: string, observed?: number | string): Partial<QuoteResponse> {
   let quoteAt: string | undefined;
-  if(typeof observed==='number'&&Number.isFinite(observed)&&observed>0)quoteAt=new Date(observed*1000).toISOString();
+  if(typeof observed==='number'&&Number.isSafeInteger(observed)&&observed>0&&observed<253402300800)quoteAt=new Date(observed*1000).toISOString();
   // Tencent HK/CN timestamps use their exchange wall clock. The US fallback's
   // undocumented wall-clock field is intentionally not treated as verified.
   if(typeof observed==='string'&&market!=='US'&&/^\d{14}$/u.test(observed)) {
     const y=Number(observed.slice(0,4)),m=Number(observed.slice(4,6)),d=Number(observed.slice(6,8));
     const h=Number(observed.slice(8,10)),minute=Number(observed.slice(10,12)),second=Number(observed.slice(12,14));
-    if(m>=1&&m<=12&&d>=1&&d<=31&&h<24&&minute<60&&second<60)quoteAt=new Date(Date.UTC(y,m-1,d,h-8,minute,second)).toISOString();
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && h < 24 && minute < 60 && second < 60) {
+      const wall = new Date(Date.UTC(y, m - 1, d, h, minute, second));
+      if (wall.getUTCDate() === d) quoteAt = new Date(wall.getTime() - 8 * 3_600_000).toISOString();
+    }
   }
   return {previousClose:Number.isFinite(previousClose)&&previousClose>0?String(previousClose):undefined,source,quoteAt,
     tradingDate:quoteAt?tradingMarketDate(market,new Date(quoteAt)):undefined};
@@ -323,8 +328,30 @@ export class QuoteService {
     return primary;
   }
 
+  /** Valuation uses dated sources and can stop the collector on an HTTP throttle. */
+  async getValuationQuote(ticker: TradingTicker, at: Date, options: {
+    legacy: boolean;
+    accepts(quote: QuoteResponse): boolean;
+    mayRequest(): boolean;
+  }): Promise<QuoteResponse | null> {
+    if (!options.mayRequest()) return null;
+    const info = this.detectMarket(ticker.ticker);
+    if (ticker.market === 'US') {
+      const observed = await this.fetchUsObservedQuote(info.symbolNative, at, true);
+      if (observed && options.accepts(observed)) return observed;
+      return options.mayRequest() ? this.fetchUsQuoteYahoo(info.symbolNative, at) : null;
+    }
+    if (ticker.market === 'HK') {
+      const observed = await this.fetchHkQuote(info.symbolNative, at);
+      if (observed && options.accepts(observed)) return observed;
+      // The Sina response does not expose a verified provider time.
+      return options.legacy && options.mayRequest() ? this.fetchHkQuoteYahoo(info.symbolNative, at) : null;
+    }
+    return this.fetchCnQuote(info.symbolNative, ticker.providerSymbol.endsWith('.SS') ? 'sh' : 'sz', at);
+  }
+
   /** Sampling-only source: ordinary quote/order selection keeps its existing behavior. */
-  async fetchUsObservedQuote(symbol: string, at = new Date()): Promise<QuoteResponse | null> {
+  async fetchUsObservedQuote(symbol: string, at = new Date(), sampling = false): Promise<QuoteResponse | null> {
     const requested = symbol.toUpperCase();
     if (!/^[A-Z][A-Z0-9.-]{0,19}$/u.test(requested)) return null;
     try {
@@ -333,7 +360,10 @@ export class QuoteService {
         headers: { Accept: 'application/json' },
       }));
       return tencentObservedUsQuote(response.data, requested, at);
-    } catch { return null; }
+    } catch (error) {
+      if (sampling) throwOnValuationThrottle(error, at.getTime());
+      return null;
+    }
   }
 
   /**
@@ -341,7 +371,7 @@ export class QuoteService {
    *
    * @param symbol US ticker.
    */
-  async fetchUsQuoteYahoo(symbol: string): Promise<QuoteResponse | null> {
+  async fetchUsQuoteYahoo(symbol: string, samplingAt?: Date): Promise<QuoteResponse | null> {
     try {
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
       const response = await firstValueFrom(
@@ -372,7 +402,7 @@ export class QuoteService {
       };
 
       const meta = data?.chart?.result?.[0]?.meta;
-      if (!meta) return null;
+      if (!meta || samplingAt && !meta.symbol) return null;
 
       const price = meta.regularMarketPrice;
       const prevClose = meta.chartPreviousClose;
@@ -398,6 +428,7 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
+      if (samplingAt) throwOnValuationThrottle(error, samplingAt.getTime());
       this.logger.warn(`fetchUsQuoteYahoo failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
@@ -408,7 +439,7 @@ export class QuoteService {
    *
    * @param symbol HK native code (5 digits).
    */
-  async fetchHkQuote(symbol: string): Promise<QuoteResponse | null> {
+  async fetchHkQuote(symbol: string, samplingAt?: Date): Promise<QuoteResponse | null> {
     let primary: QuoteResponse | null = null;
     try {
       const url = `http://qt.gtimg.cn/q=hk${symbol}`;
@@ -420,10 +451,11 @@ export class QuoteService {
       if (!text) return null;
 
       // Parse v_hkXXXX="..." pattern.
-      const match = text.match(/v_hk\d+="([^"]*)"/);
+      const match = text.match(/(v_hk\d+)="([^"]*)"/);
+      if (samplingAt && match?.[1] !== 'v_hk' + symbol) return null;
       if (!match) return null;
 
-      const fields = match[1].split('~');
+      const fields = match[2].split('~');
       if (fields.length < 7) return null;
 
       const currentPrice = parseFloat(fields[3]);
@@ -466,9 +498,11 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
+      if (samplingAt) throwOnValuationThrottle(error, samplingAt.getTime());
       this.logger.warn(`fetchHkQuote tencent failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
     }
 
+    if (samplingAt) return primary;
     // Fallback to Sina if primary failed.
     if (!primary) {
       try {
@@ -559,7 +593,7 @@ export class QuoteService {
    * Third-tier HK quote fallback: Yahoo Finance. Used when both Tencent and
    * Sina fail (e.g. 503s from CDN-level rate limiting).
    */
-  async fetchHkQuoteYahoo(symbol: string): Promise<QuoteResponse | null> {
+  async fetchHkQuoteYahoo(symbol: string, samplingAt?: Date): Promise<QuoteResponse | null> {
     try {
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.HK?interval=1d&range=1d`;
       const response = await firstValueFrom(
@@ -568,6 +602,7 @@ export class QuoteService {
       const result = response.data?.chart?.result?.[0];
       if (!result?.meta) return null;
       const meta = result.meta;
+      if (samplingAt && (typeof meta.symbol !== 'string' || meta.symbol.replace(/^0+/u, '') !== (symbol + '.HK').replace(/^0+/u, ''))) return null;
       const price = meta.regularMarketPrice;
       const prevClose = meta.chartPreviousClose ?? meta.previousClose;
       if (!price || price <= 0) return null;
@@ -585,6 +620,7 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
+      if (samplingAt) throwOnValuationThrottle(error, samplingAt.getTime());
       this.logger.warn(`fetchHkQuoteYahoo failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
@@ -596,7 +632,7 @@ export class QuoteService {
    * @param symbol CN native code (6 digits).
    * @param prefix Exchange prefix required by the provider: `sh`, `sz`, or `bj`.
    */
-  async fetchCnQuote(symbol: string, prefix: string): Promise<QuoteResponse | null> {
+  async fetchCnQuote(symbol: string, prefix: string, samplingAt?: Date): Promise<QuoteResponse | null> {
     let primary: QuoteResponse | null = null;
     try {
       const url = `http://qt.gtimg.cn/q=${prefix}${symbol}`;
@@ -608,10 +644,11 @@ export class QuoteService {
       if (!text) return null;
 
       // Parse v_shXXXX="..." or v_szXXXX="..." pattern.
-      const match = text.match(/v_[a-z]+\d+="([^"]*)"/);
+      const match = text.match(/(v_[a-z]+\d+)="([^"]*)"/);
+      if (samplingAt && match?.[1] !== 'v_' + prefix + symbol) return null;
       if (!match) return null;
 
-      const fields = match[1].split('~');
+      const fields = match[2].split('~');
       if (fields.length < 6) return null;
 
       const name = fields[1] ?? '';
@@ -648,9 +685,11 @@ export class QuoteService {
         delayed: true,
       };
     } catch (error) {
+      if (samplingAt) throwOnValuationThrottle(error, samplingAt.getTime());
       this.logger.warn(`fetchCnQuote tencent failed for ${symbol}: ${error instanceof Error ? error.message : String(error)}`);
     }
 
+    if (samplingAt) return primary;
     // Fallback to Sina if primary failed.
     if (!primary) {
       try {

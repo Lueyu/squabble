@@ -1,7 +1,7 @@
 import { readTeamCommissionCost } from './team-cost';
 import { agentWorkingInstructions } from '../../../shared/agent-working-instructions';
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { teamAccountBindings, teamCommissions, teamCommissionJobs, teamVersions, teamSourceGrants, teamResearchLinks, teamDecisions } from '../../database/teams.schema';
@@ -207,8 +207,19 @@ export class TeamCommissionService {
     }
     async detail(owner: string, id: string, commissionId: string) {
         const row = await this.row(this.store.db, owner, id, commissionId);
-        const links = await this.store.db.select().from(teamResearchLinks).where(and(eq(teamResearchLinks.ownerId, owner), eq(teamResearchLinks.commissionId, commissionId)));
-        const decisions = await this.store.db.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.commissionId, commissionId)));
+        // Keep audit identities even when their report version was removed or its source was withdrawn.
+        const links = await this.store.db.select({ ...getTableColumns(teamResearchLinks),
+            reportAvailable: sql<boolean | null>`CASE WHEN ${teamResearchLinks.kind} = 'report_version' THEN EXISTS (
+                SELECT 1 FROM research_document_versions v
+                JOIN council_reports r ON r.owner = v.owner AND r.research_version_id = v.id
+                JOIN council_sessions s ON s.owner = r.owner AND s.id = r.session_id
+                WHERE v.owner = ${owner} AND v.id::text = ${teamResearchLinks.targetId}
+                  AND v.version::text = ${teamResearchLinks.targetRevision} AND v.deleted_at IS NULL AND v.revoked_at IS NULL
+                  AND v.available_at <= now() AND s.id = ${row.sessionId} AND s.team_commission_id = ${row.id}
+                  AND s.deleted_at IS NULL AND r.publication_outcome = 'succeeded'
+            ) END`,
+        }).from(teamResearchLinks).where(and(eq(teamResearchLinks.ownerId, owner), eq(teamResearchLinks.teamId, id), eq(teamResearchLinks.commissionId, commissionId)));
+        const decisions = await this.store.db.select().from(teamDecisions).where(and(eq(teamDecisions.ownerId, owner), eq(teamDecisions.teamId, id), eq(teamDecisions.accountId, row.accountId), eq(teamDecisions.commissionId, commissionId)));
         const tasks = row.sessionId ? await this.store.db.select().from(councilResearchTasks).where(and(eq(councilResearchTasks.owner, owner), eq(councilResearchTasks.sessionId, row.sessionId))) : [];
         return { ...await this.view(this.store.db, row), links, decisions: decisions.map(d => ({ ...d, createdAt: d.createdAt.toISOString() })), tasks };
     }

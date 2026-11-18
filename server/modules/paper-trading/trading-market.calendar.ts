@@ -31,10 +31,13 @@ const EARLY_CLOSE_DATES: Record<TradingMarket, ReadonlySet<string>> = {
   US: new Set(['11-27', '12-24']), HK: new Set(['02-16', '12-24', '12-31']), CN: new Set(),
 };
 
+const LOCAL_CLOCKS = new Map(Object.values(TIMEZONES).map(timeZone => [timeZone, new Intl.DateTimeFormat('en-CA', {
+  timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  second: '2-digit', hourCycle: 'h23',
+})]));
+
 function localParts(timezone: string, instant: Date): Record<string, string> {
-  return Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: timezone,
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-    second: '2-digit', hourCycle: 'h23' }).formatToParts(instant).map(part => [part.type, part.value]));
+  return Object.fromEntries(LOCAL_CLOCKS.get(timezone)!.formatToParts(instant).map(part => [part.type, part.value]));
 }
 
 export function tradingMarketDate(market: TradingMarket, instant: Date): string {

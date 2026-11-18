@@ -4,35 +4,41 @@ import type {
   PortfolioComparisonView,
 } from '@shared/portfolio-comparison.interface';
 
-export const accountColors = [
-  '#178562',
-  '#3976ce',
-  '#8b63be',
-  '#b87932',
-  '#268a96',
-  '#bf607f',
-];
+const accountColorTokens = ['--chart-2', '--chart-1', '--chart-5', '--chart-3', '--chart-4', '--info'];
 
-/** Derive color from identity, not selection order, so toggling a line never recolors another. */
-export function accountColor(id: string, colorIndex?: number): string {
-  if (id === 'real') return 'var(--foreground, #263e36)';
-  if (colorIndex !== undefined && colorIndex >= 0)
-    return accountColors[colorIndex % accountColors.length];
-  let hash = 0;
-  for (const character of id)
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return accountColors[hash % accountColors.length];
+/** Account colors follow account identity and the active theme. */
+export function accountColor(id: string, colorIndex?: number, theme?: CSSStyleDeclaration): string {
+  let index = colorIndex ?? -1;
+  if (index < 0) {
+    index = 0;
+    for (const character of id) index = (index * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  const token = id === 'real' ? '--foreground' : accountColorTokens[index % accountColorTokens.length];
+  return theme?.getPropertyValue(token).trim() || 'var(' + token + ')';
 }
 
-/** ECharts receives a resolved color; HTML consumers retain the live theme token. */
-export function chartAccountColor(
-  id: string,
-  colorIndex?: number,
-  dark = false,
-  foreground?: string,
-): string {
-  if (id === 'real') return foreground || (dark ? '#e5ede8' : '#263e36');
-  return accountColor(id, colorIndex);
+export function comparisonInclusionPoint(
+  series: PortfolioComparisonSeries,
+  metric: PortfolioComparisonMetric,
+  window?: Pick<PortfolioComparisonView, 'from' | 'to'>,
+) {
+  if (series.kind !== 'simulation' || !series.firstIncludedAt) return undefined;
+  const at = Date.parse(series.firstIncludedAt);
+  if (!Number.isFinite(at) || (window && (at < Date.parse(window.from) || at > Date.parse(window.to)))) return undefined;
+  return series.points.find(point => Date.parse(point.timestamp) === at
+    && Number.isFinite(metric === 'equity' ? point.equityUsd : point.returnPct));
+}
+
+export function formatComparisonTime(value: string | number, language: string, seconds = false) {
+  return new Intl.DateTimeFormat(language, {
+    timeZone: 'Asia/Shanghai',
+    ...(seconds ? { year: 'numeric', second: '2-digit' } : {}),
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(value));
 }
 
 export interface ComparisonGapBridge {
@@ -92,7 +98,7 @@ export function comparisonSymbolIndices(
   const valid = (index: number) => values[index] !== null && Number.isFinite(values[index]);
   const count = values.filter(value => value !== null && Number.isFinite(value)).length;
   return values.flatMap((_value, index) => valid(index)
-    && (count < 3 || (!valid(index - 1) && !valid(index + 1))) ? [index] : []);
+    && (count <= 24 || !valid(index - 1) || !valid(index + 1)) ? [index] : []);
 }
 
 export function comparisonSamplingLabel(
@@ -132,7 +138,7 @@ export function comparisonTimeWindow(series: PortfolioComparisonSeries[]) {
 /** Reference days have no observed-at time and must not change with the browser's timezone. */
 export function referenceDateLabel(value: number, language: string, intraday = false): string {
   return new Intl.DateTimeFormat(language, {
-    ...(!intraday ? { timeZone: 'UTC' } : {}),
+    timeZone: intraday ? 'Asia/Shanghai' : 'UTC',
     month: '2-digit',
     day: '2-digit',
     ...(intraday ? { hour: '2-digit', minute: '2-digit' } as const : {}),
@@ -169,10 +175,8 @@ export function comparisonTooltip(
   );
   if (!entries.length) return '';
   const timestamp = entries[0].data[0];
-  const observedAt = (value: number) => new Intl.DateTimeFormat(language, {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    }).format(value);
+  const observedAt = (value: number) => formatComparisonTime(value, language, true);
+  const zh = language.startsWith('zh');
   const hasQuoteTime = (item: (typeof entries)[number]) => quoteTimestamps.some(quote =>
     typeof quote === 'number' ? quote === item.data[0]
       : quote.accountId === item.seriesId && quote.timestamp === item.data[0]);
@@ -186,14 +190,18 @@ export function comparisonTooltip(
   return [
     heading,
     ...entries.map(item => {
-      const time = reference && hasQuoteTime(item) ? ` (${observedAt(item.data[0])})` : '';
+      const time = (reference ? hasQuoteTime(item) : item.data[0] !== timestamp) ? ` (${observedAt(item.data[0])})` : '';
       const value = item.data[1] == null ? '—' : metric === 'return'
         ? `${item.data[1].toFixed(2)}%` : money.format(item.data[1]);
-      const gaps = reference && item.data[1] == null ? series.find(row => row.accountId === item.seriesId)?.points
+      const account = series.find(row => row.accountId === item.seriesId);
+      const gaps = item.data[1] == null ? account?.points
         .find(point => Date.parse(point.timestamp) === item.data[0])?.gaps ?? [] : [];
-      const warnings = [...new Set(gaps.filter(gap => referencePriceWarnings.has(gap.split(':')[0]))
-        .map(gap => comparisonGapLabel(gap, language.startsWith('zh'), true)))];
-      return `${item.seriesName ?? ''}${time}: ${value}${warnings.length ? ` · ${warnings.join('; ')}` : ''}`;
+      const warnings = [...new Set(gaps.map(gap => comparisonGapLabel(gap, zh, reference)))];
+      const inclusion = account && !reference ? comparisonInclusionPoint(account, metric) : undefined;
+      if (inclusion && Date.parse(inclusion.timestamp) === item.data[0]) {
+        warnings.unshift(zh ? '首次计入统计' : 'First included valuation');
+      }
+      return [(item.seriesName ?? '') + time + ': ' + value, ...warnings].join(' · ');
     }),
   ].join('\n');
 }

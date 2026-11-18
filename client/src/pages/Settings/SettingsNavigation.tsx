@@ -1,68 +1,58 @@
+import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { NavLink, useNavigate } from 'react-router-dom';
-import {
-  BookOpenText, Bot, ChevronRight, Coins, Palette, RefreshCw,
-  ShieldCheck, SlidersHorizontal, Sparkles, Bell, Plug, type LucideIcon,
-} from 'lucide-react';
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { SETTINGS_GROUPS, SETTINGS_SECTIONS, type SettingsSection } from './settings-navigation';
-import { getAuthMode } from '@/api/auth-mode';
+import { Link, useLocation } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import { useToolConnectionCopy } from '@/features/tool-connections/tool-connection-copy';
+import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navigation';
+import { CONNECTION_SETTINGS, isConnectionSettingsSection, visibleSettingsSections, type SettingsSection } from './settings-navigation';
 
-const ICONS: Record<SettingsSection, LucideIcon> = {
-  models: Sparkles, agents: Bot, budget: Coins, rules: SlidersHorizontal,
-  appearance: Palette, security: ShieldCheck, updates: RefreshCw, guide: BookOpenText,
-  notifications: Bell, mcp: Plug, tools: Plug,
-};
-
-export default function SettingsNavigation({ active }: { active: SettingsSection }) {
+export default function SettingsNavigation({ active, localWorkspace, placement }: {
+  active: SettingsSection;
+  localWorkspace: boolean;
+  placement: 'sidebar' | 'page';
+}) {
   const { t } = useTranslation();
   const toolCopy = useToolConnectionCopy();
-  const navigate = useNavigate();
-  const sections = SETTINGS_SECTIONS.filter(section => getAuthMode() !== 'local' || section.id !== 'security');
+  const location = useLocation();
+  const connections = isConnectionSettingsSection(active);
+  const otherSections = visibleSettingsSections(localWorkspace).filter(section => !isConnectionSettingsSection(section.id));
 
-  return <>
-    <aside className="settings-sidebar" aria-label={t('settingsNav.navigation')}>
-      <div className="settings-sidebar-heading">
-        <span className="settings-kicker">SQUABBLE</span>
-        <p className="settings-sidebar-title">{t('ui.settings.nav')}</p>
-        <p className="settings-sidebar-intro">{t('settingsNav.intro')}</p>
-      </div>
-      <nav className="settings-menu" aria-label={t('settingsNav.navigation')}>
-        {SETTINGS_GROUPS.map(group => <div className="settings-menu-group" key={group}>
-          <p className="settings-group-label">{t(`settingsNav.groups.${group}`)}</p>
-          {sections.filter(section => section.group === group).map(section => {
-            const Icon = ICONS[section.id];
-            return <NavLink key={section.id} to={`/settings/${section.id}`} end
-              className="settings-menu-link">
-              <Icon size={18} aria-hidden="true" />
-              <span>{section.id === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section.id}.title`)}</span>
-              <ChevronRight size={14} className="settings-menu-arrow" aria-hidden="true" />
-            </NavLink>;
-          })}
-        </div>)}
-      </nav>
-      <div className="settings-sidebar-note">
-        <span className="settings-note-dot" aria-hidden="true" />
-        {t('settingsNav.sidebarNote')}
-      </div>
-    </aside>
+  const link = (section: SettingsSection) => (
+    <Link
+      key={section}
+      to={{
+        pathname: `/settings/${section}`,
+        search: connections && isConnectionSettingsSection(section) ? location.search : '',
+      }}
+      state={connections && isConnectionSettingsSection(section) ? location.state : undefined}
+      aria-current={active === section ? 'page' : undefined}
+    >
+      {section === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section}.title`)}
+    </Link>
+  );
 
-    <div className="settings-mobile-navigation">
-      <Select value={active} onValueChange={value => navigate(`/settings/${value}`)}>
-        <SelectTrigger aria-label={t('settingsNav.navigation')} className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {SETTINGS_GROUPS.map(group => <SelectGroup key={group}>
-            <SelectLabel>{t(`settingsNav.groups.${group}`)}</SelectLabel>
-            {sections.filter(section => section.group === group).map(section =>
-              <SelectItem key={section.id} value={section.id}>
-                {section.id === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section.id}.title`)}
-              </SelectItem>)}
-          </SelectGroup>)}
-        </SelectContent>
-      </Select>
-    </div>
-  </>;
+  return <div className={`settings-navigation settings-navigation-${placement}`} role="group" aria-label={t('settingsNav.navigation')}>
+    <div className="settings-connection-links">{CONNECTION_SETTINGS.map(link)}</div>
+    <details className="settings-more-links" key={connections ? 'connections' : 'other'} open={!connections}>
+      <summary>{t('settingsNav.more')}<ChevronDown size={14} aria-hidden="true" /></summary>
+      <div>{otherSections.map(section => link(section.id))}</div>
+    </details>
+  </div>;
+}
+
+export function SettingsLocation({ active }: { active: SettingsSection }) {
+  const { t } = useTranslation();
+  const toolCopy = useToolConnectionCopy();
+  const { goBack } = useWorkspaceNavigation();
+  return <div className="workspace-return-location">
+    <Button type="button" variant="outline" size="sm" aria-label={t('settingsNav.back')}
+      onClick={() => goBack(active === 'models' ? '/' : '/settings/models')}>
+      <ArrowLeft size={15} /><span className="hidden sm:inline">{t('settingsNav.back')}</span>
+    </Button>
+    <span className="workspace-location">
+      <span className="hidden lg:inline">{t('settingsNav.title')}</span>
+      <ChevronRight className="hidden shrink-0 lg:block" size={13} aria-hidden="true" />
+      <span className="min-w-0 truncate">{active === 'tools' ? toolCopy.title : t(`settingsNav.sections.${active}.title`)}</span>
+    </span>
+  </div>;
 }

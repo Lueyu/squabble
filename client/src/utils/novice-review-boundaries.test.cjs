@@ -23,23 +23,25 @@ test('roster loading and read failure block creating a research task, while save
 });
 test('automatic run setup retries an unknown confirmation with the original frozen preview and request', async () => {
   const f = fixture();
-  const { executeRunSetup } = f.load('features/teams/TeamRunPanel.tsx');
+  const { executeRunSetup } = f.load('features/teams/team-run-recovery.ts');
   const calls = [];
-  const record = { key: 'intent', payload: { objective: 'Reviewed objective' } };
+  const record = { key: 'intent', payload: { objective: 'Reviewed objective' }, preview: { previewId: 'exact-preview', previewHash: 'exact-hash' } };
+  let persisted;
   let uncertain = true;
   const api = {
-    preview: async (_team, input) => { calls.push(['preview', input]); return { previewId: 'exact-preview', previewHash: 'exact-hash' }; },
     confirm: async (_team, input) => { calls.push(['confirm', input]); if (uncertain) { uncertain = false; throw new Error('Lost response'); } return { revision: 7 }; },
     start: async (_team, input) => { calls.push(['start', input]); return { state: 'running' }; },
   };
-  await assert.rejects(executeRunSetup('team', record, api), /Lost response/);
-  await executeRunSetup('team', record, api);
-  assert.equal(calls.filter(([operation]) => operation === 'preview').length, 1);
-  assert.deepEqual(calls[1], calls[2]);
-  assert.equal(calls[3][1].expectedRevision, 7);
+  const retain = value => { persisted = JSON.parse(JSON.stringify(value)); };
+  await assert.rejects(executeRunSetup('team', record, api, retain), /Lost response/);
+  assert.equal(persisted.authorized, true);
+  await executeRunSetup('team', persisted, api, retain);
+  assert.deepEqual(calls[0], calls[1]);
+  assert.equal(calls[2][1].expectedRevision, 7);
+  assert.equal(persisted.agreement.revision, 7);
 });
 test('definitively stale setup requires a fresh reviewed intent, while timeouts remain unknown', () => {
-  const { runSetupNeedsReview } = fixture().load('features/teams/TeamRunPanel.tsx');
+  const { runSetupNeedsReview } = fixture().load('features/teams/team-run-recovery.ts');
   assert.equal(runSetupNeedsReview({ response: { status: 409, data: { code: 'TEAM_PREVIEW_STALE' } } }), true);
   assert.equal(runSetupNeedsReview(new Error('Lost response')), false);
 });

@@ -9,7 +9,7 @@
  * Auth: account mode requires a stored session; local mode opens the workspace
  * directly. The account-mode user menu reads GET /api/auth/me.
  */
-import { Outlet, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom';
+import { Outlet, Link, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -54,6 +54,8 @@ import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navi
 import { WorkspaceNavigationBar, WorkspaceSectionTabs } from '@/features/navigation/WorkspaceNavigationBar';
 import { WorkspaceSearch } from '@/features/navigation/WorkspaceSearch';
 import { clearTeamDraftStorage } from '@/features/teams/team-draft-storage';
+import SettingsNavigation, { SettingsLocation } from '@/pages/Settings/SettingsNavigation';
+import { resolveSettingsSection } from '@/pages/Settings/settings-navigation';
 
 /**
  * Sidebar navigation entries. `end: true` marks the index route so it is only
@@ -94,6 +96,7 @@ function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const inSettings = location.pathname === '/settings' || location.pathname.startsWith('/settings/');
+  const settingsSection = resolveSettingsSection(location.pathname, location.hash, localWorkspace);
   const pageScrollRef = useRef<HTMLElement>(null);
   const zh = i18n.language.startsWith('zh');
   const { enabled: simple } = useSimpleExperience();
@@ -157,7 +160,17 @@ function Layout() {
             {navGroups.map((group) => (
               <div key={group.label} className="app-nav-group">
                 <div className="app-nav-label">{group.label}</div>
-                {group.items.map((item) => (
+                {group.items.map((item) => item.path === '/settings' ? (
+                  <div key={item.path} className="app-settings-navigation">
+                    <Link to="/settings" onClick={() => setMobileOpen(false)}
+                      className={`app-nav-link flex items-center px-3 py-2 text-sm transition-colors ${inSettings
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
+                        : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'}`}>
+                      <Settings size={18} aria-hidden="true" /><span>{t('settingsNav.title')}</span>
+                    </Link>
+                    {settingsSection && <SettingsNavigation active={settingsSection} localWorkspace={localWorkspace} placement="sidebar" />}
+                  </div>
+                ) : (
               <NavLink
                 key={item.path}
                 to={item.path}
@@ -236,7 +249,7 @@ function Layout() {
             >
               <Menu size={20} />
             </button>
-            {simple ? <WorkspaceNavigationBar /> : <div className="app-page-title">
+            {settingsSection ? <SettingsLocation active={settingsSection} /> : simple ? <WorkspaceNavigationBar /> : <div className="app-page-title">
               {(() => {
                 const match = allItems.find((item) => {
                   if (item.end) return location.pathname === item.path;

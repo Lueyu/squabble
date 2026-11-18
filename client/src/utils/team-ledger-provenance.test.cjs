@@ -9,9 +9,9 @@ test('an older server with no provenance projection remains unknown rather than 
   assert.match(f.render(ExecutionProvenance, { entries: [] }), /Historical judgment not recorded/);
 });
 
-test('execution links use the recorded order source or an exact trade target, never an empty order id', () => {
+test('history links open the exact order or fill on its recorded ledger', () => {
   const { teamLedgerHref } = fixture().load('features/teams/team-ledger-link.ts');
-  assert.equal(teamLedgerHref('account-a', { kind: 'trade', targetId: 'trade-a', metadata: { sourceKind: 'order', sourceId: 'original-order' } }), '/transactions?accountId=account-a&orderId=original-order');
+  assert.equal(teamLedgerHref('account-a', { kind: 'trade', targetId: 'trade-a', metadata: { sourceKind: 'order', sourceId: 'original-order' } }), '/transactions?accountId=account-a&tradeId=trade-a');
   assert.equal(teamLedgerHref('account-a', { kind: 'trade', targetId: 'trade-a', metadata: {} }), '/transactions?accountId=account-a&tradeId=trade-a');
   assert.equal(teamLedgerHref('account-a', { kind: 'order', targetId: 'order-a', metadata: {} }), '/transactions?accountId=account-a&orderId=order-a');
 });
