@@ -108,6 +108,39 @@ test('comparison reads owned saved observations, preserves gaps and performs no 
     await db.insert(paperEquityObservations).values({owner,accountId:deferred.id,slot:'changed-account',dateKey:'2026-11-09',capturedAt:new Date('2026-11-09T19:30:00Z'),equityUsd:null,knownValueUsd:'100',complete:false,estimated:true,marketQuotes:[],gaps:['ACCOUNT_CHANGED_DURING_CAPTURE'],sourceFingerprint:'changed'});
     const changed=(await service.read(owner,'ALL',deferred.id,new Date('2026-11-09T20:00:00Z'))).series[0];
     assert.equal(changed.returnPct,null);assert.ok(changed.gaps.includes('CASH_FLOW_OR_BASELINE_CHANGED'));
+
+    const [newPaper, awaitingPaper] = await db.insert(paperAccounts).values([
+      { id: '00000000-0000-4000-8000-000000000002', owner, name: 'New simulation', createdAt: new Date('2026-11-17T01:00:00Z') },
+      { id: '00000000-0000-4000-8000-000000000001', owner, name: 'Awaiting complete valuation', createdAt: new Date('2026-11-17T01:00:00Z') },
+    ]).returning();
+    await db.insert(paperSnapshots).values([
+      { owner, accountId: newPaper.id, snapshotDate: '2026-11-17', valuedAt: new Date('2026-11-17T00:59:00Z'), equity: '100', cash: '100' },
+      { owner, accountId: awaitingPaper.id, snapshotDate: '2026-11-17', valuedAt: null, equity: '100', cash: '100' },
+    ]);
+    const captured = (accountId: string, timestamp: string, complete: boolean) => ({
+      owner, accountId, slot: timestamp, dateKey: timestamp.slice(0, 10), capturedAt: new Date(timestamp),
+      equityUsd: complete ? '100' : null, knownValueUsd: '100', complete, estimated: !complete,
+      marketQuotes: [], gaps: complete ? [] : ['QUOTE_TIME_UNVERIFIED:FICT'], sourceFingerprint: timestamp,
+    });
+    const included = '2026-11-17T01:35:00.000Z';
+    await db.insert(paperEquityObservations).values([
+      captured(newPaper.id, '2026-11-17T01:30:00.000Z', false),
+      captured(newPaper.id, included, true),
+      captured(newPaper.id, '2026-11-17T01:40:00.000Z', true),
+      captured(newPaper.id, '2026-11-19T01:40:00.000Z', true),
+      captured(awaitingPaper.id, '2026-11-17T01:40:00.000Z', false),
+    ]);
+    const asOf = new Date('2026-11-19T02:00:00Z');
+    const month = await service.read(owner, '1M', [newPaper.id, awaitingPaper.id].join(','), asOf);
+    const observedAccount = month.series.find(item => item.accountId === newPaper.id);
+    const awaitingAccount = month.series.find(item => item.accountId === awaitingPaper.id);
+    assert.ok(observedAccount && awaitingAccount);
+    assert.equal(observedAccount.firstIncludedAt, included);
+    assert.ok(observedAccount.points.some(point => point.timestamp === included && point.equityUsd === 100), 'hourly reduction retains the actual inclusion observation');
+    assert.equal(awaitingAccount.firstIncludedAt, null, 'missing timestamps and partial known value give no inclusion evidence');
+    const intradayView = await service.read(owner, '1D', newPaper.id, asOf);
+    assert.equal(intradayView.series[0].firstIncludedAt, included, 'the earliest fact is independent of window');
+    assert.deepEqual(intradayView.series[0].points.map(point => point.timestamp), ['2026-11-19T01:40:00.000Z']);
   } finally {
     await client.end();
     await admin.unsafe(`DROP SCHEMA IF EXISTS ${namespace} CASCADE`);

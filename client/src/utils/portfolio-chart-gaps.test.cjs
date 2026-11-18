@@ -1,5 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+const { MemoryRouter } = require('react-router-dom');
+const echarts = require('echarts');
+const ReactECharts = require('echarts-for-react').default;
 const fixture = require('./simple-test-loader.cjs');
 
 const point = (day, equityUsd, gaps = [], returnPct = null) => ({
@@ -8,6 +13,58 @@ const point = (day, equityUsd, gaps = [], returnPct = null) => ({
   equityUsd, returnPct, gaps,
 });
 const series = points => ({ accountId: 'real', points });
+
+test('weekly return axes handle one valid observation and distinguish fine ticks without changing chart data', (t) => {
+  const f = fixture();
+  const Chart = f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default;
+  let svg;
+  let chartData;
+  t.mock.method(ReactECharts.prototype, 'render', function () {
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 1000, height: 250 });
+    try {
+      chart.setOption(this.props.option);
+      chartData = chart.getOption().series[0].data;
+      svg = chart.renderToSVGString();
+    } finally {
+      chart.dispose();
+    }
+    return null;
+  });
+  const render = (points, period = '1W') => {
+    const markup = f.render(Chart, { series: [series(points)], metric: 'return', period, granularity: 'observations' });
+    assert.deepEqual(chartData, points.map(({ timestamp, returnPct }) => [Date.parse(timestamp), returnPct]));
+    return markup;
+  };
+  const labels = () => [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(match => match[1]);
+
+  const oneReturn = [point(17, 101), point(18, 102, [], 0), point(19, 103)];
+  assert.match(render(oneReturn), /11\/19, 00:00/);
+  assert.deepEqual(labels(), ['0%']);
+  render([point(17, 101), point(18, 102, [], 0.1 + 0.2)]);
+  assert.deepEqual(labels(), ['+0.3%']);
+  render(oneReturn, '1M');
+  assert.ok(labels().some(label => label.endsWith('%')));
+
+  render([point(13, 101, [], 0), point(15, 100, [], -0.004), point(18, 102, [], 0.003)]);
+  assert.deepEqual(labels().filter(label => label.endsWith('%')), ['-0.004%', '-0.002%', '0%', '+0.002%', '+0.004%']);
+
+  render([point(13, 101, [], 0), point(15, 100, [], -2), point(18, 102, [], 3)]);
+  assert.deepEqual(labels().filter(label => label.endsWith('%')), ['-2%', '-1%', '0%', '+1%', '+2%', '+3%']);
+});
+
+test('comparison extents can scan more observations than a spread call can accept', () => {
+  const { comparisonReturnExtent, comparisonTimeWindow } = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
+  const start = point(13, 100, [], -2);
+  const end = point(18, 101, [], 3);
+  const input = [series([start, ...Array(150_000).fill(point(15, 100, [], 0)), end])];
+  const extent = comparisonReturnExtent(input);
+  assert.equal(extent.count, 150_002);
+  assert.equal(extent.min, -2);
+  assert.equal(extent.max, 3);
+  const time = comparisonTimeWindow(input);
+  assert.equal(time.first, Date.parse(start.timestamp));
+  assert.equal(time.last, Date.parse(end.timestamp));
+});
 
 test('equity bridges only a declared observation gap using its unchanged known endpoints', () => {
   const options = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
@@ -109,7 +166,7 @@ test('isolated points stay visible for the selected metric even when equity has 
   assert.equal(typeof comparisonSymbolIndices, 'function');
   const input = series([point(1, 100, [], 0), point(2, 101), point(3, 105, [], 5), point(4, 106), point(5, 110, [], 10)]);
   assert.deepEqual(Array.from(comparisonSymbolIndices(input, 'return')), [0, 2, 4]);
-  assert.deepEqual(Array.from(comparisonSymbolIndices(input, 'equity')), []);
+  assert.deepEqual(Array.from(comparisonSymbolIndices(input, 'equity')), [0, 1, 2, 3, 4]);
 });
 
 test('tooltips exclude visual bridge series and keep only actual timestamps and values', () => {
@@ -136,26 +193,26 @@ test('reference date labels remain date-only while actual sampling descriptions 
 });
 
 test('real account colors follow the current foreground token in HTML and resolved chart colors', () => {
-  const { accountColor, chartAccountColor } = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
-  assert.match(accountColor('real', -1), /var\(--foreground/);
-  assert.equal(typeof chartAccountColor, 'function');
-  assert.equal(chartAccountColor('real', -1, true, 'rgb(225, 238, 231)'), 'rgb(225, 238, 231)');
-  assert.equal(accountColor('same-account', 2), chartAccountColor('same-account', 2, true));
+  const { accountColor } = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
+  const theme = { getPropertyValue: token => ({ '--foreground': 'rgb(225, 238, 231)', '--chart-2': '#447fd2' })[token] ?? '' };
+  assert.equal(accountColor('real'), 'var(--foreground)');
+  assert.equal(accountColor('real', -1, theme), 'rgb(225, 238, 231)');
+  assert.equal(accountColor('sim', 0, theme), '#447fd2');
+  assert.notEqual(accountColor('sim', 0), accountColor('other', 1));
 });
 
-test('chart captions expose the actual sampling and distinguish a visual gap connection from saved values', () => {
+test('recorded chart captions expose aggregation and explain missing real valuations', () => {
   const f = fixture();
   f.state.queries.set('portfolio-comparison', { data: { granularity: 'hourly', series: [{
     ...series([point(1, 100), point(2, null, ['MISSING_OBSERVATION']), point(4, 120)]),
     name: 'Real portfolio', kind: 'real', status: 'real', colorIndex: -1,
     equityUsd: 120, returnPct: 20, strategyCount: 0, gaps: ['MISSING_OBSERVATION'],
   }] } });
-  f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default = () => null;
+  f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default = ({ annotation }) => annotation ?? null;
   const Panel = f.load('features/portfolio-comparison/PortfolioComparisonPanel.tsx').default;
   const markup = f.render(Panel);
   assert.match(markup, /Latest saved valuation per hour/);
-  assert.match(markup, /Dashed links mark missing intervals/);
-  assert.match(markup, /not additional valuations/);
+  assert.match(markup, /Periods without a complete real-account valuation are shown as gaps/);
 });
 
 test('reference warning is explained within the existing caption without declaring an unknown day valued', () => {
@@ -170,11 +227,11 @@ test('reference warning is explained within the existing caption without declari
       priceAsOf: [{ ticker: 'FICT', date: `2026-11-0${day}`, source: 'fixture' }], fxAsOf: [],
       gaps: day === 5 ? ['PRICE_DISCONTINUITY_UNVERIFIED:FICT'] : [],
     })), gaps: ['PRICE_DISCONTINUITY_UNVERIFIED:FICT'] }] } });
-  f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default = () => null;
+  f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default = ({ annotation }) => annotation ?? null;
   const Panel = f.load('features/portfolio-comparison/PortfolioComparisonPanel.tsx').default;
-  const markup = f.render(Panel);
-  assert.match(markup, /portfolio-chart-caption[^]*Warning dashes link unknown intervals/);
-  assert.match(markup, /not daily valuations/);
+  const markup = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: ['/?basis=reference'] }, React.createElement(Panel, { persistView: true })));
+  assert.match(markup, /Warning dashes link unknown intervals/);
+  assert.match(markup, /Values in those intervals remain unknown/);
   assert.doesNotMatch(markup, /Price conventions changed; the line breaks here/);
 });
 
@@ -213,4 +270,20 @@ test('a daily close does not inherit another account quote time at the same char
   assert.match(text, /Daily close: \$100\.00/);
   assert.match(text, /Saved quote \([^\n]+:[^\n]+\): \$120\.00/);
   assert.doesNotMatch(text.split('\n')[0], /:/);
+});
+
+
+test('only the precise first included paper observation inside the window can mark a line', () => {
+  const { comparisonInclusionPoint, comparisonTooltip } = fixture().load('features/portfolio-comparison/comparison-chart-options.ts');
+  const timestamp = '2026-11-17T01:35:00.000Z';
+  const observed = { timestamp, equityUsd: 100, returnPct: 0, gaps: [] };
+  const account = { accountId: 'paper', kind: 'simulation', firstIncludedAt: timestamp, points: [observed] };
+  assert.equal(comparisonInclusionPoint(account, 'return', { from: '2026-11-16', to: '2026-11-18' }), observed);
+  assert.equal(comparisonInclusionPoint(account, 'equity', { from: '2026-11-18', to: '2026-11-19' }), undefined);
+  assert.equal(comparisonInclusionPoint({ ...account, firstIncludedAt: null }, 'equity'), undefined);
+  assert.equal(comparisonInclusionPoint({ ...account, points: [{ ...observed, returnPct: null }] }, 'return'), undefined);
+  const tooltip = comparisonTooltip([{ seriesId: 'paper', seriesName: 'Paper', data: [Date.parse(timestamp), 0] }],
+    'en-US', 'return', false, [], [account]);
+  assert.match(tooltip, /09:35:00/);
+  assert.match(tooltip, /First included valuation/);
 });

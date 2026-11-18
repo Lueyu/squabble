@@ -5,8 +5,9 @@ import type { TradingMarket, TradingMarketSchedule, TradingMarketSnapshot } from
 import { resolveTradingTicker } from '@shared/trading-market.interface';
 import { tradingMarketSchedule } from './trading-market.calendar';
 import { emptyTradingSnapshot, parseTradingSnapshot } from './trading-market.source';
+import { valuationRetryDelay } from '../quote/valuation-rate-limit';
 
-interface SourceEntry { payload: unknown; fetchedAt: string; expiresAt: number; failed: boolean }
+interface SourceEntry { payload: unknown; fetchedAt: string; expiresAt: number; failed: boolean; retryAfterMs?: number }
 
 const MAX_CACHE_ENTRIES = 256;
 const MAX_IN_FLIGHT = 32;
@@ -22,7 +23,8 @@ export class TradingMarketService {
     return tradingMarketSchedule(market, now);
   }
 
-  async getSnapshot(ticker: string, now = new Date(), forceRefresh = false): Promise<TradingMarketSnapshot> {
+  async getSnapshot(ticker: string, now = new Date(), forceRefresh = false,
+    onThrottle?: (retryAfterMs: number) => Promise<void>): Promise<TradingMarketSnapshot> {
     const info = resolveTradingTicker(ticker);
     const snapshot = emptyTradingSnapshot(ticker, now, info);
     if (!info) return snapshot;
@@ -46,6 +48,7 @@ export class TradingMarketService {
       while (this.cache.size > MAX_CACHE_ENTRIES) this.cache.delete(this.cache.keys().next().value!);
     }
     if (source.failed) {
+      if (source.retryAfterMs !== undefined) await onThrottle?.(source.retryAfterMs);
       snapshot.fetchedAt = source.fetchedAt;
       snapshot.quoteReason = snapshot.reason = 'source_unavailable';
       return snapshot;
@@ -62,9 +65,10 @@ export class TradingMarketService {
         headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 Squabble-Paper/1.0' },
       }).pipe(timeout(9000)));
       return { payload: response.data, fetchedAt, expiresAt: now.getTime() + 60_000, failed: false };
-    } catch {
+    } catch (error) {
       // Explicit unavailable result; never substitute stored prices or fabricated bars.
-      return { payload: null, fetchedAt, expiresAt: now.getTime() + 15_000, failed: true };
+      return { payload: null, fetchedAt, expiresAt: now.getTime() + 15_000, failed: true,
+        retryAfterMs: valuationRetryDelay(error, now.getTime()) ?? undefined };
     }
   }
 }

@@ -1,8 +1,9 @@
 import { isAxiosError } from 'axios';
+import { readTabRecovery, writeTabRecovery } from '@/utils/workspace-tab-recovery';
 import type { ModelConnection } from '@shared/model-connections.interface';
 import type { CreatePortfolioAccountRequest, PortfolioAccountSummary } from '@shared/portfolio-workspace.interface';
 import type { CustomSimulationCash, InvestmentPreviewRequest } from '@shared/investment-policy.interface';
-import type { CreateTeamInput, TeamExecutor, TeamSemanticConfig } from '@shared/team-workspace.interface';
+import type { BindingPreviewInput, ConfirmPreview, CreateTeamInput, TeamExecutor, TeamPublishPreviewInput, TeamSemanticConfig } from '@shared/team-workspace.interface';
 
 /**
  * Template quick start: one reviewed confirmation chains the existing draft,
@@ -19,6 +20,7 @@ export type QuickStartSeed =
 export interface QuickStartInput {
   name: string; description: string; avatar: string; templateId: string;
   seed: QuickStartSeed; accountName: string; connectionId: string | null;
+  onboarding?: boolean;
   creationMode?: 'template' | 'blank' | 'copy'; copyFromTeamVersionId?: string;
   /** The user reviewed this exact frozen seed before the creation chain started. */
   reviewedSeed?: { previewId: string; requestKey: string };
@@ -40,6 +42,12 @@ export interface QuickStartKeySlots {
 
 export interface StoredQuickStart {
   savedAt: string; input: QuickStartInput; keys: QuickStartKeySlots; progress: QuickStartProgress;
+  failureKind?: QuickStartFailureKind;
+  initialSemanticRevision?: number;
+  publishPreview?: TeamPublishPreviewInput;
+  publishConfirm?: ConfirmPreview;
+  bindingPreview?: BindingPreviewInput;
+  bindingConfirm?: ConfirmPreview;
   accountReviewKey?: string;
   receivedAccountReview?: { requestKey: string; previewId: string; expiresAt: string };
 }
@@ -188,7 +196,8 @@ function readSeed(value: unknown): QuickStartSeed | null {
 export function readStoredQuickStart(): StoredQuickStart | null {
   try {
     if (typeof window === 'undefined' || !window.sessionStorage) return null;
-    const value = JSON.parse(window.sessionStorage.getItem(QUICK_START_STORAGE_KEY) ?? 'null') as StoredQuickStart | null;
+    const scoped = readTabRecovery('team-quick-start');
+    const value = (scoped ?? JSON.parse(window.sessionStorage.getItem(QUICK_START_STORAGE_KEY) ?? 'null')) as StoredQuickStart | null;
     if (!value || typeof value !== 'object' || typeof value.savedAt !== 'string') return null;
     const input = value.input;
     if (!input || typeof input !== 'object' || typeof input.name !== 'string' || typeof input.templateId !== 'string') return null;
@@ -200,16 +209,16 @@ export function readStoredQuickStart(): StoredQuickStart | null {
     const slots = ['team', 'draft', 'publishPreview', 'publishConfirm', 'accountPreview', 'accountCreate', 'accountCompanion', 'bindingPreview', 'bindingConfirm'] as const;
     if (slots.some(slot => typeof keys[slot] !== 'string')) return null;
     if (input.reviewedSeed && (typeof input.reviewedSeed.previewId !== 'string' || typeof input.reviewedSeed.requestKey !== 'string')) return null;
-    const received = value.receivedAccountReview;
-    return { savedAt: value.savedAt, input: { ...input, seed }, keys, progress, ...(typeof value.accountReviewKey === 'string' ? { accountReviewKey: value.accountReviewKey } : {}), ...(received && typeof received.requestKey === 'string' && typeof received.previewId === 'string' && typeof received.expiresAt === 'string' ? { receivedAccountReview: received } : {}) };
+    return { ...value, input: { ...input, seed } };
   } catch { return null; }
 }
 
 export function writeStoredQuickStart(record: StoredQuickStart): boolean {
-  try { if (typeof window === 'undefined' || !window.sessionStorage) return false; window.sessionStorage.setItem(QUICK_START_STORAGE_KEY, JSON.stringify(record)); return true; } catch { return false; }
+  return writeTabRecovery('team-quick-start', record);
 }
 
 export function clearStoredQuickStart(): void {
+  writeTabRecovery('team-quick-start', null);
   try { if (typeof window !== 'undefined' && window.sessionStorage) window.sessionStorage.removeItem(QUICK_START_STORAGE_KEY); } catch { /* Removal is best effort. */ }
 }
 

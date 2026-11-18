@@ -52,6 +52,8 @@ import {
   screenshotSelectionError,
 } from './screenshot-import';
 import { ImportSavedNextSteps } from './ImportSavedNextSteps';
+import { workspaceOwnerScope } from '@/utils/workspace-tab-recovery';
+import { readScreenshotRecovery, saveScreenshotRecovery } from './import-continuation';
 const statusText: Record<string, string> = {
   draft: '等待你选好截图',
   queued: '已排队，马上开始',
@@ -106,7 +108,8 @@ const readImage = (file: File) =>
   });
 export default function ScreenshotImport({
   onSavePendingChange,
-}: { onSavePendingChange?: (pending: boolean) => void } = {}) {
+  onboarding = false,
+}: { onSavePendingChange?: (pending: boolean) => void; onboarding?: boolean } = {}) {
   const { t, i18n } = useTranslation(),
     zh = i18n.language.startsWith('zh'),
     navigate = useNavigate(),
@@ -121,7 +124,8 @@ export default function ScreenshotImport({
     queryKey: ['import', 'batches'],
     queryFn: fetchImportBatches,
   });
-  const [id, setId] = useState<string | null>(null),
+  const [recovery] = useState(readScreenshotRecovery);
+  const [id, setId] = useState<string | null>(recovery?.batchId ?? null),
     [fresh, setFresh] = useState(false),
     [files, setFiles] = useState<File[]>([]);
   const [executor, setExecutor] = useState<'local' | 'vision'>('local'),
@@ -136,14 +140,14 @@ export default function ScreenshotImport({
     [uploadCount, setUploadCount] = useState(0),
     [error, setError] = useState('');
   const [savedBatchId, setSavedBatchId] = useState<string | null>(null);
-  const [saveUnknown, setSaveUnknown] = useState(false);
+  const [saveUnknown, setSaveUnknown] = useState(Boolean(recovery));
   const [drafts, setDrafts] = useState<Record<string, Partial<ImportBatchRow>>>(
     {},
   );
   const commitRequest = useRef<{
     batchId: string;
     input: ImportBatchCommit;
-  } | null>(null),
+  } | null>(recovery),
     creatingId = useRef<string | null>(null),
     fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -282,6 +286,11 @@ export default function ScreenshotImport({
         },
       };
       const original = commitRequest.current;
+      const owner = workspaceOwnerScope();
+      if (!saveScreenshotRecovery(original) && onboarding && !saveUnknown) {
+        commitRequest.current = null;
+        throw new Error(copy('无法在此浏览器保留保存回执。', 'This browser could not retain the save request.'));
+      }
       onSavePendingChange?.(true);
       let sent = false;
       try {
@@ -297,7 +306,9 @@ export default function ScreenshotImport({
           sent = true;
           return commitImportBatch(original.batchId, original.input);
         })();
+        if (workspaceOwnerScope() !== owner) return;
         setSavedBatchId(original.batchId);
+        saveScreenshotRecovery(null);
         commitRequest.current = null;
         setSaveUnknown(false);
         onSavePendingChange?.(false);
@@ -312,6 +323,7 @@ export default function ScreenshotImport({
         await refresh();
         if (original.input.analyze) navigate('/research/portfolio');
       } catch (failure) {
+        if (workspaceOwnerScope() !== owner) return;
         const status = (
           failure as {
             response?: {
@@ -323,6 +335,7 @@ export default function ScreenshotImport({
           sent && status && status >= 400 && status < 500 &&
           status !== 408 && status !== 429
         ) {
+          saveScreenshotRecovery(null);
           commitRequest.current = null;
           setSaveUnknown(false);
           onSavePendingChange?.(false);
@@ -1152,7 +1165,7 @@ export default function ScreenshotImport({
                       ? copy('核对本次保存结果', 'Check this save result')
                       : copy('保存持仓', 'Save holdings')}
                   </Button>
-                  <Button
+                  {(!onboarding || commitRequest.current?.input.analyze) && <Button
                     variant="outline"
                     disabled={
                       busy ||
@@ -1165,7 +1178,7 @@ export default function ScreenshotImport({
                     {saveUnknown && commitRequest.current?.input.analyze === true
                       ? copy('核对本次保存结果', 'Check this save result')
                       : copy('保存并开始研究', 'Save and start research')}
-                  </Button>
+                  </Button>}
                 </div>
               </div>
             </div>

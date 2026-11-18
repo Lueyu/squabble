@@ -2522,3 +2522,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS portfolio_valuation_claim_slot ON portfolio_va
 -- An unset monetary cap is unknown, never a zero-cost reservation.
 -- Existing positive reservations and every finite per-run call limit remain unchanged.
 ALTER TABLE team_run_cycles ALTER COLUMN reserved_cost_usd DROP NOT NULL;
+
+-- 70_model_connection_tests.sql
+ALTER TABLE model_connections
+  ADD COLUMN IF NOT EXISTS test_attempt_id UUID,
+  ADD COLUMN IF NOT EXISTS test_state VARCHAR(12),
+  ADD COLUMN IF NOT EXISTS tested_at TIMESTAMPTZ;

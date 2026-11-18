@@ -35,7 +35,31 @@ export interface TeamRunCycle {
   reservedCostUsd: string | null; reservedCalls: number; lastError: string | null;
   createdAt: string; updatedAt: string;
 }
-export interface TeamRunStatus { agreement: TeamRunAgreement | null; recentCycles: TeamRunCycle[] }
+export type TeamRunWindow =
+  | { kind: 'after_close'; at: string; timezone: string }
+  | { kind: 'first' | 'inactive' | 'after_cycle' | 'unknown' };
+
+export interface TeamRunStatus {
+  agreement: TeamRunAgreement | null;
+  accountName: string | null;
+  recentCycles: TeamRunCycle[];
+  confirmationRevision: number | null;
+  nextWindow: TeamRunWindow;
+}
+export interface TeamRunFill {
+  id: string; accountId: string; accountName: string; orderId: string;
+  ticker: string; market: string; side: string; quantity: string; price: string; currency: string; createdAt: string;
+  filledAt: string | null;
+}
+export interface TeamRunResearch {
+  versionId: string; version: number; commissionId: string; title: string;
+  summary: string; publishedAt: string; source: 'automatic' | 'manual';
+  applied: { revision: number; at: string } | null;
+}
+export interface TeamRunResearchResult {
+  report: TeamRunResearch | null;
+  visibilityLimited: boolean;
+}
 export type TeamRunAgreementPreview = TeamPreview<{ configuration: TeamRunConfiguration; accountId: string; members: TeamMemberSnapshot[] }>;
 export interface TeamRunControlInput { requestKey: string; expectedRevision: number }
 /** Passed only inside trusted server code; never accepted from an HTTP request body. */

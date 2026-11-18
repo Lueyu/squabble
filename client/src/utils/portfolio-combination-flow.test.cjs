@@ -146,7 +146,7 @@ async function scenario(run) {
               element: React.createElement(Page),
             }),
             React.createElement(Route, {
-              path: '/paper/:accountId',
+              path: '/holdings/accounts/:accountId',
               element: React.createElement('p', null, 'Account detail'),
             }),
           ),
@@ -220,6 +220,6 @@ test('preview is invalidated by enablement edits and only a fresh explicit apply
     assert.equal(apply[0].args[1].allocations[0].enabled, false);
     assert.equal(
       document.querySelector('output').textContent,
-      '/paper/account-a',
+      '/holdings/accounts/account-a',
     );
   }));

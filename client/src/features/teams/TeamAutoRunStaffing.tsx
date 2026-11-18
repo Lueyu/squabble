@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { AgentProfile } from '@shared/agent-roster.interface';
 import type { ModelConnection } from '@shared/model-connections.interface';
 import type { TeamDetail } from '@shared/team-workspace.interface';
 import { Button } from '@/components/ui/button';
+import { teamOnboardingPath } from '@/features/onboarding/onboarding-state';
 import type { TeamEditorState } from './team-graph';
 import { applySuggestedTeamStaffing, assignAgentToRole, staffingFailureMessage, suggestTeamStaffing } from './team-staffing';
 
@@ -26,6 +27,9 @@ interface Props {
 /** Prepare seats in the ordinary draft; publication and run authorization remain explicit steps. */
 export function TeamAutoRunStaffing({ team, state, agents, models, zh, disabled, loading, loadError, dirty, onEdit, onPublish, onConfigure, onReload }: Props) {
   const [failure, setFailure] = useState('');
+  const [params] = useSearchParams();
+  const onboarding = params.get('onboarding') === '1';
+  const friendsPath = onboarding ? `/friends?${new URLSearchParams({ onboarding: '1', returnTo: teamOnboardingPath(team.id) })}` : '/friends';
   const published = team.publishedVersion?.config;
   const publishedMembers = published?.roles.filter(role => role.participation === 'enabled') ?? [];
   const required = published?.workBlueprint ? new Set([published.defaults.leadRoleId, published.workBlueprint.summary.reviewerRoleId, ...published.workBlueprint.works.flatMap(work => [work.roleId, work.reviewerRoleId])]) : new Set<string | null>();
@@ -49,6 +53,11 @@ export function TeamAutoRunStaffing({ team, state, agents, models, zh, disabled,
     </div>
     {loading && <p role="status">{zh ? '正在读取股友和连接…' : 'Loading saved friends and connections…'}</p>}
     {loadError && <p role="alert">{zh ? '股友或连接读取失败，现有配置保留。' : 'Friends or connections could not load. Existing configuration is retained.'}<Button variant="ghost" onClick={onReload}>{zh ? '重试读取' : 'Retry reading'}</Button></p>}
+    {onboarding && !loading && !loadError && active.length === 0 && <p className="text-sm text-muted-foreground">
+      {agents.some(agent => agent.status === 'active')
+        ? (zh ? '已有股友的执行连接待配置。' : 'Your agents need a configured connection.')
+        : (zh ? '添加第一位股友后即可为岗位配员。' : 'Add your first agent to staff a seat.')}
+    </p>}
     <ul className="space-y-3">
       {state.config.roles.map(role => {
         const current = agents.find(agent => agent.id === role.agentId);
@@ -69,7 +78,7 @@ export function TeamAutoRunStaffing({ team, state, agents, models, zh, disabled,
       {suggestedCount > 0 && <Button variant="secondary" disabled={Boolean(blocked)} onClick={() => change(() => applySuggestedTeamStaffing(state, suggestions.assignments, agents, models))}>{zh ? '应用建议股友' : 'Apply suggested friends'}</Button>}
       <Button disabled={Boolean(blocked) || !state.config.roles.some(role => role.participation === 'enabled' && role.agentId && role.executor)} onClick={onPublish}>{zh ? '保存并检查发布' : 'Save and review publication'}</Button>
       <Button variant="outline" onClick={onConfigure}>{zh ? '调整组织与成员' : 'Edit organization and members'}</Button>
-      <Button asChild variant="ghost"><Link to="/friends">{zh ? '管理我的股友' : 'Manage saved friends'}</Link></Button>
+      <Button asChild variant="ghost"><Link to={friendsPath}>{onboarding && !active.length ? (zh ? '前往股友库' : 'Go to my agents') : (zh ? '管理我的股友' : 'Manage saved friends')}</Link></Button>
     </div>
   </section>;
 }

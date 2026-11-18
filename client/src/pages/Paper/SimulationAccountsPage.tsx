@@ -17,6 +17,7 @@ import {
 import CreateSimulationAccount from './CreateSimulationAccount';
 import AccountStatusControl from './AccountStatusControl';
 import LegacyDecisionPage from './LegacyDecisionPage';
+import { assetHref, holdingsHref } from '@/features/assets/account-context';
 import type { PortfolioCompanionId } from '@shared/portfolio-workspace.interface';
 import AnimalAvatar from '@/components/AnimalAvatar';
 import { companionById } from '@/features/companions/companions';
@@ -29,7 +30,7 @@ export default function SimulationAccountsPage() {
   const zh = i18n.language.startsWith('zh');
   const [params, setParams] = useSearchParams();
   const location = useLocation();
-  const returnState = { returnTo: `${location.pathname}${location.search}` };
+  const returnState = { returnTo: `${location.pathname}${location.search}${location.hash}` };
   const library = params.get('view') === 'library';
   const setLibrary = (open: boolean) => {
     const next = new URLSearchParams(params);
@@ -78,7 +79,7 @@ export default function SimulationAccountsPage() {
   const targetPath = (id: string) =>
     strategyId
       ? simulationStrategyPath(id, strategyId)
-      : `${simulationAccountPath(id)}${orderId ? `?orderId=${encodeURIComponent(orderId)}` : ''}`;
+      : orderId ? assetHref('/transactions', id, new URLSearchParams({ orderId }).toString()) : holdingsHref(id);
   return (
     <div className="portfolio-page companion-accounts-page">
       <header className="portfolio-page-header">
@@ -234,11 +235,14 @@ export default function SimulationAccountsPage() {
                       ? '选择此账户'
                       : 'Choose account'
                     : zh
-                      ? '查看账户'
-                      : 'View account'}
+                      ? '查看持仓'
+                      : 'View holdings'}
                   <ArrowRight size={15} />
                 </Link>
               </Button>
+              {!strategyId && !orderId && <Button asChild variant="outline">
+                <Link to={simulationAccountPath(account.id)} state={returnState}>{zh ? '管理账户' : 'Manage account'}</Link>
+              </Button>}
               <AccountStatusControl account={account} shortLabel />
               </div>
             </div>

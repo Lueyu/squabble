@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, Plus } from 'lucide-react';
-import type { AgentProfile, AgentTemplateId } from '@shared/agent-roster.interface';
+import type { AgentExecutor, AgentProfile, AgentTemplateId } from '@shared/agent-roster.interface';
 import { agentRosterApi } from '@/api/agent-roster';
 import { fetchModelConnections } from '@/api/model-connections';
 import { fetchLocalAgents } from '@/api/local-agents';
@@ -16,16 +16,28 @@ import { defaultAgentExecutor } from './agent-roster-state';
 import { ExternalAgentDialog } from './ExternalAgentDialog';
 import { AgentEditorDialog } from './AgentEditorDialog';
 import { AgentRosterCard } from './AgentRosterCard';
+import { safeReturnPath } from '@/features/navigation/workspace-navigation';
+import { useAiReadiness } from '@/features/onboarding/use-ai-readiness';
+import { TEAM_ONBOARDING_PATH } from '@/features/onboarding/onboarding-state';
 
 export default function AgentRosterWorkspace() {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
   const client = useQueryClient();
+  const [params] = useSearchParams();
+  const onboarding = params.get('onboarding') === '1';
+  const requestedReturn = safeReturnPath(params.get('returnTo'));
+  const returnTo = requestedReturn?.startsWith('/teams/') ? requestedReturn : TEAM_ONBOARDING_PATH;
+  const readiness = useAiReadiness({ enabled: onboarding });
   const roster = useQuery({ queryKey: ['agent-roster'], queryFn: agentRosterApi.list });
   const templates = useQuery({ queryKey: ['agent-templates'], queryFn: agentRosterApi.templates });
   const models = useQuery({ queryKey: ['settings', 'model-connections'], queryFn: fetchModelConnections });
   const locals = useQuery({ queryKey: ['settings', 'local-agents'], queryFn: fetchLocalAgents });
-  const executor = defaultAgentExecutor(models.data ?? [], locals.data ?? []);
+  const verified = readiness.connection;
+  const onboardingExecutor: AgentExecutor | null = verified?.kind === 'local'
+    ? { executionMode: 'local', localAgentId: verified.connection.connectionId, settings: verified.connection.configuration }
+    : verified?.kind === 'model' ? { executionMode: 'model', connectionId: verified.connection.id, model: 'fast' } : null;
+  const executor = onboarding ? onboardingExecutor : defaultAgentExecutor(models.data ?? [], locals.data ?? []);
   const [open, setOpen] = useState(false);
   const [externalOpen, setExternalOpen] = useState(false);
   const [editing, setEditing] = useState<AgentProfile | null>(null);
@@ -72,7 +84,7 @@ export default function AgentRosterWorkspace() {
   const active = roster.data?.items.filter(agent => agent.status === 'active') ?? [];
   const rosterComplete = !roster.isPending && !roster.isError && !roster.data?.nextCursor;
   const missing = missingSpecialtyIds(active, (templates.data ?? []).map(item => item.id));
-  const loading = roster.isPending || models.isPending || locals.isPending;
+  const loading = roster.isPending || (onboarding ? readiness.pending : models.isPending || locals.isPending);
   const byId = new Map((templates.data ?? []).map(item => [item.id, item]));
 
   return <section className="max-w-6xl mx-auto space-y-6 p-4 sm:p-6">
@@ -95,9 +107,11 @@ export default function AgentRosterWorkspace() {
         {zh ? '重新读取' : 'Reload'}
       </Button>
     </div>}
-    {!loading && !executor && <AgentConnectionSetup zh={zh} locals={locals.data ?? []} />}
+    {!loading && !executor && (onboarding
+      ? <Button asChild><Link to={readiness.connectionPath}>{zh ? '核对研究服务连接' : 'Check your research connection'}</Link></Button>
+      : <AgentConnectionSetup zh={zh} locals={locals.data ?? []} />)}
     {failure && <p role="alert" className="text-destructive text-sm">{failure}</p>}
-    {!loading && executor && rosterComplete && missing.length > 0 && <section className="rounded-xl border border-primary/20 bg-primary/5 p-5 space-y-3">
+    {!onboarding && !loading && executor && rosterComplete && missing.length > 0 && <section className="rounded-xl border border-primary/20 bg-primary/5 p-5 space-y-3">
       <h2 className="font-semibold">{zh ? `还缺 ${missing.length} 种专业股友` : `${missing.length} specialties are still missing`}</h2>
       <p className="text-sm text-muted-foreground">{zh
         ? '按专业分工检查缺口，不按人数判断：同一专业多位股友不会补齐其他专业。一次添加只保存身份，不调用模型，也不会授予资料或工具。'
@@ -139,9 +153,15 @@ export default function AgentRosterWorkspace() {
         onEdit={() => edit(agent)} onMemory={() => setMemoryAgent(memoryAgent === agent.id ? null : agent.id)}
         onArchive={() => archive.mutate(agent)} />)}
     </div>
+    {onboarding && !loading && roster.isSuccess && active.length === 0 && executor && <div className="rounded-xl border p-5">
+      <p>{zh ? '还没有股友。先添加一位，再将其指派给团队岗位。' : 'Add your first agent so you can assign them to a team seat.'}</p>
+      <Button className="mt-3" disabled={!templates.data} onClick={() => edit(null)}>{zh ? '添加第一位股友' : 'Add your first agent'}</Button>
+    </div>}
     {active.length > 0 && <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-5">
       <p>{zh ? '股友已经准备好，下一步组成你的团队。' : 'Your agents are ready. Next, create your team.'}</p>
-      <Button asChild><Link to="/teams?guided=1">{zh ? '下一步：创建团队' : 'Next: create a team'}</Link></Button>
+      <Button asChild><Link to={returnTo}>{onboarding
+        ? (zh ? '继续团队设置' : 'Continue team setup')
+        : (zh ? '下一步：创建团队' : 'Next: create a team')}</Link></Button>
     </div>}
     <ExternalAgentDialog zh={zh} open={externalOpen} onOpenChange={setExternalOpen} />
     {open && templates.data && <AgentEditorDialog key={editing ? `${editing.id}:${editing.revision}` : `new:${initialTemplateId ?? 'default'}`}

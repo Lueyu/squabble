@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronRight, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { TeamSemanticConfig, TeamWorkPlanPreviewResult } from '@shared/team-workspace.interface';
 import type { TeamBlueprintTaskKind } from '@shared/team-work-blueprint.interface';
 import { teamsApi } from '@/api/teams';
@@ -78,7 +78,7 @@ export function TeamWorkPlanPreview({ teamId, semanticRevision, state, edit, zh,
     }
   };
   return <details className="team-workplan" id="team-workplan">
-    <summary>{zh ? '研究分工设置' : 'Research division settings'}</summary>
+    <summary>{zh ? '研究分工与复核' : 'Research roles and reviews'}<ChevronRight className="size-3.5 shrink-0" aria-hidden="true" /></summary>
     <div className="team-workplan-content">
     <p className="team-muted team-small">{zh ? '在此编辑草稿的岗位、依赖与复核安排，保存并发布后生效。下方结构预览只读，不保存、不调用模型、不启动研究。' : 'Edit the draft roles, dependencies and reviews here, then save and publish to apply them. The read-only structural preview below never saves, calls a model or starts research.'}</p>
     {!blueprint && <TeamNotice><p>{zh ? '此组织仍使用旧版“独立研究 + 负责人汇总”规则。' : 'This organization still uses the legacy independent-research plus lead-summary rule.'}</p><Button variant="outline" size="sm" disabled={readOnly || !lead} onClick={buildFromOrganization}>{zh ? '根据当前组织建立标准研究分工' : 'Build a standard division from this organization'}</Button></TeamNotice>}

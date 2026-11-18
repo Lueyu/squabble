@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { FolderTree, Plus, Search, UsersRound } from 'lucide-react';
 import type { TeamSummary } from '@shared/team-workspace.interface';
 import type { AiInvestmentPreview } from '@shared/investment-policy.interface';
 import { teamKeys, teamsApi } from '@/api/teams';
+import { fetchHoldings } from '@/api';
 import { portfolioWorkspaceApi, portfolioWorkspaceKeys } from '@/api/portfolio-workspace';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +19,9 @@ import { teamCostLabel } from '@/features/teams/team-commission-state';
 import { quickStartStepLabel } from '@/features/teams/team-quick-start';
 import { useTeamQuickStart, type QuickStartRunState } from '@/features/teams/use-team-quick-start';
 import { TeamAccountReviewRecovery } from '@/features/teams/TeamAccountReviewRecovery';
+import { OnboardingStepper } from '@/features/onboarding/OnboardingStepper';
+import { IMPORT_ONBOARDING_PATH, teamOnboardingPath } from '@/features/onboarding/onboarding-state';
+import { useAiReadiness } from '@/features/onboarding/use-ai-readiness';
 import '@/features/teams/teams.css';
 
 function QuickStartPanel({ state, zh, onContinue, onBackToForm, onLater, onReviewSeed, onConfirmSeed }: { state: QuickStartRunState; zh: boolean; onContinue: () => void; onBackToForm: () => void; onLater: () => void; onReviewSeed: () => Promise<AiInvestmentPreview>; onConfirmSeed: (preview: AiInvestmentPreview) => void }) {
@@ -27,7 +31,7 @@ function QuickStartPanel({ state, zh, onContinue, onBackToForm, onLater, onRevie
     <p className="team-muted team-small">{zh ? '快速开始按你确认的选项执行：创建团队、发布模板配置、准备并关联模拟盘。已完成的步骤不会重复执行，本过程不调用模型。' : 'Quick start follows your reviewed choices: create the team, publish the template configuration, prepare and link the simulation account. Completed steps never rerun and no model is called.'}</p>
     <ol>{(state.progress?.steps ?? []).map(step => <li key={step.id} className={`is-${step.state}`}><span>{quickStartStepLabel(step.id, zh)}</span><span>{states[step.state]}</span></li>)}</ol>
     {state.status === 'running' && <p role="status">{zh ? '正在执行，请保持此窗口打开…' : 'Running; keep this window open…'}</p>}
-    {state.status === 'failed' && <TeamNotice error><p>{state.message}</p>{needsSeedReview && <TeamAccountReviewRecovery zh={zh} read={onReviewSeed} confirm={onConfirmSeed} />}<div className="team-inline-actions">{state.failureKind === 'rejected' && (!state.input?.reviewedSeed || !state.progress?.teamId)
+    {state.status === 'failed' && <TeamNotice error><p>{state.message ?? (zh ? '此处保留了上次确认的建队请求。' : 'Your confirmed creation request is available to resume.')}</p>{needsSeedReview && <TeamAccountReviewRecovery zh={zh} read={onReviewSeed} confirm={onConfirmSeed} />}<div className="team-inline-actions">{state.failureKind === 'rejected' && (!state.input?.reviewedSeed || !state.progress?.teamId)
       ? <Button variant="outline" onClick={onBackToForm}>{zh ? '返回修改选项' : 'Back to the options'}</Button>
       : <>{!needsSeedReview && <Button onClick={onContinue}>{zh ? '继续完成剩余步骤' : 'Continue the remaining steps'}</Button>}<Button variant="ghost" onClick={onLater}>{zh ? '稍后继续' : 'Continue later'}</Button>{state.progress?.teamId && <Button asChild variant="outline"><Link to={`/teams/${encodeURIComponent(state.progress.teamId)}?panel=overview`}>{zh ? '查看已创建的团队' : 'View the created team'}</Link></Button>}</>}</div></TeamNotice>}
   </div>;
@@ -37,13 +41,14 @@ function TeamCard({ team, accountName, executionStatus, zh, copy, remove, canRem
   return <article className="team-card"><div className="team-card-heading"><span className="team-avatar">{team.avatar ? team.avatar.slice(0, 4) : <UsersRound size={25} />}</span><div><h2><Link to={`/teams/${encodeURIComponent(team.id)}`}>{team.name}</Link></h2><span className="team-status">{team.status === 'archived' ? (zh ? '已归档 · 只读' : 'Archived · read only') : team.currentVersion ? `v${team.currentVersion} ${zh ? '已发布' : 'published'}` : (zh ? '尚未发布' : 'Not published')}</span></div></div><p className="team-card-description">{team.description || (zh ? '组织、职责与研究记录，在同一工作区。' : 'Organization, responsibilities and research in one workspace.')}</p><dl className="team-card-facts"><div><dt>{zh ? '组织' : 'Organization'}</dt><dd>{team.roleCount} {zh ? '岗位' : 'roles'} · {team.departmentCount} {zh ? '部门' : 'departments'} · {team.connectionCount ?? '—'} {zh ? '连接' : 'connections'}</dd></div><div><dt>{zh ? '账户' : 'Account'}</dt><dd>{team.accountId ? (accountName || team.accountId) : (zh ? '未关联账户' : 'No account linked')}</dd></div><div><dt>{zh ? '研究' : 'Research'}</dt><dd>{team.runningCommissionCount ? `${team.runningCommissionCount} ${zh ? '项进行中' : 'in progress'}` : (zh ? '当前无进行中委托' : 'No active commissions')}</dd></div><div><dt>{zh ? '模拟执行' : 'Simulated execution'}</dt><dd>{executionStatus === 'running' ? (zh ? '运行中' : 'Running') : executionStatus === 'paused' ? (zh ? '已暂停' : 'Paused') : executionStatus === 'archived' ? (zh ? '账户已归档' : 'Account archived') : (zh ? '未记录 / 未关联' : 'Unrecorded / unlinked')}</dd></div></dl><div className="team-card-draft">{zh ? '运行草稿修订' : 'Execution draft revision'} {team.semanticRevision} · {team.hasDraft === true ? (zh ? '有待发布变化' : 'unpublished changes') : team.hasDraft === false ? (zh ? '与发布版本一致' : 'matches published version') : (zh ? '发布差异待核对' : 'publication difference unverified')} · {zh ? '费用' : 'Cost'} {teamCostLabel(team.cost, zh)}</div><div className="team-card-actions"><Button asChild><Link to={`/teams/${encodeURIComponent(team.id)}?panel=overview`}>{zh ? '运行概览' : 'Run overview'}</Link></Button><Button variant="outline" asChild><Link to={`/teams/${encodeURIComponent(team.id)}?panel=organization`}>{zh ? '配置团队' : 'Configure team'}</Link></Button><Button variant="ghost" onClick={() => copy(team)} disabled={!canRemove}>{zh ? '复制' : 'Copy'}</Button><Button variant="ghost" onClick={() => remove(team)} disabled={!canRemove}><span className="team-danger">{zh ? '移除' : 'Remove'}</span></Button></div></article>;
 }
 
-export function TeamsPage() {
+export function TeamsPage({ onboarding = false }: { onboarding?: boolean } = {}) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
   const [params, setParams] = useSearchParams();
-  const q = params.get('q') ?? ''; const filter = ['published', 'draft', 'unbound', 'archived'].includes(params.get('filter') ?? '') ? params.get('filter')! : 'all';
+  const q = onboarding ? '' : params.get('q') ?? '';
+  const filter = !onboarding && ['published', 'draft', 'unbound', 'archived'].includes(params.get('filter') ?? '') ? params.get('filter')! : 'all';
   const filters = { q, filter: filter === 'archived' ? 'all' : filter, status: filter === 'archived' ? 'archived' : 'active', limit: 30 };
   const list = useInfiniteQuery({ queryKey: teamKeys.list(filters), initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => teamsApi.list({ ...filters, cursor: pageParam }), getNextPageParam: page => page.nextCursor || undefined, retry: false });
-  const [creationRecovery, setCreationRecovery] = useState<TeamCreationDraft | null>(() => readTeamCreationDraft());
+  const [creationRecovery, setCreationRecovery] = useState<TeamCreationDraft | null>(() => readTeamCreationDraft(onboarding));
   const [creating, setCreating] = useState(() => params.get('advanced') === '1' && params.get('create') === '1');
   const [copySource, setCopySource] = useState<TeamSummary | null>(null);
   const quick = useTeamQuickStart(zh);
@@ -54,7 +59,47 @@ export function TeamsPage() {
   const openCreate = (source?: TeamSummary): void => { if (quick.resumable) { setCreating(true); quick.resume(knownAccountIds); return; } setCopySource(source ?? null); setCreating(true); };
   const resumeQuickStart = (): void => { setCreating(true); quick.resume(knownAccountIds); };
   const quickActive = quick.state.status !== 'idle';
+  const needsStartingPoint = onboarding && list.isSuccess && !items.length && !quickActive && !quick.resumable;
+  const holdings = useQuery({ queryKey: ['holdings'], queryFn: fetchHoldings, enabled: needsStartingPoint, retry: false });
+  const ai = useAiReadiness({ enabled: needsStartingPoint && Boolean(holdings.data?.length) });
   const updateFilter = (key: string, value: string): void => { const next = new URLSearchParams(params); if (value && value !== 'all') next.set(key, value); else next.delete(key); setParams(next, { replace: true }); };
+  if (onboarding) {
+    if (quickActive || quick.resumable) return <section className="team-workspace space-y-4">
+      <OnboardingStepper step="team" zh={zh} />
+      <h1 className="text-2xl font-semibold sm:text-3xl">{zh ? '继续创建团队模拟盘' : 'Resume team simulation setup'}</h1>
+      <div className="rounded-xl border bg-card p-5">
+        <QuickStartPanel state={quick.state} zh={zh}
+          onReviewSeed={quick.refreshSeedReview} onConfirmSeed={preview => quick.resumeWithSeedReview(preview, knownAccountIds)}
+          onContinue={() => quick.resume(knownAccountIds)} onBackToForm={quick.reset}
+          onLater={() => setParams({}, { replace: true })} />
+      </div>
+    </section>;
+    if (items[0]) return <Navigate to={teamOnboardingPath(items[0].id)} replace />;
+    const workspaceDisabled = list.data?.pages[0]?.capabilities.workspaceEnabled === false;
+    if (workspaceDisabled || list.isPending || list.isError || holdings.isPending || holdings.isError || !holdings.data?.length || !ai.connection) {
+      const pending = list.isPending || needsStartingPoint && (holdings.isPending || Boolean(holdings.data?.length) && ai.pending);
+      const failed = list.isError || needsStartingPoint && (holdings.isError || ai.error && Boolean(holdings.data?.length));
+      return <section className="team-workspace space-y-4">
+        <OnboardingStepper step="team" zh={zh} />
+        <h1 className="text-2xl font-semibold sm:text-3xl">{zh ? '新建团队模拟盘' : 'Create a team simulation'}</h1>
+        {workspaceDisabled ? <TeamNotice>{zh ? '当前实例尚未开启团队配置。' : 'Team configuration is disabled on this instance.'}</TeamNotice>
+          : pending ? <p role="status">{zh ? '正在核对创建条件…' : 'Checking setup requirements…'}</p>
+            : failed ? <TeamLoadError zh={zh} retry={() => {
+              if (list.isError) void list.refetch();
+              if (holdings.isError) void holdings.refetch();
+              if (ai.error) void ai.reload();
+            }} message={zh ? '暂时无法核对创建条件。' : 'Setup requirements could not be checked.'} />
+              : !holdings.data?.length ? <Button asChild><Link to={IMPORT_ONBOARDING_PATH}>{zh ? '先导入持仓' : 'Import holdings first'}</Link></Button>
+                : <Button asChild><Link to={ai.connectionPath}>{zh ? '核对研究服务连接' : 'Check your research connection'}</Link></Button>}
+      </section>;
+    }
+    return <div className="team-workspace">
+      <TeamCreateDialog open onboarding teams={items} recovery={creationRecovery}
+        onOpenChange={open => { if (!open) setParams({}, { replace: true }); }}
+        onCreate={input => quick.run(input, knownAccountIds)} />
+    </div>;
+  }
+
   return <section className="team-workspace team-list-page" aria-label={zh ? '团队模拟盘' : 'Team simulations'}><header className="team-page-header"><div><span className="team-eyebrow">{zh ? '一起研究，各自成章' : 'Research together, keep every decision traceable'}</span><h1>{zh ? '团队模拟盘' : 'Team simulations'}</h1><p>{zh ? '搭建你的研究组织，为每次判断留下职责、证据与版本。' : 'Build a research organization with responsibilities, evidence and versions for every decision.'}</p></div><Button onClick={() => openCreate()} disabled={list.data?.pages[0]?.capabilities.workspaceEnabled === false}><Plus size={16} />{zh ? '新建团队' : 'New team'}</Button></header>
     {list.data?.pages[0]?.capabilities.workspaceEnabled === false && <TeamNotice>{zh ? '当前实例尚未开启团队配置；已有历史仍可读取。' : 'Team configuration is disabled on this instance. Existing history remains readable.'}</TeamNotice>}
     <div className="team-list-toolbar"><div className="team-search"><Search size={16} /><Input aria-label={zh ? '搜索团队名称' : 'Search teams'} placeholder={zh ? '搜索团队名称…' : 'Search team names…'} value={q} onChange={event => updateFilter('q', event.target.value)} /></div><div className="team-filter-tabs" role="group" aria-label={zh ? '团队筛选' : 'Team filters'}>{['all', 'published', 'draft', 'unbound', 'archived'].map(value => <Button key={value} variant={filter === value ? 'secondary' : 'ghost'} aria-pressed={filter === value} size="sm" onClick={() => updateFilter('filter', value)}>{({ all: zh ? '全部' : 'All', published: zh ? '已发布' : 'Published', draft: zh ? '有草稿' : 'With draft', unbound: zh ? '未关联' : 'Unlinked', archived: zh ? '已归档' : 'Archived' })[value]}</Button>)}</div></div>

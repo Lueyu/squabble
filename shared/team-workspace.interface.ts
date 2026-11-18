@@ -168,6 +168,7 @@ export interface TeamExecutionContext {
   plan: TeamCommissionPlan; members: TeamMemberSnapshot[]; inputSnapshot: Record<string, unknown>;
 }
 export interface TeamResearchLink {
+  reportAvailable?: boolean | null;
   id: string; kind: 'task' | 'attempt' | 'report_version' | 'thesis_version' | 'strategy_revision' | 'signal' | 'order' | 'trade';
   targetId: string; targetRevision: string | null;
   relation: 'produced' | 'reviewed' | 'used' | 'derived' | 'executed';
@@ -202,6 +203,7 @@ export interface DecisionInput {
   reason: string; proposedPolicyDraftId?: string;
 }
 export interface TeamDecision {
+  reportAvailable?: boolean | null;
   id: string; teamId: string; accountId: string; commissionId: string | null;
   proposalId: string; proposalRevision: number;
   event: DecisionInput['event'] | 'requires_reapproval' | 'applied' | 'continue_policy';

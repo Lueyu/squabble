@@ -23,16 +23,16 @@ Structure reviewed on **2026-11-10** against `98f073e` plus the V4 working tree.
 | `/strategies`, `/strategies/new`, `/strategies/interviews/:interviewId` | `features/strategy-interview/` | Persisted clarification; existing combination confirmation remains execution authority |
 | `/settings/notifications`, `/settings/mcp` | `features/integrations/PaperIntegrationPanels.tsx` | Shared with retained Paper page; hidden Settings panels close portals |
 | `/` | `client/src/pages/Overview/PortfolioOverviewPage.tsx`: saved real/simulation comparison and research entry | `client/src/pages/Dashboard/DashboardPage.tsx` |
-| `/holdings?accountId=real\|id` | `client/src/pages/Holdings/HoldingsPage.tsx`: primary Holdings destination with explicit real/paper ledger | Independent of investment overview and `/paper` simulation-account list |
+| `/holdings?accountId=real\|id` | `client/src/pages/Holdings/HoldingsPage.tsx`: primary Holdings destination with explicit real/paper ledger | Account switcher, account-specific positions and cash, and entry to simulation account management |
 | `/analysis` | `client/src/pages/Analysis/ReportHistoryPage.tsx` | `client/src/pages/Analysis/AnalysisPage.tsx` |
 | `/analysis/reports/:versionId` | `client/src/pages/Analysis/ResearchDocumentPage.tsx`, `SimpleReportReader.tsx`: exact immutable version and archived simulation-review reading | Shared; never replace requested ID with the latest report |
 | `/council` | `client/src/pages/Council/SimpleCouncilPage.tsx`, `client/src/pages/Channel/ChannelWorkbench.tsx`: channel projection, fact checks and actions | `client/src/pages/Council/CouncilPage.tsx`: retained research room |
-| `/paper` | `client/src/pages/Paper/SimulationAccountsPage.tsx`: independent accounts and explicit creation | `client/src/pages/Paper/PaperPage.tsx`; `AiInvestmentPage.tsx` is retained code, not the current route |
-| `/paper/:accountId` | `client/src/pages/Paper/SimulationAccountPage.tsx`: selected account, orders, valuation and pause/resume | Explicit owner/account scope |
+| `/holdings/accounts` (legacy `/paper`) | `client/src/pages/Paper/SimulationAccountsPage.tsx`: independent accounts and explicit creation | `client/src/pages/Paper/PaperPage.tsx`; `AiInvestmentPage.tsx` is retained code, not the current route |
+| `/holdings/accounts/:accountId` (legacy `/paper/:accountId`) | `client/src/pages/Paper/SimulationAccountPage.tsx`: selected account, orders, valuation and pause/resume | Explicit owner/account scope |
 | `/paper/:accountId/strategies` | `client/src/features/investment-strategies/AccountStrategyCombinationPage.tsx`: saved combination draft, budgets, preview and apply | Owner strategy library stays reusable across accounts |
 | `/agent-builder` | Redirect to `/settings/agents` | `client/src/pages/AgentBuilder/AgentBuilderPage.tsx` |
 | `/holdings`, `/transactions`, `/import` | Recorded real assets and explicit imports | Shared pages in `client/src/pages/Holdings/`, `client/src/pages/Transactions/`, `client/src/pages/Import/` |
-| `/settings/*` | Connections, integrations, budgets, rules, appearance | `client/src/pages/Settings/SettingsPage.tsx` |
+| `/settings/*` | Local Agent and Model API links sit under the primary sidebar entry. Mobile has the same destinations in the settings page switcher | `client/src/pages/Settings/SettingsPage.tsx`, `SettingsNavigation.tsx` |
 
 The development phase is **web-only**, established at `fe9df6c`. Desktop code and manual recovery workflow remain, but ordinary PR checks do not require desktop testing/packaging until explicitly resumed. This phase baseline differs from the knowledge verification revision above.
 
@@ -114,7 +114,7 @@ Local Agent diagnostic snapshots use `shared/telemetry-diagnostics.interface.ts`
 
 `/teams` and `/teams/:id` compose `pages/Teams/` and `features/teams/`; shared contracts/templates live in `shared/team-workspace.interface.ts` and `team-templates.ts`. `server/modules/teams/` owns organization revisions, active account bindings, source grants, durable manual commissions and decisions. Migration61 is registered explicitly. Council executes frozen workKey DAGs in its existing store; `database/team-context.ts`, `team-source-context.ts`, `report-source-fence.ts` and `team-execution-links.ts` carry neutral fences/provenance without infrastructure importing TeamsModule. `portfolio-assets.service.ts` provides pure `GET /api/ai-investment/accounts/:id/assets`; `/holdings?accountId=real|id` keeps real/paper caches and writes separate. See `docs/team-workspace.md` and `docs/team-workspace-validation.md`.
 
-Fine-grained Team source/work visibility lives in `server/database/team-member-sources.ts`; Team-derived strategy source classification is `server/modules/paper-trading/team-strategy-sources.ts`. `PortfolioAssetsService` projects immutable execution provenance for reverse ledger links; the comparison panel lazily reads actual decision history and exact common input versions.
+Fine-grained Team source/work visibility lives in `server/database/team-member-sources.ts`; Team-derived strategy source classification is `server/modules/paper-trading/team-strategy-sources.ts`. `PortfolioAssetsService` projects immutable execution provenance for reverse ledger links; the overview comparison reads owner-scoped valuations and records the first observed inclusion separately from window returns.
 
 
 ## Persistent agents and autonomous teams

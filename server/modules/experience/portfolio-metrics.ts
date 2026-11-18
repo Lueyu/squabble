@@ -5,7 +5,7 @@ export interface MetricsHolding { ticker: string; shares: string | number; curre
 export interface MetricsCash { currency: string; balance: string | number; reconciliationStatus?: string }
 export interface MetricsTransaction { ticker: string; txType: string; txDate: string; shares: string | number; price: string | number; fees: string | number | null; currency: string | null }
 export interface MetricsQuote { symbol: string; price: string; previousClose?: string; currency: string; market: string; quoteAt?: string; tradingDate?: string; source?: string }
-export interface PortfolioMetricsInput { at: Date; timezone: string; holdings: MetricsHolding[]; cash: MetricsCash[]; rates: PortfolioFxRow[]; quotes: Record<string, MetricsQuote | null | undefined>; transactions: MetricsTransaction[] }
+export interface PortfolioMetricsInput { at: Date; timezone: string; holdings: MetricsHolding[]; cash: MetricsCash[]; rates: PortfolioFxRow[]; quotes: Record<string, MetricsQuote | null | undefined>; transactions: MetricsTransaction[]; scheduledQuotes?: boolean }
 export interface PortfolioMetrics { totalValueUsd: number | null; knownValueUsd: number; holdingsValueUsd: number; cashUsd: number | null; knownCashUsd: number;
   dailyPnlUsd: number | null; knownDailyPnlUsd: number | null; returnPct: number | null; partial: boolean; estimated: boolean; gaps: string[];
   marketTimes: Array<{market: string; dataAsOf: string | null; tradingDate: string | null}> }
@@ -73,7 +73,7 @@ export function computePortfolioMetrics(input: PortfolioMetricsInput): Portfolio
   if(!cashComplete) {partial=true;dailyComplete=false;gaps.add('CASH_UNCONFIRMED');}
   knownValueUsd += knownCashUsd;
   const positions = new Map(input.holdings.map(h=>[h.ticker,h]));
-  for(const tx of input.transactions.filter(t=>t.txType==='Buy'||t.txType==='Sell')) {
+  for(const tx of input.scheduledQuotes ? [] : input.transactions.filter(t=>t.txType==='Buy'||t.txType==='Sell')) {
     const m=market(null,tx.currency);
     if(tx.txDate===portfolioMarketDay(m,input.at)&&!positions.has(tx.ticker))positions.set(tx.ticker,{ticker:tx.ticker,shares:0,currentPrice:null,currency:tx.currency,market:m});
   }
@@ -85,7 +85,7 @@ export function computePortfolioMetrics(input: PortfolioMetricsInput): Portfolio
     const price=number(q&&q.market===m&&q.currency===currency&&offered!==null&&offered>0&&(!Number.isFinite(quoteTime)||quoteTime<=input.at.getTime()+120_000)?q.price:row.currentPrice);
     const schedule=tradingMarketSchedule(m,input.at);
     const observingSession=schedule.isTradingDay&&schedule.opensAt&&Date.parse(schedule.opensAt)<=input.at.getTime()&&schedule.closesAt&&input.at.getTime()<Date.parse(schedule.closesAt);
-    const freshInSession=!observingSession||input.at.getTime()-quoteTime<=45*60_000;
+    const freshInSession=input.scheduledQuotes||!observingSession||input.at.getTime()-quoteTime<=45*60_000;
     const quotedSchedule=Number.isFinite(quoteTime)?tradingMarketSchedule(m,new Date(quoteTime)):null;
     const quotedClose=quotedSchedule?.closesAt?Date.parse(quotedSchedule.closesAt):null;
     const closingObservation=quotedClose!==null&&input.at.getTime()>=quotedClose?quoteTime>=quotedClose-15*60_000:true;

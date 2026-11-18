@@ -112,4 +112,5 @@ export const IMPORT_QUERY_KEYS = [
   ['today'],
   ['current-research'],
   ['simple-experience'],
+  ['onboarding'],
 ] as const;

@@ -5,7 +5,7 @@ import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform
 import { paperAccounts, paperOrders, paperPositions, paperSnapshots, paperTrades } from '../../database/schema';
 import { simulationCash } from '../../database/simulation-experiments.schema';
 import type { PortfolioAccountAssets, PortfolioExecutionProvenance } from '../../../shared/portfolio-workspace.interface';
-import type { PaperOrder, PaperTrade } from '../../../shared/api.interface';
+import type { PaperOrder } from '../../../shared/api.interface';
 import { teamCommissions, teamDecisions, teamResearchLinks, teamVersions } from '../../database/teams.schema';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
 
@@ -65,8 +65,11 @@ export class PortfolioAssetsService {
         tx.select().from(simulationCash).where(and(eq(simulationCash.owner, owner), eq(simulationCash.accountId, accountId))),
         tx.select().from(paperOrders).where(and(eq(paperOrders.owner, owner), eq(paperOrders.accountId, accountId)))
           .orderBy(desc(paperOrders.createdAt), paperOrders.id),
-        tx.select().from(paperTrades).where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, accountId)))
-          .orderBy(desc(paperTrades.createdAt), paperTrades.id),
+        tx.select({ trade: paperTrades, filledAt: paperOrders.filledAt }).from(paperTrades)
+          .leftJoin(paperOrders, and(eq(paperOrders.id, paperTrades.orderId),
+            eq(paperOrders.owner, paperTrades.owner), eq(paperOrders.accountId, paperTrades.accountId)))
+          .where(and(eq(paperTrades.owner, owner), eq(paperTrades.accountId, accountId)))
+          .orderBy(desc(sql`coalesce(${paperOrders.filledAt}, ${paperTrades.createdAt})`), desc(paperTrades.id)),
         tx.select().from(paperSnapshots).where(and(eq(paperSnapshots.owner, owner), eq(paperSnapshots.accountId, accountId)))
           .orderBy(desc(paperSnapshots.valuedAt), desc(paperSnapshots.snapshotDate)).limit(1),
       ]);
@@ -93,8 +96,10 @@ export class PortfolioAssetsService {
           unsettled: item.availabilityKnown ? item.unsettled : null,
         })) : [{ currency: account.baseCurrency, available: account.cashBalance, frozen: null, unsettled: null, availabilityKnown: true }],
         orders: orders.map(order => ({ ...order, createdAt: order.createdAt.toISOString(), filledAt: order.filledAt?.toISOString() ?? null })) as PaperOrder[],
-        trades: trades.map(trade => ({ ...trade, createdAt: trade.createdAt.toISOString() })) as PaperTrade[],
-        executionProvenance: await executionProvenance(tx, owner, accountId, orders.map(order => order.id), trades.map(trade => trade.id)),
+        trades: trades.map(({ trade, filledAt }) => ({
+          ...trade, createdAt: trade.createdAt.toISOString(), filledAt: filledAt?.toISOString() ?? null,
+        })) as PortfolioAccountAssets['trades'],
+        executionProvenance: await executionProvenance(tx, owner, accountId, orders.map(order => order.id), trades.map(({ trade }) => trade.id)),
         equityUsd: snapshots[0]?.equity ?? null,
         valuedAt: snapshots[0]?.valuedAt?.toISOString() ?? null,
         gaps,

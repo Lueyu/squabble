@@ -228,18 +228,24 @@ test('headless connected browsers can capture while interactive sign-in is unava
   }
 });
 
-test('companion list uses stable animal fallbacks and offers only account operations', () => {
+test('simulation account cards keep the fallback avatar and link to their holdings and management pages', () => {
   const f = fixture();
   f.state.queries.set('portfolio-accounts', { data: [{ id: 'legacy', name: 'Legacy companion account', status: 'paused', companionId: null, equityUsd: '12000', cashBalance: '5000', strategyCount: 0, policyRevision: 1 }] });
   const Page = f.load('pages/Paper/SimulationAccountsPage.tsx').default;
-  const html = f.render(Page);
-  assert.match(html, /<h1[^>]*>Simulation accounts<\/h1>/);
-  assert.match(html, /New simulation account/);
-  assert.doesNotMatch(html, /My companions|Add companion/);
-  assert.match(html, /data-persona="moderator"/);
-  assert.match(html, /Delete Legacy companion account/);
-  assert.match(html, /View account/);
-  assert.doesNotMatch(html, /href="\/strategies|Clarify a strategy|Compare account histories|Join comparison/);
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const list = JSDOM.fragment(renderToStaticMarkup(React.createElement(MemoryRouter,
+    { initialEntries: ['/holdings/accounts'] }, React.createElement(Page))));
+  assert.equal(list.querySelector('h1').textContent, 'Simulation accounts');
+  assert.match(list.querySelector('header').textContent, /New simulation account/);
+  const card = list.querySelector('article');
+  assert.ok(card.querySelector('[data-persona="moderator"]'));
+  assert.ok(card.querySelector('button[aria-label="Delete Legacy companion account"]'));
+  const links = new Map([...card.querySelectorAll('a')].map(link => [link.textContent, link.getAttribute('href')]));
+  assert.equal(links.get('Legacy companion account'), '/holdings?accountId=legacy');
+  assert.equal(links.get('View holdings'), '/holdings?accountId=legacy');
+  assert.equal(links.get('Manage account'), '/holdings/accounts/legacy');
+  assert.equal(card.querySelector('a[href^="/strategies"]'), null);
+  assert.doesNotMatch(list.textContent, /My companions|Add companion|Clarify a strategy|Compare account histories|Join comparison/);
 });
 
 test('editing an uploaded text attachment changes metadata without overwriting its original content', async () => {

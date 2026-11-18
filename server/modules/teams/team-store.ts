@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
-import { teams, teamDrafts, teamVersions, teamAccountBindings, teamRequests, teamPreviews, teamCommissions } from '../../database/teams.schema';
+import { teams, teamDrafts, teamVersions, teamAccountBindings, teamRequests, teamPreviews, teamCommissions, teamDecisions } from '../../database/teams.schema';
 import { lockTeamOwner, type TeamDatabase } from '../../database/team-context';
 import { paperSnapshots } from '../../database/schema';
 import { canonicalHash, COMPILER_VERSION, parseTeam, teamError, uuidSchema } from './team-contract';
@@ -12,6 +12,15 @@ import { combineTeamCosts, readTeamCommissionCost } from './team-cost';
 import type { ConfirmPreview, TeamDetail, TeamGuardSet, TeamPreview, TeamVersion, TeamBinding, TeamCostSummary } from '../../../shared/team-workspace.interface';
 export type TeamRow = typeof teams.$inferSelect;
 export type CommissionRow = typeof teamCommissions.$inferSelect;
+type DecisionRow = typeof teamDecisions.$inferSelect;
+export async function decisionHistoryViews(rows: DecisionRow[], canRead: (versionId: string) => Promise<boolean>) {
+    const items: (Omit<DecisionRow, 'createdAt'> & { createdAt: string; reportAvailable: boolean | null })[] = [];
+    for (const row of rows) {
+        const versionId = row.basis.reportVersionId;
+        items.push({ ...row, reportAvailable: versionId ? await canRead(versionId) : null, createdAt: row.createdAt.toISOString() });
+    }
+    return items;
+}
 export function unknownCost(currency = 'USD'): TeamCostSummary {
     return { confirmed: { amount: null, currency }, reserved: { amount: null, currency }, estimatedMaximum: { amount: null, currency }, externalUsageUnknown: false, unknownAttemptIds: [] };
 }

@@ -12,6 +12,8 @@ function checkedBody(req: Request, input: unknown): unknown {
 export class TeamRunController {
   constructor(private readonly runs: TeamRunService) {}
   @NeedLogin() @Get() status(@Req() req: Request, @Param('id') id: string) { return this.runs.status(req.userContext.userId, id); }
+  @NeedLogin() @Get('fills') fills(@Req() req: Request, @Param('id') id: string) { return this.runs.fills(req.userContext.userId, id); }
+  @NeedLogin() @Get('research') research(@Req() req: Request, @Param('id') id: string) { return this.runs.research(req.userContext.userId, id); }
   @NeedLogin() @Post('preview') @HttpCode(200) preview(@Req() req: Request, @Param('id') id: string, @Body() body: unknown) { return this.runs.preview(req.userContext.userId, id, checkedBody(req, body)); }
   @NeedLogin() @Post('confirm') @HttpCode(200) confirm(@Req() req: Request, @Param('id') id: string, @Body() body: unknown) { return this.runs.confirm(req.userContext.userId, id, checkedBody(req, body)); }
   @NeedLogin() @Post('start') @HttpCode(200) start(@Req() req: Request, @Param('id') id: string, @Body() body: unknown) { return this.runs.control(req.userContext.userId, id, 'start', checkedBody(req, body)); }

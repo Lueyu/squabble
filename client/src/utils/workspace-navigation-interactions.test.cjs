@@ -22,7 +22,7 @@ for (const width of [1440, 390]) test(`feature search opens distinct holdings, s
   const root = createRoot(document.getElementById('root'));
   try {
     await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(WorkspaceSearch), React.createElement(Location))));
-    for (const [label, path] of [['Holdings', '/holdings'], ['Simulation accounts', '/paper'], ['Daily report', '/daily']]) {
+    for (const [label, path] of [['Holdings', '/holdings'], ['Simulation accounts', '/holdings/accounts'], ['Daily report', '/daily']]) {
       await React.act(async () => document.querySelector('[aria-label="Find a feature"]').click());
       const button = [...document.querySelectorAll('[role="dialog"] button')].find(node => node.textContent === label);
       assert.ok(button, `${label} must be selectable in search`);
@@ -45,6 +45,9 @@ test('ledger parent links preserve its account and holdings roots have no overvi
   const holdings = render('/holdings?accountId=fictional-b', WorkspaceNavigationBar);
   assert.doesNotMatch(holdings, /Go back|Within/);
   const investment = render('/', WorkspaceSectionTabs);
-  assert.match(investment, /href="\/paper"/);
-  assert.match(investment, /Simulation accounts/);
+  assert.equal(investment, '', 'the overview has no section subnavigation');
+
+  const accountList = render('/holdings/accounts', WorkspaceNavigationBar);
+  assert.match(accountList, /href="\/holdings\?accountId=real"/);
+  assert.match(accountList, /Holdings/);
 });

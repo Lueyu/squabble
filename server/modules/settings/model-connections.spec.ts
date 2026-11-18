@@ -5,8 +5,13 @@ import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
+import axios from 'axios';
 import { users } from '../../database/schema';
 import { ModelConnectionsService } from './model-connections.service';
+import { ModelConnectionsController } from './model-connections.controller';
+import { SettingsService } from './settings.service';
+import { LlmService } from '../research-core/llm.service';
+import { LlmBudgetService } from '../llm-budget/llm-budget.service';
 
 const url = process.env.BUDGET_TEST_DATABASE_URL;
 const dbTest = url ? test : test.skip;
@@ -22,6 +27,7 @@ before(async () => {
   if (!client) return;
   process.env.SETTINGS_ENCRYPTION_KEY = 'test-model-connections-master-key-2026';
   await client.unsafe(readFileSync('scripts/db/10_model_connections.sql', 'utf8'));
+  await client.unsafe(readFileSync('scripts/db/70_model_connection_tests.sql', 'utf8'));
   await db.insert(users).values([{ id: owner, username: owner.slice(0, 32), passwordHash: 'test' },
     { id: other, username: other.slice(0, 32), passwordHash: 'test' }]);
   service = new ModelConnectionsService(db);
@@ -84,6 +90,55 @@ dbTest('concurrent connection creation cannot exceed the per-user limit', async 
   for (const result of results) {
     if (result.status === 'fulfilled') await service.remove(owner, result.value.id);
     else assert.match(result.reason.message, /eight/i);
+  }
+});
+
+dbTest('the budgeted provider response persists current test evidence across re-reads and rejects an edited attempt', async () => {
+  const created = await service.save(owner, { ...draft, baseUrl: 'https://8.8.8.8/v1' });
+  const controller = new ModelConnectionsController(service, new LlmService(
+    new SettingsService(db, {} as never, service), new LlmBudgetService(db),
+  ));
+  const request = { userContext: { userId: owner } } as never;
+  const original = axios.defaults.adapter;
+  let calls = 0;
+  let status = 503;
+  let editDuringTest = false;
+  axios.defaults.adapter = async config => {
+    calls++;
+    assert.equal(config.url, 'https://8.8.8.8/v1/chat/completions');
+    assert.equal(JSON.parse(String(config.data)).model, draft.fastModel);
+    if (editDuringTest) await service.save(owner, { ...draft, baseUrl: created.baseUrl, fastModel: 'updated', apiKey: '' }, created.id);
+    return { status, statusText: '', headers: {}, config, data: status === 200 ? {
+      choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 },
+    } : {} };
+  };
+  const current = async () => (await new ModelConnectionsService(db).list(owner)).find(row => row.id === created.id);
+  try {
+    assert.equal((await current())?.testState, undefined);
+    await assert.rejects(controller.test({ userContext: { userId: other } } as never, created.id), /not found/i);
+    assert.equal(calls, 0);
+    assert.equal((await controller.test(request, created.id, { language: 'zh-CN' })).ok, false);
+    assert.equal(calls, 1);
+    assert.equal((await current())?.testState, 'failed');
+    assert.equal((await current())?.testedAt, undefined);
+    status = 200;
+    assert.equal((await controller.test(request, created.id)).ok, true);
+    assert.equal(calls, 2);
+    const tested = await current();
+    assert.equal(tested?.testState, 'passed');
+    assert.ok(tested?.testedAt);
+    assert.ok(!JSON.stringify(tested).includes(draft.apiKey));
+    await service.save(owner, { ...draft, baseUrl: created.baseUrl, name: 'Renamed', apiKey: '' }, created.id);
+    assert.equal((await current())?.testedAt, tested.testedAt);
+
+    editDuringTest = true;
+    assert.equal((await controller.test(request, created.id)).ok, false);
+    assert.equal(calls, 3);
+    assert.equal((await current())?.testState, undefined);
+  } finally {
+    axios.defaults.adapter = original;
+    await service.remove(owner, created.id);
   }
 });
 

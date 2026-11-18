@@ -31,6 +31,8 @@ export interface PortfolioComparisonSeries {
   colorIndex: number;
   status: 'real' | 'running' | 'paused' | 'archived';
   createdAt: string | null;
+  /** Earliest complete recorded paper valuation, independent of the requested window. */
+  firstIncludedAt: string | null;
   valuationAsOf: string | null;
   equityUsd: number | null;
   returnPct: number | null;

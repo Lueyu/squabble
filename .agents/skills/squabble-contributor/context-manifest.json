@@ -8,6 +8,7 @@
     "workingTreeChanges": true,
     "reviewedAt": "2026-11-13",
     "scope": [
+      "2026-11-18 guided investment workflow against 55e457f: import holdings, verify one AI connection in Settings and use existing roster members in a new paper team. Team run evidence reads published report versions and actual ledger fills. Market-session valuation capture is independent of team execution.",
       "2026-11-17 automatic team startup against560f9ef plus working tree: overview staffing/publication/account actions, acknowledged account return, server preview before final standing-authority confirmation and optional immediate initial cycle. Immutable confirmation lineage and existing owner/budget/cycle/receipt fences prevent restart or pause/resume replay; later after-close research and paper execution remain distinct. Five architecture flows retain their writer and authority boundaries. Each creation prepares a new paper account from real positions with editable CNY/USD/HKD10,000 virtual cash, retaining source-revision checks and recoverable preview identities. Team money and period caps default to explicit null; additive migration68 permits unknown cost reservations while later finite caps conservatively fence them.",
       "V4 eight-destination navigation, safe return and scroll restoration; compatible legacy routes",
       "Persistent strategy interviews with exact wording, explicit acceptance, saved review and disabled account staging",

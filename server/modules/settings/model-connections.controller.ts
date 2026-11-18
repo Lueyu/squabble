@@ -34,15 +34,32 @@ export class ModelConnectionsController {
 
   @Post(':id/test')
   async test(@Req() request: Request, @Param('id') id: string, @Body() body?: { language?: string }) {
-    // Fail owner resolution before the transport/budget test, never silently use another credential.
-    await this.connections.resolve(request.userContext.userId, id);
+    const owner = request.userContext.userId;
+    const zh = body?.language === 'zh-CN';
+    const attemptId = await this.connections.beginTest(owner, id);
+    let failure: string | undefined;
     try {
-      await this.llm.chatFast([{ role: 'user', content: 'Reply with OK only.' }], request.userContext.userId,
-        { connectionId: id, purpose: 'connection-test', maxOutputTokens: 16 });
-      return { ok: true, message: body?.language === 'zh-CN' ? '模型连接正常。' : 'The model connection is working.' };
+      await this.llm.chatFast([{ role: 'user', content: 'Reply with OK only.' }], owner, {
+        connectionId: id,
+        purpose: 'connection-test',
+        maxOutputTokens: 16,
+        retryPolicy: 'none',
+        shouldContinue: () => this.connections.isTestCurrent(owner, id, attemptId),
+      });
     } catch (error) {
-      if (error instanceof BudgetExceededException) throw error;
-      return { ok: false, message: safeAnalysisError(error, body?.language === 'zh-CN' ? 'zh-CN' : 'en') };
+      failure = safeAnalysisError(error, zh ? 'zh-CN' : 'en');
+      if (error instanceof BudgetExceededException) {
+        await this.connections.finishTest(owner, id, attemptId, false);
+        throw error;
+      }
     }
+    const current = await this.connections.finishTest(owner, id, attemptId, failure === undefined);
+    if (!current) return {
+      ok: false,
+      message: zh ? '连接配置或测试已变更，请刷新查看当前状态。' : 'The connection or test changed. Refresh to see its current status.',
+    };
+    return failure
+      ? { ok: false, message: failure }
+      : { ok: true, message: zh ? '模型连接正常。' : 'The model connection is working.' };
   }
 }

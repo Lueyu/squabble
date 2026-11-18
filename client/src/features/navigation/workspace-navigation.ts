@@ -100,7 +100,8 @@ export function resolveWorkspaceRoute(
       kind: 'root',
     };
   const retained: Record<string, { section: WorkspaceSectionId; title: string; parent: string }> = {
-    '/paper': { section: 'overview', title: zh ? '模拟账户' : 'Simulation accounts', parent: '/' },
+    '/paper': { section: 'assets', title: zh ? '模拟账户' : 'Simulation accounts', parent: '/holdings' },
+    '/holdings/accounts': { section: 'assets', title: zh ? '模拟账户' : 'Simulation accounts', parent: '/holdings' },
     '/daily': { section: 'daily', title: zh ? '投资日报' : 'Daily report', parent: '/' },
     '/memory': { section: 'data', title: zh ? '记忆' : 'Memory', parent: '/data' },
   };
@@ -115,10 +116,17 @@ export function resolveWorkspaceRoute(
     };
   if (pathname.startsWith('/teams/'))
     return { section: 'teams', title: zh ? '团队工作区' : 'Team workspace', parent: '/teams', kind: 'detail' };
+  if (pathname.startsWith('/holdings/accounts/'))
+    return {
+      section: 'assets',
+      title: zh ? '管理模拟账户' : 'Manage simulation account',
+      parent: '/holdings/accounts',
+      kind: 'detail',
+    };
   const account = pathname.match(/^\/paper\/([^/]+)(?:\/(.*))?$/u);
   if (account)
     return {
-      section: 'overview',
+      section: 'assets',
       title: account[2]
         ? zh
           ? '策略组合'
@@ -126,7 +134,7 @@ export function resolveWorkspaceRoute(
         : zh
           ? '模拟账户'
           : 'Simulation account',
-      parent: account[2] ? '/paper/' + account[1] : '/paper',
+      parent: account[2] ? '/holdings/accounts/' + account[1] : '/holdings/accounts',
       kind: 'detail',
     };
   if (pathname.startsWith('/strategies'))
@@ -311,7 +319,7 @@ export function workspaceDestinations(language: string) {
   const zh = language.startsWith('zh');
   return [
     ...workspaceSections(language),
-    { path: '/paper', label: zh ? '模拟账户' : 'Simulation accounts' },
+    { path: '/holdings/accounts', label: zh ? '模拟账户' : 'Simulation accounts' },
     { path: '/daily', label: zh ? '投资日报' : 'Daily report' },
     {
       path: '/strategies',

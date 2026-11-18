@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Copy, Trash2 } from 'lucide-react';
+import { ChevronRight, Copy, Trash2 } from 'lucide-react';
 import { fetchModelConnections } from '@/api/model-connections';
 import { fetchLocalAgents } from '@/api/local-agents';
 import { listToolConnections } from '@/api/tool-connections';
@@ -11,21 +11,36 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { friendlyError } from '@/utils/error-message';
-import type { TeamRole, TeamSourceGrant, TeamRelation } from '@shared/team-workspace.interface';
-import { departmentDescendants, moveTeamObjects, objectParent, relationLabel, type TeamEditorState } from './team-graph';
+import type { TeamRole, TeamSourceGrant } from '@shared/team-workspace.interface';
+import { departmentDescendants, moveTeamObjects, objectParent, type TeamEditorState } from './team-graph';
 import { TeamNotice, TeamSelect } from './TeamPrimitives';
 import { TeamRosterBinding } from './TeamRosterBinding';
 
-interface TeamInspectorProps { teamId: string; semanticRevision: number; state: TeamEditorState; selected: string[]; edit: (state: TeamEditorState) => void; remove: () => void; duplicate: () => void; zh: boolean; readOnly: boolean; sourceGrants: TeamSourceGrant[]; needsSave: boolean }
-export function TeamInspector({ teamId, semanticRevision, state, selected, edit, remove, duplicate, zh, readOnly, sourceGrants, needsSave }: TeamInspectorProps) {
+interface TeamInspectorProps {
+  teamId: string;
+  semanticRevision: number;
+  state: TeamEditorState;
+  selected: string[];
+  edit: (state: TeamEditorState) => void;
+  remove: () => void;
+  duplicate: () => void;
+  openRelations: (roleId: string, trigger: HTMLButtonElement) => void;
+  clearSelection: () => void;
+  zh: boolean;
+  readOnly: boolean;
+  sourceGrants: TeamSourceGrant[];
+  needsSave: boolean;
+  workPlan: ReactNode;
+  saveAction: ReactNode;
+}
+
+export function TeamInspector({ teamId, semanticRevision, state, selected, edit, remove, duplicate, openRelations,
+  clearSelection, zh, readOnly, sourceGrants, needsSave, workPlan, saveAction }: TeamInspectorProps) {
   const models = useQuery({ queryKey: ['model-connections'], queryFn: fetchModelConnections, retry: false });
   const locals = useQuery({ queryKey: ['local-agents'], queryFn: fetchLocalAgents, retry: false });
   const tools = useQuery({ queryKey: ['tool-connections'], queryFn: listToolConnections, retry: false });
   const check = useMutation({ retry: false, mutationFn: () => teamsApi.checkConnections(teamId, { requestKey: crypto.randomUUID(), semanticRevision, roleIds: selected.filter(id => state.config.roles.some(r => r.id === id)) }) });
   const id = selected.length === 1 ? selected[0] : null; const role = state.config.roles.find(r => r.id === id); const department = state.config.departments.find(d => d.id === id);
-  const relation = state.config.relations.find(item => item.id === id);
-  const patchRelation = (patch: Partial<TeamRelation>): void => edit({ ...state, config: { ...state.config, relations: state.config.relations.map(item => item.id === id ? { ...item, ...patch } : item) } });
-  const roleOptions = state.config.roles.map(item => ({ value: item.id, label: state.display.roleLabels[item.id] || item.id }));
   useEffect(() => { check.reset(); }, [id, role?.executor, semanticRevision]);
   const patchRole = (patch: Partial<TeamRole>): void => { edit({ ...state, config: { ...state.config, roles: state.config.roles.map(r => r.id === id ? { ...r, ...patch } : r) } }); };
   const forbidden = new Set(selected.flatMap(objectId => [objectId, ...departmentDescendants(state.config, objectId)]));
@@ -36,15 +51,51 @@ export function TeamInspector({ teamId, semanticRevision, state, selected, edit,
   const selectedModel = role?.executor?.executionMode === 'model' ? models.data?.find(c => role.executor?.executionMode === 'model' && c.id === role.executor.connectionId) : null;
   const selectedLocal = role?.executor?.executionMode === 'local' ? locals.data?.find(c => role.executor?.executionMode === 'local' && c.id === role.executor.localAgentId) : null;
   const toolIds = [...new Set((tools.data ?? []).flatMap(c => c.allowedToolIds))];
-  return <aside className="team-inspector" aria-label={zh ? '对象属性' : 'Object properties'}><h2>{zh ? '属性与职责' : 'Properties and responsibility'}</h2>
-    {!selected.length && <><p className="team-muted">{zh ? '选择画布或列表中的部门、岗位和关系进行编辑。' : 'Select a department, role or relation to edit.'}</p><label className="team-field"><span>{zh ? '团队名称' : 'Team name'}</span><Input maxLength={60} value={state.display.name} disabled={readOnly} onChange={e => edit({ ...state, display: { ...state.display, name: e.target.value } })} /></label><label className="team-field"><span>{zh ? '头像标记' : 'Avatar label'}</span><Input maxLength={40} value={state.display.avatar ?? ''} disabled={readOnly} onChange={e => edit({ ...state, display: { ...state.display, avatar: e.target.value || null } })} /></label><TeamSelect label={zh ? '建议最终负责人' : 'Suggested final lead'} value={state.config.defaults.leadRoleId ?? ''} options={[{ value: '', label: zh ? '每次委托时选择' : 'Choose for each commission' }, ...state.config.roles.map(r => ({ value: r.id, label: state.display.roleLabels[r.id] || r.id }))]} onChange={value => edit({ ...state, config: { ...state.config, defaults: { ...state.config.defaults, leadRoleId: value || null } } })} disabled={readOnly} /><TeamSelect label={zh ? '默认并行度' : 'Default parallelism'} value={String(state.config.defaults.parallelism)} options={[{ value: '1', label: '1' }, { value: '2', label: '2' }]} onChange={v => edit({ ...state, config: { ...state.config, defaults: { ...state.config.defaults, parallelism: v === '2' ? 2 : 1 } } })} disabled={readOnly} /></>}
-    {relation && <><h3>{zh ? '关系与方向' : 'Relation and direction'}</h3><TeamSelect label={zh ? '起点岗位' : 'From role'} value={relation.fromRoleId} options={roleOptions.filter(item => item.value !== relation.toRoleId)} disabled={readOnly} onChange={value => patchRelation({ fromRoleId: value })} /><TeamSelect label={zh ? '终点岗位' : 'To role'} value={relation.toRoleId} options={roleOptions.filter(item => item.value !== relation.fromRoleId)} disabled={readOnly} onChange={value => patchRelation({ toRoleId: value })} /><TeamSelect label={zh ? '关系类型' : 'Relation type'} value={relation.kind} options={(['reports_to', 'delegates_to', 'reviews'] as const).map(kind => ({ value: kind, label: relationLabel(kind, zh) }))} disabled={readOnly} onChange={value => patchRelation({ kind: value as TeamRelation['kind'] })} /><label className="team-field"><span>{zh ? '责任范围 / 交付建议' : 'Responsibility scope / delivery'}</span><Textarea maxLength={1000} value={relation.responsibilityScope} disabled={readOnly} onChange={event => patchRelation({ responsibilityScope: event.target.value })} /></label><Button variant="outline" disabled={readOnly} onClick={() => patchRelation({ fromRoleId: relation.toRoleId, toRoleId: relation.fromRoleId })}>{zh ? '反转关系方向' : 'Reverse relation'}</Button></>}
+  const relationCount = role ? state.config.relations.filter(relation => relation.fromRoleId === role.id || relation.toRoleId === role.id).length : 0;
+  const connection = selectedLocal ? {
+    name: selectedLocal.name,
+    status: selectedLocal.available ? (zh ? '可用' : 'Available') : (zh ? '当前不可用' : 'Unavailable'),
+  } : selectedModel ? {
+    name: selectedModel.name,
+    status: selectedModel.available ? (zh ? '已配置' : 'Configured') : (zh ? '当前不可用' : 'Unavailable'),
+  } : null;
+  const propertiesLabel = role ? (zh ? '岗位属性' : 'Role properties')
+    : department ? (zh ? '部门属性' : 'Department properties') : (zh ? '团队属性' : 'Team properties');
+
+  return <aside className="team-inspector" aria-label={propertiesLabel}>
+    <div className="team-section-title"><h2 tabIndex={-1}>{propertiesLabel}</h2>
+      <span className="team-editor-draft-badge">{readOnly ? (zh ? '只读' : 'Read only') : (zh ? '草稿' : 'Draft')}</span>
+    </div>
+    {!selected.length && <>
+      <p className="team-muted">{zh ? '选择一个岗位或部门查看属性。' : 'Select a role or department to view its properties.'}</p>
+      <details className="team-editor-disclosure">
+        <summary>{zh ? '团队设置' : 'Team settings'}<ChevronRight aria-hidden="true" /></summary>
+        <div className="team-inspector-details"><label className="team-field"><span>{zh ? '团队名称' : 'Team name'}</span><Input maxLength={60} value={state.display.name} disabled={readOnly} onChange={e => edit({ ...state, display: { ...state.display, name: e.target.value } })} /></label><label className="team-field"><span>{zh ? '头像标记' : 'Avatar label'}</span><Input maxLength={40} value={state.display.avatar ?? ''} disabled={readOnly} onChange={e => edit({ ...state, display: { ...state.display, avatar: e.target.value || null } })} /></label><TeamSelect label={zh ? '建议最终负责人' : 'Suggested final lead'} value={state.config.defaults.leadRoleId ?? ''} options={[{ value: '', label: zh ? '每次委托时选择' : 'Choose for each commission' }, ...state.config.roles.map(r => ({ value: r.id, label: state.display.roleLabels[r.id] || r.id }))]} onChange={value => edit({ ...state, config: { ...state.config, defaults: { ...state.config.defaults, leadRoleId: value || null } } })} disabled={readOnly} /><TeamSelect label={zh ? '默认并行度' : 'Default parallelism'} value={String(state.config.defaults.parallelism)} options={[{ value: '1', label: '1' }, { value: '2', label: '2' }]} onChange={v => edit({ ...state, config: { ...state.config, defaults: { ...state.config.defaults, parallelism: v === '2' ? 2 : 1 } } })} disabled={readOnly} /></div>
+      </details>
+    </>}
+
     {selected.length > 1 && <p>{zh ? `已选择 ${selected.length} 个对象` : `${selected.length} objects selected`}</p>}
-    {(role || department) && <label className="team-field"><span>{zh ? '显示名称' : 'Display name'}</span><Input value={(department ? state.display.departmentLabels[id!] : state.display.roleLabels[id!]) ?? ''} maxLength={100} disabled={readOnly} onChange={e => edit({ ...state, display: { ...state.display, [department ? 'departmentLabels' : 'roleLabels']: { ...(department ? state.display.departmentLabels : state.display.roleLabels), [id!]: e.target.value } } })} /></label>}
-    {!!selected.length && !selected.some(item => state.config.relations.some(r => r.id === item)) && <TeamSelect label={zh ? '移至部门' : 'Move to department'} value={id ? objectParent(state.config, id) ?? '' : ''} options={departments} disabled={readOnly} onChange={value => edit(moveTeamObjects(state, selected, value || null))} />}
-    {department && <><label className="team-field"><span>{zh ? '部门说明' : 'Department purpose'}</span><Textarea value={department.purpose} maxLength={1000} disabled={readOnly} onChange={e => edit({ ...state, config: { ...state.config, departments: state.config.departments.map(d => d.id === id ? { ...d, purpose: e.target.value } : d) } })} /></label><div className="team-form-grid"><label className="team-field"><span>{zh ? '容器宽度' : 'Container width'}</span><Input type="number" min={280} value={state.layout.positions[id!]?.width ?? 600} disabled={readOnly} onChange={e => edit({ ...state, layout: { ...state.layout, positions: { ...state.layout.positions, [id!]: { ...state.layout.positions[id!], width: Math.max(280, Number(e.target.value)) } } } })} /></label><label className="team-field"><span>{zh ? '容器高度' : 'Container height'}</span><Input type="number" min={180} value={state.layout.positions[id!]?.height ?? 400} disabled={readOnly} onChange={e => edit({ ...state, layout: { ...state.layout, positions: { ...state.layout.positions, [id!]: { ...state.layout.positions[id!], height: Math.max(180, Number(e.target.value)) } } } })} /></label></div></>}
-    {role && <><TeamRosterBinding role={role} label={state.display.roleLabels[role.id] || role.id} models={models.data ?? []} zh={zh} disabled={readOnly} onBind={patchRole} /><TeamSelect label={zh ? '参与状态' : 'Participation'} value={role.participation} options={[{ value: 'placeholder', label: zh ? '待配置 / 不参与运行' : 'Placeholder / inactive' }, { value: 'enabled', label: zh ? '已配置 / 可选入委托' : 'Enabled / eligible for commissions' }]} disabled={readOnly} onChange={value => patchRole({ participation: value === 'enabled' ? 'enabled' : 'placeholder' })} />
-      <label className="team-field"><span>{zh ? '职责范围' : 'Responsibility'}</span><Textarea value={role.responsibility} maxLength={1000} rows={4} disabled={readOnly} onChange={e => patchRole({ responsibility: e.target.value })} /></label><label className="team-field"><span>{zh ? '预期交付' : 'Expected delivery'}</span><Textarea value={role.expectedOutput} maxLength={1000} rows={3} disabled={readOnly} onChange={e => patchRole({ expectedOutput: e.target.value })} /></label>
+    {(role || department) && <label className="team-field"><span>{department ? (zh ? '部门名称' : 'Department name') : (zh ? '岗位名称' : 'Role name')}</span><Input value={(department ? state.display.departmentLabels[id!] : state.display.roleLabels[id!]) ?? ''} maxLength={100} disabled={readOnly} onChange={e => edit({ ...state, display: { ...state.display, [department ? 'departmentLabels' : 'roleLabels']: { ...(department ? state.display.departmentLabels : state.display.roleLabels), [id!]: e.target.value } } })} /></label>}
+
+    {department && <><label className="team-field"><span>{zh ? '部门说明' : 'Department purpose'}</span><Textarea value={department.purpose} maxLength={1000} disabled={readOnly} onChange={e => edit({ ...state, config: { ...state.config, departments: state.config.departments.map(d => d.id === id ? { ...d, purpose: e.target.value } : d) } })} /></label></>}
+    {role && <TeamRosterBinding key={`roster-${role.id}`} role={role} label={state.display.roleLabels[role.id] || role.id} models={models.data ?? []} zh={zh} disabled={readOnly} onBind={patchRole} />}
+    {connection && <p className="team-muted">{connection.name} · {connection.status}</p>}
+    {role && <label className="team-field">
+      <span>{zh ? '岗位职责' : 'Role responsibility'}</span>
+      <Textarea value={role.responsibility} maxLength={1000} rows={1} readOnly={readOnly} onChange={event => patchRole({ responsibility: event.target.value })} />
+    </label>}
+    {role && <Button variant="outline" className="team-inspector-relations" onClick={event => openRelations(role.id, event.currentTarget)}>
+      <span>{zh ? `汇报与协作 · ${relationCount} 条关系` : `Reporting and collaboration · ${relationCount}`}</span>
+      <ChevronRight aria-hidden="true" />
+    </Button>}
+    {workPlan}
+    {!!selected.length && <details key={`properties-${selected.join(',')}`} className="team-editor-disclosure team-advanced-properties">
+      <summary>{zh ? '其他属性' : 'More properties'}<ChevronRight aria-hidden="true" /></summary>
+      <div className="team-inspector-details">
+        {!!selected.length && !selected.some(item => state.config.relations.some(r => r.id === item)) && <TeamSelect label={zh ? '移至部门' : 'Move to department'} value={id ? objectParent(state.config, id) ?? '' : ''} options={departments} disabled={readOnly} onChange={value => edit(moveTeamObjects(state, selected, value || null))} />}
+        {department && <div className="team-form-grid"><label className="team-field"><span>{zh ? '容器宽度' : 'Container width'}</span><Input type="number" min={280} value={state.layout.positions[id!]?.width ?? 600} disabled={readOnly} onChange={e => edit({ ...state, layout: { ...state.layout, positions: { ...state.layout.positions, [id!]: { ...state.layout.positions[id!], width: Math.max(280, Number(e.target.value)) } } } })} /></label><label className="team-field"><span>{zh ? '容器高度' : 'Container height'}</span><Input type="number" min={180} value={state.layout.positions[id!]?.height ?? 400} disabled={readOnly} onChange={e => edit({ ...state, layout: { ...state.layout, positions: { ...state.layout.positions, [id!]: { ...state.layout.positions[id!], height: Math.max(180, Number(e.target.value)) } } } })} /></label></div>}
+        {role && <><TeamSelect label={zh ? '参与状态' : 'Participation'} value={role.participation} options={[{ value: 'placeholder', label: zh ? '待配置 / 不参与运行' : 'Placeholder / inactive' }, { value: 'enabled', label: zh ? '已配置 / 可选入委托' : 'Enabled / eligible for commissions' }]} disabled={readOnly} onChange={value => patchRole({ participation: value === 'enabled' ? 'enabled' : 'placeholder' })} />
+      <label className="team-field"><span>{zh ? '预期交付' : 'Expected delivery'}</span><Textarea value={role.expectedOutput} maxLength={1000} rows={3} disabled={readOnly} onChange={e => patchRole({ expectedOutput: e.target.value })} /></label>
       {!role.agentId && <><TeamSelect label={zh ? '执行连接' : 'Executor connection'} value={executorValue} options={executorOptions} disabled={readOnly || models.isPending || locals.isPending} onChange={value => { const connectionId = value.slice(value.indexOf(':') + 1); if (!value) patchRole({ executor: null }); else if (value.startsWith('model:')) { const c = models.data?.find(item => item.id === connectionId); patchRole({ executor: { executionMode: 'model', connectionId, model: c?.slowModel || c?.fastModel || '', settings: {} } }); } else patchRole({ executor: { executionMode: 'local', localAgentId: connectionId, settings: {} } }); }} />
       {role.executor?.executionMode === 'model' && <label className="team-field"><span>{zh ? '明确模型标识' : 'Explicit model identifier'}</span><Input value={role.executor.model} disabled={readOnly} onChange={e => role.executor?.executionMode === 'model' && patchRole({ executor: { ...role.executor, model: e.target.value } })} /><small>{selectedModel ? `${selectedModel.fastModel} / ${selectedModel.slowModel}` : (zh ? '连接不可用，需在设置核对' : 'Connection unavailable; check settings')}</small></label>}
       {role.executor?.executionMode === 'model' && selectedModel && <TeamSelect label={zh ? '连接模型档位' : 'Connection model tier'} value={role.executor.tier === 'fast' ? 'fast' : 'slow'} disabled={readOnly} options={[{ value: 'slow', label: `${zh ? '深度' : 'Deep'} · ${selectedModel.slowModel}` }, { value: 'fast', label: `${zh ? '快速' : 'Fast'} · ${selectedModel.fastModel}` }]} onChange={value => role.executor?.executionMode === 'model' && patchRole({ executor: { ...role.executor, tier: value, model: value === 'fast' ? selectedModel.fastModel : selectedModel.slowModel } })} />}
@@ -56,6 +107,15 @@ export function TeamInspector({ teamId, semanticRevision, state, selected, edit,
       <fieldset className="team-permission-list" disabled={readOnly}><legend>{zh ? '已有工具授权的子集' : 'Subset of existing tool grants'}</legend>{toolIds.map(toolId => <label key={toolId}><Checkbox checked={role.allowedToolIds.includes(toolId)} onCheckedChange={checked => patchRole({ allowedToolIds: checked ? [...role.allowedToolIds, toolId] : role.allowedToolIds.filter(value => value !== toolId) })} />{toolId}</label>)}{!toolIds.length && <p className="team-muted team-small">{zh ? '暂无可选已授权工具。编辑岗位不会开启新权限。' : 'No authorized tools available. Role edits never grant new permissions.'}</p>}</fieldset>
       <fieldset className="team-permission-list" disabled={readOnly}><legend>{zh ? '可引用的团队资料版本' : 'Granted team source versions'}</legend>{sourceGrants.map(grant => <label key={grant.id}><Checkbox checked={role.sourceGrantIds.includes(grant.id)} disabled={!role.sourceGrantIds.includes(grant.id) && (grant.state !== 'active' || grant.sourceRef.availability !== 'available')} onCheckedChange={checked => patchRole({ sourceGrantIds: checked ? [...role.sourceGrantIds, grant.id] : role.sourceGrantIds.filter(value => value !== grant.id) })} />{grant.sourceRef.kind} · {grant.sourceRef.id} · {grant.sourceRef.revision} · {grant.state} / {grant.sourceRef.availability}</label>)}</fieldset>
     </>}
-    {!!selected.length && <div className="team-inspector-actions">{!relation && <Button variant="outline" disabled={readOnly} onClick={duplicate}><Copy size={14} />{zh ? '复制选中' : 'Duplicate'}</Button>}<Button variant="outline" disabled={readOnly} onClick={remove}><Trash2 size={14} />{department ? (zh ? '解散 / 删除' : 'Dissolve / delete') : (zh ? '删除' : 'Delete')}</Button></div>}
+        <div className="team-inspector-actions">
+          {!readOnly && <>
+            <Button variant="outline" size="sm" onClick={duplicate}><Copy size={14} />{zh ? '复制选中' : 'Duplicate'}</Button>
+            <Button variant="outline" size="sm" onClick={remove}><Trash2 size={14} />{department ? (zh ? '解散 / 删除' : 'Dissolve / delete') : (zh ? '删除' : 'Delete')}</Button>
+          </>}
+          <Button variant="ghost" size="sm" onClick={clearSelection}>{zh ? '团队属性' : 'Team properties'}</Button>
+        </div>
+      </div>
+    </details>}
+    {saveAction}
   </aside>;
 }

@@ -123,7 +123,7 @@ for (const returnToTeam of [false, true]) test(`four starting points retain exac
     assert.deepEqual(companionCalls[0], companionCalls[1]);
     assert.equal(companionCalls[1][2].companionId, 'macro');
     assert.deepEqual(returnedAccounts, returnToTeam ? ['created-account'] : []);
-    assert.equal(document.querySelector('output').textContent, returnToTeam ? '/paper' : '/paper/created-account');
+    assert.equal(document.querySelector('output').textContent, returnToTeam ? '/paper' : '/holdings/accounts/created-account');
   } finally {
     await React.act(async () => root.unmount());
   }

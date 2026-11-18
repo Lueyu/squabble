@@ -132,7 +132,7 @@ export interface PortfolioAccountAssets {
     unsettled: string | null; availabilityKnown: boolean;
   }>;
   orders: import('./api.interface').PaperOrder[];
-  trades: import('./api.interface').PaperTrade[];
+  trades: Array<import('./api.interface').PaperTrade & { filledAt: string | null }>;
   /** Optional for compatible older servers; an absent link is never inferred from ticker or time. */
   executionProvenance?: PortfolioExecutionProvenance[];
   /** Latest saved complete USD valuation; not a valuation made by this read. */

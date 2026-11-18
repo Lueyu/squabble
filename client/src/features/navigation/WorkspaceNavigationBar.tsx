@@ -19,7 +19,7 @@ export function WorkspaceNavigationBar() {
   ) ?? { label: route.section === 'daily' ? (zh ? '投资日报' : 'Daily report') : route.title };
   const { goBack } = useWorkspaceNavigation();
   const accountId = new URLSearchParams(location.search).get('accountId') ?? 'real';
-  const parent = route.section === 'assets' ? assetHref(route.parent, accountId) : route.parent;
+  const parent = route.section === 'assets' && route.parent === '/holdings' ? assetHref(route.parent, accountId) : route.parent;
   if (route.kind === 'flow')
     return (
       <div id="workspace-flow-controls" className="workspace-flow-controls">
@@ -84,18 +84,13 @@ export function WorkspaceSectionTabs() {
   const accountId = new URLSearchParams(location.search).get('accountId') ?? 'real';
   const section = resolveWorkspaceRoute(pathname, i18n.language).section;
   const items =
-    section === 'assets'
+    section === 'assets' && ['/watchlist', '/import'].includes(pathname)
       ? [
           ['/holdings', zh ? '持仓与现金' : 'Holdings & cash'],
           ['/transactions', zh ? '交易账本' : 'Ledger'],
           ['/watchlist', zh ? '关注列表' : 'Watchlist'],
           ...(accountId === 'real' ? [['/import', zh ? '导入与对账' : 'Import & reconcile']] : []),
         ]
-      : section === 'overview'
-        ? [
-            ['/', zh ? '投资总览' : 'Overview'],
-            ['/paper', zh ? '模拟账户' : 'Simulation accounts'],
-          ]
       : section === 'daily' &&
           ['/daily', '/analysis', '/journal'].includes(pathname)
         ? [

@@ -5,8 +5,8 @@ import { discussionPrompt } from './council.dialogue';
 import { evidenceExcerpts, type CouncilEvidence } from './council.rules';
 import { normalizeBuilderConfig } from '../paper-trading/agent-builder.rules';
 import { parseSecFinancials } from '../research-core/sec-financials';
-import { estimateInputTokens } from '../llm-budget/llm-budget.rules';
-import { jsonChatMessages } from '../research-core/llm.service';
+import { DEFAULT_LLM_BUDGET, estimateInputTokens } from '../llm-budget/llm-budget.rules';
+import { jsonChatMessages, type ChatMessage } from '../research-core/llm.service';
 import { CouncilWorkflowExecutor } from './council.workflow-executor';
 
 function secFinancialEvidence(): CouncilEvidence[] {
@@ -93,6 +93,79 @@ test('summary retains a short unique third or later handoff fact with its citati
     for (const point of points) assert.ok(captured.includes(point), `lost complete short point: ${point}`);
     if (count === 5) for (const point of financialPoints) assert.ok(captured.includes(point));
     assert.ok(captured.includes('business-news'));
+  }
+});
+
+test('Team model summary and review fit the new-user limit with exact inputs and reject an oversized request before dispatch', async () => {
+  const objective = 'Review the actual portfolio, discuss gaps, and propose a bounded paper-account strategy.';
+  const steering = 'Keep the USD and HKD balances distinct. 国库券不做价格假设。';
+  const member = { id: 'lead', name: 'Portfolio Lead', model: 'fast', executionMode: 'model',
+    instructions: 'Use exact positions, flag unknown prices, and explain disagreements.' };
+  const assignment = { workKey: 'a'.repeat(64), roleId: 'lead', taskKind: 'summary', objective,
+    expectedOutput: 'Return a citable research report and proposed strategy for independent review.',
+    dependencyWorkKeys: ['b'.repeat(64)], reviewerRoleId: 'reviewer', reviewMode: 'independent',
+    inputRefs: [], requestedByRoleIds: ['lead'] };
+  const cutoff = '2026-11-18T09:55:51.185Z';
+  const account = { id: 'paper-account', name: 'Acceptance model simulation', cashBalance: { USD: '10000', CNY: '10000', HKD: '10000' } };
+  const positions = [{ id: 'position', owner: 'owner', accountId: account.id, ticker: 'AAPL', company: 'Acceptance sample',
+    market: 'US', currency: 'USD', shares: '4', avgCost: '71', restrictedShares: '1', openedAt: cutoff, updatedAt: cutoff }];
+  const frozen = { accountId: account.id, holdings: positions, account, readAt: cutoff };
+  const evidence = { id: 'team-account:commission', role: 'portfolio', evidenceType: 'owner_portfolio',
+    title: 'Frozen team account', sourceName: 'Frozen owner context', sourceUrl: null,
+    content: JSON.stringify(frozen), fetchedAt: cutoff, relevanceScore: 0 };
+  const plan = { objective, work: [assignment, { workKey: assignment.dependencyWorkKeys[0], dependencyWorkKeys: [], inputRefs: [] }] };
+  const row = { id: 'session', owner: 'owner', revision: 1, ticker: 'PORTFOLIO', language: 'zh-CN',
+    status: 'running', scene: 'portfolio_daily', title: objective, subject: objective, profileSnapshot: {}, evidenceSnapshot: [evidence],
+    checkpoint: { workflow: { peers: [], recallEnabled: false }, teamContext: { plan, commissionId: 'commission', dataCutoffAt: cutoff,
+      inputSnapshot: { account, positions, policyRevision: null, inputRefs: [], capturedAt: cutoff, costRates: { inputUsdPerMillion: 9 } } } } };
+  const executionPlan = { schemaVersion: 1, parameterOrigin: 'ai_proposed', evidenceIds: [evidence.id],
+    strategy: { entries: [{ text: 'Recheck price before any proposal.' }] }, gaps: ['unverified quote'] };
+  const delivery = { conclusion: 'The price is unknown.', evidenceIds: [evidence.id], executionPlan,
+    response: { evidencePoints: ['The account has four shares.'] }, assumptions: [], gaps: ['unverified quote'] };
+  const task = { id: 'task', key: 'summary', workKey: assignment.workKey, position: 1, assignment,
+    dependencyWorkKeys: assignment.dependencyWorkKeys, dependencies: [], skills: [], delivery };
+  const predecessor = { id: 'financials', key: 'financials', workKey: assignment.dependencyWorkKeys[0], state: 'accepted',
+    attempts: [], delivery };
+  const limit = DEFAULT_LLM_BUDGET.maxInputTokens;
+  for (const kind of ['work', 'review', 'oversized'] as const) {
+    const exactSteering = kind === 'oversized' ? steering.repeat(250) : steering;
+    const builder = { from: () => builder, where: () => builder, orderBy: async () => [{ content: exactSteering }] };
+    const calls: ChatMessage[][] = [];
+    let measured = 0;
+    const executor = new CouncilWorkflowExecutor({
+      db: { select: () => builder },
+      llm: { getInputLimit: async () => limit, chatFastJSON: async (messages: ChatMessage[]) => {
+        calls.push(messages);
+        throw new Error('CAPTURED');
+      } },
+      store: { markRemote: async (_row: unknown, _task: unknown, _id: unknown, update: { memory: { requestTokens: number } }) => {
+        measured = update.memory.requestTokens;
+      } },
+      activity: async () => {},
+    } as never);
+    await assert.rejects(executor.execute(row as never, task as never,
+      { id: 'attempt', revision: 1, kind: kind === 'review' ? 'review' : 'work' } as never, member as never, [predecessor] as never),
+    kind === 'oversized' ? /RESEARCH_CONTEXT_LIMIT/ : /CAPTURED/);
+    if (kind === 'oversized') {
+      assert.ok(measured > limit);
+      assert.equal(calls.length, 0);
+      continue;
+    }
+    assert.equal(calls.length, 1);
+    const messages = jsonChatMessages(calls[0]);
+    assert.equal(measured, estimateInputTokens(messages));
+    assert.ok(measured <= 6000);
+    const input = JSON.parse(messages.at(-1)!.content);
+    assert.deepEqual(input.task.assignment, assignment);
+    assert.deepEqual(input.member, { name: member.name, instructions: member.instructions });
+    assert.deepEqual(input.steering, [steering]);
+    assert.equal(input.dataCutoffAt, cutoff);
+    assert.equal(input.evidence[0].id, evidence.id);
+    assert.deepEqual(JSON.parse(input.evidence[0].content), frozen);
+    assert.equal(input.teamInput, undefined);
+    assert.equal(input.thread, undefined);
+    if (kind === 'review') assert.deepEqual(input.submitted.executionPlan, executionPlan);
+    else assert.match(messages[0].content, /executionPlan.*ai_proposed/u);
   }
 });
 

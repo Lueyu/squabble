@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { FolderPlus, LayoutTemplate, Plus, Search } from 'lucide-react';
+import { LayoutTemplate, Search } from 'lucide-react';
 import { TEAM_TEMPLATES } from '@shared/team-templates';
 import { agentRosterApi } from '@/api/agent-roster';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AgentIdentity } from '@/features/agent-roster/AgentIdentity';
 import type { ModelConnection } from '@shared/model-connections.interface';
-import { TeamOutline } from './TeamOutline';
 import { draftWithTemplate } from './team-template-instantiation';
 import { assignAgentToRole, staffingFailureMessage } from './team-staffing';
 import type { TeamEditorState } from './team-graph';
@@ -19,8 +18,6 @@ interface TeamEditorSidebarProps {
   selected: string[];
   select: (ids: string[]) => void;
   edit: (state: TeamEditorState) => void;
-  add: (kind: 'role' | 'department') => void;
-  locate: (id: string) => void;
   zh: boolean;
   readOnly: boolean;
   notify: (message: string) => void;
@@ -28,18 +25,13 @@ interface TeamEditorSidebarProps {
   assignAgent?: (roleId: string, agentId: string) => void;
 }
 
-/**
- * Left rail of the organization canvas: add seats/groups, browse and drag your
- * friends, apply a full organization template, and a persistent outline tree.
- * Nothing here grants permissions or dispatches research.
- */
-export function TeamEditorSidebar({ state, selected, select, edit, add, locate, zh, readOnly, notify, models = [], assignAgent }: TeamEditorSidebarProps) {
+export function TeamEditorSidebar({ state, selected, select, edit, zh, readOnly, notify, models = [], assignAgent }: TeamEditorSidebarProps) {
   const { i18n } = useTranslation();
   const zhText = zh || i18n.language.startsWith('zh');
   const [query, setQuery] = useState('');
   const [applying, setApplying] = useState(false);
   const [applyId, setApplyId] = useState<string | null>(null);
-  const [tab, setTab] = useState<'outline' | 'friends' | 'templates'>('outline');
+  const [tab, setTab] = useState<'friends' | 'templates'>('friends');
   const [friendId, setFriendId] = useState<string | null>(null);
   const [failure, setFailure] = useState('');
   const roster = useQuery({ queryKey: ['agent-roster'], queryFn: agentRosterApi.list, retry: false });
@@ -67,26 +59,18 @@ export function TeamEditorSidebar({ state, selected, select, edit, add, locate, 
     }
   };
   return <aside className="team-editor-sidebar" aria-label={zhText ? '组织编辑侧栏' : 'Organization editing sidebar'}>
-    <section className="team-sidebar-section">
-      <h2>{zhText ? '添加到画布' : 'Add to canvas'}</h2>
-      <div className="team-sidebar-add">
-        <Button variant="outline" size="sm" disabled={readOnly || state.config.roles.length >= 30} onClick={() => add('role')}><Plus size={14} />{zhText ? '成员岗位' : 'Member seat'} ({state.config.roles.length}/30)</Button>
-        <Button variant="outline" size="sm" disabled={readOnly} onClick={() => add('department')}><FolderPlus size={14} />{zhText ? '部门 / 分组' : 'Department / group'}</Button>
-      </div>
-    </section>
     <div className="team-sidebar-tabs" role="tablist" aria-label={zhText ? '侧栏内容' : 'Sidebar content'}>
-      {(['outline', 'friends', 'templates'] as const).map((value, index) => <button type="button" key={value} id={`team-sidebar-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`team-sidebar-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
+      {(['friends', 'templates'] as const).map((value, index) => <button type="button" key={value} id={`team-sidebar-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`team-sidebar-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
-        const tabs = ['outline', 'friends', 'templates'] as const;
-        const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3];
+        const tabs = ['friends', 'templates'] as const;
+        const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? 1 : 1 - index];
         setTab(next);
         document.getElementById(`team-sidebar-tab-${next}`)?.focus();
-      }}>{value === 'outline' ? (zhText ? '组织目录' : 'Outline') : value === 'friends' ? (zhText ? '股友库' : 'Friends') : (zhText ? '模板' : 'Templates')}</button>)}
+      }}>{value === 'friends' ? (zhText ? '股友库' : 'Friends') : (zhText ? '模板' : 'Templates')}</button>)}
     </div>
     <div className="team-sidebar-panel" data-sidebar-tab={tab} id={`team-sidebar-panel-${tab}`} role="tabpanel" aria-labelledby={`team-sidebar-tab-${tab}`}>
     {tab === 'friends' && <section className="team-sidebar-section">
-      <h2>{zhText ? '我的股友' : 'My friends'}</h2>
       <div className="team-sidebar-search"><Search size={14} /><Input aria-label={zhText ? '搜索股友' : 'Find friends'} placeholder={zhText ? '按姓名或专长搜索…' : 'By name or specialty…'} value={query} onChange={event => setQuery(event.target.value)} /></div>
       {roster.isPending && <p role="status" className="team-muted team-small">{zhText ? '正在读取股友库…' : 'Loading friends…'}</p>}
       {roster.isError && <div role="alert" className="team-sidebar-assignment"><p>{zhText ? '股友库读取失败，请重试。' : 'Could not load friends. Try again.'}</p><Button variant="outline" size="sm" onClick={() => void roster.refetch()}>{zhText ? '重试' : 'Retry'}</Button></div>}
@@ -107,13 +91,8 @@ export function TeamEditorSidebar({ state, selected, select, edit, add, locate, 
       </div>
     </section>}
     {tab === 'templates' && <section className="team-sidebar-section">
-      <h2>{zhText ? '团队模板' : 'Team templates'}</h2>
       <Button variant="outline" size="sm" disabled={readOnly} onClick={() => { setApplying(true); setApplyId(null); }}><LayoutTemplate size={14} />{zhText ? '应用模板到当前草稿' : 'Apply a template to this draft'}</Button>
       <p className="team-muted team-small">{zhText ? '应用只替换当前草稿结构并可撤销；已发布版本与运行协议不变。' : 'Applying only replaces the current draft structure and is undoable; published versions and run agreements stay untouched.'}</p>
-    </section>}
-    {tab === 'outline' && <section className="team-sidebar-section team-sidebar-outline">
-      <h2>{zhText ? '组织目录' : 'Organization outline'}</h2>
-      <TeamOutline state={state} selected={selected} select={select} edit={edit} locate={locate} zh={zhText} readOnly={readOnly} />
     </section>}
     </div>
     <Dialog open={applying} onOpenChange={setApplying}>

@@ -12,6 +12,8 @@ export interface ResearchWorkflowConfig {
   memory?: ResearchMemoryRecall; reset?: boolean;
 }
 export interface ResearchDelivery {
+  executionPlan?: import('./report-execution-plan.interface').ReportExecutionPlanInput;
+  executionPlanError?: 'missing' | 'invalid';
   thesisCandidates?: ThesisCandidateInput[];
   valuation?: ResearchToolResult;
   researchStance?: 'positive' | 'balanced' | 'cautious';

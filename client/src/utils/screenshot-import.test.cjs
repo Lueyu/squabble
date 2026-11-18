@@ -338,6 +338,8 @@ function screenshotPage(initialBatch = null, agents = [agent()], { failFirstComm
     },
     './screenshot-import': helpers(),
     './ImportSavedNextSteps': { ImportSavedNextSteps },
+    '@/utils/workspace-tab-recovery': { workspaceOwnerScope: () => 'local' },
+    './import-continuation': { readScreenshotRecovery: () => null, saveScreenshotRecovery: () => true },
     '@/utils/local-agent-settings': { agentSettingsProblem: () => null, cleanAgentSettings: value => value },
     sonner: { toast: { error() {}, success() {} } },
   };
@@ -366,7 +368,7 @@ test('durable screenshot UI restores the last server batch and leaves recognitio
   page.unmount(); assert.equal(page.calls.length, 0);
 });
 
-test('the primary screenshot save keeps partial progress without queuing research and offers friends next', async () => {
+test('the primary screenshot save keeps partial progress without queuing research and offers a next step', async () => {
   const page = screenshotPage(fixtureBatch()); page.render(); page.flush(); const tree = page.render();
   const button = nodes(tree).find(node => node.type === 'Button' && content(node) === '保存持仓');
   assert.ok(button, 'reviewed holdings need a primary save action');

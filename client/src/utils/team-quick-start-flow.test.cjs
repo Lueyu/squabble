@@ -4,7 +4,11 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fixture = require('./simple-test-loader.cjs');
 
-const quick = () => fixture().load('features/teams/team-quick-start.ts');
+const quick = () => {
+  const f = fixture();
+  f.load('api/auth-mode.ts').setAuthMode('local');
+  return f.load('features/teams/team-quick-start.ts');
+};
 const commission = () => fixture().load('features/teams/team-commission-state.ts');
 
 /** Small axios-shaped error: the quick-start code only reads isAxiosError, response.status and the code body. */

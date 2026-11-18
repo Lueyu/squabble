@@ -1314,3 +1314,34 @@
   margin: 0;
   line-height: 20px;
 }
+
+.account-segments {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--muted);
+}
+
+.account-segments :is(a, button, .account-current-range) {
+  height: auto;
+  min-height: 38px;
+  max-width: 100%;
+  padding: 8px 12px;
+  color: var(--muted-foreground);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.account-segments :is([aria-current="page"], [aria-pressed="true"], .account-current-range) {
+  background: var(--brand-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.portfolio-overview .portfolio-comparison .portfolio-chart:not(.compact) {
+  height: clamp(185px, 26vw, 248px);
+}

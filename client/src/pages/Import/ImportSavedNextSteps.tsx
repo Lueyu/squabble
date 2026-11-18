@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { safeReturnPath } from '@/features/navigation/workspace-navigation';
+import { LOCAL_ONBOARDING_PATH } from '@/features/onboarding/onboarding-state';
 
 /** Saving is complete before these links appear; following them never starts research. */
 export function ImportSavedNextSteps() {
@@ -16,8 +17,8 @@ export function ImportSavedNextSteps() {
     <div className="mt-3 space-y-3" role="status">
       <p className="text-sm">
         {zh
-          ? '持仓已保存。可以返回继续管理，或认识一起验证投资想法的股友。'
-          : 'Your holdings are saved. Return to your work or meet agents to explore investment ideas.'}
+          ? '持仓已保存。下一步，连接一种可用的研究服务。'
+          : 'Holdings saved. Connect a research service to continue.'}
       </p>
       <div className="flex flex-wrap gap-2">
         {returnTo && (
@@ -28,8 +29,8 @@ export function ImportSavedNextSteps() {
           </Button>
         )}
         <Button asChild variant={returnTo ? 'outline' : 'default'}>
-          <Link to="/friends">
-            {zh ? '下一步：认识股友' : 'Next: meet your agents'}
+          <Link to={LOCAL_ONBOARDING_PATH}>
+            {zh ? '连接研究服务' : 'Connect a research service'}
           </Link>
         </Button>
         {!returnTo && (

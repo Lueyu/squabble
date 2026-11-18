@@ -1,7 +1,39 @@
 import type { AiInvestmentPreview } from '@shared/investment-policy.interface';
 
 /** Read-only evidence shown before a new team's independent paper ledger is created. */
-export function TeamAccountSeedReview({ preview, zh }: { preview: AiInvestmentPreview; zh: boolean }) {
+export function TeamAccountSeedReview({ preview, zh, compact = false }: { preview: AiInvestmentPreview; zh: boolean; compact?: boolean }) {
+  const count = preview.seed.positions.length;
+  const snapshot = new Date(preview.seed.capturedAt).toLocaleString(zh ? 'zh-CN' : 'en', {
+    timeZone: 'Asia/Shanghai', dateStyle: 'medium', timeStyle: 'short',
+  });
+  if (compact) return <section className="space-y-4 rounded-xl border bg-card p-5" aria-label={zh ? '核对模拟起点' : 'Review the starting point'}>
+    <h2 className="text-lg font-semibold">{zh ? '模拟起点' : 'Simulation starting point'}</h2>
+    <dl className="grid gap-3 sm:grid-cols-2">
+      <div><dt className="text-sm text-muted-foreground">{zh ? '持仓来源' : 'Position source'}</dt><dd className="font-medium">
+        {zh ? `我的实仓 · ${count} 项持仓` : `Real portfolio · ${count} positions`}
+      </dd></div>
+      <div><dt className="text-sm text-muted-foreground">{zh ? '快照时间（北京时间）' : 'Snapshot time (Beijing)'}</dt>
+        <dd className="font-medium"><time dateTime={preview.seed.capturedAt}>{snapshot}</time></dd>
+      </div>
+    </dl>
+    {count > 0 && <details className="border-t pt-3">
+      <summary className="cursor-pointer text-sm text-muted-foreground">{zh ? '查看快照内的持仓' : 'View positions in the snapshot'}</summary>
+      <ul className="mt-2 divide-y text-sm">{preview.seed.positions.map(position => <li key={position.sourceHoldingId ?? `${position.market}:${position.ticker}`} className="flex justify-between gap-3 py-2">
+        <span className="break-all">{position.ticker}</span><span>{position.shares} {zh ? '股' : 'shares'}</span>
+      </li>)}</ul>
+    </details>}
+    <div className="border-t pt-4">
+      <p className="text-sm text-muted-foreground">{zh ? '可用虚拟现金' : 'Available virtual cash'}</p>
+      <dl className="mt-3 grid gap-3 sm:grid-cols-3">
+        {preview.seed.cash.map(cash => <div key={cash.currency}>
+          <dt className="text-sm text-muted-foreground">{cash.currency}</dt>
+          <dd className="mt-1 rounded-md border px-3 py-2.5 font-medium tabular-nums">
+            {Number(cash.total).toLocaleString(zh ? 'zh-CN' : 'en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </dd>
+        </div>)}
+      </dl>
+    </div>
+  </section>;
   return <section className="space-y-3 rounded-lg border p-4" aria-label={zh ? '核对新模拟盘起点' : 'Review the new paper account seed'}>
     <h3 className="font-semibold">{zh ? '本团队的新独立模拟盘' : 'A new independent paper account for this team'}</h3>
     <p className="text-sm">{zh ? '复制以下实仓持仓快照；实盘现金不作为本金。以下三币金额全部是可用虚拟现金。' : 'Copy the real-position snapshot below; real cash is not used as starting capital. The three currency amounts below are available virtual cash.'}</p>

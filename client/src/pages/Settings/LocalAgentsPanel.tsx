@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { errorMessage } from '@/pages/AgentBuilder/errorMessage';
+import { LOCAL_AI_READINESS_KEY } from '@/features/onboarding/use-ai-readiness';
 
 const QUERY_KEY = ['settings', 'local-agents'];
 const STATUS_KEY = [...QUERY_KEY, 'status'];
@@ -31,7 +32,7 @@ export default function LocalAgentsPanel() {
     || status.data?.items.some((agent: LocalAgentConnection) => agent.source === 'companion' && agent.connected));
   const refresh = async () => {
     await Promise.all([client.invalidateQueries({ queryKey: QUERY_KEY, exact: true }),
-      client.invalidateQueries({ queryKey: STATUS_KEY })]);
+      client.invalidateQueries({ queryKey: STATUS_KEY }), client.invalidateQueries({ queryKey: LOCAL_AI_READINESS_KEY })]);
   };
 
   useEffect(() => {
@@ -43,6 +44,7 @@ export default function LocalAgentsPanel() {
     if (!companion?.connected) return;
     setPairing(null);
     void client.invalidateQueries({ queryKey: QUERY_KEY, exact: true });
+    void client.invalidateQueries({ queryKey: LOCAL_AI_READINESS_KEY });
   }, [companion?.connected, client]);
 
   const action = useMutation({

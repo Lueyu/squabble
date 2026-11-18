@@ -60,6 +60,7 @@
     "filledPrice": "Filled price",
     "notFilled": "No fill time recorded",
     "createdAt": "Created",
+    "recordedAt": "Recorded at",
     "noOrders": "This account has no recorded orders.",
     "fills": "Recorded simulation fills",
     "recordedFillPrice": "Recorded fill price",

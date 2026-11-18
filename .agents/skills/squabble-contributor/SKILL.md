@@ -13,7 +13,7 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 2. 从已安装 skill 或仓库正本运行 `node <skill目录>/scripts/inspect-workspace.cjs --repo <仓库根目录>`。它只读 Git 状态、知识版本、路径和迁移登记；不会安装依赖、迁移数据库或调用 AI。`--config <私有配置文件>` 仅补充位置提示。
 3. 优先读取当前 checkout 的本 skill 和下面与任务有关的参考资料。`context-manifest.json` 记录核对基线、模块入口和相关图。版本差异、缺失基线和脏文件需要定向核对，不代表运行实例损坏。不要把旧文档当作当前代码的证明，也不要重新通读整个仓库。
 4. 明确是当前简化体验还是保留的旧流程，再打开对应入口。当前 `/council` 通过 `SimpleCouncilPage` 进入频道；旧 `CouncilPage` 和 `multi-agent/` 分析仍存在。
-5. 当前 `/` 为账户表现总览，`/paper` 为多模拟仓列表，`/paper/:accountId/strategies` 管理该仓组合；比较和频道账户选择是只读操作，不替代显式应用。旧无账户接口保留歧义与托管账户保护。
+5. 当前 `/` 为账户表现总览，`/holdings/accounts` 为多模拟仓列表（旧 `/paper` 链接按原意跳转），`/paper/:accountId/strategies` 管理该仓组合；比较和频道账户选择是只读操作，不替代显式应用。旧无账户接口保留歧义与托管账户保护。
 6. 共享研究基础在 `server/modules/research-core/`，执行器选择在 `research-routing/`；策略界面在 `client/src/features/investment-strategies/`。不要把旧目录名当作功能归属；中文阅读顺序见 `docs/code-reading.zh-CN.md`。
 7. V4 新入口为 `/daily`、`/research`、`/data`、`/memory`；策略问答在 `client/src/features/strategy-interview/` 和 `/strategies`。访谈采纳与执行授权分开；已保存预览只能通过只读 `GET /api/strategy-interviews/:id/review` 恢复，不得重新生成时丢失观察意图。导航返回/滚动逻辑在 `features/navigation/`，通知/MCP 复用面板在 `features/integrations/`。
 8. `/research` 复用持久化研究会话的大框聊天与历史侧栏，不是能力超链接入口。报告历史逐条删除一个版本；研究任务删除不级联报告。迁移 `49_research_deletions.sql` 保留墓碑和请求回执，已运行或提供方状态未确定的任务先结算。删除来源不可再次同步、调用记忆、执行策略或发布新频道内容；已有成交和固定快照保留，删除已采纳版本只清空采纳指针。
@@ -47,9 +47,9 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 
 ## 独立股友与引导式自动团队（当前入口）
 
-当前新建团队主线为导入持仓→`/friends`选择12种专业股友→`/teams`统一选择11种组织模板→组织配置与研究分工→分别确认发布、账户关联与运行。`/teams?guided=1`只恢复已有引导进度，无进度时进入统一模板创建；研究室按需使用。`agent-roster`拥有稳定身份、不可变能力版本与personal/team/conversation分域记忆；连接、岗位和模拟账户头像不是股友身份。复用同一股友不复制其他团队记忆，显式分享保留原始来源权限。模板只声明只读工具上限，不能授予运行权限。`council.roster.ts`、`agent-roster-context.ts`与`council-execution-proof.ts`在派发、工具读取、结果验收和最终发布复验固定/当前权限；归档阻止新派发，已派发结果只有精确服务端receipt证明才能结算，暂停和来源撤销仍阻止发布。
+首次引导从实仓持仓导入、设置连接到建立团队模拟盘。设置中的本地 Agent 以可执行状态为准，命名模型 API 以当前配置的测试回执为准。迁移70持久化测试结果，改变模型、地址或密钥需重测。`/teams?guided=1`优先续接已有请求或团队，首次创建复用统一组织起点及持仓快照核对。团队配员复用`/friends`中的股友，空目录可先添加一位。组织发布、账户关联和启动仍使用各自确认接口。`agent-roster`拥有稳定身份、不可变能力版本与personal/team/conversation分域记忆；连接、岗位和模拟账户头像不是股友身份。复用同一股友不复制其他团队记忆，显式分享保留原始来源权限。模板只声明只读工具上限，不能授予运行权限。`council.roster.ts`、`agent-roster-context.ts`与`council-execution-proof.ts`在派发、工具读取、结果验收和最终发布复验固定/当前权限；归档阻止新派发，已派发结果只有精确服务端receipt证明才能结算，暂停和来源撤销仍阻止发布。
 
-`/`投资总览与`/holdings?accountId=real|id`持仓为独立一级入口，`/paper`明确称为模拟账户。迁移66为稳定股友profile增加动物头像，`shared/animal-avatar.ts`定义ID；名字/简介/头像更新不创建能力版本，新会话与委托固定当时身份，历史快照保留回退。`AgentEditorDialog.tsx`保存实际工作指令与偏好，`shared/agent-working-instructions.ts`供个人及团队执行共用；英文推荐创建保存英文模板。`features/teams/guided-team-storage.ts`按owner分区保留标签页表单与进度，旧无owner缓存须逐项API验权；未知操作沿原始key与确切payload恢复，不能结束后另建。正式整改设计、计划及验收分别见`docs/ui-regression-repair-design.zh-CN.md`、`docs/ui-regression-repair-plan.md`与`docs/ui-regression-repair-validation.md`。
+`/`投资总览与`/holdings?accountId=real|id`持仓为独立一级入口，`/holdings/accounts`集中浏览和管理模拟账户。迁移66为稳定股友profile增加动物头像，`shared/animal-avatar.ts`定义ID；名字/简介/头像更新不创建能力版本，新会话与委托固定当时身份，历史快照保留回退。`AgentEditorDialog.tsx`保存实际工作指令与偏好，`shared/agent-working-instructions.ts`供个人及团队执行共用；英文推荐创建保存英文模板。`features/teams/guided-team-storage.ts`按owner分区保留标签页表单与进度，旧无owner缓存须逐项API验权；未知操作沿原始key与确切payload恢复，不能结束后另建。正式整改设计、计划及验收分别见`docs/ui-regression-repair-design.zh-CN.md`、`docs/ui-regression-repair-plan.md`与`docs/ui-regression-repair-validation.md`。
 
 `team-runs`保存明确确认的运行协议与不可变修订，按已验证交易日产生有限cycle/commission。系统actor只能采纳本cycle确切已验收报告并导入`execution-strategy`，最终账户应用事务复验协议、版本、binding、来源和权限。授权涵盖替换模拟组合；用户草稿保留。暂停取消全部自动模拟交易（含保护单），不伪称外部未知任务已取消。旧岗位仍可手动委托，关联/转换为股友并发布后才可自动运行。引导创建保留原请求与断点，未知结果不换key重建。
 
@@ -65,7 +65,7 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 
 ## 团队模拟盘
 
-总览对齐与盘中估值见`docs/overview-chart-polish.md`：`PortfolioValuationScheduler`独立按5分钟slot采集实盘/非归档模拟盘，暂停仍可估值、总开关false停止；迁移67保存盘中paper事实、claim和真实报价provenance，不改变交易/研究节奏。日/周保留观测、月按小时、更长按日；未知点与财务continuity边界不能被聚合隐藏。`PortfolioIntradayReferenceService`仅读owned quote facts，按当前数量画含明确来源的部分持仓参考，不以knownValueUsd冒充净值。日内FX只用前日已知日期；US采集专用Tencent源验证season/分钟证据/纽约时区，不用抓取时刻代替行情时间。截图红框和existing logo由宽度/卡片subgrid修复；虚线连接层不生成数据点或收益。
+总览对齐与盘中估值见`docs/overview-chart-polish.md`：`PortfolioValuationScheduler`独立按交易时段采集实盘和非归档模拟盘的新增估值观测，暂停仍可估值、总开关false停止；迁移67保存盘中paper事实、claim和真实报价provenance，不改变交易/研究节奏。日/周保留观测、月按小时、更长按日；未知点与财务continuity边界不能被聚合隐藏。`PortfolioIntradayReferenceService`仅读owned quote facts，按当前数量画含明确来源的部分持仓参考，不以knownValueUsd冒充净值。日内FX只用前日已知日期；US采集专用Tencent源验证season/分钟证据/纽约时区，不用抓取时刻代替行情时间。截图红框和existing logo由宽度/卡片subgrid修复；虚线连接层不生成数据点或收益。
 
 列表卡片和详情常用入口的“移除团队”复用归档预览/确认，固定`pause_all`并明确保留账户、成交、报告及版本，可在已归档查看。`team-version.service.ts`在同一事务复核运行协议快照、暂停协议并记修订、取消未派发周期；`team-run.service.ts`对旧暂停/对账复核当前绑定，不能影响接手团队。高级归档显式保留已确认规则的兼容入口保留，但团队自动研究协议也停止。比例调整集中在`client/src/workspace-density.css`，研究室由`Layout.tsx`的专用pane填充剩余高度。验证与截图见`docs/compact-ui-team-removal.md`。
 

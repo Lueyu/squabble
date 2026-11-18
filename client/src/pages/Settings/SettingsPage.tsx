@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowUpRight, BookOpenText, LockKeyhole } from 'lucide-react';
+import { ChevronRight, LockKeyhole } from 'lucide-react';
 import { AppearanceControls } from '@/components/AppearancePicker';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,8 +21,9 @@ import SettingsNavigation from './SettingsNavigation';
 import SystemUpdateCard from './SystemUpdateCard';
 import ResearchParticipantsPanel from './ResearchParticipantsPanel';
 import { useSimpleExperience } from '@/hooks/use-simple-experience';
-import { resolveSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from './settings-navigation';
+import { isConnectionSettingsSection, resolveSettingsSection, visibleSettingsSections, type SettingsSection } from './settings-navigation';
 import './settings.css';
+import { OnboardingConnectionStep } from '@/features/onboarding/OnboardingConnectionStep';
 import { NotificationChannelsCard, AgentSessionsCard } from '@/features/integrations/PaperIntegrationPanels';
 import { useWorkspaceNavigation } from '@/features/navigation/use-workspace-navigation';
 import ToolConnectionsPanel from '@/features/tool-connections/ToolConnectionsPanel';
@@ -34,9 +35,8 @@ export default function SettingsPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const localWorkspace = getAuthMode() === 'local';
-  const requestedSection = resolveSettingsSection(location.pathname, location.hash);
-  const active = localWorkspace && requestedSection === 'security' ? 'models' : requestedSection;
-  const sections = SETTINGS_SECTIONS.filter(section => !localWorkspace || section.id !== 'security');
+  const active = resolveSettingsSection(location.pathname, location.hash, localWorkspace);
+  const sections = visibleSettingsSections(localWorkspace);
   const [visited, setVisited] = useState<SettingsSection[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   useWorkspaceNavigation(scrollRef);
@@ -46,9 +46,9 @@ export default function SettingsPage() {
   useEffect(() => {
     if (active && location.pathname !== `/settings/${active}`) {
       // Keep the panel tree mounted while normalizing an old entry URL.
-      navigate({ pathname: `/settings/${active}`, search: location.search }, { replace: true });
+      navigate({ pathname: `/settings/${active}`, search: location.search, hash: location.hash }, { replace: true, state: location.state });
     }
-  }, [active, location.pathname, location.search, navigate]);
+  }, [active, location.pathname, location.search, location.hash, location.state, navigate]);
 
   useEffect(() => {
     if (!active) return;
@@ -58,28 +58,28 @@ export default function SettingsPage() {
   }, [active]);
 
   if (!active) return <NotFound />;
-  const group = SETTINGS_SECTIONS.find(section => section.id === active)!.group;
+  const connectionPage = isConnectionSettingsSection(active);
+  const onboarding = connectionPage && new URLSearchParams(location.search).get('onboarding') === '1';
+  const navigation = <SettingsNavigation active={active} localWorkspace={localWorkspace} placement="page" />;
   return <div className="settings-shell">
-    <SettingsNavigation active={active} />
     <div ref={scrollRef} className="settings-content">
       <div className="settings-content-inner">
-        <header className="settings-page-heading">
-          <div className="min-w-0">
-            <p className="settings-kicker">{t(`settingsNav.groups.${group}`)}</p>
-            <h1 ref={titleRef} tabIndex={-1} className="settings-page-title" id="settings-page-title">
-              {active === 'tools' ? toolCopy.title : t(`settingsNav.sections.${active}.title`)}
-            </h1>
-            <p className="settings-page-description">{active === 'tools' ? toolCopy.description : t(`settingsNav.sections.${active}.description`)}</p>
-          </div>
-          {active !== 'guide' && <Button asChild variant="ghost" size="sm" className="settings-help-link">
-            <Link to="/settings/guide"><BookOpenText />{t('settingsNav.help')}<ArrowUpRight /></Link>
-          </Button>}
+        {!onboarding && <><header className="settings-page-heading">
+          <h1 ref={titleRef} tabIndex={-1} className="settings-page-title" id="settings-page-title">
+            {connectionPage ? t('settingsNav.connectionTitle') : active === 'tools' ? toolCopy.title : t(`settingsNav.sections.${active}.title`)}
+          </h1>
+          <p className="settings-page-description">
+            {connectionPage ? t('settingsNav.connectionDescription') : active === 'tools' ? toolCopy.description : t(`settingsNav.sections.${active}.description`)}
+          </p>
         </header>
+        {navigation}</>}
 
         {sections.filter(section => section.id === active || visited.includes(section.id)).map(section =>
           <div key={section.id} hidden={active !== section.id} className="settings-panel"
             role="region" aria-label={section.id === 'tools' ? toolCopy.title : t(`settingsNav.sections.${section.id}.title`)}>
-            <SettingsSectionContent section={section.id} active={active === section.id} />
+            {onboarding && active === section.id
+              ? <OnboardingConnectionStep navigation={navigation} headingRef={titleRef}>{section.id === 'agents' ? <LocalAgentsPanel /> : <ModelConnectionsPanel />}</OnboardingConnectionStep>
+              : <SettingsSectionContent section={section.id} active={active === section.id} />}
           </div>)}
       </div>
     </div>
@@ -95,9 +95,18 @@ function SettingsSectionContent({ section, active }: { section: SettingsSection;
     case 'tools': return <ToolConnectionsPanel active={active} />;
     case 'models': return <div className="space-y-6">
       <ModelConnectionsPanel active={active} />
-      <IntegrationSettingsPanel section="models" active={active} />
+      <details className="settings-panel-details">
+        <summary>{t('settingsNav.additionalModels')}<ChevronRight size={16} aria-hidden="true" /></summary>
+        <IntegrationSettingsPanel section="models" active={active} />
+      </details>
     </div>;
-    case 'agents': return <div className="space-y-6">{simple && <ResearchParticipantsPanel />}<LocalAgentsPanel /><ResearchMemorySettings /></div>;
+    case 'agents': return <div className="space-y-6">
+      <LocalAgentsPanel />
+      <details className="settings-panel-details">
+        <summary>{t('settingsNav.additionalAgents')}<ChevronRight size={16} aria-hidden="true" /></summary>
+        <div className="space-y-4">{simple && <ResearchParticipantsPanel />}<ResearchMemorySettings /></div>
+      </details>
+    </div>;
     case 'budget': return <BudgetPanel />;
     case 'rules': return <StrategyRulesPage embedded active={active} />;
     case 'appearance': return <AppearancePanel active={active} />;

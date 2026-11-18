@@ -1,13 +1,35 @@
+import type { TeamRelation } from '@shared/team-workspace.interface';
+import type { TeamGraphIssue } from './team-graph';
+
 export function teamEditorView(params: URLSearchParams, width: number): 'list' | 'canvas' {
-  return params.get('view') ? params.get('view') === 'list' ? 'list' : 'canvas' : width < 700 ? 'list' : 'canvas';
+  const view = params.get('view');
+  return view === 'canvas' || view === 'list' ? view : width < 700 ? 'list' : 'canvas';
+}
+
+export function opensTeamRelations(params: URLSearchParams): boolean {
+  return params.get('panel') === 'relations' || (params.get('panel') === 'organization' && params.get('relations') === '1');
 }
 export function withTeamEditorView(params: URLSearchParams, view: 'list' | 'canvas'): URLSearchParams {
   const next = new URLSearchParams(params);
   next.set('view', view);
   return next;
 }
-export function teamIssueDestination(issue: { code: string }): string {
-  return /RELATION|REPORTING|SCOPE|MISSING_ROLE/.test(issue.code) ? 'relations' : 'organization';
+export type TeamRelationView =
+  | { kind: 'all' }
+  | { kind: 'related'; roleId: string }
+  | { kind: 'issues'; ids: string[] }
+  | { kind: 'edit'; id: string }
+  | { kind: 'add'; fromRoleId?: string; toRoleId?: string };
+
+export function teamIssueDestination(issue: TeamGraphIssue, relations: TeamRelation[]): TeamRelationView | null {
+  const id = relations.find(relation => issue.objectIds.includes(relation.id))?.id;
+  if (id) return { kind: 'edit', id };
+  if (issue.code === 'REPORTING_CYCLE') {
+    const ids = relations.filter(relation => relation.kind === 'reports_to' &&
+      issue.objectIds.includes(relation.fromRoleId) && issue.objectIds.includes(relation.toRoleId)).map(relation => relation.id);
+    return { kind: 'issues', ids };
+  }
+  return null;
 }
 
 /** User-facing repair instructions; internal validator codes remain diagnostic details. */

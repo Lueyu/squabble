@@ -10,20 +10,24 @@ function renderContext({ simple = true, path = '/holdings?accountId=real&q=FICT#
   const f = fixture();
   f.state.simpleExperience = simple;
   f.state.queries.set('asset-account-teams', { data: team ? [team] : [] });
+  if (team) f.state.queries.set(JSON.stringify(['portfolio-assets', team.accountId]), { data: {
+    accountId: team.accountId, positions: [], cash: [], orders: [], trades: [], gaps: [], equityUsd: null, valuedAt: null,
+  } });
   const { AccountAssetsPage } = f.load('features/assets/AccountAssetsPage.tsx');
   const html = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [path] },
     React.createElement(AccountAssetsPage, { mode, real: React.createElement('article', null, 'REAL_ASSETS') })));
   return new JSDOM(html);
 }
 
-test('simple assets keeps the selected account without repeating links or another page’s scope notice', () => {
+test('account controls show the selected real account and its separate management entry', () => {
   for (const mode of ['holdings', 'transactions']) {
     const dom = renderContext({ mode, path: `/${mode}?accountId=real&q=FICT#cash` });
     try {
       const context = dom.window.document.querySelector('section[aria-label="assets.accountContext"]');
-      assert.ok(context.querySelector('#asset-account-selector'), 'the account choice remains explicit');
+      assert.match(context.querySelector('[aria-current="page"]').getAttribute('href'), /accountId=real/);
       assert.doesNotMatch(context.textContent, /assets.globalWatchlist/, 'the watchlist page owns its scope notice');
-      assert.equal(context.querySelectorAll('a').length, 0, 'section tabs already own ledger, watchlist and import navigation');
+      assert.ok(context.querySelector('a[href="/holdings/accounts"]'));
+      assert.equal(context.querySelector('a[href^="/import"]'), null, 'the header owns the import action');
       assert.match(dom.window.document.body.textContent, /REAL_ASSETS/);
     } finally { dom.window.close(); }
   }
@@ -42,12 +46,13 @@ test('legacy assets preserves section destinations, exact account and source ret
   } finally { dom.window.close(); }
 });
 
-test('simple simulation assets retains its unique bound-team destination', () => {
+test('paper holdings retain the bound-team link and omit the real import action', () => {
   const dom = renderContext({ path: '/holdings?accountId=paper-a', team: { id: 'team/a', accountId: 'paper-a', binding: { state: 'active' } } });
   try {
-    const context = dom.window.document.querySelector('section[aria-label="assets.accountContext"]');
-    assert.equal(context.querySelectorAll('a').length, 1);
-    assert.equal(context.querySelector('a').getAttribute('href'), '/teams/team%2Fa');
-    assert.equal(context.querySelector('a').textContent, 'assets.openTeam');
+    const document = dom.window.document;
+    const teamLinks = document.querySelectorAll('a[href="/teams/team%2Fa"]');
+    assert.equal(teamLinks.length, 1);
+    assert.match(teamLinks[0].textContent, /View team run/);
+    assert.equal(document.querySelector('a[href^="/import"]'), null);
   } finally { dom.window.close(); }
 });

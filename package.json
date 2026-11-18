@@ -34,6 +34,7 @@
     "test:local-agents": "tsx --tsconfig tsconfig.node.json --test server/local-agents/*.spec.ts server/modules/local-agents/*.spec.ts",
     "test:memory-eval": "node scripts/evaluate-memory.cjs",
     "test:wiring": "npm run build:server && node scripts/check-module-wiring.cjs",
+    "test:team-acceptance": "node scripts/team-acceptance/run.cjs",
     "test:architecture": "node --test scripts/module-boundaries.spec.cjs",
     "test:context": "node --test scripts/squabble-context.spec.cjs",
     "check:context": "node .agents/skills/squabble-contributor/scripts/check-context.cjs --repo .",

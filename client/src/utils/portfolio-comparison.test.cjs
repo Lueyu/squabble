@@ -38,7 +38,7 @@ test('one saved observation has one timestamp, while null gaps retain their real
   assert.equal(comparisonTimeWindow([]), null);
 });
 
-test('an account comparison link selects its starting account while keeping other accounts available', async () => {
+test('an account comparison link opens with the requested accounts selected', async () => {
   const React = require('react');
   const { createRoot } = require('react-dom/client');
   const { MemoryRouter } = require('react-router-dom');
@@ -57,11 +57,7 @@ test('an account comparison link selects its starting account while keeping othe
     const Page = f.load('pages/Overview/PortfolioOverviewPage.tsx').default;
     await React.act(async () => root.render(React.createElement(MemoryRouter, { initialEntries: ['/?accountIds=account-a'] }, React.createElement(Page))));
     assert.equal(document.querySelector('output').textContent, 'real,account-a');
-    const other = [...document.querySelectorAll('button')].find(button => button.textContent.includes('account-b'));
-    assert.ok(other, 'the second simulation stays available to add');
-    assert.equal(other.getAttribute('aria-pressed'), 'false');
-    await React.act(async () => other.click());
-    assert.equal(document.querySelector('output').textContent, 'real,account-a,account-b');
+    assert.match(document.querySelector('button[aria-haspopup="dialog"]').textContent, /Select accounts \(2\)/);
   } finally {
     await React.act(async () => root.unmount()); dom.window.close();
     global.window = previous.window; global.document = previous.document; global.IS_REACT_ACT_ENVIRONMENT = previous.act;
@@ -85,6 +81,7 @@ test('overview chart choices survive a detail visit and browser back through the
     })) } });
     f.load('features/portfolio-comparison/PortfolioComparisonChart.tsx').default = ({ series, metric }) =>
       React.createElement('output', { 'data-chart': true }, `${metric}:${series.map(item => item.accountId).join(',')}`);
+    f.state.queries.set('portfolio-accounts', { data: [{ id: 'account-a', name: 'Account A', status: 'paused' }] });
     const Page = f.load('pages/Overview/PortfolioOverviewPage.tsx').default;
     function Location() { return React.createElement('output', { 'data-url': true }, useLocation().search); }
     function Detail() { const navigate = useNavigate(); return React.createElement('button', { onClick: () => navigate(-1) }, 'Back'); }
@@ -93,14 +90,14 @@ test('overview chart choices survive a detail visit and browser back through the
         React.createElement(Route, { path: '/', element: React.createElement(Page) }),
         React.createElement(Route, { path: '/holdings', element: React.createElement(Detail) })))));
     assert.equal(document.querySelector('[data-chart]').textContent, 'return:real,account-a');
-    const week = [...document.querySelectorAll('button')].find(button => button.textContent === '1W');
+    const week = [...document.querySelectorAll('button')].find(button => button.textContent === 'Past week');
     await React.act(async () => week.click());
     assert.match(document.querySelector('[data-url]').textContent, /period=1W/);
     const account = [...document.querySelectorAll('a')].find(link => link.pathname === '/holdings' && link.search === '?accountId=account-a');
     await React.act(async () => account.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })));
     await React.act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Back').click());
     assert.equal(document.querySelector('[data-chart]').textContent, 'return:real,account-a');
-    assert.equal([...document.querySelectorAll('button')].find(button => button.textContent === '1W').getAttribute('aria-pressed'), 'true');
+    assert.equal([...document.querySelectorAll('button')].find(button => button.textContent === 'Past week').getAttribute('aria-pressed'), 'true');
   } finally {
     await React.act(async () => root.unmount()); dom.window.close();
     global.window = previous.window; global.document = previous.document; global.IS_REACT_ACT_ENVIRONMENT = previous.act;

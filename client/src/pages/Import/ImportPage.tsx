@@ -24,13 +24,12 @@ import {
   History,
   Upload,
   Loader2,
-  CheckCircle2,
   XCircle,
 } from 'lucide-react';
 
 import { fetchImportHistory } from '@/api';
 import { confirmMappedImport, IMPORT_QUERY_KEYS } from '@/api/import-batches';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { ImportRowCandidate } from '@shared/api.interface';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,6 +41,9 @@ import { ImportAccountBoundary } from '@/features/assets/AccountAssetsPage';
 import ScreenshotImport from './ScreenshotImport';
 import TransactionImport from './TransactionImport';
 import { ImportSavedNextSteps } from './ImportSavedNextSteps';
+import { OnboardingStepper } from '@/features/onboarding/OnboardingStepper';
+import { workspaceOwnerScope } from '@/utils/workspace-tab-recovery';
+import { readCsvImportRecovery, readScreenshotRecovery, saveCsvImportRecovery } from './import-continuation';
 
 /** Field keys the CSV mapper can assign. */
 type MapField = 'ticker' | 'shares' | 'avgCost' | 'company';
@@ -202,18 +204,26 @@ function ImportPage() {
 }
 
 function RealImportPage() {
-  const { t } = useTranslation();
-  const [mode, setMode] = useState<'csv' | 'ocr'>('ocr');
-  const [savePending, setSavePending] = useState(false);
+  const { t, i18n } = useTranslation();
+  const zh = i18n.language.startsWith('zh');
+  const [params] = useSearchParams();
+  const onboarding = params.get('onboarding') === '1';
+  const [mode, setMode] = useState<'csv' | 'ocr'>(() => {
+    if (readScreenshotRecovery()) return 'ocr';
+    return onboarding || readCsvImportRecovery()?.kind === 'pending' ? 'csv' : 'ocr';
+  });
+  const [savePending, setSavePending] = useState(() =>
+    readCsvImportRecovery()?.kind === 'pending' || Boolean(readScreenshotRecovery()));
   return (
     <div className="space-y-4">
+      {onboarding && <OnboardingStepper step="holdings" zh={zh} />}
       <div>
-        <h1 className="flex items-center gap-2 font-serif text-2xl font-semibold">
-          <Upload size={22} className="text-primary" />
-          {t('import.title')}
+        <h1 className={onboarding ? 'text-2xl font-semibold sm:text-3xl' : 'flex items-center gap-2 font-serif text-2xl font-semibold'}>
+          {!onboarding && <Upload size={22} className="text-primary" />}
+          {onboarding ? (zh ? '导入我的持仓' : 'Import my holdings') : t('import.title')}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          {t('import.subtitle')}
+          {onboarding ? (zh ? '选择券商导出的持仓文件，核对后保存到我的实仓。' : 'Choose a file from your broker and review it before saving to your real portfolio.') : t('import.subtitle')}
         </p>
       </div>
 
@@ -237,12 +247,11 @@ function RealImportPage() {
       </div>
 
       {mode === 'csv' ? (
-        <CsvImport onSavePendingChange={setSavePending} />
+        <CsvImport onSavePendingChange={setSavePending} onboarding={onboarding} />
       ) : (
-        <ScreenshotImport onSavePendingChange={setSavePending} />
+        <ScreenshotImport onSavePendingChange={setSavePending} onboarding={onboarding} />
       )}
-      <TransactionImport />
-      <ImportHistoryCard />
+      {!onboarding && <><TransactionImport /><ImportHistoryCard /></>}
     </div>
   );
 }
@@ -253,13 +262,15 @@ function RealImportPage() {
 
 function CsvImport({
   onSavePendingChange,
-}: { onSavePendingChange?: (pending: boolean) => void } = {}) {
+  onboarding = false,
+}: { onSavePendingChange?: (pending: boolean) => void; onboarding?: boolean } = {}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const zh = i18n.language.startsWith('zh');
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [filename, setFilename] = useState('');
+  const [recovery] = useState(readCsvImportRecovery);
+  const [filename, setFilename] = useState(recovery?.kind === 'pending' ? recovery.input.filename ?? '' : recovery?.filename ?? '');
   const [headers, setHeaders] = useState<string[]>([]);
   const [matrix, setMatrix] = useState<string[][]>([]);
   const [encoding, setEncoding] = useState<'utf-8' | 'gbk'>('utf-8');
@@ -267,21 +278,18 @@ function CsvImport({
   const [buyDate, setBuyDate] = useState('');
   const [source, setSource] = useState<string>('generic');
   const [committing, setCommitting] = useState(false);
-  const [saveUnknown, setSaveUnknown] = useState(false);
-  const [result, setResult] = useState<{
-    created: number;
-    skipped: number;
-    failed: Array<{ ticker: string; reason: string }>;
-  } | null>(null);
+  const [saveUnknown, setSaveUnknown] = useState(recovery?.kind === 'pending');
+  const [result, setResult] = useState<Awaited<ReturnType<typeof confirmMappedImport>> | null>(
+    onboarding && recovery?.kind === 'saved' ? recovery.result : null,
+  );
   const requestIntent = useRef<Parameters<
     typeof confirmMappedImport
-  >[0] | null>(null);
+  >[0] | null>(recovery?.kind === 'pending' ? recovery.input : null);
   const inFlight = useRef(false);
   const saveLocked = committing || saveUnknown;
 
   const readFile = (file: File) => {
     if (requestIntent.current) return;
-    setFilename(file.name);
     setResult(null);
     const reader = new FileReader();
     reader.onload = () => {
@@ -303,6 +311,8 @@ function CsvImport({
           String(h).trim() || t('ui.import.columnNumber', { number: i + 1 }),
       );
       const body = data.slice(1);
+      saveCsvImportRecovery(null);
+      setFilename(file.name);
       setHeaders(hdrs);
       setMatrix(body);
       setMapping(suggestForPreset(hdrs, source));
@@ -313,7 +323,7 @@ function CsvImport({
     reader.readAsText(file, encoding);
   };
 
-  const previewRows = matrix.length > 0 ? rowsFromMatrix(matrix, mapping) : [];
+  const previewRows = requestIntent.current?.rows ?? rowsFromMatrix(matrix, mapping);
 
   const commit = async (analyze = false) => {
     if (
@@ -324,20 +334,27 @@ function CsvImport({
       toast.warning(t('import.noRows'));
       return;
     }
-    try {
-      inFlight.current = true;
-      setCommitting(true);
-      onSavePendingChange?.(true);
-      // Keep the exact payload until its original save outcome is known.
-      const input = requestIntent.current ??= {
+    const owner = workspaceOwnerScope();
+    const input = requestIntent.current ?? {
         source: source === 'robinhood' ? 'robinhood' : 'csv',
         rows: previewRows,
         filename: filename || undefined,
         buyDate: buyDate || undefined,
         analyze,
         requestKey: crypto.randomUUID(),
-      } as const;
+    } as const;
+    if (!saveCsvImportRecovery({ kind: 'pending', input }) && onboarding && !requestIntent.current) {
+      toast.error(zh ? '无法在此浏览器保留保存回执。请启用会话存储后重试。' : 'This browser could not retain the save request. Enable session storage and retry.');
+      return;
+    }
+    requestIntent.current = input;
+    try {
+      inFlight.current = true;
+      setCommitting(true);
+      onSavePendingChange?.(true);
       const r = await confirmMappedImport(input);
+      if (workspaceOwnerScope() !== owner) return;
+      saveCsvImportRecovery({ kind: 'saved', result: r, filename: input.filename });
       requestIntent.current = null;
       setSaveUnknown(false);
       onSavePendingChange?.(false);
@@ -349,11 +366,13 @@ function CsvImport({
         await queryClient.invalidateQueries({ queryKey: [...queryKey] });
       if (input.analyze) navigate('/research/portfolio');
     } catch (error) {
+      if (workspaceOwnerScope() !== owner) return;
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (
         status && status >= 400 && status < 500 &&
         status !== 408 && status !== 429
       ) {
+        saveCsvImportRecovery(null);
         requestIntent.current = null;
         setSaveUnknown(false);
         onSavePendingChange?.(false);
@@ -370,255 +389,144 @@ function CsvImport({
     }
   };
 
-  return (
+  const hasReview = matrix.length > 0 || saveUnknown;
+  const canSave = !committing && (saveUnknown || (mapping.ticker != null && mapping.shares != null));
+  const mappingFields = (
+    <div className="grid gap-3 md:grid-cols-4">
+      {(['ticker', 'shares', 'avgCost', 'company'] as MapField[]).map(field => (
+        <label key={field} className="space-y-1.5 text-xs">
+          <span>{t(`import.${field}`)}</span>
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+            value={mapping[field] ?? ''}
+            disabled={saveLocked}
+            onChange={e => !requestIntent.current && setMapping(prev => ({
+              ...prev, [field]: e.target.value === '' ? undefined : Number(e.target.value),
+            }))}
+          >
+            <option value="">{t('import.noMapping')}</option>
+            {headers.map((label, index) => <option key={index} value={index}>{label}</option>)}
+          </select>
+        </label>
+      ))}
+    </div>
+  );
+
+  return <div className="space-y-4">
     <Card>
-      <CardHeader className="flex flex-col items-stretch gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between">
-        <CardTitle className="shrink-0 text-sm">
-          {t('import.csvImport')}
-        </CardTitle>
-        <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:flex sm:items-center">
-          <select
-            className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs sm:w-36"
-            value={source}
-            disabled={saveLocked}
-            onChange={(e) => {
-              if (requestIntent.current) return;
-              const v = e.target.value;
-              setSource(v);
-              if (headers.length > 0) setMapping(suggestForPreset(headers, v));
-            }}
-          >
-            {Object.entries(BROKER_PRESETS).map(([k, v]) => (
-              <option key={k} value={k}>
-                {t(v.labelKey)}
-              </option>
-            ))}
-          </select>
-          <select
-            className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs sm:w-28"
-            value={encoding}
-            disabled={saveLocked}
-            onChange={(e) => {
-              if (!requestIntent.current)
-                setEncoding(e.target.value as 'utf-8' | 'gbk');
-            }}
-          >
-            <option value="utf-8">UTF-8</option>
-            <option value="gbk">{t('import.gbkNote')}</option>
-          </select>
-          <Button
-            className="col-span-2 w-full sm:w-auto"
-            size="sm"
-            variant="outline"
-            disabled={saveLocked}
-            onClick={() => fileRef.current?.click()}
-          >
-            <Upload size={14} className="mr-1" /> {t('import.selectFile')}
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            disabled={saveLocked}
-            onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0])}
-          />
-        </div>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+        <CardTitle>{onboarding ? (zh ? '表格文件' : 'Spreadsheet file') : t('import.csvImport')}</CardTitle>
+        {filename && <Badge variant="secondary" className="text-primary">{zh ? '已读取' : 'File read'}</Badge>}
       </CardHeader>
-      <CardContent className="space-y-4 p-4">
-        {matrix.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-            {t('import.uploadHint')}
-          </div>
-        ) : (
-          <>
-            <div className="text-xs text-muted-foreground">
-              {filename} · {matrix.length} {t('import.rowsData')} (
-              {t('import.columns')}: {headers.length})
-              {source === 'robinhood' && ` · ${t('import.robinhoodApplied')}`}
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-4">
-              {(['ticker', 'shares', 'avgCost', 'company'] as MapField[]).map(
-                (field) => (
-                  <div key={field} className="space-y-1.5">
-                    <Label className="text-xs">
-                      {field === 'ticker'
-                        ? t('import.ticker')
-                        : field === 'shares'
-                          ? t('import.shares')
-                          : field === 'avgCost'
-                            ? t('import.avgCost')
-                            : t('import.company')}
-                    </Label>
-                    <select
-                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                      value={mapping[field] ?? ''}
-                      disabled={saveLocked}
-                      onChange={(e) =>
-                        !requestIntent.current && setMapping((prev) => ({
-                          ...prev,
-                          [field]:
-                            e.target.value === ''
-                              ? undefined
-                              : Number(e.target.value),
-                        }))
-                      }
-                    >
-                      <option value="">{t('import.noMapping')}</option>
-                      {headers.map((h, i) => (
-                        <option key={i} value={i}>
-                          {h}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ),
-              )}
-            </div>
-
-            <div className="max-h-56 overflow-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-muted/50">
-                  <tr className="text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">
-                      {t('ui.import.tickerColumn')}
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      {t('ui.import.nameColumn')}
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      {t('ui.import.sharesColumn')}
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      {t('ui.import.costColumn')}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {previewRows.slice(0, 20).map((r, i) => (
-                    <tr key={i} className="border-t">
-                      <td className="px-3 py-1.5 font-medium">{r.ticker}</td>
-                      <td className="px-3 py-1.5 text-xs text-muted-foreground">
-                        {r.company ?? '—'}
-                      </td>
-                      <td className="px-3 py-1.5 font-mono-nums">{r.shares}</td>
-                      <td className="px-3 py-1.5 font-mono-nums">
-                        {r.avgCost ?? '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {previewRows.length > 20 && (
-              <div className="text-xs text-muted-foreground">
-                {t('import.preview20', { count: previewRows.length })}
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs">{t('import.buyDate')}</Label>
-                <Input
-                  type="date"
-                  className="h-9 w-40"
-                  value={buyDate}
-                  disabled={saveLocked}
-                  onChange={(e) => {
-                    if (!requestIntent.current) setBuyDate(e.target.value);
-                  }}
-                />
-              </div>
-              <Button
-                className="mt-4"
-                onClick={() => commit(false)}
-                disabled={
-                  committing ||
-                  (saveUnknown && requestIntent.current?.analyze === true) ||
-                  mapping.ticker == null || mapping.shares == null
-                }
-              >
-                {committing ? (
-                  <Loader2 size={14} className="mr-1 animate-spin" />
-                ) : (
-                  <CheckCircle2 size={14} className="mr-1" />
-                )}
-                {saveUnknown && requestIntent.current?.analyze === false
-                  ? (zh ? '核对本次保存结果' : 'Check this save result')
-                  : (zh ? '保存持仓' : 'Save holdings')}
-              </Button>
-              <Button
-                className="mt-4"
-                variant="outline"
-                onClick={() => commit(true)}
-                disabled={
-                  committing ||
-                  (saveUnknown && requestIntent.current?.analyze === false) ||
-                  mapping.ticker == null || mapping.shares == null
-                }
-              >
-                {saveUnknown && requestIntent.current?.analyze === true
-                  ? (zh ? '核对本次保存结果' : 'Check this save result')
-                  : (zh ? '保存并开始研究' : 'Save and start research')}
-              </Button>
-            </div>
-            {saveUnknown && (
-              <p role="status" className="text-sm text-amber-700 dark:text-amber-300">
-                {zh
-                  ? '先核对本次保存结果，再修改持仓或开始新的保存。'
-                  : 'Check this save result before editing holdings or starting another save.'}
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              {zh
-                ? '已有持仓会更新数量和成本，文件里没有的持仓会保留。'
-                : 'Existing quantities and costs update. Holdings missing from this file are retained.'}
-            </p>
-          </>
-        )}
-
-        {result && (
-          <div className="rounded-md border border-border p-3 text-sm">
-            <div className="flex items-center gap-2">
-              <Badge
-                variant="outline"
-                className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-              >
-                {t('import.created')} {result.created}
-              </Badge>
-              <Badge
-                variant="outline"
-                className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
-              >
-                {t('import.skipped')} {result.skipped}
-              </Badge>
-            </div>
-            {result.failed.length > 0 && (
-              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                {result.failed.slice(0, 10).map((f, i) => (
-                  <div key={i} className="flex items-center gap-1.5">
-                    <XCircle size={12} className="shrink-0 text-amber-500" />
-                    <span>
-                      {f.ticker}：{f.reason}
-                    </span>
-                  </div>
-                ))}
-                {result.failed.length > 10 && (
-                  <div>
-                    {t('ui.import.moreFailed', {
-                      count: result.failed.length - 10,
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-            <ImportSavedNextSteps />
-          </div>
-        )}
+      <CardContent className="space-y-3">
+        {filename ? <p className="break-all font-medium">{filename}</p> : <p className="text-sm text-muted-foreground">{t('import.uploadHint')}</p>}
+        {hasReview && <p className="text-xs text-muted-foreground">
+          {previewRows.length} {zh ? '条待核对持仓' : 'positions to review'}
+        </p>}
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" disabled={saveLocked} onClick={() => fileRef.current?.click()}>
+            {filename ? (zh ? '重新选择文件' : 'Choose another file') : t('import.selectFile')}
+          </Button>
+          <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" disabled={saveLocked}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) readFile(file);
+              e.target.value = '';
+            }}
+          />
+          {(!onboarding || !filename) && <>
+            <select aria-label={zh ? '券商' : 'Broker'} className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs"
+              value={source} disabled={saveLocked} onChange={e => {
+                if (requestIntent.current) return;
+                const preset = e.target.value;
+                setSource(preset);
+                if (headers.length) setMapping(suggestForPreset(headers, preset));
+              }}>
+              {Object.entries(BROKER_PRESETS).map(([key, item]) => <option key={key} value={key}>{t(item.labelKey)}</option>)}
+            </select>
+            <select aria-label={zh ? '文件编码' : 'File encoding'} className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs"
+              value={encoding} disabled={saveLocked} onChange={e => {
+                if (!requestIntent.current) setEncoding(e.target.value === 'gbk' ? 'gbk' : 'utf-8');
+              }}>
+              <option value="utf-8">UTF-8</option><option value="gbk">{t('import.gbkNote')}</option>
+            </select>
+          </>}
+        </div>
       </CardContent>
     </Card>
-  );
+
+    {hasReview && (!result || !onboarding) && <Card>
+      <CardHeader><CardTitle>{zh ? '核对持仓' : 'Review holdings'}</CardTitle></CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground">{zh ? '目标账户 · 我的实仓' : 'Destination · Real portfolio'}</p>
+        {matrix.length > 0 && (onboarding
+          ? <details open={mapping.ticker == null || mapping.shares == null} className="space-y-3">
+              <summary className="cursor-pointer text-sm text-muted-foreground">{zh ? '检查列对应关系和起始日期' : 'Check column mapping and start date'}</summary>
+              {mappingFields}
+              <Label className="grid w-fit gap-1 text-xs">{t('import.buyDate')}<Input type="date" className="h-9 w-40" value={buyDate} disabled={saveLocked} onChange={e => {
+                if (!requestIntent.current) setBuyDate(e.target.value);
+              }} /></Label>
+            </details>
+          : mappingFields)}
+        <ul className="max-h-72 divide-y overflow-auto border-y">
+          {previewRows.slice(0, 20).map((row, index) => <li key={index} className="flex items-start justify-between gap-3 py-3 text-sm">
+            <div className="min-w-0">
+              <p className="break-words font-medium">{row.company || row.ticker}</p>
+              {row.company && <p className="break-all text-xs text-muted-foreground">{row.ticker}</p>}
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="tabular-nums">{row.shares} {zh ? '股' : 'shares'}</p>
+              {row.avgCost != null && <p className="text-xs tabular-nums text-muted-foreground">
+                {zh ? '成本' : 'Cost'} {row.avgCost}{row.currency && ` ${row.currency}`}
+              </p>}
+            </div>
+          </li>)}
+        </ul>
+        {previewRows.length > 20 && <p className="text-xs text-muted-foreground">{t('import.preview20', { count: previewRows.length })}</p>}
+        <div className="flex flex-wrap items-end gap-2">
+          {!onboarding && <Label className="grid gap-1 text-xs">{t('import.buyDate')}<Input type="date" className="h-9 w-40" value={buyDate} disabled={saveLocked} onChange={e => {
+            if (!requestIntent.current) setBuyDate(e.target.value);
+          }} /></Label>}
+          <Button
+            onClick={() => commit(false)}
+            disabled={!canSave || (saveUnknown && requestIntent.current?.analyze === true)}
+          >
+            {committing && <Loader2 size={14} className="animate-spin" />}
+            {saveUnknown && requestIntent.current?.analyze === false ? (zh ? '核对本次保存结果' : 'Check this save result') : (zh ? '保存持仓' : 'Save holdings')}
+          </Button>
+          {(!onboarding || requestIntent.current?.analyze) && <Button
+            variant="outline"
+            onClick={() => commit(true)}
+            disabled={!canSave || (saveUnknown && requestIntent.current?.analyze === false)}
+          >
+            {saveUnknown && requestIntent.current?.analyze === true ? (zh ? '核对本次保存结果' : 'Check this save result') : (zh ? '保存并开始研究' : 'Save and start research')}
+          </Button>}
+          {onboarding && <Button asChild variant="ghost"><Link to="/holdings?accountId=real">{zh ? '返回持仓' : 'Back to holdings'}</Link></Button>}
+        </div>
+        {saveUnknown && <p role="status" className="text-sm text-muted-foreground">
+          {zh ? '先核对本次保存结果，再修改持仓或开始新的保存。' : 'Check this save result before editing holdings or starting another save.'}
+        </p>}
+        <p className="text-xs text-muted-foreground">{zh
+          ? '已有持仓会更新数量和成本，文件里没有的持仓会保留。'
+          : 'Existing quantities and costs update. Holdings missing from this file are retained.'}</p>
+      </CardContent>
+    </Card>}
+
+    {result && <Card>
+      <CardContent className="space-y-2 pt-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary" className="text-primary">{t('import.created')} {result.created}</Badge>
+          {result.updated > 0 && <Badge variant="secondary">{zh ? '已更新' : 'Updated'} {result.updated}</Badge>}
+          {result.skipped > 0 && <Badge variant="outline">{t('import.skipped')} {result.skipped}</Badge>}
+        </div>
+        {result.failed.slice(0, 10).map(row => <p className="text-sm text-destructive" key={row.ticker}>
+          <XCircle size={14} className="mr-1 inline" />{row.ticker} · {row.reason}
+        </p>)}
+        {result.failed.length > 10 && <p className="text-sm">{t('ui.import.moreFailed', { count: result.failed.length - 10 })}</p>}
+        {(result.created > 0 || result.updated > 0) && <ImportSavedNextSteps />}
+      </CardContent>
+    </Card>}
+  </div>;
 }
 
 // ---------------------------------------------------------------------

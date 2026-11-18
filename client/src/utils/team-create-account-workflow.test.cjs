@@ -13,6 +13,7 @@ const fixture = require('./simple-test-loader.cjs');
 test('a definitively stale seed is visibly re-reviewed while retaining the original team and publication', async () => {
   window.sessionStorage.clear();
   const f = fixture(); let sequence = 0; f.state.randomUUID = () => `refresh-${++sequence}`;
+  f.load('api/auth-mode.ts').setAuthMode('local');
   const teams = f.load('api/teams.ts').teamsApi;
   const portfolios = f.load('api/portfolio-workspace.ts').portfolioWorkspaceApi;
   const team = { id: 'team', bindingRevision: 0, draft: { semanticRevision: 0, config: { roles: [] } }, currentVersionId: null };
@@ -64,6 +65,7 @@ test('a definitively stale seed is visibly re-reviewed while retaining the origi
 test('reviewed multi-currency creation retries a lost account receipt without another team, preview or account identity', async () => {
   window.sessionStorage.clear();
   const f = fixture({ realQuery: true }); let sequence = 0; f.state.randomUUID = () => `workflow-${++sequence}`;
+  f.load('api/auth-mode.ts').setAuthMode('local');
   const teams = f.load('api/teams.ts').teamsApi;
   const portfolios = f.load('api/portfolio-workspace.ts').portfolioWorkspaceApi;
   const investment = f.load('api/ai-investment.ts');
@@ -83,7 +85,8 @@ test('reviewed multi-currency creation retries a lost account receipt without an
   investment.previewAiInvestment = async () => { calls.push(['preview']); return { previewId: 'unexpected-preview' }; };
   const { useTeamQuickStart } = f.load('features/teams/use-team-quick-start.ts');
   let workflow;
-  function Harness() { workflow = useTeamQuickStart(false); return null; }
+  let zh = false;
+  function Harness() { workflow = useTeamQuickStart(zh); return null; }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } });
   let root = createRoot(document.getElementById('root'));
   const mount = () => React.act(async () => root.render(React.createElement(QueryClientProvider, { client }, React.createElement(MemoryRouter, null, React.createElement(Harness)))));
@@ -96,6 +99,7 @@ test('reviewed multi-currency creation retries a lost account receipt without an
     assert.equal(calls.filter(([operation]) => operation === 'preview').length, 0, 'use the user-reviewed snapshot');
     await React.act(async () => root.unmount());
     root = createRoot(document.getElementById('root'));
+    zh = true;
     await mount();
     await React.act(async () => workflow.resume(new Set(['unrelated'])));
     await settle();

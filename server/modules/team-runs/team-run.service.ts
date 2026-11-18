@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { nextRunWindow, recentTeamFills, recentTeamResearch } from './team-run-overview';
 import { TeamStore } from '../teams/team-store';
 import { TeamCommissionService } from '../teams/team-commission.service';
-import { canonicalHash, confirmSchema, parseTeam, requestKeySchema, revisionSchema, teamError } from '../teams/team-contract';
-import { teamAccountBindings, teamCommissions, teamRequests, teamSourceGrants } from '../../database/teams.schema';
+import { canonicalHash, confirmSchema, parseTeam, requestKeySchema, revisionSchema, uuidSchema, teamError } from '../teams/team-contract';
+import { teams, teamAccountBindings, teamCommissions, teamRequests, teamSourceGrants } from '../../database/teams.schema';
 import { teamRunAgreements, teamRunCycles, teamRunAgreementRevisions } from '../../database/team-run.schema';
 import { teamAccountPolicySnapshot, pauseTeamAccountInTransaction } from '../paper-trading/team-account-transaction';
 import { lockTeamOwner, type TeamDatabase } from '../../database/team-context';
@@ -55,11 +56,48 @@ export class TeamRunService {
     const [row] = await tx.select().from(teamRunAgreements).where(and(eq(teamRunAgreements.ownerId, owner), eq(teamRunAgreements.teamId, teamId))).for('update');
     return row ?? null;
   }
-  async status(owner: string, teamId: string): Promise<TeamRunStatus> {
-    const agreement = await this.row(this.store.db, owner, teamId);
-    const cycles = await this.store.db.select().from(teamRunCycles).where(and(eq(teamRunCycles.ownerId, owner), eq(teamRunCycles.teamId, teamId))).orderBy(desc(teamRunCycles.createdAt)).limit(30);
-    return { agreement: agreement ? agreementView(agreement) : null, recentCycles: cycles.map(cycleView) };
+  private async overviewTeam(tx: TeamDatabase, owner: string, teamId: string) {
+    parseTeam(uuidSchema, teamId);
+    const [team] = await tx.select({ accountId: teams.accountId }).from(teams)
+      .where(and(eq(teams.ownerId, owner), eq(teams.id, teamId))).limit(1);
+    if (!team) teamError('TEAM_NOT_FOUND');
+    return team;
   }
+  async status(owner: string, teamId: string): Promise<TeamRunStatus> {
+    return this.store.db.transaction(async tx => {
+      await tx.execute(sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`);
+      const team = await this.overviewTeam(tx, owner, teamId);
+      const [agreement] = await tx.select().from(teamRunAgreements)
+        .where(and(eq(teamRunAgreements.ownerId, owner), eq(teamRunAgreements.teamId, teamId))).limit(1);
+      const cycles = await tx.select().from(teamRunCycles).where(and(eq(teamRunCycles.ownerId, owner),
+        eq(teamRunCycles.teamId, teamId))).orderBy(desc(teamRunCycles.createdAt), desc(teamRunCycles.id)).limit(30);
+      const [confirmation] = agreement ? await tx.select({ revision: teamRunAgreementRevisions.revision })
+        .from(teamRunAgreementRevisions).where(and(eq(teamRunAgreementRevisions.ownerId, owner),
+          eq(teamRunAgreementRevisions.agreementId, agreement.id), eq(teamRunAgreementRevisions.state, 'confirmed')))
+        .orderBy(desc(teamRunAgreementRevisions.revision)).limit(1) : [];
+      const accountId = agreement?.accountId ?? team.accountId;
+      const [account] = accountId ? await tx.select({ name: paperAccounts.name }).from(paperAccounts)
+        .where(and(eq(paperAccounts.owner, owner), eq(paperAccounts.id, accountId))).limit(1) : [];
+      const recentCycles = cycles.map(cycleView);
+      return { agreement: agreement ? agreementView(agreement) : null, accountName: account?.name ?? null,
+        recentCycles, confirmationRevision: confirmation?.revision ?? null,
+        nextWindow: agreement?.state === 'running' ? nextRunWindow(agreement.configuration, recentCycles,
+          confirmation?.revision ?? 0, new Date()) : { kind: 'inactive' } };
+    });
+  }
+
+  async fills(owner: string, teamId: string) {
+    await this.overviewTeam(this.store.db, owner, teamId);
+    return recentTeamFills(this.store.db, owner, teamId);
+  }
+
+  async research(owner: string, teamId: string) {
+    return this.store.db.transaction(async tx => {
+      await this.overviewTeam(tx, owner, teamId);
+      return recentTeamResearch(tx, owner, teamId);
+    });
+  }
+
   async preview(owner: string, teamId: string, input: unknown) {
     const request = parseTeam(teamRunInputSchema, input), { requestKey, ...configuration } = request;
     const [prior] = await this.store.db.select().from(teamRequests).where(and(eq(teamRequests.ownerId, owner), eq(teamRequests.requestKey, requestKey)));

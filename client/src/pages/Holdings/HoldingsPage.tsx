@@ -16,7 +16,6 @@ import {
   RefreshCw,
   Check,
   AlertTriangle,
-  ChevronRight,
 } from 'lucide-react';
 import type {
   Holding,
@@ -26,17 +25,18 @@ import type {
   CashAccount,
   DashboardOverview,
   LatestRating,
-  AgentRun,
 } from '@shared/api.interface';
-import { fetchHoldings, fetchGroups, fetchCashAccounts, fetchDashboard, getLatestRatings, getAgentRuns } from '@/api';
+import { fetchHoldings, fetchGroups, fetchCashAccounts, fetchDashboard, getLatestRatings } from '@/api';
 import { useMarketQuotes } from '@/hooks/use-market-quotes';
 import {
   formatCurrencyWithCode,
+  formatCurrencyWithCurrency,
+  formatPriceWithCurrency,
+  formatShares,
   plClass,
   cn,
 } from '@/utils/format';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { MarketStatusBadges } from '@/components/MarketStatusBadges';
 import { Input } from '@/components/ui/input';
 import {
@@ -53,25 +53,20 @@ import HoldingsTable from './HoldingsTable';
 import AgentRunDetailModal from '@/components/MultiAgent/AgentRunDetailModal';
 import {
   Alert,
-  AlertTitle,
   AlertDescription,
 } from '@/components/ui/alert';
 
 import { useTranslation } from 'react-i18next';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigationType, useSearchParams } from 'react-router-dom';
 import { AccountAssetsPage } from '@/features/assets/AccountAssetsPage';
+import { SIMULATION_ACCOUNTS_PATH } from '@/features/assets/account-context';
+import { formatComparisonTime } from '@/features/portfolio-comparison/comparison-chart-options';
+import { useSimpleExperience } from '@/hooks/use-simple-experience';
 
 /** Columns that the holdings table can sort by. */
-type SortKey =
-  | 'ticker'
-  | 'company'
-  | 'buyPrice'
-  | 'currentPrice'
-  | 'shares'
-  | 'marketValue'
-  | 'cost'
-  | 'pl'
-  | 'returnPct';
+const sortKeys = ['ticker', 'company', 'buyPrice', 'currentPrice', 'shares', 'marketValue', 'cost', 'pl', 'returnPct'] as const;
+type SortKey = typeof sortKeys[number];
+const markets: Market[] = ['US', 'HK', 'CN'];
 
 /** Holding record augmented with derived numeric values used by the table. */
 interface DerivedHolding extends Holding {
@@ -102,7 +97,7 @@ function computeDerived(h: Holding): DerivedHolding {
  *
  * State groups: raw holdings/groups/cash/overview, filter/sort controls,
  * selected holding for the detail dialog, add-dialog open state, market
- * multi-select, AI ratings map, and the pending-human run count.
+ * multi-select and AI ratings.
  */
 export default function HoldingsPage() {
   return <AccountAssetsPage mode="holdings" real={<RealHoldingsPage />} />;
@@ -110,6 +105,8 @@ export default function HoldingsPage() {
 
 function RealHoldingsPage() {
   const { t, i18n } = useTranslation();
+  const { enabled: simple } = useSimpleExperience();
+  const zh = i18n.language.startsWith('zh');
   const [accountParams, setAccountParams] = useSearchParams();
   const [holdings, setHoldings] = useState<DerivedHolding[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -117,31 +114,37 @@ function RealHoldingsPage() {
   const [hasLoadedHoldings, setHasLoadedHoldings] = useState(false);
   const loadRevision = useRef(0);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState(() => accountParams.get('q') ?? '');
-  const [groupId, setGroupId] = useState(() => accountParams.get('group') ?? '');
-  const [sortKey, setSortKey] = useState<SortKey>(() => { const value = accountParams.get('sort'); return ['ticker', 'company', 'buyPrice', 'currentPrice', 'shares', 'marketValue', 'cost', 'pl', 'returnPct'].includes(value ?? '') ? value as SortKey : 'marketValue'; });
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => accountParams.get('direction') === 'asc' ? 'asc' : 'desc');
+  const navigationType = useNavigationType();
+  const urlSearch = accountParams.get('q') ?? '';
+  const [search, setSearch] = useState(urlSearch);
+  useEffect(() => {
+    if (navigationType !== 'REPLACE') setSearch(urlSearch);
+  }, [navigationType, urlSearch]);
+  const groupId = accountParams.get('group') ?? '';
+  const sortKey = sortKeys.find(key => key === accountParams.get('sort')) ?? 'marketValue';
+  const sortDir = accountParams.get('direction') === 'asc' ? 'asc' : 'desc';
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<Holding | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [selectedMarkets, setSelectedMarkets] = useState<Set<Market>>(
-    new Set((accountParams.has('markets') ? (accountParams.get('markets') ?? '').split(',').filter(value => ['US', 'HK', 'CN'].includes(value)) : ['US', 'HK', 'CN']) as Market[])
-  );
+  const marketFilter = accountParams.get('markets');
+  const selectedMarkets = useMemo(() => {
+    const selected = marketFilter?.split(',');
+    return new Set(selected ? markets.filter(market => selected.includes(market)) : markets);
+  }, [marketFilter]);
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [aiRatings, setAiRatings] = useState<Record<string, LatestRating>>({});
-  const [aiRatingsLoading, setAiRatingsLoading] = useState(false);
-  const [awaitingHumanCount, setAwaitingHumanCount] = useState(0);
   const [aiDetailRunId, setAiDetailRunId] = useState<string | null>(null);
   const [aiDetailOpen, setAiDetailOpen] = useState(false);
 
-  useEffect(() => {
+  function updateFilters(changes: Record<string, string | null>) {
     const next = new URLSearchParams(accountParams);
-    for (const [key, value] of Object.entries({ q: search, group: groupId, sort: sortKey, direction: sortDir, markets: [...selectedMarkets].join(',') })) {
-      if (value) next.set(key, value); else next.delete(key);
+    next.set('accountId', 'real');
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null) next.delete(key); else next.set(key, value);
     }
-    if (next.toString() !== accountParams.toString()) setAccountParams(next, { replace: true });
-  }, [search, groupId, sortKey, sortDir, selectedMarkets]);
+    setAccountParams(next, { replace: true });
+  }
 
   const tickers = useMemo(
     () => holdings.map((h) => h.ticker),
@@ -155,7 +158,6 @@ function RealHoldingsPage() {
    * because ratings are an enhancement, not required for the list to render.
    */
   const loadAiRatings = async () => {
-    setAiRatingsLoading(true);
     try {
       const result = await getLatestRatings();
       const items = (result?.items ?? []) as LatestRating[];
@@ -166,19 +168,6 @@ function RealHoldingsPage() {
       setAiRatings(map);
     } catch (err) {
       // 静默失败，不影响主流程
-    } finally {
-      setAiRatingsLoading(false);
-    }
-  };
-
-  /** Count runs awaiting human decision (drives the risk-alert banner). */
-  const loadAwaitingHuman = async () => {
-    try {
-      const result = await getAgentRuns({ status: 'awaiting_human', limit: 10 });
-      const items = (result?.items ?? []) as AgentRun[];
-      setAwaitingHumanCount(result?.total ?? items.length);
-    } catch (err) {
-      // 静默失败
     }
   };
 
@@ -229,11 +218,9 @@ function RealHoldingsPage() {
   useEffect(() => {
     loadData();
     loadAiRatings();
-    loadAwaitingHuman();
     const handleUpdate = () => {
       loadData();
       loadAiRatings();
-      loadAwaitingHuman();
     };
     window.addEventListener('portfolio-updated', handleUpdate);
     return () => {
@@ -245,9 +232,8 @@ function RealHoldingsPage() {
   /** Toggle sort on a column; switches direction when clicking the same column. */
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+      updateFilters({ sort: key, direction: sortDir === 'asc' ? 'desc' : 'asc' });
     } else {
-      setSortKey(key);
       const descKeys: SortKey[] = [
         'marketValue',
         'cost',
@@ -256,8 +242,8 @@ function RealHoldingsPage() {
         'shares',
         'currentPrice',
         'buyPrice',
-      ] as SortKey[];
-      setSortDir(descKeys.includes(key) ? 'desc' : 'asc');
+      ];
+      updateFilters({ sort: key, direction: descKeys.includes(key) ? 'desc' : 'asc' });
     }
   };
 
@@ -328,15 +314,13 @@ function RealHoldingsPage() {
   const totalPl = overview ? parseFloat(overview.totalPl || '0') : 0;
   const displayCurrency = overview?.baseCurrency ?? 'USD';
 
-  return (
-    <div className="space-y-5">
-      {/* Header */}
+  const details = <div className="space-y-4">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h1 className="font-serif text-2xl md:text-3xl font-semibold tracking-tight flex items-center gap-2.5">
+          {!simple && <h1 className="font-serif text-2xl md:text-3xl font-semibold tracking-tight flex items-center gap-2.5">
             <Briefcase className="size-6 text-primary" />
             {t('holdings.title')}
-          </h1>
+          </h1>}
           <div className="text-sm text-muted-foreground mt-1 flex items-center flex-wrap gap-1.5">
             <MarketStatusBadges
               marketStatus={marketStatus}
@@ -374,7 +358,7 @@ function RealHoldingsPage() {
             />
             {t('ui.tx.refresh')}
           </Button>
-            <Button variant="outline" size="sm" asChild><Link to="/paper?seedReal=1">{i18n.language.startsWith('en') ? 'Copy to simulation' : '复制到模拟盘'}</Link></Button>
+            <Button variant="outline" size="sm" asChild><Link to={SIMULATION_ACCOUNTS_PATH + '?seedReal=1'}>{i18n.language.startsWith('en') ? 'Copy to simulation' : '复制到模拟盘'}</Link></Button>
           <Button size="sm" onClick={() => setAddOpen(true)}>
             <Plus className="size-4" />
             {t('holdings.addHolding')}
@@ -382,33 +366,9 @@ function RealHoldingsPage() {
         </div>
       </div>
 
-      {/* Pending analysis reviews */}
-      {awaitingHumanCount > 0 && (
-        <Alert className="border-warning/35 bg-warning/10 text-foreground">
-          <AlertTriangle className="size-4 text-warning" />
-          <AlertTitle className="font-medium">{t('ui.holdings.riskAlert')}</AlertTitle>
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-3 text-muted-foreground">
-            <span>
-              {t('ui.holdings.riskMessage', { count: awaitingHumanCount })}
-            </span>
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="shrink-0 border-warning/35 bg-background/70 text-foreground hover:bg-warning/15"
-            >
-              <Link to="/analysis">
-                {t('ui.holdings.viewDetails')}
-                <ChevronRight className="size-3" />
-              </Link>
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
-
       {/* Market Filter */}
       <div className="flex items-center gap-2 flex-wrap">
-        {(['US', 'HK', 'CN'] as Market[]).map((m) => {
+        {markets.map((m) => {
           const labels: Record<Market, string> = {
             US: t('dash.us'),
             HK: t('dash.hk'),
@@ -416,30 +376,21 @@ function RealHoldingsPage() {
           };
           const active = selectedMarkets.has(m);
           return (
-            <Badge
+            <Button
               key={m}
+              type="button"
+              size="sm"
               variant={active ? 'default' : 'outline'}
-              className={cn(
-                'cursor-pointer select-none gap-1.5 h-7 px-3',
-                active
-                  ? 'bg-primary text-primary-foreground'
-                  : 'hover:bg-muted'
-              )}
+              aria-pressed={active}
               onClick={() => {
-                setSelectedMarkets((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(m)) {
-                    next.delete(m);
-                  } else {
-                    next.add(m);
-                  }
-                  return next;
-                });
+                const next = new Set(selectedMarkets);
+                if (next.has(m)) next.delete(m); else next.add(m);
+                updateFilters({ markets: [...next].join(',') });
               }}
             >
               {active && <Check className="size-3" />}
               {labels[m]}
-            </Badge>
+            </Button>
           );
         })}
       </div>
@@ -451,17 +402,20 @@ function RealHoldingsPage() {
           <Input
             placeholder={t('ui.holdings.searchPlaceholder')}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              updateFilters({ q: e.target.value || null });
+            }}
             className="pl-9"
           />
         </div>
         <div className="sm:w-48">
-          <Select value={groupId} onValueChange={setGroupId}>
+          <Select value={groupId || '__all__'} onValueChange={value => updateFilters({ group: value === '__all__' ? null : value })}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder={t('ui.holdings.allGroups')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">{t('ui.holdings.allGroups')}</SelectItem>
+              <SelectItem value="__all__">{t('ui.holdings.allGroups')}</SelectItem>
               {groups.map((g) => (
                 <SelectItem key={g.id} value={g.id}>
                   {g.name}
@@ -471,13 +425,6 @@ function RealHoldingsPage() {
           </Select>
         </div>
       </div>
-
-      {hasLoadedHoldings && error && (
-        <Alert variant="destructive">
-          <AlertTriangle className="size-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
 
       {/* Desktop Table */}
       <HoldingsTable
@@ -506,6 +453,71 @@ function RealHoldingsPage() {
         aiRatings={aiRatings}
         onViewAiAnalysis={handleViewAiAnalysis}
       />
+
+    </div>;
+
+  const updatedAt = holdings.reduce<string | null>((latest, holding) =>
+    Number.isFinite(Date.parse(holding.updatedAt)) && (!latest || Date.parse(holding.updatedAt) > Date.parse(latest))
+      ? holding.updatedAt : latest, null);
+
+  return (
+    <div className="space-y-5">
+      {hasLoadedHoldings && error && (
+        <Alert variant="destructive">
+          <AlertTriangle className="size-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {simple ? <>
+        <section className="rounded-xl border bg-card p-4 sm:p-5" aria-labelledby="real-holdings-heading">
+          <div className="flex items-start justify-between gap-3">
+            <h2 id="real-holdings-heading" className="text-lg font-semibold">{zh ? '我的实仓' : 'My real portfolio'}</h2>
+            <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">{zh ? '实仓' : 'Real'}</span>
+          </div>
+          {updatedAt && <p className="mt-3 text-xs text-muted-foreground">
+            {zh ? '持仓记录更新于' : 'Holdings updated'}{' '}
+            <time dateTime={updatedAt}>{formatComparisonTime(updatedAt, i18n.language)}</time>
+          </p>}
+          {loading && !hasLoadedHoldings ? <p role="status" className="mt-4 text-sm text-muted-foreground">{t('common.loading')}</p>
+            : !hasLoadedHoldings && error ? <div className="mt-4 flex flex-wrap items-center gap-3">
+              <p role="alert" className="text-destructive">{error}</p>
+              <Button size="sm" variant="outline" onClick={() => void loadData()}>{t('common.retry')}</Button>
+            </div>
+            : filtered.length ? <ul className="mt-4 divide-y border-t">
+              {filtered.map(holding => <li key={holding.id}>
+                <button type="button" className="flex w-full min-h-14 items-center justify-between gap-3 rounded-sm py-2.5 text-start focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" onClick={() => openDetail(holding)}>
+                  <span className="min-w-0 break-words">
+                    <strong className="block font-semibold">{holding.company || holding.ticker}</strong>
+                    {holding.company && <span className="text-xs text-muted-foreground">{holding.ticker}</span>}
+                  </span>
+                  <span className="text-end">
+                    <span className="block text-sm font-medium tabular-nums">{formatShares(holding.shares)} {zh ? '股' : 'shares'}</span>
+                    <span className="block text-xs text-muted-foreground">{zh ? '成本' : 'Cost'} {formatPriceWithCurrency(holding.buyPrice, holding.currency)}</span>
+                  </span>
+                </button>
+              </li>)}
+            </ul> : <p className="mt-4 text-sm text-muted-foreground">
+              {t(holdings.length ? 'assets.noMatchingHoldings' : 'holdings.noHoldings')}
+            </p>}
+        </section>
+        <section className="rounded-xl border bg-card p-4 sm:p-5" aria-label={zh ? '现金' : 'Cash'}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <h2 className="text-lg font-semibold">{zh ? '现金' : 'Cash'}</h2>
+            {cashAccounts.length ? <dl className="flex flex-wrap gap-x-6 gap-y-3">
+              {cashAccounts.map(cash => <div key={cash.currency}>
+                <dt className="text-xs text-muted-foreground">{cash.currency}</dt>
+                <dd className="font-semibold tabular-nums">{cash.balance != null && String(cash.balance).trim() && Number.isFinite(Number(cash.balance))
+                  ? formatCurrencyWithCurrency(cash.balance, cash.currency) : '—'}</dd>
+              </div>)}
+            </dl> : <p className="text-sm text-muted-foreground">{t('assets.cashUnknown')}</p>}
+          </div>
+        </section>
+        <details className="rounded-xl border bg-card p-4 sm:p-5">
+          <summary className="cursor-pointer py-1 text-sm font-medium">{zh ? '筛选与管理持仓' : 'Filter and manage holdings'}</summary>
+          <div className="pt-4">{details}</div>
+        </details>
+      </> : details}
 
       <HoldingDetailDialog
         open={detailOpen}

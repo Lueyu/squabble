@@ -39,12 +39,19 @@ export default function ModelConnectionsPanel({ active = true }: { active?: bool
     onError: (error: unknown) => setFailure(errorMessage(error, key('failed'))),
   });
   const probe = useMutation({
+    retry: false,
     mutationFn: (id: string) => testModelConnection(id, i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
     onSuccess: (result, id) => setResults(current => ({ ...current, [id]: result })),
     onError: (error: unknown, id: string) => setResults(current => ({ ...current,
       [id]: { ok: false, message: errorMessage(error, key('failed')) } })),
+    onSettled: () => client.invalidateQueries({ queryKey: QUERY_KEY }),
   });
   const edit = (row: ModelConnection | null) => {
+    if (row) setResults(current => {
+      const next = { ...current };
+      delete next[row.id];
+      return next;
+    });
     setEditing(row);
     setDraft(row ? { name: row.name, baseUrl: row.baseUrl, fastModel: row.fastModel, slowModel: row.slowModel, apiKey: '' } : { ...EMPTY });
     setFailure(''); setOpen(true);
@@ -62,7 +69,7 @@ export default function ModelConnectionsPanel({ active = true }: { active?: bool
       {list.isSuccess && list.data.length === 0 && <p className="rounded-lg bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">{key('empty')}</p>}
       <div className="grid gap-3 lg:grid-cols-2">{list.data?.map(connection => <div key={connection.id} className="min-w-0 rounded-xl border border-border p-4">
         <div className="flex items-start justify-between gap-3"><div className="min-w-0">
-          <p className="flex min-w-0 items-center gap-2 font-semibold">{connection.available ? <CheckCircle2 className="size-4 shrink-0 text-success" /> : <Unplug className="size-4 shrink-0 text-destructive" />}
+          <p className="flex min-w-0 items-center gap-2 font-semibold">{connection.available && connection.testState === 'passed' ? <CheckCircle2 className="size-4 shrink-0 text-success" /> : <Unplug className="size-4 shrink-0 text-muted-foreground" />}
             <span className="min-w-0 [overflow-wrap:anywhere]">{connection.name}</span></p>
           <p className="mt-1 break-all text-xs text-muted-foreground">{connection.baseUrl}</p>
         </div><div className="flex shrink-0">
@@ -73,6 +80,13 @@ export default function ModelConnectionsPanel({ active = true }: { active?: bool
           <dt className="text-muted-foreground">{key('fast')}</dt><dd className="break-all">{connection.fastModel}</dd>
           <dt className="text-muted-foreground">{key('slow')}</dt><dd className="break-all">{connection.slowModel}</dd>
         </dl>
+        {connection.available && connection.testState !== 'passed' && !results[connection.id] && <p className="mt-2 text-xs text-muted-foreground">
+          {connection.testState === 'failed'
+            ? (i18n.language.startsWith('zh') ? '测试失败，请核对配置后重试。' : 'Test failed. Check the configuration and try again.')
+            : connection.testState === 'pending'
+              ? (i18n.language.startsWith('zh') ? '正在核对测试结果。若结果持续未知，可再次测试。' : 'Checking the test outcome. If it stays unknown, test again.')
+              : (i18n.language.startsWith('zh') ? '已保存，待测试。' : 'Saved. Test required.')}
+        </p>}
         {connection.needsReentry && <p className="mt-2 text-xs text-destructive">{key('reentry')}</p>}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">{connection.maskedApiKey}</span>

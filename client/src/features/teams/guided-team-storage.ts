@@ -1,4 +1,4 @@
-import { getAuthMode } from '@/api/auth-mode';
+export { workspaceOwnerScope as guidedOwnerScope } from '@/utils/workspace-tab-recovery';
 import type { TradingMarket } from '@shared/trading-market.interface';
 import type { GuidedTeamRecord } from './guided-team-create';
 import { guidedRequestKey } from './guided-request-keys';
@@ -14,15 +14,6 @@ export interface GuidedTeamDraft {
   step: number;
 }
 
-/** This partitions private tab caches only; the server remains the authority for identity and access. */
-export function guidedOwnerScope(): string | null {
-  if (getAuthMode() === 'local') return 'local';
-  try {
-    const token = window.localStorage.getItem('sq-at');
-    const payload = token && JSON.parse(window.atob(token.split('.')[1].replace(/-/gu, '+').replace(/_/gu, '/')));
-    return typeof payload?.sub === 'string' && payload.sub ? `account:${payload.sub}` : null;
-  } catch { return null; }
-}
 const cacheKey = (owner: string, kind: string) => `${prefix}.${encodeURIComponent(owner)}.${kind}`;
 function read(owner: string | null, kind: string, storage?: TabStorage): unknown {
   try { return owner ? JSON.parse((storage ?? window.sessionStorage).getItem(cacheKey(owner, kind)) ?? 'null') : null; }
