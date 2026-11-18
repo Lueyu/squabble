@@ -429,8 +429,11 @@ async function observeLedger(work, team, { state, now, fill, trade }, { requireR
   await visit('/holdings?accountId=' + team.accountId);
   if (requireRunEvidence) {
     const selector = page.getByRole('navigation', { name: 'Switch asset account', exact: true });
-    await selector.getByRole('link', { name: 'My real portfolio', exact: true }).press('Enter');
+    const real = selector.getByRole('link', { name: 'My real portfolio', exact: true });
+    await real.press('Enter');
     await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === 'real');
+    await real.and(page.locator('a[aria-current=page]')).waitFor();
+    await page.getByRole('region', { name: 'My real portfolio', exact: true }).getByText(ticker, { exact: true }).waitFor();
     const paper = selector.getByRole('link', { name: team.accountName, exact: true });
     await paper.press('Enter');
     await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === team.accountId);

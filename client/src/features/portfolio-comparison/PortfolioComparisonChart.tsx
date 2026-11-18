@@ -17,6 +17,7 @@ import {
   comparisonGapBridges,
   comparisonGapLabel,
   comparisonLineData,
+  comparisonReturnExtent,
   comparisonSymbolIndices,
   comparisonTimeWindow,
   comparisonTooltip,
@@ -56,6 +57,16 @@ export default function PortfolioComparisonChart({
   const timeWindow = useMemo(() => comparisonTimeWindow(series), [series]);
   const singleObservation =
     timeWindow !== null && timeWindow.first === timeWindow.last;
+  const weeklyReturnExtent = useMemo(() => !reference && period === '1W' && metric === 'return'
+    ? comparisonReturnExtent(series) : undefined, [series, reference, period, metric]);
+  const singleReturn = weeklyReturnExtent?.count === 1 ? weeklyReturnExtent.first : undefined;
+  const singleTimestamp = singleReturn?.timestamp ?? (singleObservation ? timeWindow.first : undefined);
+  const splitNumber = compact ? 3 : 4;
+  const returnSpan = weeklyReturnExtent ? weeklyReturnExtent.max - weeklyReturnExtent.min : Infinity;
+  const tickScale = returnSpan || Math.abs(weeklyReturnExtent?.min ?? 0) || 1;
+  const fineReturnTicks = !singleReturn && tickScale < 1;
+  const returnTickDigits = fineReturnTicks
+    ? Math.min(100, 1 - Math.floor(Math.log10(tickScale / splitNumber))) : 1;
   const quoteTimestamps = useMemo(() => historySeries?.flatMap(item => item.points
     .flatMap(point => point.timestamp && Number.isFinite(Date.parse(point.timestamp))
       ? [{ accountId: item.accountId, timestamp: Date.parse(point.timestamp) }] : [])) ?? [], [historySeries]);
@@ -116,7 +127,7 @@ export default function PortfolioComparisonChart({
       minInterval: (reference ? referenceGranularity : granularity) === 'hourly'
         ? 3600000 : intraday ? 60000 : 86400000,
       axisLabel: {
-        show: !singleObservation,
+        show: singleTimestamp === undefined,
         showMaxLabel: true,
         color: muted,
         hideOverlap: true,
@@ -136,13 +147,15 @@ export default function PortfolioComparisonChart({
       type: 'value',
       position: 'left',
       scale: true,
-      splitNumber: compact ? 3 : 4,
+      splitNumber,
       axisLabel: {
+        ...(singleReturn && { customValues: [singleReturn.value] }),
         color: muted,
-        fontSize: 12,
+        fontSize: fineReturnTicks ? 10 : 12,
+        ...(fineReturnTicks && { margin: 4 }),
         formatter: (value: number) =>
           metric === 'return'
-            ? `${value > 0 ? '+' : ''}${Number(value.toFixed(1))}%`
+            ? `${value > 0 ? '+' : ''}${Number(singleReturn ? value.toPrecision(12) : value.toFixed(returnTickDigits))}%`
             : new Intl.NumberFormat('en-US', {
                 notation: 'compact',
                 style: 'currency',
@@ -150,7 +163,7 @@ export default function PortfolioComparisonChart({
                 maximumFractionDigits: 1,
               }).format(value),
       },
-      splitLine: { lineStyle: { color: border } },
+      splitLine: { show: !singleReturn, lineStyle: { color: border } },
     },
     series: series.flatMap((item) => {
       const color = accountColor(item.accountId, item.colorIndex, chartTheme);
@@ -274,20 +287,22 @@ export default function PortfolioComparisonChart({
           opts={{ renderer: 'svg' }}
         />
       </div>
-      {singleObservation && (
+      {singleTimestamp !== undefined && (
         <p className="px-3 text-center text-xs leading-6 text-muted-foreground">
           {reference
             ? zh
               ? '当前仅有一条参考行情'
               : 'One reference price observation'
-            : zh
-              ? '仅一条已存估值，等待下一次观察'
-              : 'One saved valuation; waiting for the next observation'}{' '}
+            : singleReturn
+              ? zh ? '仅一条已存收益率，等待下一次观察' : 'One saved return observation'
+              : zh
+                ? '仅一条已存估值，等待下一次观察'
+                : 'One saved valuation; waiting for the next observation'}{' '}
           ·{' '}
           {reference
-            ? referenceIntraday ? new Date(timeWindow.first).toLocaleString(i18n.language)
+            ? referenceIntraday ? new Date(singleTimestamp).toLocaleString(i18n.language)
               : series[0]?.points[0]?.date
-            : formatComparisonTime(timeWindow.first, i18n.language)}
+            : formatComparisonTime(singleTimestamp, i18n.language)}
         </p>
       )}
       {annotation}

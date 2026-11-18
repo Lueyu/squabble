@@ -127,12 +127,37 @@ export function comparisonLineData(
 }
 
 export function comparisonTimeWindow(series: PortfolioComparisonSeries[]) {
-  const timestamps = series
-    .flatMap((item) => item.points.map((point) => Date.parse(point.timestamp)))
-    .filter(Number.isFinite);
-  return timestamps.length
-    ? { first: Math.min(...timestamps), last: Math.max(...timestamps) }
-    : null;
+  let first = Infinity;
+  let last = -Infinity;
+  for (const item of series) {
+    for (const point of item.points) {
+      const timestamp = Date.parse(point.timestamp);
+      if (!Number.isFinite(timestamp)) continue;
+      first = Math.min(first, timestamp);
+      last = Math.max(last, timestamp);
+    }
+  }
+  return first === Infinity ? null : { first, last };
+}
+
+export function comparisonReturnExtent(series: PortfolioComparisonSeries[]) {
+  let first: { timestamp: number; value: number } | undefined;
+  let count = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const item of series) {
+    for (const point of item.points) {
+      const value = point.returnPct;
+      if (value === null || !Number.isFinite(value)) continue;
+      const timestamp = Date.parse(point.timestamp);
+      if (!Number.isFinite(timestamp)) continue;
+      first ??= { timestamp, value };
+      count++;
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+    }
+  }
+  return count === 0 ? undefined : { first, count, min, max };
 }
 
 /** Reference days have no observed-at time and must not change with the browser's timezone. */

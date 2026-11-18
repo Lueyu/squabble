@@ -237,8 +237,19 @@ async function verifyJourneys(page, base, scenario, language, label) {
   await page.waitForURL(url => url.pathname === '/holdings' && url.searchParams.get('accountId') === 'real');
   const real = page.getByRole('region', { name: realName });
   await real.getByRole('button').first().waitFor();
+  assert.equal(new URL(page.url()).search, '?accountId=real', 'opening the real account must not navigate a second time to write default filters');
   await page.screenshot({ path: path.join(output, label + '-real-holdings.png'), animations: 'disabled' });
   assert.equal(scenario.seen.some(url => url.pathname === '/api/multi-agent/runs' && url.searchParams.get('status') === 'awaiting_human'), false);
+  const filters = page.locator('details').filter({ has: page.getByText(word('筛选与管理持仓', 'Filter and manage holdings'), { exact: true }) });
+  await filters.locator('summary').press('Enter');
+  const search = filters.getByRole('textbox');
+  await search.pressSequentially('unmatched-ticker');
+  await page.waitForURL(url => url.searchParams.get('q') === 'unmatched-ticker');
+  assert.equal(await real.getByRole('button').count(), 0);
+  await search.fill('');
+  await real.getByRole('button').first().waitFor();
+  assert.equal(new URL(page.url()).search, '?accountId=real');
+  await filters.locator('summary').press('Enter');
 
   await page.getByRole('link', { name: word('导入持仓', 'Import holdings'), exact: true }).click();
   await page.waitForURL(base + '/import?accountId=real');

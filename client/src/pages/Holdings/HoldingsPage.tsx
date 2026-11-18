@@ -57,23 +57,16 @@ import {
 } from '@/components/ui/alert';
 
 import { useTranslation } from 'react-i18next';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigationType, useSearchParams } from 'react-router-dom';
 import { AccountAssetsPage } from '@/features/assets/AccountAssetsPage';
 import { SIMULATION_ACCOUNTS_PATH } from '@/features/assets/account-context';
 import { formatComparisonTime } from '@/features/portfolio-comparison/comparison-chart-options';
 import { useSimpleExperience } from '@/hooks/use-simple-experience';
 
 /** Columns that the holdings table can sort by. */
-type SortKey =
-  | 'ticker'
-  | 'company'
-  | 'buyPrice'
-  | 'currentPrice'
-  | 'shares'
-  | 'marketValue'
-  | 'cost'
-  | 'pl'
-  | 'returnPct';
+const sortKeys = ['ticker', 'company', 'buyPrice', 'currentPrice', 'shares', 'marketValue', 'cost', 'pl', 'returnPct'] as const;
+type SortKey = typeof sortKeys[number];
+const markets: Market[] = ['US', 'HK', 'CN'];
 
 /** Holding record augmented with derived numeric values used by the table. */
 interface DerivedHolding extends Holding {
@@ -121,30 +114,37 @@ function RealHoldingsPage() {
   const [hasLoadedHoldings, setHasLoadedHoldings] = useState(false);
   const loadRevision = useRef(0);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState(() => accountParams.get('q') ?? '');
-  const [groupId, setGroupId] = useState(() => accountParams.get('group') ?? '');
-  const [sortKey, setSortKey] = useState<SortKey>(() => { const value = accountParams.get('sort'); return ['ticker', 'company', 'buyPrice', 'currentPrice', 'shares', 'marketValue', 'cost', 'pl', 'returnPct'].includes(value ?? '') ? value as SortKey : 'marketValue'; });
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => accountParams.get('direction') === 'asc' ? 'asc' : 'desc');
+  const navigationType = useNavigationType();
+  const urlSearch = accountParams.get('q') ?? '';
+  const [search, setSearch] = useState(urlSearch);
+  useEffect(() => {
+    if (navigationType !== 'REPLACE') setSearch(urlSearch);
+  }, [navigationType, urlSearch]);
+  const groupId = accountParams.get('group') ?? '';
+  const sortKey = sortKeys.find(key => key === accountParams.get('sort')) ?? 'marketValue';
+  const sortDir = accountParams.get('direction') === 'asc' ? 'asc' : 'desc';
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<Holding | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [selectedMarkets, setSelectedMarkets] = useState<Set<Market>>(
-    new Set((accountParams.has('markets') ? (accountParams.get('markets') ?? '').split(',').filter(value => ['US', 'HK', 'CN'].includes(value)) : ['US', 'HK', 'CN']) as Market[])
-  );
+  const marketFilter = accountParams.get('markets');
+  const selectedMarkets = useMemo(() => {
+    const selected = marketFilter?.split(',');
+    return new Set(selected ? markets.filter(market => selected.includes(market)) : markets);
+  }, [marketFilter]);
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [aiRatings, setAiRatings] = useState<Record<string, LatestRating>>({});
   const [aiDetailRunId, setAiDetailRunId] = useState<string | null>(null);
   const [aiDetailOpen, setAiDetailOpen] = useState(false);
 
-  useEffect(() => {
+  function updateFilters(changes: Record<string, string | null>) {
     const next = new URLSearchParams(accountParams);
     next.set('accountId', 'real');
-    for (const [key, value] of Object.entries({ q: search, group: groupId, sort: sortKey, direction: sortDir, markets: [...selectedMarkets].join(',') })) {
-      if (value) next.set(key, value); else next.delete(key);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null) next.delete(key); else next.set(key, value);
     }
-    if (next.toString() !== accountParams.toString()) setAccountParams(next, { replace: true });
-  }, [search, groupId, sortKey, sortDir, selectedMarkets]);
+    setAccountParams(next, { replace: true });
+  }
 
   const tickers = useMemo(
     () => holdings.map((h) => h.ticker),
@@ -232,9 +232,8 @@ function RealHoldingsPage() {
   /** Toggle sort on a column; switches direction when clicking the same column. */
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+      updateFilters({ sort: key, direction: sortDir === 'asc' ? 'desc' : 'asc' });
     } else {
-      setSortKey(key);
       const descKeys: SortKey[] = [
         'marketValue',
         'cost',
@@ -243,8 +242,8 @@ function RealHoldingsPage() {
         'shares',
         'currentPrice',
         'buyPrice',
-      ] as SortKey[];
-      setSortDir(descKeys.includes(key) ? 'desc' : 'asc');
+      ];
+      updateFilters({ sort: key, direction: descKeys.includes(key) ? 'desc' : 'asc' });
     }
   };
 
@@ -369,7 +368,7 @@ function RealHoldingsPage() {
 
       {/* Market Filter */}
       <div className="flex items-center gap-2 flex-wrap">
-        {(['US', 'HK', 'CN'] as Market[]).map((m) => {
+        {markets.map((m) => {
           const labels: Record<Market, string> = {
             US: t('dash.us'),
             HK: t('dash.hk'),
@@ -384,15 +383,9 @@ function RealHoldingsPage() {
               variant={active ? 'default' : 'outline'}
               aria-pressed={active}
               onClick={() => {
-                setSelectedMarkets((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(m)) {
-                    next.delete(m);
-                  } else {
-                    next.add(m);
-                  }
-                  return next;
-                });
+                const next = new Set(selectedMarkets);
+                if (next.has(m)) next.delete(m); else next.add(m);
+                updateFilters({ markets: [...next].join(',') });
               }}
             >
               {active && <Check className="size-3" />}
@@ -409,12 +402,15 @@ function RealHoldingsPage() {
           <Input
             placeholder={t('ui.holdings.searchPlaceholder')}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              updateFilters({ q: e.target.value || null });
+            }}
             className="pl-9"
           />
         </div>
         <div className="sm:w-48">
-          <Select value={groupId || '__all__'} onValueChange={value => setGroupId(value === '__all__' ? '' : value)}>
+          <Select value={groupId || '__all__'} onValueChange={value => updateFilters({ group: value === '__all__' ? null : value })}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder={t('ui.holdings.allGroups')} />
             </SelectTrigger>
