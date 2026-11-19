@@ -15,10 +15,11 @@ import { libraryEvidenceReferences } from '../../database/data-library-visibilit
 import { sourceFingerprint } from '../../database/team-source-context';
 import type { TeamDatabase } from '../../database/team-context';
 import type { LocalAgentsService } from '../local-agents/local-agents.service';
-import { readA2aConnectionFingerprint } from '../../database/a2a-agent-context';
+import { assertA2aConnectionFingerprint, readA2aConnectionFingerprint } from '../../database/a2a-agent-context';
 import { executionReadiness } from '../local-agents/execution-readiness';
 import type { AgentProfile, AgentVersion, AgentExecutor, AgentSelection, AgentResolveOptions, AgentMemoryRecallOptions, AgentCouncilMember, AgentMemory, AgentMemoryScope, AgentTemplateId } from '../../../shared/agent-roster.interface';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
+import type { CouncilMember } from '../../../shared/council.interface';
 import type { LocalAgentConnection } from '../../../shared/local-agents.interface';
 import { AGENT_TEMPLATES, LEGACY_AGENT_TEMPLATE_IDS, archiveSchema, assertCeiling, canonicalAgentToolId, parseCreate, parseRoster, prepareAgent, recommendedSchema, rosterError, rosterHash, scopeSchema, shareMemorySchema, snapshotMember, sourceKey, sourceSchema, updateSchema, uuid, writeMemorySchema } from './agent-roster.rules';
 import { ensureBuiltinFriends } from '../../database/agent-roster-builtins';
@@ -118,6 +119,23 @@ export class AgentRosterService {
       return Boolean(connection);
     }
     return this.legacyModelAvailable(tx, owner);
+  }
+
+  /** Check an executor from a server-created Council snapshot before accepting new work. */
+  async assertFrozenExecutorAvailable(tx: RosterDb, owner: string, member: CouncilMember): Promise<void> {
+    if (member.executionMode === 'a2a') {
+      if (!member.connectionId || member.a2aFingerprint?.connectionId !== member.connectionId) {
+        rosterError('AGENT_EXECUTOR_UNAVAILABLE', 'The saved external assistant does not match its connection fingerprint');
+      }
+      await assertA2aConnectionFingerprint(tx, owner, member.a2aFingerprint);
+      return;
+    }
+    const executor: AgentExecutor | null = member.executionMode === 'local'
+      ? member.agentId ? { executionMode: 'local', localAgentId: member.agentId, settings: member.agentSettings } : null
+      : { executionMode: 'model', connectionId: member.connectionId, model: member.model };
+    if (!executor || !await this.executorAvailable(tx, owner, executor)) {
+      rosterError('AGENT_EXECUTOR_UNAVAILABLE', 'Repair this friend’s saved connection in Settings');
+    }
   }
 
   private async legacyModelAvailable(tx: RosterDb, owner: string): Promise<boolean> {

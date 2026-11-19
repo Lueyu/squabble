@@ -10,16 +10,18 @@ import { CouncilService } from './council.service';
 import { SimpleCouncilService } from './simple-council.service';
 import { AgentRosterService } from '../agent-roster/agent-roster.service';
 import { councilMessages, councilSessions, councilReports } from '../../database/council.schema';
+import { a2aAgentConnections } from '../../database/a2a-agents.schema';
 import { modelConnections } from '../../database/model-connections.schema';
 import { newCheckpoint } from './council.dialogue';
 import { normalizeBuilderConfig } from '../paper-trading/agent-builder.rules';
 import { assertCouncilRosterMember, markCouncilRosterDispatch, readCouncilRosterMemory } from './council.roster';
 import type { PostgresJsDatabase } from '../../common/platform';
 import { ResearchToolsService } from '../research-tools/research-tools.service';
-import { councilIndependentSubmissions } from '../../database/simple-council.schema';
+import { councilIndependentSubmissions, simpleCouncilRequests } from '../../database/simple-council.schema';
 import { dataLibrarySources, dataLibraryVersions } from '../../database/data-library.schema';
 import { CouncilWorkflowStore } from './council.workflow-store';
 import { councilResearchTasks } from '../../database/research-workflow.schema';
+import type { LocalAgentsStatus } from '../../../shared/local-agents.interface';
 
 test('persistent research participants survive followups and revoked friends cannot dispatch or publish', async t => {
   assert.ok(process.env.COUNCIL_TEST_DATABASE_URL, 'Disposable Council test database required');
@@ -163,10 +165,7 @@ test('persistent research participants survive followups and revoked friends can
     let starts = 0;
     const service = Object.assign(Object.create(SimpleCouncilService.prototype), { db, roster,
       start: async () => { starts++; }, get: async () => ({}),
-      resolveMembers: async (_owner: string, selected?: typeof selection) => {
-        assert.deepEqual(selected, selection, 'followups must never discover current global participants');
-        return { members: await roster.resolveMembers(owner, selected!), executors: [] };
-      } }) as SimpleCouncilService;
+      resolveMembers: async () => assert.fail('Followups use the saved members') }) as SimpleCouncilService;
     await t.test('completed followup keeps saved versions after profile changes', async () => {
       await roster.update(owner, friend.id, { requestKey: 'new-version', expectedRevision: friend.revision, instructions: 'NEW_PERSONALITY' });
       await service.addMessage(owner, session.id, { message: 'Continue this saved question', requestKey: 'followup' });
@@ -181,6 +180,76 @@ test('persistent research participants survive followups and revoked friends can
       const before = (await db.select().from(councilMessages)).length;
       await assert.rejects(service.addMessage(owner, session.id, { message: 'Do not replace my friend', requestKey: 'archived-followup' }));
       assert.equal((await db.select().from(councilMessages)).length, before);
+      assert.equal(starts, 1);
+    });
+    await t.test('built-in followups use the frozen local executor after the preset gains personal memory', async () => {
+      const status: LocalAgentsStatus = { mode: 'native', companion: { connected: false }, items: [
+        { id: 'native-codex', provider: 'codex', name: 'Fixture Codex', source: 'native', state: 'ready', loginCommand: '', installUrl: '',
+          connected: true, available: true, busy: false, models: [], reasoningEfforts: ['high'] },
+        { id: 'native-claude', provider: 'claude', name: 'Fixture Claude', source: 'native', state: 'ready', loginCommand: '', installUrl: '',
+          connected: true, available: true, busy: false },
+      ] };
+      const localRoster = new AgentRosterService(db, { async status(requester) {
+        assert.equal(requester, owner);
+        return status;
+      } });
+      const settings = { model: 'fixture-model', reasoningEffort: 'high' };
+      const { items: [legacy] } = await localRoster.recommended(owner, { requestKey: 'legacy-local', templateIds: ['financials'],
+        executor: { executionMode: 'local', localAgentId: 'native-codex', settings } });
+      const { items } = await localRoster.list(owner);
+      const builtin = items.find(item => item.origin === 'builtin' && item.currentVersion.config.templateId === 'financials');
+      assert.ok(builtin);
+      const chosen = [{ agentId: builtin.id, agentVersionId: builtin.currentVersionId }];
+      let localStarts = 0;
+      const localService = Object.assign(Object.create(SimpleCouncilService.prototype), { db, roster: localRoster,
+        start: async () => { localStarts++; }, get: async () => ({}) }) as SimpleCouncilService;
+      const frozen = await localService.resolveMembers(owner, chosen);
+      assert.deepEqual(frozen.members[0].agentSettings, settings);
+      const checkpoint = newCheckpoint(frozen.members, { independent: true });
+      checkpoint.simple!.agentSelections = chosen;
+      checkpoint.simple!.executors = frozen.executors;
+      const [conversation] = await db.insert(councilSessions).values({ owner, profileVersion: 1, ticker: 'FIXTURE', status: 'completed',
+        profileSnapshot: { ...config, council: { enabled: true, members: frozen.members } }, checkpoint }).returning();
+
+      await localRoster.writeMemory(owner, legacy.id, { requestKey: 'legacy-local-note', expectedRevision: legacy.revision,
+        scope: { kind: 'personal' }, content: 'Personal note', origin: 'user_note', sourceRefs: [] });
+      assert.equal((await localRoster.detail(owner, builtin.id)).availability, 'unavailable');
+      const followup = { message: 'Continue on my original executor', requestKey: 'frozen-local-followup' };
+      await localService.addMessage(owner, conversation.id, followup);
+      const [saved] = await db.select().from(councilSessions).where(eq(councilSessions.id, conversation.id));
+      assert.deepEqual(saved.profileSnapshot.council?.members, frozen.members);
+      assert.deepEqual(saved.checkpoint?.simple?.executors, frozen.executors);
+      assert.deepEqual(saved.checkpoint?.simple?.agentSelections, chosen);
+      assert.equal(localStarts, 1);
+
+      status.items[0].reasoningEfforts = ['low'];
+      assert.equal((await localRoster.detail(owner, builtin.id)).availability, 'unavailable');
+      await localService.addMessage(owner, conversation.id, followup);
+      await assert.rejects(localService.addMessage(owner, conversation.id, { ...followup, requestKey: 'unavailable-frozen-local' }), /Repair this friend’s saved connection/u);
+      status.items[0].available = false;
+      assert.deepEqual((await localRoster.detail(owner, builtin.id)).effectiveExecutor, { executionMode: 'local', localAgentId: 'native-claude' });
+      await assert.rejects(localService.addMessage(owner, conversation.id, { ...followup, requestKey: 'unavailable-frozen-local' }), /Repair this friend’s saved connection/u);
+      assert.equal((await db.select().from(councilMessages).where(eq(councilMessages.sessionId, conversation.id))).length, 1);
+      assert.equal((await db.select().from(simpleCouncilRequests).where(eq(simpleCouncilRequests.sessionId, conversation.id))).length, 1);
+      assert.equal(localStarts, 1);
+    });
+    await t.test('followups require the saved A2A connection to match its exact fingerprint', async () => {
+      const [external] = await db.insert(a2aAgentConnections).values({ owner, name: 'Fixture external agent', cardName: 'Fixture card', cardHash: 'fixture-hash',
+        cardVersion: '1', cardUrl: 'https://fixture.invalid/card', interfaceUrl: 'https://fixture.invalid/rpc',
+        capabilities: { structuredOutput: false, structuredOutputVerified: false, toolsKnown: false, feesKnown: false } }).returning();
+      const participant = await roster.create(owner, { requestKey: 'external-friend', executor: { executionMode: 'a2a', connectionId: external.id } });
+      const frozen = await roster.resolveMembers(owner, [{ agentId: participant.id, agentVersionId: participant.currentVersionId }]);
+      const snapshot = { ...config, council: { enabled: true, members: [{ ...frozen[0], connectionId: connection.id }] } };
+      const [conversation] = await db.insert(councilSessions).values({ owner, profileVersion: 1, ticker: 'FIXTURE', status: 'completed',
+        profileSnapshot: snapshot, checkpoint: newCheckpoint(frozen, { independent: true }) }).returning();
+      const followup = { message: 'Continue with this external assistant', requestKey: 'external-followup' };
+      await assert.rejects(service.addMessage(owner, conversation.id, followup), /does not match its connection fingerprint/u);
+      await db.update(councilSessions).set({ profileSnapshot: { ...snapshot, council: { ...snapshot.council, members: frozen } } })
+        .where(eq(councilSessions.id, conversation.id));
+      await db.update(a2aAgentConnections).set({ revision: external.revision + 1 }).where(eq(a2aAgentConnections.id, external.id));
+      await assert.rejects(service.addMessage(owner, conversation.id, followup), /A2A_CONNECTION_CHANGED/u);
+      assert.equal((await db.select().from(councilMessages).where(eq(councilMessages.sessionId, conversation.id))).length, 0);
+      assert.equal((await db.select().from(simpleCouncilRequests).where(eq(simpleCouncilRequests.sessionId, conversation.id))).length, 0);
       assert.equal(starts, 1);
     });
     await t.test('a dispatched workflow attempt accepts and publishes its saved artifact after archive', async () => {
