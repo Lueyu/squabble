@@ -10,7 +10,8 @@
  * under `api/`, and shared layout under `components/Layout.tsx`.
  */
 import React, { useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { getAuthMode } from './api/auth-mode';
 import { initAgentAPI } from './utils/agent-api';
 
@@ -87,10 +88,10 @@ function SimulationsRoute() {
   if (hash === '#notifications') {
     destination = { pathname: '/settings/notifications', search, hash: '' };
   } else if (mandateId !== null) {
-    return <LegacyDecisionPage
+    return <LinkedStrategy
       strategyId={mandateId}
-      versionId={sourceVersion || undefined}
-      returnTo={safeReturnPath(params.get('returnTo')) ?? undefined}
+      returnTo={safeReturnPath(params.get('returnTo'))
+        ?? (sourceVersion ? `/analysis/reports/${encodeURIComponent(sourceVersion)}` : undefined)}
     />;
   } else if (params.get('draft') === '1' && sourceVersion) {
     destination = { pathname: '/analysis/reports/' + encodeURIComponent(sourceVersion), search, hash: '#report-strategy' };
@@ -103,6 +104,20 @@ function SimulationsRoute() {
     current={<Navigate to={destination} state={state} replace />}
     legacy={<PaperPage />}
   />;
+}
+
+function LinkedStrategy({ strategyId, returnTo }: { strategyId: string; returnTo?: string }) {
+  const { i18n } = useTranslation();
+  return (
+    <>
+      {returnTo && (
+        <Link className="mx-auto block max-w-4xl px-6 pt-4 text-primary underline" to={returnTo}>
+          {i18n.language.startsWith('zh') ? '返回报告' : 'Back to report'}
+        </Link>
+      )}
+      <LegacyDecisionPage strategyId={strategyId} />
+    </>
+  );
 }
 
 function LegacySimulationAccountRoute() {

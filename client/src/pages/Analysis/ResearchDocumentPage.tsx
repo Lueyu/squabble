@@ -47,17 +47,26 @@ function linkedStrategies(report: ResearchDocumentView, returnTo: string, en: bo
 export default function ResearchDocumentPage() {
   const { versionId = '' } = useParams<{ versionId: string }>();
   const { enabled } = useSimpleExperience();
-  const location = useLocation();
-  const reportPath = location.pathname + location.search + location.hash;
-  if (enabled) return (
-    <SimpleReportReader
-      key={versionId}
-      versionId={versionId}
-      renderLinkedStrategies={(report, zh) => linkedStrategies(report, reportPath, !zh)}
-    />
-  );
+  if (enabled) return <SimpleResearchDocument key={versionId} versionId={versionId} />;
   // A route change remounts editing state so a draft cannot accidentally publish against another version.
   return <ResearchDocumentReader key={versionId} versionId={versionId} />;
+}
+
+function SimpleResearchDocument({ versionId }: { versionId: string }) {
+  const { i18n } = useTranslation();
+  const location = useLocation();
+  const reportPath = location.pathname + location.search + location.hash;
+  const { data } = useQuery({ queryKey: ['research-document', versionId], queryFn: () => fetchResearchDocument(versionId), enabled: Boolean(versionId) });
+  return (
+    <>
+      <SimpleReportReader versionId={versionId} />
+      {Boolean(data?.strategyUses?.length) && data && (
+        <aside className="mx-auto mb-6 max-w-5xl px-4 text-sm">
+          {linkedStrategies(data, reportPath, i18n.language.startsWith('en'))}
+        </aside>
+      )}
+    </>
+  );
 }
 function ResearchDocumentReader({ versionId }: { versionId: string }) {
   const { i18n } = useTranslation(); const en = Boolean(i18n.resolvedLanguage?.startsWith('en'));
