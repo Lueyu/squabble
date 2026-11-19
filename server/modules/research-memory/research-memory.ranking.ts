@@ -28,7 +28,11 @@ export function memoryRelevance(item: ResearchMemoryRecallItem, query: string): 
     ...item.citations.map(citation => citation.title)].filter(Boolean).join(' '));
   const normalized = normalize(query.slice(0, MEMORY_QUERY_LIMIT));
   const concepts = aliases.filter(group => group.some(term => includes(normalized, term)));
-  const terms = [...new Set(normalized.match(/[\p{L}\p{N}/]+/gu) ?? [])].filter(term => term.length > 2).slice(0, 64);
+  const tokens = normalized.match(/[\p{L}\p{N}/]+/gu) ?? [];
+  const terms = [...new Set(tokens)]
+    .filter(term => term.length > 2 ||
+      (concepts.length === 0 && tokens.length === 1 && /^[\u3400-\u9fff]{2}$/u.test(term)))
+    .slice(0, 64);
   return concepts.reduce((score, group) => score + (group.some(term => includes(text, term)) ? 10 : 0), 0)
     + terms.reduce((score, term) => score + Number(includes(text, term)), 0);
 }
