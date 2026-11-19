@@ -16,25 +16,44 @@ import {
 
 interface Props {
   sessions: ResearchConversationView[];
+  search: string;
   selectedId: string | null;
   pending: boolean;
   error: boolean;
   onRetry: () => void;
+  onClearSearch: () => void;
   onSelect: (id: string) => void;
   onDeleted: (id: string) => void;
 }
 
 export default function ResearchHistoryList({
   sessions,
+  search,
   selectedId,
   pending,
   error,
   onRetry,
+  onClearSearch,
   onSelect,
   onDeleted,
 }: Props) {
   const { i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
+  const query = search.trim().toLocaleLowerCase();
+  const visibleSessions = sessions
+    .map((item) => ({
+      item,
+      name:
+        item.title ||
+        item.subject ||
+        item.ticker ||
+        (zh ? '未命名研究' : 'Untitled research'),
+    }))
+    .filter(({ item, name }) =>
+      `${name} ${item.subject ?? ''} ${item.ticker ?? ''}`
+        .toLocaleLowerCase()
+        .includes(query),
+    );
   const client = useQueryClient();
   const [target, setTarget] = useState<ResearchConversationView | null>(null);
   const intent = useRef(createRequestIntent(() => crypto.randomUUID()));
@@ -110,13 +129,16 @@ export default function ResearchHistoryList({
             : 'Start with a question. Your research will be saved here.'}
         </p>
       )}
+      {!pending && !error && sessions.length > 0 && !visibleSessions.length && (
+        <div className="research-history-notice">
+          <p role="status">{zh ? '没有匹配的研究。' : 'No matching research.'}</p>
+          <Button variant="ghost" size="sm" onClick={onClearSearch}>
+            {zh ? '清除搜索' : 'Clear search'}
+          </Button>
+        </div>
+      )}
       <ul className="research-history-list">
-        {sessions.map((item) => {
-          const name =
-            item.title ||
-            item.subject ||
-            item.ticker ||
-            (zh ? '未命名研究' : 'Untitled research');
+        {visibleSessions.map(({ item, name }) => {
           return (
             <li
               key={item.id}
