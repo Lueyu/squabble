@@ -66,7 +66,13 @@ export default function GuidedOnboarding({ holdings, returnTo }: {
   if (teamSteps.includes(null)) return null;
   const pending = teams.isPending || runs.some(run => run.isPending) ||
     (readingHoldings && holdings.isPending) || (readingConnection && ai.pending);
-  if (pending) return null;
+  if (pending) {
+    return (
+      <p role="status" className="px-4 py-2 text-sm text-muted-foreground">
+        {zh ? '正在核对设置进度…' : 'Checking setup progress…'}
+      </p>
+    );
+  }
   const existingStep =
     teamSteps.find(step => step?.step === 'team' && step.needsAttention) ??
     teamSteps.find(step => step?.step === 'team' && step.agreementState === 'paused') ??
