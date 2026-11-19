@@ -17,7 +17,7 @@ import type { TeamDatabase } from '../../database/team-context';
 import type { LocalAgentsService } from '../local-agents/local-agents.service';
 import { readA2aConnectionFingerprint } from '../../database/a2a-agent-context';
 import { executionReadiness } from '../local-agents/execution-readiness';
-import type { AgentProfile, AgentVersion, AgentExecutor, AgentSelection, AgentResolveOptions, AgentMemoryRecallOptions, AgentCouncilMember, AgentMemory, AgentMemoryScope } from '../../../shared/agent-roster.interface';
+import type { AgentProfile, AgentVersion, AgentExecutor, AgentSelection, AgentResolveOptions, AgentMemoryRecallOptions, AgentCouncilMember, AgentMemory, AgentMemoryScope, AgentTemplateId } from '../../../shared/agent-roster.interface';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
 import type { LocalAgentConnection } from '../../../shared/local-agents.interface';
 import { AGENT_TEMPLATES, LEGACY_AGENT_TEMPLATE_IDS, archiveSchema, assertCeiling, canonicalAgentToolId, parseCreate, parseRoster, prepareAgent, recommendedSchema, rosterError, rosterHash, scopeSchema, shareMemorySchema, snapshotMember, sourceKey, sourceSchema, updateSchema, uuid, writeMemorySchema } from './agent-roster.rules';
@@ -27,26 +27,28 @@ type ProfileRow = typeof profiles.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
 type MemoryRow = typeof memories.$inferSelect;
 type RosterDb = TeamDatabase;
+type BuiltinExecutor = Exclude<AgentExecutor, { executionMode: 'a2a' }>;
 export const AGENT_ROSTER_LOCAL_STATUS = 'AGENT_ROSTER_LOCAL_STATUS';
 function versionView(row: VersionRow): AgentVersion { return { id: row.id, agentId: row.agentId, version: row.version, config: row.config, createdAt: row.createdAt.toISOString() }; }
 
-const legacyModelExecutor: AgentExecutor = { executionMode: 'model', model: 'slow' };
+const legacyModelExecutor: BuiltinExecutor = { executionMode: 'model', model: 'slow' };
+const currentVersionJoin = and(eq(versions.ownerId, profiles.ownerId), eq(versions.agentId, profiles.id), eq(versions.id, profiles.currentVersionId));
 
-async function selectBuiltinExecutor(passedConnectionIds: string[], locals: LocalAgentConnection[], legacyAvailable: () => Promise<boolean>): Promise<AgentExecutor | null> {
-  const routes: AgentExecutor[] = passedConnectionIds.map(connectionId => ({ executionMode: 'model', connectionId, model: 'slow' }));
+function selectBuiltinExecutor(passedConnectionIds: string[], locals: LocalAgentConnection[], legacyAvailable: boolean): BuiltinExecutor | null {
+  const routes: BuiltinExecutor[] = passedConnectionIds.map(connectionId => ({ executionMode: 'model', connectionId, model: 'slow' }));
   for (const item of locals) {
     if (executionReadiness(item).executable) routes.push({ executionMode: 'local', localAgentId: item.id });
   }
   if (routes.length) return routes.length === 1 ? routes[0] : null;
-  return await legacyAvailable() ? legacyModelExecutor : null;
+  return legacyAvailable ? legacyModelExecutor : null;
 }
 
-function matchesBuiltinRoute(executor: AgentExecutor, builtin: AgentExecutor | null): boolean {
-  if (executor.executionMode === 'model' && builtin?.executionMode === 'model') {
-    return executor.connectionId === builtin.connectionId && executor.model === builtin.model;
+function sameExecutorRoute(left: AgentExecutor, right: BuiltinExecutor): boolean {
+  if (left.executionMode === 'model' && right.executionMode === 'model') {
+    return left.connectionId === right.connectionId && left.model === right.model;
   }
-  return executor.executionMode === 'local' && builtin?.executionMode === 'local'
-    && executor.localAgentId === builtin.localAgentId && !executor.settings?.model && !executor.settings?.reasoningEffort;
+  return left.executionMode === 'local' && right.executionMode === 'local' && left.localAgentId === right.localAgentId
+    && left.settings?.model === right.settings?.model && left.settings?.reasoningEffort === right.settings?.reasoningEffort;
 }
 
 function profileView(row: ProfileRow, version: VersionRow, configured: boolean, effectiveExecutor: AgentExecutor | null): AgentProfile {
@@ -141,50 +143,67 @@ export class AgentRosterService {
     catch { rosterError('AGENT_SOURCE_UNAVAILABLE', 'A saved source was removed or is no longer authorized; choose its current version'); }
   }
 
-  private async builtinExecutor(tx: RosterDb, owner: string): Promise<AgentExecutor | null> {
-    const [connections, locals] = await Promise.all([
-      tx.select({ id: modelConnections.id }).from(modelConnections)
-        .where(and(eq(modelConnections.owner, owner), eq(modelConnections.testState, 'passed'))).limit(2),
-      this.locals?.status(owner),
-    ]);
-    return selectBuiltinExecutor(connections.map(({ id }) => id), locals?.items ?? [], () => this.legacyModelAvailable(tx, owner));
-  }
-
-  private async rosterAvailability(owner: string) {
+  private async rosterAvailability(tx: RosterDb, owner: string) {
     const [models, external, status, legacy] = await Promise.all([
-      this.db.select({ id: modelConnections.id, testState: modelConnections.testState }).from(modelConnections).where(eq(modelConnections.owner, owner)),
-      this.db.select({ id: a2aAgentConnections.id }).from(a2aAgentConnections)
+      tx.select({ id: modelConnections.id, testState: modelConnections.testState }).from(modelConnections).where(eq(modelConnections.owner, owner)),
+      tx.select({ id: a2aAgentConnections.id }).from(a2aAgentConnections)
         .where(and(eq(a2aAgentConnections.owner, owner), eq(a2aAgentConnections.status, 'enabled'))),
       this.locals?.status(owner),
-      this.legacyModelAvailable(this.db, owner),
+      this.legacyModelAvailable(tx, owner),
     ]);
     const locals = status?.items ?? [];
     const modelIds = new Set(models.map(({ id }) => id));
+    const testedModelIds = new Set(models.filter(model => model.testState === 'passed').map(({ id }) => id));
     const externalIds = new Set(external.map(({ id }) => id));
-    const builtin = await selectBuiltinExecutor(models.filter(model => model.testState === 'passed').map(({ id }) => id), locals, async () => legacy);
-    return { builtin, available(executor: AgentExecutor): boolean {
+    const defaultExecutor = selectBuiltinExecutor([...testedModelIds], locals, legacy);
+    function available(executor: AgentExecutor): boolean {
       if (executor.executionMode === 'model') return executor.connectionId ? modelIds.has(executor.connectionId) : legacy;
       if (executor.executionMode === 'a2a') return externalIds.has(executor.connectionId);
       const local = locals.find(item => item.id === executor.localAgentId);
       return Boolean(local && executionReadiness(local, executor.settings).executable);
-    } };
+    }
+
+    // A null entry records conflicting runnable routes for this specialty.
+    const savedRoutes = new Map<AgentTemplateId, BuiltinExecutor | null>();
+    if (!defaultExecutor) {
+      const specialty = sql<AgentTemplateId>`${versions.config}->>'templateId'`;
+      const savedExecutor = sql<BuiltinExecutor>`${versions.config}->'executor'`;
+      const candidates = await tx.select({ templateId: specialty, executor: savedExecutor })
+        .from(profiles).innerJoin(versions, currentVersionJoin)
+        .where(and(eq(profiles.ownerId, owner), this.legacyRecommendedCandidate(tx)))
+        .groupBy(specialty, savedExecutor);
+      for (const { templateId, executor } of candidates) {
+        if (!available(executor)) continue;
+        if (executor.executionMode === 'model' && executor.connectionId && !testedModelIds.has(executor.connectionId)) continue;
+        const prior = savedRoutes.get(templateId);
+        if (prior === undefined) {
+          const route = executor.executionMode === 'local' && !executor.settings?.model && !executor.settings?.reasoningEffort
+            ? { executionMode: 'local', localAgentId: executor.localAgentId } satisfies BuiltinExecutor
+            : executor;
+          savedRoutes.set(templateId, route);
+        } else if (prior && !sameExecutorRoute(prior, executor)) {
+          savedRoutes.set(templateId, null);
+        }
+      }
+    }
+    return { builtinFor: (templateId: AgentTemplateId) => defaultExecutor ?? savedRoutes.get(templateId) ?? null, available };
   }
 
   private async view(tx: RosterDb, owner: string, row: ProfileRow): Promise<AgentProfile> {
     const version = await this.versionRow(tx, owner, row.id, row.currentVersionId);
     const builtin = version.config.origin === 'builtin';
     const active = row.status === 'active';
-    const effectiveExecutor = builtin && active ? await this.builtinExecutor(tx, owner) : null;
+    const effectiveExecutor = builtin && active ? (await this.rosterAvailability(tx, owner)).builtinFor(version.config.templateId) : null;
     const configured = active && (builtin ? Boolean(effectiveExecutor) : await this.executorAvailable(tx, owner, version.config.executor));
     return profileView(row, version, configured, effectiveExecutor);
   }
 
   async detail(owner: string, id: string): Promise<AgentProfile> { return this.view(this.db, owner, await this.row(this.db, owner, id)); }
 
-  private legacyRecommendedCandidate() {
+  private legacyRecommendedCandidate(tx: RosterDb) {
     const builtin = alias(profiles, 'builtin_profile');
     const builtinVersion = alias(versions, 'builtin_version');
-    const activeBuiltin = this.db.select({ id: builtin.id }).from(builtin).innerJoin(builtinVersion, and(
+    const activeBuiltin = tx.select({ id: builtin.id }).from(builtin).innerJoin(builtinVersion, and(
       eq(builtinVersion.ownerId, builtin.ownerId), eq(builtinVersion.agentId, builtin.id), eq(builtinVersion.id, builtin.currentVersionId),
     )).where(and(
       eq(builtin.ownerId, profiles.ownerId), eq(builtin.status, 'active'),
@@ -193,16 +212,17 @@ export class AgentRosterService {
       sql`coalesce(${builtinVersion.config} #>> '{preferences,language}', 'zh-CN') = coalesce(${versions.config} #>> '{preferences,language}', 'zh-CN')`,
     ));
     // The receipt identifies an unedited batch preset even if historical catalog defaults differ.
-    const originalReceipt = this.db.select({ id: requests.id }).from(requests).where(and(
+    const originalReceipt = tx.select({ id: requests.id }).from(requests).where(and(
       eq(requests.ownerId, profiles.ownerId), eq(requests.operation, 'recommended'),
       sql`${requests.result} @> jsonb_build_object('items', jsonb_build_array(jsonb_build_object(
         'id', ${profiles.id}, 'revision', ${profiles.revision}, 'currentVersionId', ${profiles.currentVersionId}
       )))`,
     ));
     return and(eq(profiles.status, 'active'), sql`${versions.config}->>'origin' IS DISTINCT FROM 'builtin'`,
+      sql`${versions.config} #>> '{executor,executionMode}' IN ('model', 'local')`,
       exists(activeBuiltin), exists(originalReceipt),
-    notExists(this.db.select({ id: memories.id }).from(memories).where(and(eq(memories.ownerId, profiles.ownerId), eq(memories.agentId, profiles.id)))),
-    notExists(this.db.select({ id: shares.id }).from(shares).where(and(eq(shares.ownerId, profiles.ownerId), eq(shares.targetAgentId, profiles.id)))));
+    notExists(tx.select({ id: memories.id }).from(memories).where(and(eq(memories.ownerId, profiles.ownerId), eq(memories.agentId, profiles.id)))),
+    notExists(tx.select({ id: shares.id }).from(shares).where(and(eq(shares.ownerId, profiles.ownerId), eq(shares.targetAgentId, profiles.id)))));
   }
 
   async list(owner: string, query: unknown = {}) {
@@ -213,8 +233,8 @@ export class AgentRosterService {
       catch { rosterError('AGENT_INVALID_INPUT', 'Invalid page cursor'); }
     }
     if (q.status !== 'archived') await this.db.transaction(tx => ensureBuiltinFriends(tx, owner));
-    const availability = q.status === 'archived' ? null : await this.rosterAvailability(owner);
-    const duplicateCandidate = availability ? this.legacyRecommendedCandidate() : sql`false`;
+    const availability = q.status === 'archived' ? null : await this.rosterAvailability(this.db, owner);
+    const duplicateCandidate = availability ? this.legacyRecommendedCandidate(this.db) : sql`false`;
     const batchSize = Math.max(30, q.limit + 1);
     const page: { agent: AgentProfile; cursorAt: string }[] = [];
     // Read current versions with their profiles and scan past hidden presets before deciding whether another page exists.
@@ -223,7 +243,7 @@ export class AgentRosterService {
         profile: profiles, version: versions, duplicateCandidate: sql<boolean>`(${duplicateCandidate})`,
         cursorAt: sql<string>`to_char(${profiles.updatedAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       })
-        .from(profiles).innerJoin(versions, and(eq(versions.ownerId, profiles.ownerId), eq(versions.agentId, profiles.id), eq(versions.id, profiles.currentVersionId)))
+        .from(profiles).innerJoin(versions, currentVersionJoin)
         .where(and(eq(profiles.ownerId, owner), q.status === 'all' ? undefined : eq(profiles.status, q.status),
           q.q ? ilike(profiles.name, '%' + q.q + '%') : undefined,
           cursor ? sql`(${profiles.updatedAt},${profiles.id})<(${cursor.at}::timestamptz,${cursor.id}::uuid)` : undefined))
@@ -231,9 +251,10 @@ export class AgentRosterService {
       for (const { profile, version, duplicateCandidate, cursorAt } of rows) {
         const active = profile.status === 'active';
         const isBuiltin = version.config.origin === 'builtin';
-        const effectiveExecutor = active && isBuiltin ? availability?.builtin ?? null : null;
+        const builtinExecutor = active ? availability?.builtinFor(version.config.templateId) : null;
+        const effectiveExecutor = isBuiltin ? builtinExecutor ?? null : null;
         const configured = active && (isBuiltin ? Boolean(effectiveExecutor) : Boolean(availability?.available(version.config.executor)));
-        if (duplicateCandidate && (!configured || matchesBuiltinRoute(version.config.executor, availability?.builtin ?? null))) continue;
+        if (duplicateCandidate && (!configured || (builtinExecutor && sameExecutorRoute(version.config.executor, builtinExecutor)))) continue;
         page.push({ agent: profileView(profile, version, configured, effectiveExecutor), cursorAt });
         if (page.length > q.limit) break;
       }
@@ -324,11 +345,11 @@ export class AgentRosterService {
       rosterError('AGENT_INVALID_INPUT', 'Choose each friend only once in a discussion');
     parseRoster(z.array(sourceSchema).max(100), options.sourceRefs ?? []);
     const result: AgentCouncilMember[] = [];
-    let builtinExecutor: Promise<AgentExecutor | null> | undefined;
+    let availability: Awaited<ReturnType<AgentRosterService['rosterAvailability']>> | undefined;
     for (const selection of selections) {
       const { profile, version } = await readAgentRosterVersion(tx, owner, selection.agentId, selection.agentVersionId, options);
       const executor = version.config.origin === 'builtin'
-        ? await (builtinExecutor ??= this.builtinExecutor(tx, owner))
+        ? (availability ??= await this.rosterAvailability(tx, owner)).builtinFor(version.config.templateId)
         : version.config.executor;
       if (!executor) rosterError('AGENT_EXECUTOR_UNAVAILABLE', 'A built-in friend needs one unambiguous usable connection for personal research');
       if (version.config.origin !== 'builtin') {
