@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { simulationAccountPath } from '@/utils/portfolio-workspace';
 import GuidedOnboarding from '@/features/onboarding/GuidedOnboarding';
 import { IMPORT_ONBOARDING_PATH } from '@/features/onboarding/onboarding-state';
-import { readAssetAccount, assetHref, holdingsHref, SIMULATION_ACCOUNTS_PATH } from './account-context';
+import { readAssetAccount, assetHref, holdingsHref, SIMULATION_ACCOUNTS_PATH, FORMER_TEAM_ACCOUNTS_PATH } from './account-context';
 import PaperAccountAssets from './PaperAccountAssets';
 
 /** Ownership comes from team bindings; companion presentation metadata is never a team. */
@@ -60,12 +60,15 @@ export function AccountAssetsPage({ real, mode, renderRealHoldings }: {
     ? IMPORT_ONBOARDING_PATH : '/import?accountId=real';
   const onboarding = realHoldings && <GuidedOnboarding holdings={holdings} returnTo={returnTo} />;
   const realName = zh ? '我的实仓' : 'My real portfolio';
-  const activeAccounts = (accounts.data ?? []).filter(item => item.status !== 'archived' || item.id === id);
+  const formerTeamCount = accounts.data?.filter(item => item.formerTeam).length ?? 0;
+  const accountChoices = (accounts.data ?? []).filter(item => item.id === id
+    || (item.status !== 'archived' && (!simple || !item.formerTeam)));
   const choices = [
     { id: 'real', name: realName },
-    ...activeAccounts.map(item => ({
+    ...accountChoices.map(item => ({
       id: item.id,
-      name: item.name + (item.status === 'archived' ? ' · ' + t('assets.archived') : ''),
+      name: item.name + (item.status === 'archived' ? ' · ' + t('assets.archived')
+        : item.formerTeam ? (zh ? ' · 原团队已归档' : ' · Former team archived') : ''),
     })),
   ];
   if (id && !choices.some(item => item.id === id)) choices.push({ id, name: t('assets.simulation') });
@@ -81,12 +84,17 @@ export function AccountAssetsPage({ real, mode, renderRealHoldings }: {
       {choices.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
     </SelectContent>
   </Select>;
+  const formerTeamLink = formerTeamCount > 0 && <Link className="block text-xs text-muted-foreground underline-offset-2 hover:underline"
+    to={FORMER_TEAM_ACCOUNTS_PATH} state={{ returnTo }}>
+    {zh ? `已归档团队账户（${formerTeamCount}）` : `Accounts from archived teams (${formerTeamCount})`}
+  </Link>;
   const watchlist = id && assetHref('/watchlist', id, new URLSearchParams({ returnTo }).toString());
 
   if (simple && realHoldings && renderRealHoldings) return <div className="portfolio-page space-y-4">
     {renderRealHoldings({
       accountSelector: <div className="min-w-0 space-y-1">
         {selectAccount}
+        {formerTeamLink}
         {accounts.isError && <p role="status" className="text-xs text-destructive">{t('assets.accountListUnavailable')}</p>}
       </div>,
       importPath,
@@ -111,6 +119,7 @@ export function AccountAssetsPage({ real, mode, renderRealHoldings }: {
               <Link to={switchHref(item.id)} aria-current={id === item.id ? 'page' : undefined}>{item.name}</Link>
             </Button>)}
           </nav> : selectAccount}
+          {formerTeamLink}
         </div>
         <Button asChild variant="outline" size="sm"><Link to={SIMULATION_ACCOUNTS_PATH} state={{ returnTo }}>
           {zh ? '管理模拟账户' : 'Manage simulation accounts'}

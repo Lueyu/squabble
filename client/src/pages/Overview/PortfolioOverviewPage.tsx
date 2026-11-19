@@ -47,9 +47,10 @@ function Overview({ initialAccountIds }: { initialAccountIds?: string[] }) {
     retry: false,
   });
   const report = daily.data?.reports[0];
+  const formerTeamIds = new Set((accounts.data ?? []).filter(account => account.formerTeam).map(account => account.id));
   const visibleAccounts = [
     { id: 'real', name: zh ? '我的实仓' : 'My real portfolio', companionId: 'value' as const },
-    ...(accounts.data ?? []).filter(account => account.status !== 'archived'),
+    ...(accounts.data ?? []).filter(account => account.status !== 'archived' && !account.formerTeam),
   ];
   return <div className="portfolio-page portfolio-overview space-y-5">
     <header className="space-y-2">
@@ -59,7 +60,7 @@ function Overview({ initialAccountIds }: { initialAccountIds?: string[] }) {
         {' · '}{zh ? '北京时间' : 'Beijing time'}
       </p>
     </header>
-    <PortfolioComparisonPanel initialAccountIds={initialAccountIds} persistView />
+    <PortfolioComparisonPanel initialAccountIds={initialAccountIds} defaultExcludedAccountIds={formerTeamIds} persistView />
     <div className="grid items-start gap-4 lg:grid-cols-2">
       <section className="min-w-0 rounded-xl border bg-card p-4 sm:p-5">
         <h2 className="mb-4 text-lg font-semibold">{zh ? '我的账户' : 'My accounts'}</h2>

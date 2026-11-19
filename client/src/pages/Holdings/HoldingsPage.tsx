@@ -15,6 +15,7 @@ import {
   Plus,
   RefreshCw,
   Check,
+  ChevronDown,
   AlertTriangle,
 } from 'lucide-react';
 import type {
@@ -40,6 +41,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { MarketStatusBadges } from '@/components/MarketStatusBadges';
 import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -70,6 +78,7 @@ const sortKeys = ['ticker', 'company', 'buyPrice', 'currentPrice', 'shares', 'ma
 type SortKey = typeof sortKeys[number];
 const markets: Market[] = ['US', 'HK', 'CN'];
 const currencies: Currency[] = ['CNY', 'USD', 'HKD'];
+const marketOptionClass = 'w-full pl-2 pr-8 [&>span:first-child]:left-auto [&>span:first-child]:right-2 aria-checked:text-primary';
 
 /** Holding record augmented with derived numeric values used by the table. */
 interface DerivedHolding extends Holding {
@@ -213,7 +222,7 @@ function RealHoldingsPage({ ledger }: { ledger?: { accountSelector: ReactNode; i
     if (navigationType !== 'REPLACE') setSearch(urlSearch);
   }, [navigationType, urlSearch]);
   const groupId = accountParams.get('group') ?? '';
-  const currencyFilter = accountParams.get('currency');
+  const currencyFilter = currencies.find(currency => currency === accountParams.get('currency'));
   const sortKey = sortKeys.find(key => key === accountParams.get('sort')) ?? 'marketValue';
   const sortDir = accountParams.get('direction') === 'asc' ? 'asc' : 'desc';
   const [detailOpen, setDetailOpen] = useState(false);
@@ -375,7 +384,7 @@ function RealHoldingsPage({ ledger }: { ledger?: { accountSelector: ReactNode; i
     if (groupId) {
       list = list.filter((h) => h.groupId === groupId);
     }
-    if (ledger && currencies.some(currency => currency === currencyFilter)) {
+    if (ledger && currencyFilter) {
       list = list.filter(holding => holding.currency === currencyFilter);
     }
     if (selectedMarkets.size > 0) {
@@ -557,6 +566,14 @@ function RealHoldingsPage({ ledger }: { ledger?: { accountSelector: ReactNode; i
     Number.isFinite(Date.parse(holding.updatedAt)) && (!latest || Date.parse(holding.updatedAt) > Date.parse(latest))
       ? holding.updatedAt : latest, null);
 
+  const marketLabels: Record<Market, string> = { US: t('dash.us'), HK: t('dash.hk'), CN: t('dash.cn') };
+  const allMarkets = selectedMarkets.size === 0 || selectedMarkets.size === markets.length;
+  const onlyMarket = markets.find(market => selectedMarkets.has(market));
+  const marketValue = allMarkets ? t('assets.allMarkets')
+    : selectedMarkets.size === 1 && onlyMarket ? marketLabels[onlyMarket]
+      : zh ? '多个市场' : 'Multiple markets';
+  const allCurrencies = zh ? '全部币种' : 'All currencies';
+
   return (
     <div className="space-y-5">
       {hasLoadedHoldings && error && (
@@ -579,23 +596,38 @@ function RealHoldingsPage({ ledger }: { ledger?: { accountSelector: ReactNode; i
 
         <div className="flex min-w-0 flex-wrap items-start gap-2">
           {ledger.accountSelector}
-          <label className="flex min-h-9 items-center gap-2 rounded-md border bg-card px-2 text-sm">
-            {zh ? '市场' : 'Market'}
-            <select className="max-w-full bg-transparent" value={selectedMarkets.size === 1 ? [...selectedMarkets][0] : selectedMarkets.size === 2 ? 'custom' : 'all'}
-              onChange={event => updateFilters({ markets: event.target.value === 'all' ? null : event.target.value })}>
-              <option value="all">{zh ? '全部' : 'All'}</option>
-              {selectedMarkets.size === 2 && <option value="custom" disabled>{zh ? '多个市场' : 'Multiple markets'}</option>}
-              {markets.map(market => <option key={market} value={market}>{t(market === 'CN' ? 'dash.cn' : market === 'HK' ? 'dash.hk' : 'dash.us')}</option>)}
-            </select>
-          </label>
-          <label className="flex min-h-9 items-center gap-2 rounded-md border bg-card px-2 text-sm">
-            {zh ? '币种' : 'Currency'}
-            <select className="max-w-full bg-transparent" value={currencyFilter ?? 'all'}
-              onChange={event => updateFilters({ currency: event.target.value === 'all' ? null : event.target.value })}>
-              <option value="all">{zh ? '全部' : 'All'}</option>
-              {currencies.map(currency => <option key={currency} value={currency}>{currency}</option>)}
-            </select>
-          </label>
+          <DropdownMenu>
+            <DropdownMenuTrigger aria-label={t('assets.marketFilter')} aria-describedby="real-holdings-market-value" className={cn(
+              'border-input data-[state=open]:border-ring focus-visible:border-ring focus-visible:ring-ring/20 dark:bg-input/30 dark:hover:bg-input/50',
+              'flex h-9 w-fit max-w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap',
+              'transition-[color,box-shadow] outline-none focus-visible:ring-[3px] enabled:hover:border-ring data-[state=open]:[&_svg]:rotate-180',
+            )}>
+              <span id="real-holdings-market-value" className="truncate">{marketValue}</span>
+              <ChevronDown aria-hidden="true" className="text-muted-foreground size-4 shrink-0 opacity-50 transition-transform duration-200" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="min-w-[max(8rem,var(--radix-dropdown-menu-trigger-width))]">
+              <DropdownMenuItem className="w-full pl-2 pr-8" onSelect={() => updateFilters({ markets: null })}>
+                {t('assets.allMarkets')}
+              </DropdownMenuItem>
+              {markets.map(market => (
+                <DropdownMenuCheckboxItem key={market} checked={allMarkets || selectedMarkets.has(market)}
+                  className={marketOptionClass} onSelect={event => event.preventDefault()}
+                  onCheckedChange={checked => {
+                    const next = markets.filter(item => item === market ? checked : allMarkets || selectedMarkets.has(item));
+                    updateFilters({ markets: next.length > 0 && next.length < markets.length ? next.join(',') : null });
+                  }}>
+                  {marketLabels[market]}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Select value={currencyFilter ?? 'all'} onValueChange={value => updateFilters({ currency: value === 'all' ? null : value })}>
+            <SelectTrigger aria-label={zh ? '币种' : 'Currency'} className="max-w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{allCurrencies}</SelectItem>
+              {currencies.map(currency => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}
+            </SelectContent>
+          </Select>
           <Input className="w-full sm:w-48" placeholder={t('ui.holdings.searchPlaceholder')}
             aria-label={zh ? '搜索名称或代码' : 'Search name or ticker'} value={search}
             onChange={event => {

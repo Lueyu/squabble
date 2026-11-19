@@ -41,6 +41,7 @@ const periodOptions = Object.keys(periods) as PortfolioComparisonPeriod[];
 interface Props {
   accountIds?: string[];
   initialAccountIds?: string[];
+  defaultExcludedAccountIds?: ReadonlySet<string>;
   compact?: boolean;
   persistView?: boolean;
 }
@@ -55,6 +56,7 @@ interface ComparisonControls {
 export default function PortfolioComparisonPanel({
   accountIds,
   initialAccountIds,
+  defaultExcludedAccountIds,
   compact,
   persistView = false,
 }: Props) {
@@ -106,7 +108,7 @@ export default function PortfolioComparisonPanel({
     refetchInterval: 60_000,
   });
   const series = comparison.data?.series ?? [];
-  const isSelected = (id: string) => selectedIds === null || selectedIds.includes(id);
+  const isSelected = (id: string) => selectedIds === null ? !defaultExcludedAccountIds?.has(id) : selectedIds.includes(id);
   const selected = series.filter(item => isSelected(item.accountId));
   const selectedAccountIds = selected.map(item => item.accountId);
   const savedSeries = selected.map(account => {
@@ -220,7 +222,9 @@ export default function PortfolioComparisonPanel({
               {series.map(item => (
                 <label key={item.accountId} className="flex min-h-8 items-center gap-2 text-sm">
                   <input type="checkbox" className="size-4 shrink-0 accent-primary" checked={isSelected(item.accountId)} onChange={() => toggle(item.accountId)} />
-                  <span className="min-w-0 break-words">{label(item)}</span>
+                  <span className="min-w-0 break-words">{label(item)}
+                    {defaultExcludedAccountIds?.has(item.accountId) && (zh ? ' · 原团队已归档' : ' · Former team archived')}
+                  </span>
                 </label>
               ))}
             </fieldset>}
