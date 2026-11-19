@@ -24,3 +24,75 @@
 .team-create-name-actions > :last-child {
   margin-inline-start: auto;
 }
+
+.team-create-review {
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+}
+
+.team-create-review-summary,
+.team-create-organization-preview {
+  min-inline-size: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.team-create-review-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: 8px 16px;
+  padding: 12px 16px;
+  overflow-wrap: anywhere;
+}
+
+.team-create-review-summary dt {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.team-create-review-summary dd {
+  font-weight: 650;
+}
+
+.team-create-organization-preview {
+  overflow: hidden;
+}
+
+.team-create-organization-heading,
+.team-create-organization-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 8px 16px;
+}
+
+.team-create-organization-preview .team-canvas {
+  height: clamp(280px, 48vh, 410px);
+  border-block: 1px solid var(--border);
+}
+
+.team-create-organization-preview [class~='react-flow__pane'] {
+  touch-action: pan-y;
+}
+
+.team-create-organization-preview [class~='react-flow__edge'],
+.team-create-organization-preview [class~='react-flow__handle'] {
+  pointer-events: none;
+}
+
+.team-create-organization-preview [class~='react-flow__handle'] {
+  visibility: hidden;
+}
+
+.team-create-organization-preview [class~='react-flow__controls-button'] {
+  width: 36px;
+  height: 36px;
+}
+
+.team-create-organization-preview .team-department-toggle,
+.team-create-organization-preview .team-department-node p {
+  display: none;
+}

@@ -1,12 +1,14 @@
-import { memo, useEffect, useRef, useState, type DragEvent } from 'react';
-import { BaseEdge, Handle, MiniMap, NodeResizer, Panel, Position, ReactFlow, ReactFlowProvider, SelectionMode, applyNodeChanges, useReactFlow, type Connection, type EdgeProps, type NodeProps } from '@xyflow/react';
+import { memo, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { BaseEdge, Controls, Handle, MiniMap, NodeResizer, Panel, Position, ReactFlow, ReactFlowProvider, SelectionMode, applyNodeChanges, useReactFlow, type Connection, type EdgeProps, type NodeProps } from '@xyflow/react';
 import { ChevronDown, ChevronRight, Folder, Map as MapIcon, Network, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useQuery } from '@tanstack/react-query';
 import { agentRosterApi } from '@/api/agent-roster';
+import type { AgentProfile } from '@shared/agent-roster.interface';
+import { useUnlistedAgentProfiles } from '@/features/agent-roster/useUnlistedAgentProfiles';
 import AnimalAvatar from '@/components/AnimalAvatar';
 import { absolutePosition, departmentDescendants, moveTeamObjects, type TeamEditorState } from './team-graph';
-import { toTeamFlow, type ParallelTeamEdge, type TeamFlowNode } from './team-flow-adapter';
+import { toTeamFlow, type ParallelTeamEdge, type TeamFlowNode, type TeamRoleIdentity } from './team-flow-adapter';
 import '@xyflow/react/dist/style.css';
 
 const RoleNode = memo(function RoleNode({ id, data, selected }: NodeProps<TeamFlowNode>) {
@@ -39,16 +41,45 @@ const edgeTypes = {
     const target = horizontal ? targetX : targetY;
     const fromCross = horizontal ? sourceY : sourceX;
     const toCross = horizontal ? targetY : targetX;
-    const middle = (source + target) / 2;
+    const distance = target - source;
+    const middle = source + distance / 2;
     const middleCross = (fromCross + toCross) / 2 + offset;
-    const control = (target - source) / 5;
+    const escape = distance / 6;
+    const startTurn = source + escape;
+    const endTurn = target - escape;
     const point = (along: number, across: number) => horizontal ? `${along},${across}` : `${across},${along}`;
-    const path = `M ${point(source, fromCross)} C ${point(source + control, fromCross)} ${point(middle - control, middleCross)} ${point(middle, middleCross)} S ${point(target - control, toCross)} ${point(target, toCross)}`;
+    const path = `M ${point(source, fromCross)} L ${point(startTurn, fromCross)} L ${point(startTurn, middleCross)} L ${point(endTurn, middleCross)} L ${point(endTurn, toCross)} L ${point(target, toCross)}`;
     return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} interactionWidth={interactionWidth}
       label={label} labelStyle={labelStyle} labelBgStyle={labelBgStyle}
       labelX={horizontal ? middle : middleCross} labelY={horizontal ? middleCross : middle} />;
   },
 };
+
+const initialFit = { padding: 0.12, maxZoom: 1 };
+
+export function TeamCanvasPreview({ state, agents, staffing, zh }: {
+  state: TeamEditorState;
+  agents?: AgentProfile[];
+  staffing?: ReadonlyMap<string, TeamRoleIdentity>;
+  zh: boolean;
+}) {
+  const { nodes, edges } = toTeamFlow(state, [], 'reporting-review', zh, agents, staffing);
+  return <div className="team-canvas">
+    <ReactFlow<TeamFlowNode> nodes={nodes} edges={edges.map(edge => ({ ...edge, interactionWidth: 0 }))} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+      fitView fitViewOptions={initialFit} minZoom={0.15} maxZoom={2}
+      nodesDraggable={false} nodesConnectable={false} nodesFocusable={false} edgesFocusable={false}
+      elementsSelectable={false} deleteKeyCode={null} zoomOnScroll={false} preventScrolling={false}
+      ariaLabelConfig={{
+        'controls.ariaLabel': zh ? '画布缩放' : 'Canvas zoom',
+        'controls.zoomIn.ariaLabel': zh ? '放大' : 'Zoom in',
+        'controls.zoomOut.ariaLabel': zh ? '缩小' : 'Zoom out',
+        'controls.fitView.ariaLabel': zh ? '适应画布' : 'Fit canvas',
+      }}>
+      <Controls position="top-right" orientation="horizontal" showInteractive={false} fitViewOptions={initialFit} />
+    </ReactFlow>
+  </div>;
+}
+
 export interface CanvasControls { fit: () => void; zoomIn: () => void; zoomOut: () => void; resetZoom: () => void; getZoom: () => number }
 interface TeamCanvasProps { state: TeamEditorState; selected: string[]; select: (ids: string[]) => void; edit: (state: TeamEditorState) => void; connect: (from: string, to: string) => void; onSelectRelation: (id: string, trigger?: SVGElement) => void; filter: string; zh: boolean; readOnly: boolean; locateId: string | null; fitInitial: boolean; assignAgent?: (roleId: string, agentId: string) => void; onZoomChange?: (zoom: number) => void; registerControls?: (controls: CanvasControls | null) => void }
 function Canvas({ state, selected, select, edit, connect, onSelectRelation, filter, zh, readOnly, locateId, fitInitial, assignAgent, onZoomChange, registerControls }: TeamCanvasProps) {
@@ -59,7 +90,9 @@ function Canvas({ state, selected, select, edit, connect, onSelectRelation, filt
     return () => registerControls?.(null);
   }, [flow, registerControls]);
   const roster = useQuery({ queryKey: ['agent-roster'], queryFn: agentRosterApi.list, retry: false });
-  const adapted = toTeamFlow(state, selected, filter, zh, roster.data?.items);
+  const { profiles: unlisted } = useUnlistedAgentProfiles(roster.data?.items, state.config.roles.map(role => role.agentId));
+  const agents = useMemo(() => [...(roster.data?.items ?? []), ...unlisted], [roster.data?.items, unlisted]);
+  const adapted = toTeamFlow(state, selected, filter, zh, agents);
   const edges = adapted.edges.map(edge => ({
     ...edge,
     ariaRole: 'button',
@@ -90,7 +123,7 @@ function Canvas({ state, selected, select, edit, connect, onSelectRelation, filt
     if (agentId) { select([id]); assignAgent(id, agentId); }
   };
   useEffect(() => {
-    const adapted = toTeamFlow(state, selected, filter, zh, roster.data?.items);
+    const adapted = toTeamFlow(state, selected, filter, zh, agents);
     setNodes(current => {
       const previousNodes = new Map(current.map(node => [node.id, node]));
       return adapted.nodes.map(node => {
@@ -122,7 +155,7 @@ function Canvas({ state, selected, select, edit, connect, onSelectRelation, filt
         };
       });
     });
-  }, [state, selected, filter, zh, roster.data, agentDropTarget, readOnly, assignAgent]);
+  }, [state, selected, filter, zh, agents, agentDropTarget, readOnly, assignAgent]);
   useEffect(() => { if (!locateId) return; const p = absolutePosition(state, locateId); viewportIntent.current = true; void flow.setCenter(p.x + 105, p.y + 60, { zoom: 1, duration: 250 }); }, [locateId, flow]);
   const candidate = (node: TeamFlowNode): string | null => {
     const current = { ...state, layout: { ...state.layout, positions: Object.fromEntries(nodesRef.current.map(n => [n.id, { ...state.layout.positions[n.id], ...n.position }])) } };
@@ -130,7 +163,7 @@ function Canvas({ state, selected, select, edit, connect, onSelectRelation, filt
     const departments = state.config.departments.filter(d => !forbidden.has(d.id) && !state.layout.collapsedDepartmentIds.includes(d.id));
     return departments.reverse().find(d => { const dp = absolutePosition(current, d.id); const size = state.layout.positions[d.id]; return p.x + 100 >= dp.x && p.x + 100 <= dp.x + (size?.width ?? 600) && p.y + 45 >= dp.y + 45 && p.y + 45 <= dp.y + (size?.height ?? 400); })?.id ?? null;
   };
-  return <div className="team-canvas" aria-label={zh ? '自由组织画布' : 'Free organization canvas'}><ReactFlow<TeamFlowNode> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} defaultViewport={state.layout.viewport} fitView={fitInitial || Object.keys(state.layout.positions).length === 0} fitViewOptions={{ padding: 0.12, maxZoom: 1 }} minZoom={0.15} maxZoom={2} nodesDraggable={!readOnly} nodesConnectable={!readOnly} elementsSelectable selectionMode={SelectionMode.Partial} multiSelectionKeyCode="Shift" panOnDrag zoomOnScroll deleteKeyCode={null}
+  return <div className="team-canvas" aria-label={zh ? '自由组织画布' : 'Free organization canvas'}><ReactFlow<TeamFlowNode> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} defaultViewport={state.layout.viewport} fitView={fitInitial || Object.keys(state.layout.positions).length === 0} fitViewOptions={initialFit} minZoom={0.15} maxZoom={2} nodesDraggable={!readOnly} nodesConnectable={!readOnly} elementsSelectable selectionMode={SelectionMode.Partial} multiSelectionKeyCode="Shift" panOnDrag zoomOnScroll deleteKeyCode={null}
     onNodesChange={changes => { setNodes(current => applyNodeChanges(changes, current)); const selectionChanges = changes.filter(change => change.type === 'select'); if (selectionChanges.length) { const ids = new Set(selected); selectionChanges.forEach(change => { if (change.type === 'select') { if (change.selected) ids.add(change.id); else ids.delete(change.id); } }); select([...ids]); } }}
     onNodeDrag={(_, node) => setTarget(candidate(node))}
     onNodeDragStop={(_, node, moved) => { const positions = { ...state.layout.positions }; moved.forEach(n => { positions[n.id] = { ...positions[n.id], ...n.position }; }); let next = { ...state, layout: { ...state.layout, positions } }; const destination = candidate(node); next = moveTeamObjects(next, moved.map(n => n.id), destination); edit(next); setTarget(null); }}

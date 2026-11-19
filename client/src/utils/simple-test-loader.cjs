@@ -22,7 +22,10 @@ module.exports = function fixture({ realQuery = false } = {}) {
       if (id === '@tanstack/react-query' && realQuery) return require(id);
       if (id === '@tanstack/react-query') return {
         useQuery: queryResult,
-        useQueries: ({ queries }) => queries.map(queryResult),
+        useQueries: ({ queries, combine }) => {
+          const results = queries.map(queryResult);
+          return combine ? combine(results) : results;
+        },
         useMutation: options => state.mutationFactory ? state.mutationFactory(options) : state.mutation ?? ({ isPending: false, mutateAsync: async () => {}, mutate() {} }),
         useQueryClient: () => ({ invalidateQueries() {}, setQueryData() {}, async cancelQueries() {} }),
       };

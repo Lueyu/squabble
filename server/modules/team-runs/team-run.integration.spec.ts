@@ -53,6 +53,28 @@ test('explicit immediate startup reserves once before close and preserves the fr
   } finally { await f.dispose(); }
 });
 
+test('a running agreement retains its exact legacy friend after the directory folds it into the built-in roster', options, async () => {
+  const f = await setup('immediate', 'CN', undefined, 'recommended');
+  try {
+    const [before] = await f.db.select().from(teamRunAgreements);
+    assert.equal(before.state, 'running');
+    assert.equal(before.members[0].rosterAgentId, f.friend.id);
+    assert.equal(before.members[0].rosterAgentVersionId, f.friend.currentVersionId);
+
+    const roster = await f.roster.list(f.owner);
+    assert.equal(roster.items.length, 12);
+    assert.ok(roster.items.every(friend => friend.id !== f.friend.id && friend.origin === 'builtin'));
+    await f.runs.reconcileAuthority(before);
+    await f.scheduler.runOnce(new Date('2026-11-12T03:00:00Z'));
+
+    const [after] = await f.db.select().from(teamRunAgreements);
+    assert.deepEqual(after, before);
+    const [commission] = await f.db.select().from(teamCommissions);
+    assert.equal(commission.members[0].rosterAgentId, f.friend.id);
+    assert.equal(commission.members[0].rosterAgentVersionId, f.friend.currentVersionId);
+  } finally { await f.dispose(); }
+});
+
 test('unknown native fees preserve automatic next-dispatch authority while an uncertain result blocks it', options, async () => {
   const f = await setup('immediate');
   try {

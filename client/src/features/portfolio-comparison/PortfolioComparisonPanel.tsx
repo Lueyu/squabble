@@ -99,7 +99,7 @@ export default function PortfolioComparisonPanel({
     });
   }
 
-  const reference = basis === 'reference';
+  const explicitReference = basis === 'reference';
   const comparison = useQuery({
     queryKey: ['portfolio-comparison', period, accountIds ?? 'all'],
     queryFn: () => fetchPortfolioComparison(period, accountIds),
@@ -109,26 +109,40 @@ export default function PortfolioComparisonPanel({
   const isSelected = (id: string) => selectedIds === null || selectedIds.includes(id);
   const selected = series.filter(item => isSelected(item.accountId));
   const selectedAccountIds = selected.map(item => item.accountId);
-  const history = useQuery({
-    queryKey: ['portfolio-history', period, selectedAccountIds],
-    queryFn: () => fetchPortfolioHistory(period, selectedAccountIds),
-    enabled: reference && selected.length > 0,
-    retry: false,
-    refetchInterval: query => query.state.data?.refreshing ? 3000 : 60_000,
-  });
-  const chartSeries = reference ? historicalReferenceSeries(selected, history.data) : selected.map(account => {
+  const savedSeries = selected.map(account => {
     if (!account.createdAt) return account;
     const createdAt = Date.parse(account.createdAt);
     return { ...account, points: account.points.filter(point => Date.parse(point.timestamp) >= createdAt) };
   });
-  const realOnlyOverview = persistView && series.length === 1 && chartSeries[0]?.kind === 'real';
-  const realOnly = realOnlyOverview && !reference && savedMetric === null;
-  const realValuations = realOnly ? chartSeries[0].points.filter(point => point.equityUsd !== null) : [];
+  const realAccount = savedSeries.find(account => account.kind === 'real');
+  const realValuations = realAccount?.points.filter(point => point.equityUsd !== null) ?? [];
+  const singleRealSelection = !!realAccount && selected.length === 1;
+  const automatic = persistView && !!realAccount && !explicitReference && savedMetric === null;
+  const hasComparableReturn = savedSeries.some(account => account.points.some(point => point.returnPct !== null));
+  // Keep a usable comparison. When it would be empty, show the real holdings'
+  // dated price reference on its own axis instead of mixing it into saved NAV.
+  const needsRealReference = automatic && !realValuations.length && !hasComparableReturn;
+  const referenceAccounts = needsRealReference && realAccount ? [realAccount] : selected;
+  const referenceAccountIds = referenceAccounts.map(item => item.accountId);
+  const history = useQuery({
+    queryKey: ['portfolio-history', period, referenceAccountIds],
+    queryFn: () => fetchPortfolioHistory(period, referenceAccountIds),
+    enabled: (explicitReference || needsRealReference) && referenceAccounts.length > 0,
+    retry: false,
+    refetchInterval: query => query.state.data?.refreshing ? 3000 : 60_000,
+  });
+  const referenceSeries = explicitReference || needsRealReference
+    ? historicalReferenceSeries(referenceAccounts, history.data) : [];
+  const reference = explicitReference || referenceSeries.some(account => account.equityUsd !== null);
+  const chartSeries = reference ? referenceSeries : savedSeries;
+  const realOnly = automatic && singleRealSelection && !reference;
+  const showRangeButton = automatic && series.length === 1;
   const singleValuation = realValuations.length === 1 ? realValuations[0] : undefined;
   const latestRealValuation = realValuations.at(-1);
-  const metric = realOnly && latestRealValuation && realValuations.filter(point => point.returnPct !== null).length < 2
+  const metric = reference || (automatic && latestRealValuation && (!hasComparableReturn
+    || (singleRealSelection && realValuations.filter(point => point.returnPct !== null).length < 2)))
     ? 'equity' : requestedMetric;
-  const partialReferences = reference ? selected.flatMap(account => {
+  const partialReferences = reference ? referenceAccounts.flatMap(account => {
     const coverage = partialReferenceCoverage(history.data?.series.find(item => item.accountId === account.accountId));
     return coverage ? [{ account, ...coverage }] : [];
   }) : [];
@@ -196,12 +210,12 @@ export default function PortfolioComparisonPanel({
         <Popover>
           <PopoverTrigger asChild>
             <Button type="button" variant="outline" className="shrink-0"
-              aria-label={realOnly ? text('统计区间', 'Date range') + ' · ' + periodLabel(period) : undefined}>
-              {realOnly ? periodLabel(period) : text(`选择账户（${selected.length}）`, `Select accounts (${selected.length})`)}
+              aria-label={showRangeButton ? text('统计区间', 'Date range') + ' · ' + periodLabel(period) : undefined}>
+              {showRangeButton ? periodLabel(period) : text(`选择账户（${selected.length}）`, `Select accounts (${selected.length})`)}
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" collisionPadding={12} className="max-h-[min(75dvh,30rem)] max-w-[calc(100vw-24px)] overflow-y-auto" aria-label={text('图表选项', 'Chart options')}>
-            {!realOnly && <fieldset className="space-y-1">
+            {!showRangeButton && <fieldset className="space-y-1">
               <legend className="mb-1 text-sm font-semibold">{text('同图显示的账户', 'Accounts on this chart')}</legend>
               {series.map(item => (
                 <label key={item.accountId} className="flex min-h-8 items-center gap-2 text-sm">
@@ -222,14 +236,14 @@ export default function PortfolioComparisonPanel({
             </label>
             <label className="mt-3 grid gap-1 text-sm">
               {text('图表口径', 'Chart data')}
-              <select className="h-9 rounded-md border bg-background px-2" value={reference ? 'reference' : realOnly ? 'auto' : metric}
+              <select className="h-9 rounded-md border bg-background px-2" value={explicitReference ? 'reference' : automatic ? 'auto' : metric}
                 onChange={event => {
                   const value = event.target.value;
                   if (value === 'reference') update({ basis: 'reference', metric: 'equity' });
                   else if (value === 'auto') update({}, ['basis', 'metric']);
                   else update({ basis: 'records', metric: value === 'return' ? 'return' : 'equity' });
                 }}>
-                {realOnlyOverview && <option value="auto">{text('自动', 'Automatic')}</option>}
+                {persistView && realAccount && <option value="auto">{text('自动', 'Automatic')}</option>}
                 <option value="return">{text('账户收益率', 'Account returns')}</option>
                 <option value="equity">{text('账户资产金额', 'Account equity')}</option>
                 <option value="reference">{text('当前持仓回看', 'Current holdings lookback')}</option>
@@ -239,7 +253,7 @@ export default function PortfolioComparisonPanel({
         </Popover>
       </div>
 
-      {!realOnly && <div className="account-segments" role="group" aria-label={text('比较区间', 'Comparison period')}>
+      {!showRangeButton && <div className="account-segments" role="group" aria-label={text('比较区间', 'Comparison period')}>
         {(['1D', '1W'] as const).map(value => (
           <Button key={value} type="button" variant="ghost" size="sm" aria-pressed={period === value}
             onClick={() => update({ period: value })}>{periodLabel(value)}</Button>
@@ -279,13 +293,16 @@ export default function PortfolioComparisonPanel({
           })}
         </dl>}
         {reference && <div className="space-y-2 text-xs text-muted-foreground">
+          {needsRealReference && <p>{text('此区间暂无完整实仓估值，显示可核对的实仓持仓参考市值。', 'Complete real-portfolio valuations are unavailable in this period. Showing the available holdings reference.')}</p>}
           <p>{text('使用当前持仓数量和历史行情，不含现金、交易与分红。', 'Uses current holdings and historical prices. Excludes cash, trades and dividends.')}</p>
-          {history.isPending && selected.length > 0 && <p role="status">{text('正在读取历史行情…', 'Loading historical prices…')}</p>}
-          {history.isError && <p role="alert">{text('历史行情暂时无法读取。', 'Historical prices are unavailable.')} <Button variant="outline" size="sm" onClick={() => void history.refetch()}>{text('重试', 'Retry')}</Button></p>}
           {history.data?.refreshing && <p role="status">{text('正在补齐历史行情…', 'Preparing historical prices…')}</p>}
           {partialReferences.map(({ account, covered, total }) =>
             <p key={account.accountId}>{label(account)} · {text(`覆盖 ${covered}/${total} 项持仓`, `${covered}/${total} holdings covered`)}</p>)}
         </div>}
+        {(needsRealReference || explicitReference) && referenceAccounts.length > 0 && history.isPending
+          && <p className="text-xs text-muted-foreground" role="status">{text('正在读取历史行情…', 'Loading historical prices…')}</p>}
+        {(needsRealReference || explicitReference) && history.isError
+          && <p className="text-xs text-muted-foreground" role="alert">{text('历史行情暂时无法读取。', 'Historical prices are unavailable.')} <Button variant="outline" size="sm" onClick={() => void history.refetch()}>{text('重试', 'Retry')}</Button></p>}
         <PortfolioComparisonChart series={chartSeries} metric={metric} compact={compact} reference={reference}
           period={period} window={comparison.data} historySeries={history.data?.series}
           realOnly={realOnly}

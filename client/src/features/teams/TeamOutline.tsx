@@ -7,16 +7,21 @@ import type { TeamEditorState } from './team-graph';
 import { useQuery } from '@tanstack/react-query';
 import { agentRosterApi } from '@/api/agent-roster';
 import { AgentIdentity } from '@/features/agent-roster/AgentIdentity';
+import { useUnlistedAgentProfiles } from '@/features/agent-roster/useUnlistedAgentProfiles';
 
 export function TeamOutline({ state, selected, select, edit, locate, zh, readOnly }: { state: TeamEditorState; selected: string[]; select: (ids: string[]) => void; edit: (state: TeamEditorState) => void; locate: (id: string) => void; zh: boolean; readOnly: boolean }) {
   const [search, setSearch] = useState('');
   const roster = useQuery({ queryKey: ['agent-roster'], queryFn: agentRosterApi.list, retry: false });
+  const { profiles: unlisted } = useUnlistedAgentProfiles(roster.data?.items, state.config.roles.map(role => role.agentId));
   const query = search.trim().toLocaleLowerCase();
   const searchable = state.config.roles.length + state.config.departments.length > 6 || !!search;
   const matches = (id: string): boolean => `${state.display.roleLabels[id] ?? state.display.departmentLabels[id] ?? ''} ${state.config.roles.find(r => r.id === id)?.responsibility ?? ''}`.toLocaleLowerCase().includes(query);
   const toggle = (id: string): void => { edit({ ...state, layout: { ...state.layout, collapsedDepartmentIds: state.layout.collapsedDepartmentIds.includes(id) ? state.layout.collapsedDepartmentIds.filter(value => value !== id) : [...state.layout.collapsedDepartmentIds, id] } }); };
   const row = (id: string, department: boolean, depth: number): React.ReactNode => {
-    const role = state.config.roles.find(r => r.id === id); const agent = roster.data?.items.find(person => person.id === role?.agentId); const collapsed = state.layout.collapsedDepartmentIds.includes(id); const label = (department ? state.display.departmentLabels[id] : state.display.roleLabels[id]) || (zh ? '未命名' : 'Untitled');
+    const role = state.config.roles.find(r => r.id === id);
+    const agent = roster.data?.items.find(person => person.id === role?.agentId) ?? unlisted.find(person => person.id === role?.agentId);
+    const collapsed = state.layout.collapsedDepartmentIds.includes(id);
+    const label = (department ? state.display.departmentLabels[id] : state.display.roleLabels[id]) || (zh ? '未命名' : 'Untitled');
     const description = role ? [agent?.name, role.participation === 'placeholder' || !role.executor ? (zh ? '待配置 · 不参与' : 'Placeholder · inactive') : (role.agentId ? (zh ? '已指派' : 'Assigned') : (zh ? '已配置' : 'Configured'))].filter(Boolean).join(' · ') : (zh ? '部门 / 分组' : 'Department / group');
     return <div key={id} className="team-outline-branch"><div className={`team-outline-row${selected.includes(id) ? ' is-selected' : ''}`} style={{ paddingLeft: 4 + Math.min(depth, 4) * 8 }}>
       <Checkbox checked={selected.includes(id)} aria-label={`${zh ? '选择' : 'Select'} ${label}`} onCheckedChange={checked => select(checked ? [...new Set([...selected, id])] : selected.filter(value => value !== id))} />

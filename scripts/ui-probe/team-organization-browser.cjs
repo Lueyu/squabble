@@ -108,14 +108,18 @@ async function verifyCanvasControls(page) {
 
   const viewport = canvas.locator('.react-flow__viewport');
   const beforePan = await viewport.evaluate(element => element.style.transform);
+  await canvas.scrollIntoViewIfNeeded();
   const bounds = await canvas.boundingBox();
-  await page.mouse.move(bounds.x + 12, bounds.y + 16);
+  const panY = bounds.y + bounds.height * 0.65;
+  await page.mouse.move(bounds.x + 12, panY);
   await page.mouse.down();
-  await page.mouse.move(bounds.x + 55, bounds.y + 43, { steps: 6 });
+  await page.mouse.move(bounds.x + 55, panY + 27, { steps: 6 });
   await page.mouse.up();
   assert.notEqual(await viewport.evaluate(element => element.style.transform), beforePan);
 
   const beforeWheel = await zoom.textContent();
+  const wheelBounds = await canvas.boundingBox();
+  await page.mouse.move(wheelBounds.x + wheelBounds.width / 2, wheelBounds.y + wheelBounds.height / 2);
   await page.mouse.wheel(0, -120);
   await page.waitForFunction(before => document.querySelector('.team-zoom-tools button:nth-child(2)')?.textContent !== before, beforeWheel);
 
@@ -164,9 +168,11 @@ async function verifyParallelRelations(page, url) {
     const markerId = path.getAttribute('marker-end')?.match(/^url\(['"]?#(.+?)['"]?\)$/)?.[1];
     const marker = markerId ? document.getElementById(markerId) : null;
     return { name: path.closest('.react-flow__edge').getAttribute('aria-label'), arrow: marker?.tagName === 'marker',
+      path: path.getAttribute('d'),
       from: from.x, to: to.x, middle: middle.y };
   }));
   assert.equal(routes.length, 3);
+  assert.ok(routes.every(route => /^M[\d\s.,L-]+$/.test(route.path)), 'parallel paths use line segments');
   assert.equal(routes.filter(route => !route.arrow).map(route => route.name).join(', '), '', 'each rendered route ends with a target arrow');
   assert.ok(routes.every(route => route.name.includes('反向复核') ? route.from > route.to : route.from < route.to));
   const lanes = routes.map(route => route.middle).sort((a, b) => a - b);
@@ -310,7 +316,7 @@ async function main() {
         if (viewport.label === '390x844') await verifyMobileEditing(page, url, viewport.label);
         if (viewport.label === '390x844-dark') await verifyArchived(page, url);
       } catch (error) {
-        problems.push(error.message);
+        problems.push(error.stack ?? error.message);
         await page.screenshot({ animations: 'disabled', path: path.join(EVIDENCE, `failure-${viewport.label}.png`) });
       } finally {
         await page.close();

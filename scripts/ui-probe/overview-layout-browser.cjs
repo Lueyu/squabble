@@ -88,7 +88,9 @@ async function fictionalRoutes(context, origin, language) {
       const series = [{ id: 'real', name: 'Real portfolio', status: 'real', createdAt: null }, ...accounts].map((account, index) => {
         const visible = [real, a, b, waiting][index].filter(item => item.timestamp >= from);
         const points = realOnly && period === '1D' ? visible.slice(-1).map(item => ({ ...item, returnPct: null }))
-          : realOnly && period === '1M' ? [] : visible;
+          : realOnly && ['1M', '3M'].includes(period)
+            ? visible.map(item => point(item.timestamp, null, null, ['INCOMPLETE_VALUATION', 'CASH_UNCONFIRMED']))
+            : visible;
         const latest = points.at(-1);
         return {
           accountId: account.id, name: account.name, kind: index === 0 ? 'real' : 'simulation', status: account.status,
@@ -102,12 +104,19 @@ async function fictionalRoutes(context, origin, language) {
         methodology: 'saved_valuations_no_external_flows', series } });
     }
     if (pathname === '/api/portfolio-history') {
-      if (url.searchParams.get('period') === '1D') return route.fulfill({ status: 503, json: {} });
+      const period = url.searchParams.get('period');
+      if (period === '1D') return route.fulfill({ status: 503, json: {} });
       const date = '2026-11-13';
       const quote = { date, valueUsd: 9875, knownValueUsd: 9875, coveredPositions: 1, totalPositions: 1,
         priceAsOf: [{ ticker: 'FICT', date, source: 'fictional-close' }], fxAsOf: [], gaps: [] };
-      return route.fulfill({ json: { refreshing: false, series: [{ accountId: 'real', points: [quote], gaps: [],
-        coverage: { completePoints: 1, totalPoints: 1, coveredPositions: 1, totalPositions: 1 } }] } });
+      const points = realOnly && period === '1M' ? [] : realOnly && period === '3M'
+        ? ['2026-11-12', date, '2026-11-16'].map(day => ({
+          ...quote, date: day, valueUsd: null, knownValueUsd: day === date ? 9900 : 9875, totalPositions: 2,
+          priceAsOf: [{ ticker: 'FICT', date: day, source: 'fictional-close' }], gaps: ['COHORT_EXCLUDED:EXMP'],
+        })) : [quote];
+      return route.fulfill({ json: { refreshing: false, series: [{ accountId: 'real', points, gaps: [],
+        coverage: { completePoints: points.filter(item => item.valueUsd !== null).length,
+          totalPoints: points.length, coveredPositions: points.at(-1)?.coveredPositions ?? 0, totalPositions: points.at(-1)?.totalPositions ?? 0 } }] } });
     }
     if (pathname === '/api/daily-workspace/research') return route.fulfill({ json: {
       date: url.searchParams.get('date'), timezone: 'Asia/Shanghai', latest: null,
@@ -391,6 +400,14 @@ async function verifyRealOnly(page, language, label) {
     assert.equal((await geometry(page)).horizontalOverflow, false, period + ' remains within the viewport');
     await panel.screenshot({ path: path.join(output, label + '-real-' + period + '.png'), animations: 'disabled' });
   }
+  await rangeButton.click();
+  await range.selectOption('3M');
+  await page.keyboard.press('Escape');
+  await panel.getByRole('heading', { name: zh ? '持仓参考市值' : 'Holdings lookback', exact: true }).waitFor({ timeout: 5000 });
+  await panel.getByText(zh ? /覆盖 1\/2 项持仓/ : /1\/2 holdings covered/).waitFor();
+  await plot.waitFor();
+  await panel.getByText(zh ? /使用当前持仓数量和历史行情/ : /Uses current holdings and historical prices/).waitFor();
+  await panel.screenshot({ path: path.join(output, label + '-real-reference-fallback.png'), animations: 'disabled' });
   await rangeButton.click();
   await range.selectOption('1W');
   await page.keyboard.press('Escape');

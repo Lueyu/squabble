@@ -1,8 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
-const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/teams' });
-for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'MutationObserver', 'NodeFilter', 'CustomEvent', 'DocumentFragment', 'Element', 'Node', 'Event', 'getComputedStyle']) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key], writable: true });
+const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/teams', pretendToBeVisual: true });
+for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'MutationObserver', 'NodeFilter', 'CustomEvent', 'DocumentFragment', 'Element', 'Node', 'Event', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame']) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key], writable: true });
+globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const React = require('react');
 const { createRoot } = require('react-dom/client');

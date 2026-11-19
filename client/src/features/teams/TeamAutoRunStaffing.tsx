@@ -5,6 +5,7 @@ import type { ModelConnection } from '@shared/model-connections.interface';
 import type { TeamDetail } from '@shared/team-workspace.interface';
 import { Button } from '@/components/ui/button';
 import { teamOnboardingPath } from '@/features/onboarding/onboarding-state';
+import { useUnlistedAgentProfiles } from '@/features/agent-roster/useUnlistedAgentProfiles';
 import type { TeamEditorState } from './team-graph';
 import { applySuggestedTeamStaffing, assignAgentToRole, staffingFailureMessage, suggestTeamStaffing } from './team-staffing';
 
@@ -36,7 +37,9 @@ export function TeamAutoRunStaffing({ team, state, agents, models, zh, disabled,
   const publishedReady = publishedMembers.length > 0 && publishedMembers.every(role => role.agentId && role.agentVersionId && role.executor)
     && [...required].every(id => publishedMembers.some(role => role.id === id));
   const changed = dirty || JSON.stringify(state.config) !== JSON.stringify(published);
-  if (team.status === 'archived' || publishedReady && !changed) return null;
+  const hidden = team.status === 'archived' || publishedReady && !changed;
+  const { profiles: unlisted } = useUnlistedAgentProfiles(loading || loadError || hidden ? undefined : agents, state.config.roles.map(role => role.agentId));
+  if (hidden) return null;
 
   const suggestions = suggestTeamStaffing(state, agents);
   const active = agents.filter(agent => agent.status === 'active' && agent.availability === 'configured');
@@ -60,7 +63,7 @@ export function TeamAutoRunStaffing({ team, state, agents, models, zh, disabled,
     </p>}
     <ul className="space-y-3">
       {state.config.roles.map(role => {
-        const current = agents.find(agent => agent.id === role.agentId);
+        const current = agents.find(agent => agent.id === role.agentId) ?? unlisted.find(agent => agent.id === role.agentId);
         const proposed = agents.find(agent => agent.id === suggestions.assignments[role.id]);
         const label = state.display.roleLabels[role.id] ?? role.id;
         return <li className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2" key={role.id}>
@@ -68,7 +71,7 @@ export function TeamAutoRunStaffing({ team, state, agents, models, zh, disabled,
           <label className="text-sm"><span className="sr-only">{zh ? `为${label}选择股友` : `Choose a friend for ${label}`}</span><select className="w-full rounded-md border bg-background p-2" value={role.agentId ?? ''} disabled={Boolean(blocked)} onChange={event => { const agentId = event.target.value; if (agentId) change(() => assignAgentToRole(state, role.id, agentId, agents, models)); }}>
             <option value="">{zh ? '选择已有股友' : 'Choose a saved friend'}</option>
             {active.map(agent => <option key={agent.id} value={agent.id}>{agent.name} · {agent.specialty}</option>)}
-            {role.agentId && !active.some(agent => agent.id === role.agentId) && <option value={role.agentId}>{current?.name ?? (zh ? '原股友不可用' : 'Original friend unavailable')}</option>}
+            {role.agentId && !active.some(agent => agent.id === role.agentId) && <option value={role.agentId}>{current?.name ?? (zh ? '已关联股友' : 'Saved friend assigned')}</option>}
           </select></label>
         </li>;
       })}

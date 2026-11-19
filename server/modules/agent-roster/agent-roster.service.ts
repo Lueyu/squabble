@@ -1,10 +1,12 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { and, desc, eq, ilike, sql } from 'drizzle-orm';
+import { and, desc, eq, exists, ilike, notExists, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { agentRosterProfiles as profiles, agentRosterVersions as versions, agentRosterRequests as requests, agentRosterMemories as memories, agentRosterMemoryShares as shares } from '../../database/agent-roster.schema';
 import { modelConnections } from '../../database/model-connections.schema';
+import { a2aAgentConnections } from '../../database/a2a-agents.schema';
 import { userApiSettings } from '../../database/schema';
 import { teams, teamVersions, teamSourceGrants } from '../../database/teams.schema';
 import { lockAgentRosterOwner, readAgentRosterVersion } from '../../database/agent-roster-context';
@@ -17,6 +19,7 @@ import { readA2aConnectionFingerprint } from '../../database/a2a-agent-context';
 import { executionReadiness } from '../local-agents/execution-readiness';
 import type { AgentProfile, AgentVersion, AgentExecutor, AgentSelection, AgentResolveOptions, AgentMemoryRecallOptions, AgentCouncilMember, AgentMemory, AgentMemoryScope } from '../../../shared/agent-roster.interface';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
+import type { LocalAgentConnection } from '../../../shared/local-agents.interface';
 import { AGENT_TEMPLATES, LEGACY_AGENT_TEMPLATE_IDS, archiveSchema, assertCeiling, canonicalAgentToolId, parseCreate, parseRoster, prepareAgent, recommendedSchema, rosterError, rosterHash, scopeSchema, shareMemorySchema, snapshotMember, sourceKey, sourceSchema, updateSchema, uuid, writeMemorySchema } from './agent-roster.rules';
 import { ensureBuiltinFriends } from '../../database/agent-roster-builtins';
 
@@ -26,6 +29,32 @@ type MemoryRow = typeof memories.$inferSelect;
 type RosterDb = TeamDatabase;
 export const AGENT_ROSTER_LOCAL_STATUS = 'AGENT_ROSTER_LOCAL_STATUS';
 function versionView(row: VersionRow): AgentVersion { return { id: row.id, agentId: row.agentId, version: row.version, config: row.config, createdAt: row.createdAt.toISOString() }; }
+
+const legacyModelExecutor: AgentExecutor = { executionMode: 'model', model: 'slow' };
+
+async function selectBuiltinExecutor(passedConnectionIds: string[], locals: LocalAgentConnection[], legacyAvailable: () => Promise<boolean>): Promise<AgentExecutor | null> {
+  const routes: AgentExecutor[] = passedConnectionIds.map(connectionId => ({ executionMode: 'model', connectionId, model: 'slow' }));
+  for (const item of locals) {
+    if (executionReadiness(item).executable) routes.push({ executionMode: 'local', localAgentId: item.id });
+  }
+  if (routes.length) return routes.length === 1 ? routes[0] : null;
+  return await legacyAvailable() ? legacyModelExecutor : null;
+}
+
+function matchesBuiltinRoute(executor: AgentExecutor, builtin: AgentExecutor | null): boolean {
+  if (executor.executionMode === 'model' && builtin?.executionMode === 'model') {
+    return executor.connectionId === builtin.connectionId && executor.model === builtin.model;
+  }
+  return executor.executionMode === 'local' && builtin?.executionMode === 'local'
+    && executor.localAgentId === builtin.localAgentId && !executor.settings?.model && !executor.settings?.reasoningEffort;
+}
+
+function profileView(row: ProfileRow, version: VersionRow, configured: boolean, effectiveExecutor: AgentExecutor | null): AgentProfile {
+  return { ...(version.config.origin === 'builtin' ? { origin: 'builtin' as const } : {}), ...(effectiveExecutor ? { effectiveExecutor } : {}),
+    id: row.id, avatar: row.avatar, name: row.name, specialty: row.specialty, description: row.description, status: row.status as AgentProfile['status'], revision: row.revision,
+    currentVersionId: row.currentVersionId, currentVersion: versionView(version), availability: configured ? 'configured' : 'unavailable',
+    createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
+}
 
 /** Owns persistent identity and capability ceilings. Runtime authorization remains an intersection at every use. */
 @Injectable()
@@ -86,6 +115,10 @@ export class AgentRosterService {
       const [connection] = await tx.select({ id: modelConnections.id }).from(modelConnections).where(and(eq(modelConnections.owner, owner), eq(modelConnections.id, executor.connectionId)));
       return Boolean(connection);
     }
+    return this.legacyModelAvailable(tx, owner);
+  }
+
+  private async legacyModelAvailable(tx: RosterDb, owner: string): Promise<boolean> {
     const [settings] = await tx.select({ key: userApiSettings.llmApiKeyEnc }).from(userApiSettings).where(eq(userApiSettings.owner, owner));
     return Boolean(settings?.key || process.env.DOUBAO_API_KEY);
   }
@@ -109,31 +142,68 @@ export class AgentRosterService {
   }
 
   private async builtinExecutor(tx: RosterDb, owner: string): Promise<AgentExecutor | null> {
-    const connections = await tx.select({ id: modelConnections.id }).from(modelConnections)
-      .where(and(eq(modelConnections.owner, owner), eq(modelConnections.testState, 'passed'))).limit(2);
-    const routes: AgentExecutor[] = connections.map(({ id }) => ({ executionMode: 'model', connectionId: id, model: 'slow' }));
-    const paired = (await this.locals?.status(owner))?.items ?? [];
-    for (const item of paired) {
-      if (executionReadiness(item).executable) routes.push({ executionMode: 'local', localAgentId: item.id });
-    }
-    if (routes.length) return routes.length === 1 ? routes[0] : null;
-    const legacy: AgentExecutor = { executionMode: 'model', model: 'slow' };
-    return await this.executorAvailable(tx, owner, legacy) ? legacy : null;
+    const [connections, locals] = await Promise.all([
+      tx.select({ id: modelConnections.id }).from(modelConnections)
+        .where(and(eq(modelConnections.owner, owner), eq(modelConnections.testState, 'passed'))).limit(2),
+      this.locals?.status(owner),
+    ]);
+    return selectBuiltinExecutor(connections.map(({ id }) => id), locals?.items ?? [], () => this.legacyModelAvailable(tx, owner));
   }
 
-  private async view(tx: RosterDb, owner: string, row: ProfileRow, resolveBuiltin = () => this.builtinExecutor(tx, owner)): Promise<AgentProfile> {
+  private async rosterAvailability(owner: string) {
+    const [models, external, status, legacy] = await Promise.all([
+      this.db.select({ id: modelConnections.id, testState: modelConnections.testState }).from(modelConnections).where(eq(modelConnections.owner, owner)),
+      this.db.select({ id: a2aAgentConnections.id }).from(a2aAgentConnections)
+        .where(and(eq(a2aAgentConnections.owner, owner), eq(a2aAgentConnections.status, 'enabled'))),
+      this.locals?.status(owner),
+      this.legacyModelAvailable(this.db, owner),
+    ]);
+    const locals = status?.items ?? [];
+    const modelIds = new Set(models.map(({ id }) => id));
+    const externalIds = new Set(external.map(({ id }) => id));
+    const builtin = await selectBuiltinExecutor(models.filter(model => model.testState === 'passed').map(({ id }) => id), locals, async () => legacy);
+    return { builtin, available(executor: AgentExecutor): boolean {
+      if (executor.executionMode === 'model') return executor.connectionId ? modelIds.has(executor.connectionId) : legacy;
+      if (executor.executionMode === 'a2a') return externalIds.has(executor.connectionId);
+      const local = locals.find(item => item.id === executor.localAgentId);
+      return Boolean(local && executionReadiness(local, executor.settings).executable);
+    } };
+  }
+
+  private async view(tx: RosterDb, owner: string, row: ProfileRow): Promise<AgentProfile> {
     const version = await this.versionRow(tx, owner, row.id, row.currentVersionId);
     const builtin = version.config.origin === 'builtin';
     const active = row.status === 'active';
-    const effectiveExecutor = builtin && active ? await resolveBuiltin() : null;
+    const effectiveExecutor = builtin && active ? await this.builtinExecutor(tx, owner) : null;
     const configured = active && (builtin ? Boolean(effectiveExecutor) : await this.executorAvailable(tx, owner, version.config.executor));
-    return { ...(builtin ? { origin: 'builtin' as const } : {}), ...(effectiveExecutor ? { effectiveExecutor } : {}),
-      id: row.id, avatar: row.avatar, name: row.name, specialty: row.specialty, description: row.description, status: row.status as AgentProfile['status'], revision: row.revision,
-      currentVersionId: row.currentVersionId, currentVersion: versionView(version), availability: configured ? 'configured' : 'unavailable',
-      createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
+    return profileView(row, version, configured, effectiveExecutor);
   }
 
   async detail(owner: string, id: string): Promise<AgentProfile> { return this.view(this.db, owner, await this.row(this.db, owner, id)); }
+
+  private legacyRecommendedCandidate() {
+    const builtin = alias(profiles, 'builtin_profile');
+    const builtinVersion = alias(versions, 'builtin_version');
+    const activeBuiltin = this.db.select({ id: builtin.id }).from(builtin).innerJoin(builtinVersion, and(
+      eq(builtinVersion.ownerId, builtin.ownerId), eq(builtinVersion.agentId, builtin.id), eq(builtinVersion.id, builtin.currentVersionId),
+    )).where(and(
+      eq(builtin.ownerId, profiles.ownerId), eq(builtin.status, 'active'),
+      sql`${builtinVersion.config}->>'origin' = 'builtin'`,
+      sql`${builtinVersion.config}->>'templateId' = ${versions.config}->>'templateId'`,
+      sql`coalesce(${builtinVersion.config} #>> '{preferences,language}', 'zh-CN') = coalesce(${versions.config} #>> '{preferences,language}', 'zh-CN')`,
+    ));
+    // The receipt identifies an unedited batch preset even if historical catalog defaults differ.
+    const originalReceipt = this.db.select({ id: requests.id }).from(requests).where(and(
+      eq(requests.ownerId, profiles.ownerId), eq(requests.operation, 'recommended'),
+      sql`${requests.result} @> jsonb_build_object('items', jsonb_build_array(jsonb_build_object(
+        'id', ${profiles.id}, 'revision', ${profiles.revision}, 'currentVersionId', ${profiles.currentVersionId}
+      )))`,
+    ));
+    return and(eq(profiles.status, 'active'), sql`${versions.config}->>'origin' IS DISTINCT FROM 'builtin'`,
+      exists(activeBuiltin), exists(originalReceipt),
+    notExists(this.db.select({ id: memories.id }).from(memories).where(and(eq(memories.ownerId, profiles.ownerId), eq(memories.agentId, profiles.id)))),
+    notExists(this.db.select({ id: shares.id }).from(shares).where(and(eq(shares.ownerId, profiles.ownerId), eq(shares.targetAgentId, profiles.id)))));
+  }
 
   async list(owner: string, query: unknown = {}) {
     const q = parseRoster(z.object({ status: z.enum(['active', 'archived', 'all']).default('active'), q: z.string().trim().max(100).optional(), limit: z.coerce.number().int().min(1).max(100).default(30), cursor: z.string().max(1000).optional() }).strict(), query);
@@ -143,13 +213,37 @@ export class AgentRosterService {
       catch { rosterError('AGENT_INVALID_INPUT', 'Invalid page cursor'); }
     }
     if (q.status !== 'archived') await this.db.transaction(tx => ensureBuiltinFriends(tx, owner));
-    const rows = await this.db.select().from(profiles).where(and(eq(profiles.ownerId, owner), q.status === 'all' ? undefined : eq(profiles.status, q.status), q.q ? ilike(profiles.name, '%' + q.q + '%') : undefined,
-      cursor ? sql`(${profiles.updatedAt},${profiles.id})<(${cursor.at}::timestamptz,${cursor.id}::uuid)` : undefined)).orderBy(desc(profiles.updatedAt), desc(profiles.id)).limit(q.limit + 1);
-    let builtinExecutor: Promise<AgentExecutor | null> | undefined;
-    const resolveBuiltin = () => builtinExecutor ??= this.builtinExecutor(this.db, owner);
-    const items = await Promise.all(rows.slice(0, q.limit).map(row => this.view(this.db, owner, row, resolveBuiltin)));
-    const last = rows[q.limit - 1];
-    return { items, nextCursor: rows.length > q.limit && last ? Buffer.from(JSON.stringify({ id: last.id, at: last.updatedAt.toISOString() })).toString('base64url') : null };
+    const availability = q.status === 'archived' ? null : await this.rosterAvailability(owner);
+    const duplicateCandidate = availability ? this.legacyRecommendedCandidate() : sql`false`;
+    const batchSize = Math.max(30, q.limit + 1);
+    const page: { agent: AgentProfile; cursorAt: string }[] = [];
+    // Read current versions with their profiles and scan past hidden presets before deciding whether another page exists.
+    while (page.length <= q.limit) {
+      const rows = await this.db.select({
+        profile: profiles, version: versions, duplicateCandidate: sql<boolean>`(${duplicateCandidate})`,
+        cursorAt: sql<string>`to_char(${profiles.updatedAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      })
+        .from(profiles).innerJoin(versions, and(eq(versions.ownerId, profiles.ownerId), eq(versions.agentId, profiles.id), eq(versions.id, profiles.currentVersionId)))
+        .where(and(eq(profiles.ownerId, owner), q.status === 'all' ? undefined : eq(profiles.status, q.status),
+          q.q ? ilike(profiles.name, '%' + q.q + '%') : undefined,
+          cursor ? sql`(${profiles.updatedAt},${profiles.id})<(${cursor.at}::timestamptz,${cursor.id}::uuid)` : undefined))
+        .orderBy(desc(profiles.updatedAt), desc(profiles.id)).limit(batchSize);
+      for (const { profile, version, duplicateCandidate, cursorAt } of rows) {
+        const active = profile.status === 'active';
+        const isBuiltin = version.config.origin === 'builtin';
+        const effectiveExecutor = active && isBuiltin ? availability?.builtin ?? null : null;
+        const configured = active && (isBuiltin ? Boolean(effectiveExecutor) : Boolean(availability?.available(version.config.executor)));
+        if (duplicateCandidate && (!configured || matchesBuiltinRoute(version.config.executor, availability?.builtin ?? null))) continue;
+        page.push({ agent: profileView(profile, version, configured, effectiveExecutor), cursorAt });
+        if (page.length > q.limit) break;
+      }
+      const lastScanned = rows.at(-1);
+      if (rows.length < batchSize || !lastScanned) break;
+      cursor = { id: lastScanned.profile.id, at: lastScanned.cursorAt };
+    }
+    const last = page[q.limit - 1];
+    return { items: page.slice(0, q.limit).map(({ agent }) => agent), nextCursor: page.length > q.limit && last
+      ? Buffer.from(JSON.stringify({ id: last.agent.id, at: last.cursorAt })).toString('base64url') : null };
   }
 
   private async insert(tx: RosterDb, owner: string, input: Parameters<typeof prepareAgent>[0]): Promise<AgentProfile> {

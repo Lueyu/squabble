@@ -1636,7 +1636,7 @@
   outline-offset: -2px;
 }
 
-.team-editor-page .team-role-node {
+:is(.team-editor-page, .team-create-organization-preview) .team-role-node {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1650,7 +1650,7 @@
   box-shadow: 0 0 0 2px var(--team-accent);
 }
 
-.team-editor-page .team-role-title {
+:is(.team-editor-page, .team-create-organization-preview) .team-role-title {
   min-height: 44px;
 }
 
@@ -1682,7 +1682,7 @@
   border-radius: 7px;
 }
 
-.team-editor-page .team-role-title :where(strong, .break-words) {
+:is(.team-editor-page, .team-create-organization-preview) .team-role-title :where(strong, .break-words) {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1691,11 +1691,11 @@
   line-height: 1.35;
 }
 
-.team-editor-page .team-node-badges {
+:is(.team-editor-page, .team-create-organization-preview) .team-node-badges {
   margin-top: 0;
 }
 
-.team-editor-page .team-node-badges:empty {
+:is(.team-editor-page, .team-create-organization-preview) .team-node-badges:empty {
   display: none;
 }
 

@@ -7,7 +7,8 @@ import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { modelConnections } from '../../database/model-connections.schema';
 import { dataLibrarySources, dataLibraryVersions } from '../../database/data-library.schema';
-import type { AgentExecutor } from '../../../shared/agent-roster.interface';
+import { AGENT_TEMPLATE_IDS, type AgentExecutor } from '../../../shared/agent-roster.interface';
+import type { LocalAgentsStatus } from '../../../shared/local-agents.interface';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
 
 const available = Boolean(process.env.AGENT_ROSTER_TEST_DATABASE_URL ?? process.env.TEAM_TEST_DATABASE_URL);
@@ -236,6 +237,126 @@ test('recommended templates are atomic and idempotent; duplicate people are reje
     assert.equal(archived.status, 'archived');
     await assert.rejects(f.service.resolveMembers(f.owner, [selections[0]]), errorIs('AGENT_ARCHIVED'));
     assert.equal((await f.service.version(f.owner, a.id, a.currentVersionId)).id, a.currentVersionId);
+  } finally { await f.dispose(); }
+});
+
+test('the upgraded roster shows twelve built-ins and preserves custom friends and pinned legacy versions', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    await f.client`UPDATE model_connections SET test_state='passed' WHERE owner=${f.owner}`;
+    const request = { requestKey: 'legacy-specialties', executor: f.executor, templateIds: [...AGENT_TEMPLATE_IDS] };
+    const legacy = await f.service.recommended(f.owner, request);
+    const [pinned, customized, withMemory, sharedMemory, archived] = legacy.items;
+    const team = await f.team('Older team', [pinned]);
+    const [originalTeam] = await f.client`SELECT config_json FROM team_versions WHERE team_id=${team.id}`;
+
+    const upgraded = await f.service.list(f.owner);
+    assert.equal(upgraded.items.length, 12);
+    assert.equal(upgraded.nextCursor, null);
+    assert.ok(upgraded.items.every(agent => agent.origin === 'builtin'));
+    assert.deepEqual(upgraded.items.map(agent => agent.currentVersion.config.templateId).sort(), [...AGENT_TEMPLATE_IDS].sort());
+    const fresh = await f.service.list(f.stranger);
+    assert.equal(fresh.items.length, 12);
+    assert.ok(fresh.items.every(agent => agent.origin === 'builtin' && !upgraded.items.some(other => other.id === agent.id)));
+    assert.deepEqual(await f.service.list(f.owner), upgraded);
+
+    const firstPage = await f.service.list(f.owner, { limit: 5 });
+    assert.ok(firstPage.nextCursor);
+    const secondPage = await f.service.list(f.owner, { cursor: firstPage.nextCursor, limit: 7 });
+    assert.equal(secondPage.nextCursor, null);
+    assert.deepEqual([...firstPage.items, ...secondPage.items], upgraded.items);
+    const search = await f.service.list(f.owner, { q: pinned.name });
+    assert.deepEqual(search.items, upgraded.items.filter(agent => agent.name === pinned.name));
+
+    assert.deepEqual(await f.service.detail(f.owner, pinned.id), pinned);
+    assert.deepEqual(await f.service.version(f.owner, pinned.id, pinned.currentVersionId), pinned.currentVersion);
+    const [member] = await f.service.resolveMembers(f.owner, [{ agentId: pinned.id, agentVersionId: pinned.currentVersionId }]);
+    assert.equal(member.rosterAgentId, pinned.id);
+    assert.equal(member.rosterAgentVersionId, pinned.currentVersionId);
+    const [storedTeam] = await f.client`SELECT config_json FROM team_versions WHERE team_id=${team.id}`;
+    assert.deepEqual(storedTeam, originalTeam);
+
+    const custom = await f.service.create(f.owner, { requestKey: 'handpicked', templateId: 'financials', executor: f.executor });
+    assert.equal(custom.name, pinned.name);
+    const edited = await f.service.update(f.owner, customized.id, { requestKey: 'rename', expectedRevision: customized.revision, name: 'My valuation friend' });
+    assert.equal(edited.currentVersionId, customized.currentVersionId);
+    const scope = { kind: 'personal' } as const;
+    const memory = await f.service.writeMemory(f.owner, withMemory.id, { requestKey: 'remember', expectedRevision: withMemory.revision, scope, content: 'A personal note', origin: 'user_note', sourceRefs: [] });
+    await f.service.shareMemory(f.owner, withMemory.id, memory.id, { requestKey: 'share', expectedRevision: withMemory.revision, targetAgentId: sharedMemory.id, targetScope: scope });
+    const inactive = await f.service.archive(f.owner, archived.id, { requestKey: 'archive', expectedRevision: archived.revision });
+    const all = await f.service.list(f.owner, { status: 'all' });
+    assert.deepEqual(new Set(all.items.map(agent => agent.id)), new Set([...upgraded.items, custom, edited, withMemory, sharedMemory, inactive].map(agent => agent.id)));
+    assert.deepEqual((await f.service.list(f.owner, { status: 'archived' })).items, [inactive]);
+    assert.deepEqual(await f.service.recommended(f.owner, request), legacy);
+  } finally { await f.dispose(); }
+});
+
+test('legacy presets remain visible for useful availability, a different route, or a different language', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    await f.client`UPDATE model_connections SET test_state='passed' WHERE owner=${f.owner}`;
+    const [second] = await f.db.insert(modelConnections).values({
+      owner: f.owner, name: 'Second connection', baseUrl: 'https://second.invalid', fastModel: 'fast', slowModel: 'slow',
+      apiKeyEnc: 'never-used-secret', testState: 'passed',
+    }).returning();
+    const { items: [pinned] } = await f.service.recommended(f.owner, { requestKey: 'pinned-only', templateIds: ['financials'], executor: f.executor });
+
+    const ambiguous = await f.service.list(f.owner);
+    assert.deepEqual(ambiguous.items.filter(agent => agent.availability === 'configured').map(agent => agent.id), [pinned.id]);
+    assert.equal(ambiguous.items.filter(agent => agent.origin === 'builtin').length, 12);
+
+    await f.client`UPDATE model_connections SET test_state=NULL WHERE id=${second.id}`;
+    assert.ok(!(await f.service.list(f.owner)).items.some(agent => agent.id === pinned.id));
+
+    const { items: [alternate] } = await f.service.recommended(f.owner, {
+      requestKey: 'alternate-route', templateIds: ['financials'], executor: { executionMode: 'model', connectionId: second.id, model: 'fast' },
+    });
+    const { items: [english] } = await f.service.recommended(f.owner, {
+      requestKey: 'english-language', templateIds: ['financials'], executor: f.executor, language: 'en',
+    });
+    const listed = await f.service.list(f.owner);
+    assert.deepEqual(new Set(listed.items.filter(agent => !agent.origin).map(agent => agent.id)), new Set([alternate.id, english.id]));
+    assert.ok(listed.items.every(agent => agent.availability === 'configured'));
+  } finally { await f.dispose(); }
+});
+
+test('offline local presets collapse into twelve built-ins and pagination skips entire batches of duplicates', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    const { AgentRosterService } = await import('./agent-roster.service');
+    const status: LocalAgentsStatus = {
+      mode: 'companion', companion: { connected: false },
+      items: [{ id: 'paired-codex', provider: 'codex', source: 'companion', name: 'Fixture Codex', state: 'ready',
+        loginCommand: '', installUrl: '', connected: true, available: false, busy: false }],
+    };
+    let statusReads = 0;
+    const service = new AgentRosterService(f.db, { async status() { statusReads++; return status; } });
+    const baseline = await service.list(f.owner);
+    assert.equal(baseline.items.length, 12);
+    assert.ok(baseline.items.every(agent => agent.origin === 'builtin' && agent.availability === 'unavailable'));
+    const request = { executor: { executionMode: 'local', localAgentId: 'paired-codex' }, templateIds: [...AGENT_TEMPLATE_IDS] };
+    for (const key of ['old-local-a', 'old-local-b', 'old-local-c']) {
+      const legacy = await service.recommended(f.owner, { ...request, requestKey: key });
+      assert.ok(legacy.items.every(agent => agent.availability === 'unavailable'));
+    }
+    // Exercise an upgraded database retaining microseconds, with hidden rows before the built-ins in one millisecond.
+    await f.client`ALTER TABLE agent_roster_profiles ALTER COLUMN updated_at TYPE timestamptz(6)`;
+    await f.client`
+      WITH ordered AS (
+        SELECT profile.id, row_number() OVER (ORDER BY (version.config_json->>'origin' IS NOT DISTINCT FROM 'builtin'), profile.id DESC) AS rank
+        FROM agent_roster_profiles AS profile JOIN agent_roster_versions AS version ON version.id=profile.current_version_id
+        WHERE profile.owner_id=${f.owner}
+      )
+      UPDATE agent_roster_profiles AS profile SET updated_at='2026-11-01T01:02:03.000900Z'::timestamptz - ordered.rank * interval '1 microsecond'
+      FROM ordered WHERE profile.id=ordered.id`;
+    statusReads = 0;
+    const first = await service.list(f.owner, { limit: 5 });
+    assert.ok(first.nextCursor);
+    assert.match(JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString()).at, /\.000\d{3}Z$/);
+    const second = await service.list(f.owner, { limit: 7, cursor: first.nextCursor });
+    assert.equal(second.nextCursor, null);
+    assert.deepEqual([...first.items, ...second.items].map(agent => agent.id), baseline.items.map(agent => agent.id));
+    assert.equal(statusReads, 2);
   } finally { await f.dispose(); }
 });
 

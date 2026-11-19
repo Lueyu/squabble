@@ -16,6 +16,7 @@ import { TeamNotice, TeamSelect } from '@/features/teams/TeamPrimitives';
 import { quickStartPreviewRequest, validVirtualCash, type QuickStartInput } from './team-quick-start';
 import { guidedSeedBlockers } from './guided-team-state';
 import { TeamAccountSeedReview } from './TeamAccountSeedReview';
+import { TeamCopyOrganizationReview, TeamTemplateOrganizationReview } from './TeamCreationOrganizationReview';
 import { TeamTemplatePicker } from './TeamTemplatePicker';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { OnboardingStepper } from '@/features/onboarding/OnboardingStepper';
@@ -167,6 +168,7 @@ export function TeamCreateDialog({ open, onboarding = false, onOpenChange, teams
   const publishedSources = teams.flatMap(team => team.currentVersionId
     ? [{ value: team.currentVersionId, label: `${team.name} · v${team.currentVersion}` }]
     : []);
+  const copySource = teams.find(team => team.currentVersionId === copyVersionId);
   const creationMethods = [
     { value: 'template', label: zh ? '选择组织模板' : 'Organization templates' },
     { value: 'blank', label: zh ? '空白组织' : 'Blank organization' },
@@ -210,7 +212,24 @@ export function TeamCreateDialog({ open, onboarding = false, onOpenChange, teams
         </CardContent>
       </Card>}
       </fieldset>}
-      {preview && <><div ref={reviewTitle} tabIndex={-1}><TeamAccountSeedReview preview={preview} zh={zh} compact={onboarding} /></div>{guidedSeedBlockers(preview.needsInput).length > 0 && <TeamNotice error>{zh ? '当前持仓资料或行情尚未齐全，请先核对实仓后重新预览。' : 'Position information or quotes need attention. Review the real portfolio and refresh this seed.'}</TeamNotice>}<label className="team-check-row"><Checkbox checked={ack} onCheckedChange={value => setAck(value === true)} />{zh ? '已核对持仓及虚拟现金，确认创建团队、发布初始配置并关联新的独立模拟盘。本次不启动研究或交易。' : 'I reviewed positions and virtual cash. Create the team, publish its initial configuration and link a new independent paper account. This does not start research or trades.'}</label></>}
+      {preview && <>
+        <div ref={reviewTitle} tabIndex={-1} className="team-create-review">
+          <dl className="team-create-review-summary">
+            <div><dt>{zh ? '团队名称' : 'Team name'}</dt><dd>{name.trim()}</dd></div>
+            {mode === 'template' && template && <>
+              <div><dt>{zh ? '团队模板' : 'Team template'}</dt><dd>{template.name[language]}</dd></div>
+              <div><dt>{zh ? '自动配员' : 'Automatic staffing'}</dt><dd>{zh ? `${template.staffing.length} 个岗位` : `${template.staffing.length} assigned seats`}</dd></div>
+            </>}
+            {mode === 'copy' && copySource && <div><dt>{zh ? '来源版本' : 'Source version'}</dt><dd>{copySource.name} · v{copySource.currentVersion}</dd></div>}
+            {mode === 'blank' && <div><dt>{zh ? '组织结构' : 'Organization'}</dt><dd>{zh ? '空白组织' : 'Blank organization'}</dd></div>}
+          </dl>
+          {mode === 'template' && template && <TeamTemplateOrganizationReview template={template} zh={zh} />}
+          {mode === 'copy' && <TeamCopyOrganizationReview teamId={copySource?.id} versionId={copyVersionId} zh={zh} />}
+          <TeamAccountSeedReview preview={preview} zh={zh} compact={onboarding} />
+        </div>
+        {guidedSeedBlockers(preview.needsInput).length > 0 && <TeamNotice error>{zh ? '当前持仓资料或行情尚未齐全，请先核对实仓后重新预览。' : 'Position information or quotes need attention. Review the real portfolio and refresh this seed.'}</TeamNotice>}
+        <label className="team-check-row"><Checkbox checked={ack} onCheckedChange={value => setAck(value === true)} />{zh ? '已核对持仓及虚拟现金，确认创建团队、发布初始配置并关联新的独立模拟盘。本次不启动研究或交易。' : 'I reviewed positions and virtual cash. Create the team, publish its initial configuration and link a new independent paper account. This does not start research or trades.'}</label>
+      </>}
       {(validation || create.isError) && <TeamNotice error>{validation || friendlyError(create.error, zh, { zh: '创建未确认，请使用相同输入核对并重试。', en: 'Creation was not confirmed. Check and retry with the same input.' })}</TeamNotice>}
       <div className="team-dialog-actions">
         <Button variant="outline" disabled={create.isPending} onClick={() => { if (preview) { setPreview(null); setAck(false); intent.current = null; } else if (showSeed) setSeedStep(false); else onOpenChange(false); }}>{preview ? (zh ? '返回修改起点' : 'Edit starting point') : (showSeed ? (zh ? '返回修改团队' : 'Edit team') : (zh ? '取消' : 'Cancel'))}</Button>

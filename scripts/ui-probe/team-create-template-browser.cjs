@@ -6,11 +6,44 @@ const { chromium } = require('playwright');
 const { start } = require('./fixture-server.cjs');
 
 const evidence = path.resolve(__dirname, '../../dist/ui-probe/team-create-template');
+const teamId = 'aaaaaa00-0000-4000-8000-000000000001';
+const versionId = 'aaaaaa00-0000-4000-8000-000000000002';
+
+function isRectilinear(path) {
+  let x, y;
+  return path.split(/(?=[MLQ])/).every(command => {
+    const [nextX, nextY, endX, endY] = command.slice(1).trim().split(/[\s,]+/).map(Number);
+    if (command.startsWith('Q')) return x === nextX && x === endX && y === nextY && y === endY;
+    const axisAligned = command.startsWith('M') || nextX === x || nextY === y;
+    x = nextX;
+    y = nextY;
+    return axisAligned && Number.isFinite(x) && Number.isFinite(y);
+  });
+}
+
+async function verifyOrganization(preview, { roles, departments, reports, reviews }) {
+  await preview.locator('.react-flow__node-teamRole [data-persona] svg').nth(roles - 1).waitFor();
+  assert.equal(await preview.locator('.react-flow__node-teamRole [data-persona] svg').count(), roles);
+  assert.equal(await preview.locator('.react-flow__node-teamDepartment').count(), departments);
+  const paths = preview.locator('.react-flow__edge-path');
+  await paths.nth(reports + reviews - 1).waitFor();
+  const edges = await paths.evaluateAll(elements => elements.map(edge => ({
+    path: edge.getAttribute('d'),
+    dash: getComputedStyle(edge).strokeDasharray,
+    arrow: edge.getAttribute('marker-end'),
+  })));
+  assert.equal(edges.filter(edge => edge.dash === 'none').length, reports);
+  assert.equal(edges.filter(edge => edge.dash !== 'none').length, reviews);
+  assert.deepEqual(edges.filter(edge => !isRectilinear(edge.path) || !edge.arrow), [], 'line segments and target arrows');
+  assert.equal(await preview.getByRole('button').count(), 3, 'preview only offers viewport controls');
+}
 
 async function exercise(browser, origin, guided) {
   const context = await browser.newContext({
     viewport: guided ? { width: 390, height: 844 } : { width: 1280, height: 900 },
     locale: guided ? 'zh-CN' : 'en-US',
+    isMobile: guided,
+    hasTouch: guided,
   });
   try {
     await context.addInitScript(lang => localStorage.setItem('sq-lang', lang), guided ? 'zh-CN' : 'en');
@@ -18,6 +51,7 @@ async function exercise(browser, origin, guided) {
     page.setDefaultTimeout(12_000);
     const seedRequests = [];
     const unexpectedWrites = [];
+    const source = !guided && await (await context.request.get(`${origin}/api/teams/${teamId}`)).json();
     await context.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
@@ -27,6 +61,21 @@ async function exercise(browser, origin, guided) {
           return route.fulfill({
             json: { items: [], nextCursor: null, capabilities: { workspaceEnabled: true } },
           });
+        }
+        if (!guided && url.pathname === '/api/teams') {
+          const response = await route.fetch();
+          const body = await response.json();
+          const zero = { amount: '0', currency: 'USD' };
+          return route.fulfill({ response, json: { ...body, items: [{
+            ...source, name: 'Published fixture team', currentVersionId: versionId, currentVersion: 1,
+            roleCount: 4, departmentCount: 2,
+            cost: { confirmed: zero, reserved: zero, estimatedMaximum: zero, externalUsageUnknown: false, unknownAttemptIds: [] },
+          }] } });
+        }
+        if (!guided && url.pathname === `/api/teams/${teamId}/versions/${versionId}`) {
+          const labels = { ...source.display.roleLabels, [source.draft.config.defaults.leadRoleId]: 'Published fixture lead' };
+          return route.fulfill({ json: { id: versionId, teamId, config: source.draft.config,
+            displaySnapshot: { ...source.display, roleLabels: labels } } });
         }
         if (guided && url.pathname === '/api/settings/model-connections') {
           return route.fulfill({ json: { items: [{
@@ -59,9 +108,11 @@ async function exercise(browser, origin, guided) {
     const scope = guided ? page.locator('main') : page.getByRole('dialog');
     const choices = scope.getByRole('group', { name: guided ? '固定团队模板' : 'Fixed team templates' });
     const staffing = scope.getByRole('region', { name: guided ? '自动配员预览' : 'Automatic staffing preview' });
+    const organization = scope.getByRole('region', { name: guided ? '组织结构预览' : 'Organization preview' });
     await choices.waitFor();
     assert.equal(await choices.getByRole('button').count(), 11);
     assert.match(await staffing.innerText(), guided ? /自动指派 4 个岗位/ : /4 seats assigned/);
+    assert.equal(await organization.count(), 0);
     await choices.getByRole('button', {
       name: guided ? '细粒度财报尽调组' : 'Fine-grained diligence', exact: true,
     }).click();
@@ -100,9 +151,11 @@ async function exercise(browser, origin, guided) {
       await scope.getByRole('button', { name: 'Copy a configuration', exact: true }).click();
       await scope.getByLabel('Source team and published version').waitFor();
       await staffing.waitFor({ state: 'hidden' });
+      await organization.waitFor({ state: 'hidden' });
     }
     await scope.getByRole('button', { name: guided ? '空白组织' : 'Blank organization', exact: true }).click();
     await staffing.waitFor({ state: 'hidden' });
+    await organization.waitFor({ state: 'hidden' });
     await scope.getByRole('button', { name: guided ? '选择组织模板' : 'Organization templates', exact: true }).click();
     await staffing.waitFor();
     assert.equal(await committee.getAttribute('aria-pressed'), 'true');
@@ -117,6 +170,24 @@ async function exercise(browser, origin, guided) {
       name: guided ? '确认创建团队与独立模拟盘' : 'Create team and independent paper account',
     });
     await confirm.waitFor();
+    await verifyOrganization(organization, { roles: 6, departments: 3, reports: 5, reviews: 6 });
+    assert.match(await organization.innerText(), guided ? /投委会主席\s*组合经理股友/ : /Chair\s*Portfolio manager friend/);
+    await scope.getByRole('region', { name: guided ? '核对模拟起点' : 'Review the new paper account seed' }).waitFor();
+    const viewport = organization.locator('.react-flow__viewport');
+    const fit = organization.getByRole('button', { name: guided ? '适应画布' : 'Fit canvas' });
+    await fit.click();
+    const beforeZoom = await viewport.evaluate(element => element.style.transform);
+    const zoomIn = organization.getByRole('button', { name: guided ? '放大' : 'Zoom in' });
+    if (guided) await zoomIn.tap();
+    else await zoomIn.press('Enter');
+    await page.waitForFunction(before => document.querySelector('.team-create-organization-preview .react-flow__viewport').style.transform !== before, beforeZoom);
+    await fit.click();
+    await page.waitForFunction(before => document.querySelector('.team-create-organization-preview .react-flow__viewport').style.transform === before, beforeZoom);
+    assert.ok(await scope.evaluate(element => element.scrollWidth <= element.clientWidth + 1));
+    await organization.screenshot({
+      path: path.join(evidence, guided ? 'organization-mobile.png' : 'organization-desktop.png'),
+      animations: 'disabled',
+    });
     assert.equal(seedRequests.length, 1);
     assert.equal(seedRequests[0].origin, 'holdings');
     assert.deepEqual(seedRequests[0].virtualCash, [
@@ -125,6 +196,28 @@ async function exercise(browser, origin, guided) {
     assert.equal(await confirm.isDisabled(), true);
     await scope.getByRole('checkbox').check();
     assert.equal(await confirm.isEnabled(), true);
+    if (!guided) {
+      const editTeam = async () => {
+        await scope.getByRole('button', { name: 'Edit starting point' }).click();
+        await scope.getByRole('button', { name: 'Edit team' }).click();
+      };
+      const review = async () => {
+        await scope.getByRole('button', { name: 'Next', exact: true }).click();
+        await scope.getByRole('button', { name: 'Preview positions and virtual capital' }).click();
+        await confirm.waitFor();
+      };
+      await editTeam();
+      await scope.getByRole('button', { name: 'Copy a configuration' }).click();
+      await scope.getByLabel('Source team and published version').click();
+      await page.getByRole('option', { name: 'Published fixture team · v1' }).click();
+      await review();
+      await verifyOrganization(organization, { roles: 4, departments: 2, reports: 4, reviews: 4 });
+      assert.match(await organization.innerText(), /Published fixture lead/);
+      await editTeam();
+      await scope.getByRole('button', { name: 'Blank organization', exact: true }).click();
+      await review();
+      assert.equal(await organization.count(), 0);
+    }
     assert.deepEqual(unexpectedWrites, []);
   } finally {
     await context.close();
