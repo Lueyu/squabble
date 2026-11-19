@@ -47,7 +47,9 @@ function Overview({ initialAccountIds }: { initialAccountIds?: string[] }) {
     retry: false,
   });
   const report = daily.data?.reports[0];
-  const formerTeamIds = new Set((accounts.data ?? []).filter(account => account.formerTeam).map(account => account.id));
+  const formerTeamIds = accounts.data
+    ? new Set(accounts.data.filter(account => account.formerTeam).map(account => account.id))
+    : null;
   const visibleAccounts = [
     { id: 'real', name: zh ? '我的实仓' : 'My real portfolio', companionId: 'value' as const },
     ...(accounts.data ?? []).filter(account => account.status !== 'archived' && !account.formerTeam),

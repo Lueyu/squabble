@@ -41,7 +41,8 @@ const periodOptions = Object.keys(periods) as PortfolioComparisonPeriod[];
 interface Props {
   accountIds?: string[];
   initialAccountIds?: string[];
-  defaultExcludedAccountIds?: ReadonlySet<string>;
+  /** null limits the default to the real account while account classification is unavailable. */
+  defaultExcludedAccountIds?: ReadonlySet<string> | null;
   compact?: boolean;
   persistView?: boolean;
 }
@@ -108,7 +109,9 @@ export default function PortfolioComparisonPanel({
     refetchInterval: 60_000,
   });
   const series = comparison.data?.series ?? [];
-  const isSelected = (id: string) => selectedIds === null ? !defaultExcludedAccountIds?.has(id) : selectedIds.includes(id);
+  const isSelected = (id: string) => selectedIds === null
+    ? (defaultExcludedAccountIds === null ? id === 'real' : !defaultExcludedAccountIds?.has(id))
+    : selectedIds.includes(id);
   const selected = series.filter(item => isSelected(item.accountId));
   const selectedAccountIds = selected.map(item => item.accountId);
   const savedSeries = selected.map(account => {

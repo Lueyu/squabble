@@ -49,6 +49,7 @@ async function fictionalRoutes(context, origin, language) {
   };
   const seen = [];
   const imports = [];
+  let pendingAccounts;
   const assets = accountId => ({
     accountId,
     positions: [{ id: accountId, ticker: accountId === paperA ? 'PAPERA' : accountId === formerPaper ? 'PAST' : 'PAPERB', shares: '4', avgCost: null,
@@ -70,7 +71,10 @@ async function fictionalRoutes(context, origin, language) {
     if (url.origin !== origin) return route.abort('blockedbyclient');
     const pathname = url.pathname;
     if (pathname.startsWith('/api/')) seen.push(url);
-    if (pathname === '/api/ai-investment/accounts') return route.fulfill({ json: realOnly ? accounts : [...accounts, former] });
+    if (pathname === '/api/ai-investment/accounts') {
+      await pendingAccounts;
+      return route.fulfill({ json: realOnly ? accounts : [...accounts, former] });
+    }
     if (pathname.startsWith('/api/ai-investment/accounts/') && pathname.endsWith('/assets')) {
       return route.fulfill({ json: assets(pathname.split('/')[4]) });
     }
@@ -158,7 +162,14 @@ async function fictionalRoutes(context, origin, language) {
     return route.continue();
   });
   await context.routeWebSocket('**/*', socket => socket.close());
-  return { accounts, former, seen, imports };
+  return {
+    accounts, former, seen, imports,
+    delayAccounts() {
+      let release;
+      pendingAccounts = new Promise(resolve => { release = resolve; });
+      return release;
+    },
+  };
 }
 
 async function verifyHoldingsFilters(page, language, label) {
@@ -519,6 +530,19 @@ async function verifyJourneys(page, base, scenario, language, label) {
   await page.waitForURL(url => url.searchParams.get('accounts')?.split(',').includes(formerPaper));
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: word('选择账户（5）', 'Select accounts (5)'), exact: true }).waitFor();
+
+  const releaseAccounts = scenario.delayAccounts();
+  try {
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: word('选择账户（1）', 'Select accounts (1)'), exact: true }).click();
+    assert.equal(await formerOption.isChecked(), false, 'unclassified accounts are not selected implicitly');
+    await page.getByRole('checkbox', { name: a.name, exact: true }).click();
+    await page.waitForURL(url => url.searchParams.get('accounts') === 'real,' + paperA);
+    await page.keyboard.press('Escape');
+  } finally {
+    releaseAccounts();
+  }
+  await page.getByRole('button', { name: word('选择账户（2）', 'Select accounts (2)'), exact: true }).waitFor();
   assert.equal(scenario.imports.length, 1);
 }
 
