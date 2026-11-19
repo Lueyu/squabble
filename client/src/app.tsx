@@ -26,6 +26,8 @@ import JournalPage from './pages/Journal/JournalPage';
 import TransactionsPage from './pages/Transactions/TransactionsPage';
 import SettingsPage from './pages/Settings/SettingsPage';
 import PaperPage from './pages/Paper/PaperPage';
+import LegacyDecisionPage from './pages/Paper/LegacyDecisionPage';
+import { safeReturnPath } from './features/navigation/workspace-navigation';
 import AgentBuilderPage from './pages/AgentBuilder/AgentBuilderPage';
 import CouncilPage from './pages/Council/CouncilPage';
 import ImportPage from './pages/Import/ImportPage';
@@ -78,12 +80,19 @@ function SimulationsRoute() {
   const { search, hash, state } = useLocation();
   const params = new URLSearchParams(search);
   const sourceVersion = params.get('sourceReportVersionId');
+  const mandateId = params.get('strategyId');
   const requestedAccounts = params.getAll('accountId');
   const accountId = requestedAccounts.length === 1 && requestedAccounts[0] !== 'real' ? requestedAccounts[0] : null;
   let destination = { pathname: SIMULATION_ACCOUNTS_PATH, search, hash };
   if (hash === '#notifications') {
     destination = { pathname: '/settings/notifications', search, hash: '' };
-  } else if (params.get('draft') === '1' && sourceVersion && !params.has('strategyId')) {
+  } else if (mandateId !== null) {
+    return <LegacyDecisionPage
+      strategyId={mandateId}
+      versionId={sourceVersion || undefined}
+      returnTo={safeReturnPath(params.get('returnTo')) ?? undefined}
+    />;
+  } else if (params.get('draft') === '1' && sourceVersion) {
     destination = { pathname: '/analysis/reports/' + encodeURIComponent(sourceVersion), search, hash: '#report-strategy' };
   } else if (accountId && params.get('investmentStrategyId')) {
     destination = { pathname: simulationStrategyPath(accountId), search, hash };

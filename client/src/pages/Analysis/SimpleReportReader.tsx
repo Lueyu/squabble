@@ -5,7 +5,8 @@ import ResearchMarkdown from '@/components/ResearchMarkdown';
 import { fetchResearchDocument } from '@/api/research-documents';
 import { Button } from '@/components/ui/button';
 import { questionPath } from '@/utils/simple-experience';
-import {useState} from 'react';
+import {useState, type ReactNode} from 'react';
+import type { ResearchDocumentView } from '@shared/research-document.interface';
 import type {StrategySourceInput} from '@shared/user-investment-strategy.interface';
 import InvestmentStrategySourceDialog from '@/features/investment-strategies/InvestmentStrategySourceDialog';
 import {readableResearchSection,researchSectionsRecord,researchReferences} from '@shared/research-reading';
@@ -14,7 +15,13 @@ import { simulationReviewSections } from '@shared/simulation-review-reading';
 import { safeReturnPath } from '@/features/navigation/workspace-navigation';
 
 /** Always reads the requested immutable document. No lookup or redirect to current research. */
-export default function SimpleReportReader({ versionId }: { versionId: string }) {
+export default function SimpleReportReader({
+  versionId,
+  renderLinkedStrategies,
+}: {
+  versionId: string;
+  renderLinkedStrategies?: (report: ResearchDocumentView, zh: boolean) => ReactNode;
+}) {
   const { i18n } = useTranslation(); const zh = i18n.language.startsWith('zh');
   const location = useLocation(); const [params] = useSearchParams();
   const returnTo = safeReturnPath(location.state?.returnTo) ?? safeReturnPath(params.get('returnTo')) ?? '/analysis';
@@ -46,7 +53,9 @@ export default function SimpleReportReader({ versionId }: { versionId: string })
       {sections.map(section=><a key={section.id} href={`#${section.id}`}>{section.title}</a>)}
       {references&&<a href="#report-references">{zh?'参考来源':'References'}</a>}
       {!simulationSections&&<a href="#report-strategy">{zh?'加入策略草稿':'Add to a strategy draft'}</a>}
-    </nav><p className="text-sm text-muted-foreground">{zh?'加入草稿后，在目标模拟账户中预览并确认，才会影响执行。':'After adding a draft, preview and confirm it in the target simulation account to change execution.'}</p></aside></div>
+    </nav>
+    {renderLinkedStrategies?.(query.data, zh)}
+    <p className="text-sm text-muted-foreground">{zh?'加入草稿后，在目标模拟账户中预览并确认，才会影响执行。':'After adding a draft, preview and confirm it in the target simulation account to change execution.'}</p></aside></div>
     <InvestmentStrategySourceDialog source={strategySource} onClose={()=>setStrategySource(null)}/>
   </article>;
 }
