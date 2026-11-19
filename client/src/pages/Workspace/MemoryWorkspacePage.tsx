@@ -54,6 +54,7 @@ function MemoryUsage() {
   const { i18n } = useTranslation(), zh = i18n.language.startsWith('zh');
   const [params, setParams] = useSearchParams();
   const sessionId = params.get('sessionId') ?? '';
+  const validSession = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(sessionId);
   const setSessionId = (id: string) => setParams(current => {
     const next = new URLSearchParams(current);
     if (id) next.set('sessionId', id);
@@ -61,7 +62,7 @@ function MemoryUsage() {
     return next;
   }, { replace: true });
   const sessions = useQuery({ queryKey: ['memory-usage-sessions'], queryFn: () => fetchCouncilSessions() });
-  const session = useQuery({ queryKey: ['memory-usage-session', sessionId], queryFn: () => fetchCouncilSession(sessionId), enabled: Boolean(sessionId) });
+  const session = useQuery({ queryKey: ['memory-usage-session', sessionId], queryFn: () => fetchCouncilSession(sessionId), enabled: validSession });
   const savedSession = session.isError ? undefined : session.data;
   const messages = savedSession?.messages.filter(message => message.memory) ?? [];
   const linkedTaskOutsideList = sessionId && !sessions.data?.some(item => item.id === sessionId);
@@ -74,9 +75,9 @@ function MemoryUsage() {
       </select>
     </label>
     {sessions.isError && <Button onClick={() => void sessions.refetch()}>{zh ? '重试读取任务列表' : 'Retry task list'}</Button>}
-    {session.isError && <div>
+    {(session.isError || (sessionId && !validSession)) && <div>
       <p role="alert" className="text-sm text-destructive">{zh ? '无法读取该任务的记忆提交记录。' : 'Could not load submission records for this task.'}</p>
-      <Button onClick={() => void session.refetch()}>{zh ? '重试读取记录' : 'Retry records'}</Button>
+      {session.isError && <Button onClick={() => void session.refetch()}>{zh ? '重试读取记录' : 'Retry records'}</Button>}
     </div>}
     {session.isFetching && <p role="status">{zh ? '正在读取提交记录…' : 'Loading submission records…'}</p>}
     {savedSession && !messages.length && <p>{zh ? '该任务没有保存记忆提交清单，使用情况未知。' : 'No memory submission inventory was recorded for this task.'}</p>}

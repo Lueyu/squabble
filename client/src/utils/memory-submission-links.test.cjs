@@ -124,3 +124,15 @@ test('an inaccessible link keeps its task selected, shows a read error, and retr
     assert.deepEqual(page.detailRequests(), [getDetail(inaccessibleTask), getDetail(inaccessibleTask)]);
   });
 });
+
+test('a malformed task link reports an error without requesting task details', async () => {
+  await withMemoryPage('/memory?tab=usage&sessionId=%2F', async page => {
+    const error = page.document.querySelector('[role="alert"]');
+    assert.match(error?.textContent ?? '', /Could not load submission records for this task/);
+    assert.deepEqual(page.detailRequests(), []);
+    assert.equal(page.document.querySelector('details'), null);
+    await page.choose(firstTask);
+    await page.waitFor(() => page.document.querySelector('article h3')?.textContent.includes(tasks.get(firstTask)), 'valid task can still be selected');
+    assert.deepEqual(page.detailRequests(), [getDetail(firstTask)]);
+  });
+});
