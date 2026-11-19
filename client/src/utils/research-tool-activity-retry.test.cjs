@@ -14,6 +14,9 @@ const preview = {
   state: 'pending', accountId: 'fictional', target: 'Draft', args: {},
   costLimit: { maxAmount: null }, expiresAt: '2099-01-01T00:00:00Z', attachments: [],
 };
+const secondPreview = {
+  ...preview, id: 'second-preview', runId: 'second-run', descriptor: { name: 'Review second draft' },
+};
 
 async function waitFor(select, message) {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -24,7 +27,7 @@ async function waitFor(select, message) {
   assert.fail(String(message));
 }
 
-async function withPanel({ waitingForApproval, failedPath, readOnly }, check) {
+async function withPanel({ waitingForApproval, secondApproval, failedPath, readOnly }, check) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/' });
   const { document } = dom.window;
   Object.assign(globalThis, { window: dom.window, document, IS_REACT_ACT_ENVIRONMENT: true });
@@ -38,8 +41,9 @@ async function withPanel({ waitingForApproval, failedPath, readOnly }, check) {
   state.responses = {
     get(path) {
       assert.equal(path, approvalPath);
-      if (path === failedPath) throw new Error('Fixture unavailable');
-      return [preview];
+      const { runId } = state.requests.at(-1).args[1].params;
+      if (path === failedPath || runId === failedPath) throw new Error('Fixture unavailable');
+      return [runId === secondPreview.runId ? secondPreview : preview];
     },
   };
   const Panel = load('features/research-workspace/ResearchToolActivity.tsx').ResearchToolActivity;
@@ -47,7 +51,10 @@ async function withPanel({ waitingForApproval, failedPath, readOnly }, check) {
   const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity }, mutations: { gcTime: Infinity } } });
   const session = {
     id: 'session', status: 'paused', revision: 1,
-    runtimePending: waitingForApproval ? [{ runId: 'run', memberId: 'member', state: 'waiting_approval' }] : [],
+    runtimePending: [
+      ...(waitingForApproval ? [{ runId: 'run', memberId: 'member', state: 'waiting_approval' }] : []),
+      ...(secondApproval ? [{ runId: secondPreview.runId, memberId: 'second-member', state: 'waiting_approval' }] : []),
+    ],
   };
   const requests = () => state.requests.map(({ method, args: [path, options] }) => [method, path, structuredClone(options?.params)]);
   try {
@@ -95,5 +102,30 @@ test('retrying approval previews preserves saved runs and only repeats the previ
     assert.equal(context.document.querySelector('[role="alert"]'), null);
     assert.deepEqual(context.requests().slice(0, 2).map(request => request[1]).sort(), [runPath, approvalPath].sort());
     assert.deepEqual(context.requests().slice(2), [approvalsGet]);
+  });
+});
+
+test('retrying one of two approval previews keeps the successful preview and only repeats the failed GET', async () => {
+  await withPanel({ waitingForApproval: true, secondApproval: true, failedPath: secondPreview.runId }, async context => {
+    const { document, requests } = context;
+    const findPreview = ({ descriptor }) => [...document.querySelectorAll('h3')].find(node => node.textContent === descriptor.name);
+    const saved = await waitFor(() => document.querySelector('details'), 'saved run appears');
+    saved.open = true;
+    await waitFor(() => document.querySelector('[role="alert"]'), 'failed preview is reported');
+    const visiblePreview = findPreview(preview);
+    assert.equal(findPreview(secondPreview), undefined);
+    const initialRequests = requests();
+    const secondGet = ['get', approvalPath, { runId: secondPreview.runId }];
+    assert.deepEqual(initialRequests.filter(([, path]) => path === runPath), [runsGet]);
+    assert.deepEqual(initialRequests.filter(([, path]) => path === approvalPath), [approvalsGet, secondGet]);
+
+    await retry(context, /Could not load approval previews/, 'Retry approval previews');
+    await waitFor(() => findPreview(secondPreview), 'failed preview returns after retry');
+    assert.deepEqual(requests().slice(initialRequests.length), [secondGet]);
+    assert.ok(visiblePreview, 'the successful preview was visible before retry');
+    assert.equal(findPreview(preview), visiblePreview);
+    assert.equal(document.querySelector('details'), saved);
+    assert.equal(saved.open, true);
+    assert.equal(document.querySelector('[role="alert"]'), null);
   });
 });

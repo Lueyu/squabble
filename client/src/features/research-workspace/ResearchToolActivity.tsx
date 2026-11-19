@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import http from '@/api/http';
 import { listToolActions } from '@/api/tool-connections';
@@ -22,10 +22,12 @@ export function ResearchToolActivity({ session, readOnly = false }: { session: R
   const runs = useQuery({ queryKey: ['research-runtime', session.id], retry: false,
     queryFn: async () => (await http.get<RunStatus[]>('/api/research-runtime', { params: { sessionId: session.id } })).data,
     refetchInterval: session.status === 'running' ? 3000 : false });
-  const actions = useQuery({ queryKey: ['tool-actions', session.id], retry: false,
-    queryFn: async () => (await Promise.all((session.runtimePending ?? []).filter(item => item.state === 'waiting_approval')
-      .map(item => listToolActions(item.runId)))).flat(),
-    enabled: Boolean(session.runtimePending?.some(item => item.state === 'waiting_approval')) });
+  const approvalRuns = (session.runtimePending ?? []).filter(item => item.state === 'waiting_approval');
+  const approvals = useQueries({ queries: approvalRuns.map(({ runId }) => ({
+    queryKey: ['tool-actions', session.id, runId], retry: false, queryFn: () => listToolActions(runId),
+  })) });
+  const failedApprovals = approvals.filter(query => query.isError);
+  const previewsByRun = new Map(approvalRuns.map(({ runId }, index) => [runId, approvals[index]?.data]));
   const recovery = useMutation({ retry: false, mutationFn: async ({ pending, action }: {
     pending: CouncilRuntimePending; action: CouncilRuntimeRecoveryInput['action'];
   }) => {
@@ -38,7 +40,7 @@ export function ResearchToolActivity({ session, readOnly = false }: { session: R
     client.setQueryData(['research-conversation', session.id], saved);
     await client.invalidateQueries({ queryKey: ['research-runtime', session.id] });
   } });
-  if (!runs.data?.length && !session.runtimePending?.length && !runs.isError && !actions.isError) return null;
+  if (!runs.data?.length && !session.runtimePending?.length && !runs.isError) return null;
   return <section className="space-y-3 rounded-xl border p-3" aria-label={zh ? '工具研究活动' : 'Research tool activity'}>
     <h3 className="text-sm font-medium">{zh ? '工具研究活动' : 'Research tool activity'}</h3>
     {runs.isError && <div className="flex flex-wrap items-center gap-2">
@@ -47,9 +49,10 @@ export function ResearchToolActivity({ session, readOnly = false }: { session: R
         {zh ? '重试读取运行' : 'Retry saved runs'}
       </Button>
     </div>}
-    {actions.isError && <div className="flex flex-wrap items-center gap-2">
+    {failedApprovals.length > 0 && <div className="flex flex-wrap items-center gap-2">
       <p role="alert" className="text-xs text-destructive">{zh ? '无法读取审批预览。' : 'Could not load approval previews.'}</p>
-      <Button type="button" size="sm" variant="outline" disabled={actions.isFetching} onClick={() => void actions.refetch()}>
+      <Button type="button" size="sm" variant="outline" disabled={failedApprovals.some(query => query.isFetching)}
+        onClick={() => { for (const query of failedApprovals) void query.refetch(); }}>
         {zh ? '重试读取审批预览' : 'Retry approval previews'}
       </Button>
     </div>}
@@ -60,7 +63,7 @@ export function ResearchToolActivity({ session, readOnly = false }: { session: R
     </details>)}
     {session.runtimePending?.map(pending => {
       const run = runs.data?.find(item => item.id === pending.runId), last = run?.steps.at(-1);
-      const previews = actions.data?.filter(item => item.runId === pending.runId) ?? [];
+      const previews = previewsByRun.get(pending.runId)?.filter(item => item.runId === pending.runId) ?? [];
       return <article key={pending.runId} className="space-y-3 rounded-lg bg-muted/40 p-3">
         <p className="text-sm">{session.members?.find(member => member.id === pending.memberId)?.name ?? pending.memberId} · {run?.state ?? pending.state}</p>
         {pending.state === 'provider_unknown' && <p className="text-xs text-muted-foreground">{zh
