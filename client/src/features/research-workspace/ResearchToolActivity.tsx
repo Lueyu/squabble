@@ -38,9 +38,21 @@ export function ResearchToolActivity({ session, readOnly = false }: { session: R
     client.setQueryData(['research-conversation', session.id], saved);
     await client.invalidateQueries({ queryKey: ['research-runtime', session.id] });
   } });
-  if (!runs.data?.length && !session.runtimePending?.length) return null;
+  if (!runs.data?.length && !session.runtimePending?.length && !runs.isError && !actions.isError) return null;
   return <section className="space-y-3 rounded-xl border p-3" aria-label={zh ? '工具研究活动' : 'Research tool activity'}>
     <h3 className="text-sm font-medium">{zh ? '工具研究活动' : 'Research tool activity'}</h3>
+    {runs.isError && <div className="flex flex-wrap items-center gap-2">
+      <p role="alert" className="text-xs text-destructive">{zh ? '无法读取已保存的运行。' : 'Could not load saved runs.'}</p>
+      <Button type="button" size="sm" variant="outline" disabled={runs.isFetching} onClick={() => void runs.refetch()}>
+        {zh ? '重试读取运行' : 'Retry saved runs'}
+      </Button>
+    </div>}
+    {actions.isError && <div className="flex flex-wrap items-center gap-2">
+      <p role="alert" className="text-xs text-destructive">{zh ? '无法读取审批预览。' : 'Could not load approval previews.'}</p>
+      <Button type="button" size="sm" variant="outline" disabled={actions.isFetching} onClick={() => void actions.refetch()}>
+        {zh ? '重试读取审批预览' : 'Retry approval previews'}
+      </Button>
+    </div>}
     {runs.data?.map(run => <details key={run.id} className="text-xs">
       <summary>{zh ? '已保存运行' : 'Saved run'} · {run.state} · {run.steps.length} {zh ? '模型步骤' : 'model steps'}</summary>
       <ul className="mt-2 space-y-1">{run.steps.map(step => <li key={step.id}>{step.index + 1}. {step.model} · {step.state} · {step.usageKnown ? (zh ? '用量已记录' : 'Usage recorded') : (zh ? '用量未知' : 'Usage unknown')}</li>)}
@@ -66,6 +78,6 @@ export function ResearchToolActivity({ session, readOnly = false }: { session: R
         </div>}
       </article>;
     })}
-    {(runs.isError || recovery.isError) && <p role="alert" className="text-xs text-destructive">{zh ? '状态尚未确认；已有结果仍保留，请刷新后重试。' : 'Status is unconfirmed. Saved results remain; refresh and retry.'}</p>}
+    {recovery.isError && <p role="alert" className="text-xs text-destructive">{zh ? '状态尚未确认；已有结果仍保留，请刷新后重试。' : 'Status is unconfirmed. Saved results remain; refresh and retry.'}</p>}
   </section>;
 }
