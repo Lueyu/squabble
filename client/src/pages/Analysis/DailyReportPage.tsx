@@ -53,8 +53,14 @@ export default function DailyReportPage() {
     zh = i18n.language.startsWith('zh');
   const [params, setParams] = useSearchParams();
   const date = params.get('date') || undefined;
+  const [detailDate, setDetailDate] = useState(date);
   const [layer, setLayer] = useState<'personal' | string | null>(null);
   const [reportId, setReportId] = useState<string | null>(null);
+  if (date !== detailDate) {
+    setDetailDate(date);
+    setLayer(null);
+    setReportId(null);
+  }
   const query = useQuery({
     queryKey: ['daily-workspace', date],
     queryFn: () => fetchDailyWorkspace(date),
