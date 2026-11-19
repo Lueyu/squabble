@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 import { ArrowLeft, GitBranch, MessageSquare, Pencil, Check, LoaderCircle } from 'lucide-react';
-import type { ResearchDocumentSection, ResearchRevisionDraft, ResearchSectionDiff } from '@shared/research-document.interface';
+import type { ResearchDocumentSection, ResearchDocumentView, ResearchRevisionDraft, ResearchSectionDiff } from '@shared/research-document.interface';
 import { adoptResearchVersion, createResearchRevision, fetchResearchDocument, forkResearchVersion, publishResearchRevision, revokeResearchVersion, updateResearchRevision } from '@/api/research-documents';
 import { researchDiscussionPath, researchSectionChanges, researchSectionsContent, researchStrategyPath } from '@/utils/research-documents';
 import { Button } from '@/components/ui/button';
@@ -28,12 +28,45 @@ function Diff({ changes, en }: { changes: ResearchSectionDiff[]; en: boolean }) 
   </div>) : <p className="text-sm text-muted-foreground">{en ? 'No section changes.' : '章节内容尚无变化。'}</p>}</div>;
 }
 
+function linkedStrategies(report: ResearchDocumentView, returnTo: string, en: boolean) {
+  return report.strategyUses?.map(use => {
+    const params = new URLSearchParams({
+      strategyId: use.strategyId,
+      sourceReportVersionId: use.versionId,
+      returnTo,
+    });
+    const version = report.versions?.find(item => item.id === use.versionId);
+    return (
+      <Link key={`${use.strategyId}:${use.versionId}`} className="block break-words text-primary underline" to={`/paper?${params}`}>
+        {en ? 'Linked strategy' : '关联策略'}{version && ` · v${version.version}`}
+      </Link>
+    );
+  });
+}
+
 export default function ResearchDocumentPage() {
   const { versionId = '' } = useParams<{ versionId: string }>();
   const { enabled } = useSimpleExperience();
-  if (enabled) return <SimpleReportReader key={versionId} versionId={versionId} />;
+  if (enabled) return <SimpleResearchDocument key={versionId} versionId={versionId} />;
   // A route change remounts editing state so a draft cannot accidentally publish against another version.
   return <ResearchDocumentReader key={versionId} versionId={versionId} />;
+}
+
+function SimpleResearchDocument({ versionId }: { versionId: string }) {
+  const { i18n } = useTranslation();
+  const location = useLocation();
+  const reportPath = location.pathname + location.search + location.hash;
+  const { data } = useQuery({ queryKey: ['research-document', versionId], queryFn: () => fetchResearchDocument(versionId), enabled: Boolean(versionId) });
+  return (
+    <>
+      <SimpleReportReader versionId={versionId} />
+      {Boolean(data?.strategyUses?.length) && data && (
+        <aside className="mx-auto mb-6 max-w-5xl px-4 text-sm">
+          {linkedStrategies(data, reportPath, i18n.language.startsWith('en'))}
+        </aside>
+      )}
+    </>
+  );
 }
 function ResearchDocumentReader({ versionId }: { versionId: string }) {
   const { i18n } = useTranslation(); const en = Boolean(i18n.resolvedLanguage?.startsWith('en'));
@@ -61,7 +94,7 @@ function ResearchDocumentReader({ versionId }: { versionId: string }) {
   }
   if (query.isPending) return <div role="status" className="flex items-center gap-2 p-8"><LoaderCircle className="size-4 animate-spin" />{label('Loading report…', '正在加载报告…')}</div>;
   if (query.isError || !query.data) return <div role="alert" className="space-y-4 p-8"><p>{label('This report is unavailable or belongs to another workspace.', '报告不存在或不属于当前账户。')}</p><Button onClick={() => void query.refetch()}>{label('Retry', '重试')}</Button></div>;
-  const { version, document, versions = [], drafts = [], diff = [], strategyUses = [] } = query.data;
+  const { version, document, versions = [], drafts = [], diff = [] } = query.data;
   const adoptions = query.data.adoptions ?? [];
   const strategyVersionIds = document.strategyVersionIds ?? [];
   const invalid = version.status === 'revoked' || version.sourceStatus === 'missing';
@@ -126,7 +159,7 @@ function ResearchDocumentReader({ versionId }: { versionId: string }) {
         <details className="rounded-xl border p-4"><summary className="cursor-pointer font-semibold">{label('Frozen inputs', '固定输入快照')}</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">{version.snapshot ? JSON.stringify(version.snapshot, null, 2) : label('Unknown — no historical snapshot was supplied.', '未知：历史报告未提供输入快照。')}</pre></details>
         <div className="space-y-2 rounded-xl border p-4"><h2 className="font-semibold">{label('Provenance', '来源记录')}</h2><p className="break-all text-xs text-muted-foreground">{version.source ? `${version.source.type} / ${version.source.id}` : label('Research revision', '研究修订')}</p>
           {version.parentVersionId && <Link className="block underline" to={`/analysis/reports/${version.parentVersionId}`}>{label('Open parent version', '打开父版本')}</Link>}
-          {strategyUses.map(use => <Link key={`${use.strategyId}:${use.versionId}`} className="block underline" to={`/paper?strategyId=${use.strategyId}&sourceReportVersionId=${use.versionId}`}>{label('Linked strategy', '关联策略')} · {versionLabel(use.versionId)}</Link>)}
+          {linkedStrategies(query.data, location.pathname + location.search + location.hash, en)}
         </div>
       </aside></div>
     {diff.length > 0 && <details className="rounded-xl border p-4"><summary className="cursor-pointer font-semibold">{label('Changes from parent version', '相对父版本的差异')}</summary><div className="mt-4"><Diff changes={diff} en={en} /></div></details>}

@@ -10,7 +10,8 @@
  * under `api/`, and shared layout under `components/Layout.tsx`.
  */
 import React, { useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { getAuthMode } from './api/auth-mode';
 import { initAgentAPI } from './utils/agent-api';
 
@@ -26,6 +27,8 @@ import JournalPage from './pages/Journal/JournalPage';
 import TransactionsPage from './pages/Transactions/TransactionsPage';
 import SettingsPage from './pages/Settings/SettingsPage';
 import PaperPage from './pages/Paper/PaperPage';
+import LegacyDecisionPage from './pages/Paper/LegacyDecisionPage';
+import { safeReturnPath } from './features/navigation/workspace-navigation';
 import AgentBuilderPage from './pages/AgentBuilder/AgentBuilderPage';
 import CouncilPage from './pages/Council/CouncilPage';
 import ImportPage from './pages/Import/ImportPage';
@@ -78,12 +81,19 @@ function SimulationsRoute() {
   const { search, hash, state } = useLocation();
   const params = new URLSearchParams(search);
   const sourceVersion = params.get('sourceReportVersionId');
+  const mandateId = params.get('strategyId');
   const requestedAccounts = params.getAll('accountId');
   const accountId = requestedAccounts.length === 1 && requestedAccounts[0] !== 'real' ? requestedAccounts[0] : null;
   let destination = { pathname: SIMULATION_ACCOUNTS_PATH, search, hash };
   if (hash === '#notifications') {
     destination = { pathname: '/settings/notifications', search, hash: '' };
-  } else if (params.get('draft') === '1' && sourceVersion && !params.has('strategyId')) {
+  } else if (mandateId !== null) {
+    return <LinkedStrategy
+      strategyId={mandateId}
+      returnTo={safeReturnPath(params.get('returnTo'))
+        ?? (sourceVersion ? `/analysis/reports/${encodeURIComponent(sourceVersion)}` : undefined)}
+    />;
+  } else if (params.get('draft') === '1' && sourceVersion) {
     destination = { pathname: '/analysis/reports/' + encodeURIComponent(sourceVersion), search, hash: '#report-strategy' };
   } else if (accountId && params.get('investmentStrategyId')) {
     destination = { pathname: simulationStrategyPath(accountId), search, hash };
@@ -94,6 +104,20 @@ function SimulationsRoute() {
     current={<Navigate to={destination} state={state} replace />}
     legacy={<PaperPage />}
   />;
+}
+
+function LinkedStrategy({ strategyId, returnTo }: { strategyId: string; returnTo?: string }) {
+  const { i18n } = useTranslation();
+  return (
+    <>
+      {returnTo && (
+        <Link className="mx-auto block max-w-4xl px-6 pt-4 text-primary underline" to={returnTo}>
+          {i18n.language.startsWith('zh') ? '返回报告' : 'Back to report'}
+        </Link>
+      )}
+      <LegacyDecisionPage strategyId={strategyId} />
+    </>
+  );
 }
 
 function LegacySimulationAccountRoute() {
