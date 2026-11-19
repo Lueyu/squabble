@@ -1,6 +1,10 @@
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { councilReports } from '../../database/council.schema';
+import { monitorFixture, seedMonitor } from './research-memory.monitor.fixtures';
 import { rankMemoryRecall } from './research-memory.rules';
 import { packMemoryContext } from './research-memory.context';
 import { retrievalCases, retrievalCorpus } from './research-memory.retrieval.fixtures';
@@ -50,3 +54,71 @@ test('linked refutation gets capacity beside its anchor ahead of equally relevan
   assert.equal(rankMemoryRecall([history, ...corpus.filter(item => !item.id.startsWith('cash'))], 'free cash flow', preferences).items[0].id,
     history.id, 'relevant history-only evidence outranks unrelated atomic theses');
 });
+
+const shortQueries = [
+  { name: 'Chinese alias', query: '现金流怎么样', relevant: ['cash', 'cash-risk'], first: 'cash' },
+  { name: 'Two-character Chinese alias', query: '回款', relevant: ['cash', 'cash-risk'], first: 'cash' },
+  { name: 'English alias', query: 'free cash flow', relevant: ['cash', 'cash-risk'], first: 'cash' },
+  { name: 'English literal', query: 'premium pricing', relevant: ['pricing'], first: 'pricing' },
+  { name: 'Unlisted renewal query', query: '续约', relevant: ['renewals-cn'], first: 'renewals-cn' },
+  { name: 'Unlisted price query with punctuation', query: '提价？', relevant: ['price-cn'], first: 'price-cn' },
+  { name: 'Unlisted capacity query', query: '扩产', relevant: ['capacity-cn'], first: 'capacity-cn' },
+  { name: 'Unlisted continuous question', query: '续约怎么样', relevant: ['renewals-cn'] },
+  { name: 'No literal or alias match', query: '商誉', relevant: [], first: 'capacity' },
+  { name: 'Two-letter English control', query: 'AI', relevant: ['capacity-cn'], first: 'capacity' },
+];
+
+for (const fixture of shortQueries) {
+  test(`short-query rank: ${fixture.name}`, t => {
+    const corpus = retrievalCorpus();
+    const claim = corpus[0];
+    const localFixtures = [
+      { id: 'renewals-cn', summary: '订阅到期续约比例上升，主要来自企业客户。' },
+      { id: 'price-cn', summary: '试点渠道年底提价，销量仍待核对。' },
+      { id: 'capacity-cn', summary: '新厂扩产将在明年交付，供给将覆盖 AI 加速卡。' },
+    ];
+    const items = [...corpus, ...localFixtures.map(({ id, summary }) => ({
+      ...claim,
+      id,
+      memoryId: `memory-${id}`,
+      summary,
+      content: claim.content && { ...claim.content, claim: summary },
+      citations: [],
+      source: { ...claim.source, reportId: `report-${id}`, reportCreatedAt: '2026-09-01T00:00:00.000Z' },
+    }))];
+    const topThree = rankMemoryRecall(items, fixture.query, preferences).items.slice(0, 3).map(item => item.id);
+    const hits = fixture.relevant.filter(id => topThree.includes(id)).length;
+    t.diagnostic(JSON.stringify({ query: fixture.query, topThree, hits, relevant: fixture.relevant }));
+    if (fixture.first) assert.equal(topThree[0], fixture.first);
+  });
+}
+
+test('a matching short query obeys request and saved opt-outs, owner and ticker scope, and live source eligibility', {
+  skip: !process.env.MEMORY_TEST_DATABASE_URL,
+}, async () => monitorFixture(async (db, _client, owner) => {
+  const { memory, report, thesis } = await seedMonitor(db, owner);
+  const edited = await memory.updateThesis(owner, thesis.id, {
+    action: 'edit',
+    expectedVersion: thesis.version,
+    content: {
+      claim: '订阅续约比例上升',
+      supportingEvidence: thesis.supportingEvidence,
+      opposingEvidence: [],
+      assumptions: [],
+      indicators: [],
+      invalidationConditions: [],
+    },
+  });
+  const query = { ticker: 'AAPL', query: '续约' };
+  const initial = await memory.recall(owner, query);
+  assert.ok(initial.items.some(item => item.id === edited.id && item.content?.claim.includes('续约')));
+  assert.deepEqual((await memory.recall(owner, { ...query, enabled: false })).items, []);
+  assert.deepEqual((await memory.recall(randomUUID(), query)).items, []);
+  assert.deepEqual((await memory.recall(owner, { ...query, ticker: 'MSFT' })).items, []);
+  await memory.updatePreferences(owner, { autoArchive: true, recallEnabled: false });
+  assert.deepEqual((await memory.recall(owner, query)).items, []);
+  await memory.updatePreferences(owner, { autoArchive: true, recallEnabled: true });
+  await db.delete(councilReports).where(eq(councilReports.id, report.id));
+  assert.deepEqual((await memory.recall(owner, query)).items, []);
+  assert.deepEqual((await memory.refreshRecall(owner, initial, query)).items, []);
+}));
