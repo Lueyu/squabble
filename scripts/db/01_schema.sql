@@ -2528,3 +2528,8 @@ ALTER TABLE model_connections
   ADD COLUMN IF NOT EXISTS test_attempt_id UUID,
   ADD COLUMN IF NOT EXISTS test_state VARCHAR(12),
   ADD COLUMN IF NOT EXISTS tested_at TIMESTAMPTZ;
+
+-- 71_team_active_names.sql
+CREATE INDEX IF NOT EXISTS teams_active_owner_name_idx
+  ON teams (owner_id, lower(btrim(name)))
+  WHERE status = 'active';

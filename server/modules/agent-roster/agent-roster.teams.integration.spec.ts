@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { modelConnections } from '../../database/model-connections.schema';
 import { AgentRosterService } from './agent-roster.service';
 import { makeTeamFixture } from '../teams/team-test.fixture';
 import { TeamCommissionWorker } from '../teams/team-commission.worker';
@@ -20,11 +21,20 @@ test('commissions and their runtime freeze the selected person independently of 
       instructions: 'Verify cash flow.', preferences: { language: 'en', userPreferences: 'Be concise.' },
       allowedToolIds: [], allowedSources: [],
     });
+    const [seatConnection] = await f.db.insert(modelConnections).values({
+      owner: f.owner, name: 'Seat connection', baseUrl: 'https://seat.invalid',
+      fastModel: 'seat-fast', slowModel: 'seat-slow', apiKeyEnc: 'fixture-only-unused',
+    }).returning();
+    const seatExecutor = { executionMode: 'model' as const, connectionId: seatConnection.id, tier: 'fast', model: 'seat-fast', settings: {} };
     const initial = await f.team();
+    const other = await f.team('Separate fixture team');
     const detail = await f.service.detail(f.owner, initial.team.id);
     const config = {
       ...detail.draft.config,
-      roles: detail.draft.config.roles.map(role => ({ ...role, agentId: agent.id, agentVersionId: agent.currentVersionId })),
+      roles: detail.draft.config.roles.map(role => ({
+        ...role, agentId: agent.id, agentVersionId: agent.currentVersionId,
+        executor: seatExecutor, workingInstructions: 'Check the scoped team assumption.',
+      })),
     };
     const saved = await f.service.save(f.owner, initial.team.id, 'draft', {
       requestKey: randomUUID(), expectedSemanticRevision: detail.semanticRevision, config,
@@ -61,6 +71,18 @@ test('commissions and their runtime freeze the selected person independently of 
       return f.commissions.detail(f.owner, saved.id, created.commissionId);
     }
     const old = await commission();
+    const otherDraft = await f.service.save(f.owner, other.team.id, 'draft', {
+      requestKey: randomUUID(), expectedSemanticRevision: other.team.semanticRevision,
+      config: { ...other.team.draft.config, roles: other.team.draft.config.roles.map(role => ({
+        ...role, agentId: agent.id, agentVersionId: agent.currentVersionId,
+      })) },
+    });
+    assert.equal(otherDraft.draft.config.roles[0].workingInstructions, undefined);
+    assert.equal(otherDraft.draft.config.roles[0].executor?.executionMode === 'model'
+      && otherDraft.draft.config.roles[0].executor.connectionId, f.connection.id);
+    assert.deepEqual(await roster.detail(f.owner, agent.id), agent);
+    assert.deepEqual(old.members[0].executor, seatExecutor);
+    assert.match(old.members[0].agentInstructions!, /Check the scoped team assumption\./u);
     assert.equal(old.members[0].avatar, 'news');
     assert.equal(old.members[0].agentName, 'Fictional fox');
     assert.match(old.members[0].agentInstructions!, /Be concise/u);
@@ -80,6 +102,9 @@ test('commissions and their runtime freeze the selected person independently of 
     assert.equal(session.profile_snapshot.council.members[0].name, 'Fictional fox');
     assert.equal(session.profile_snapshot.council.members[0].rosterAgentId, agent.id);
     assert.match(session.profile_snapshot.council.members[0].instructions, /Be concise/u);
+    assert.match(session.profile_snapshot.council.members[0].instructions, /Check the scoped team assumption\./u);
+    assert.equal(session.profile_snapshot.council.members[0].connectionId, seatConnection.id);
+    assert.equal(session.profile_snapshot.council.members[0].model, 'fast');
     assert.equal((await roster.history(f.owner, agent.id)).items.length, 1);
   } finally { await f.dispose(); }
 });

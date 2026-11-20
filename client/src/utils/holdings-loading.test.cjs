@@ -21,8 +21,9 @@ const holding = ticker => ({ id: ticker, ticker, company: `${ticker} saved compa
   market: 'US', currency: 'USD', groupId: null, rating: null, action: null, updatedAt: '2026-11-10T00:00:00Z' });
 const overview = { totalMv: '24', totalPl: '4', baseCurrency: 'USD' };
 
-async function mount(setup, run) {
+async function mount(setup, run, { simple = true } = {}) {
   const f = fixture(), api = f.load('api/index.ts'), subscriptions = [];
+  f.state.simpleExperience = simple;
   Object.assign(api, { fetchHoldings: async () => [holding('FICT')], fetchGroups: async () => [],
     fetchCashAccounts: async () => [], fetchDashboard: async () => overview });
   f.load('hooks/use-market-quotes.ts').useMarketQuotes = tickers => {
@@ -34,24 +35,37 @@ async function mount(setup, run) {
   const host = document.createElement('div'); document.body.append(host);
   const root = createRoot(host);
   try {
-    const started = performance.now();
     await React.act(async () => root.render(React.createElement(MemoryRouter, null, React.createElement(Page))));
-    await run({ host, subscriptions, firstRenderMs: performance.now() - started,
+    await run({ host, subscriptions,
       update: async () => React.act(async () => window.dispatchEvent(new Event('portfolio-updated'))),
       refresh: async () => React.act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'ui.tx.refresh').click()) });
   } finally { await React.act(async () => root.unmount()); host.remove(); }
 }
 
-test('saved holdings render and subscribe to quotes while all supplemental requests remain pending', async t => {
-  const groups = deferred(), cash = deferred(), dashboard = deferred();
-  await mount(api => Object.assign(api, { fetchGroups: () => groups.promise, fetchCashAccounts: () => cash.promise,
-    fetchDashboard: () => dashboard.promise }), async ({ host, subscriptions, firstRenderMs }) => {
-    assert.match(host.textContent, /FICT saved company/, 'saved rows must not wait for dashboard quote/FX work');
+test('saved holdings render and subscribe to quotes while cash and groups remain pending', async () => {
+  const groups = deferred(), cash = deferred();
+  await mount(api => Object.assign(api, { fetchGroups: () => groups.promise, fetchCashAccounts: () => cash.promise }), async ({ host, subscriptions }) => {
+    assert.match(host.textContent, /FICT saved company/, 'saved rows must not wait for supplemental data');
     assert.ok(subscriptions.some(tickers => tickers.includes('FICT')), 'background quotes begin as soon as holdings arrive');
     assert.doesNotMatch(host.textContent, /\$0\.00/, 'a pending aggregate is unknown, not a zero portfolio');
-    t.diagnostic(`Saved row present after ${Math.round(firstRenderMs)} ms of React rendering with dashboard, cash and groups still unresolved (fictional fixture; excludes module loading).`);
-    await React.act(async () => { groups.resolve([]); cash.resolve([]); dashboard.resolve(overview); });
+    await React.act(async () => { groups.resolve([]); cash.resolve([]); });
     assert.match(host.textContent, /FICT saved company/);
+  });
+});
+
+test('real holdings show full management immediately', async () => {
+  await mount(() => {}, async ({ host }) => {
+    const search = host.querySelector('input[placeholder="ui.holdings.searchPlaceholder"]');
+    assert.ok(search, 'the full holdings search is available');
+    assert.ok(!search.closest('details:not([open])'), 'the full holdings view is visible on arrival');
+  });
+});
+
+test('real holdings do not repeat the position in a simplified summary', async () => {
+  await mount(() => {}, async ({ host }) => {
+    const entries = [...host.querySelectorAll('button')].filter(button => button.textContent.includes('FICT saved company'));
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0].closest('tbody'));
   });
 });
 
@@ -63,7 +77,7 @@ test('a failed background aggregate refresh retains the previous total and visib
     assert.match(host.textContent, /FICT saved company/);
     assert.match(host.textContent, /\$24\.00 · ui\.holdings\.floatingPl \$4\.00/);
     assert.equal(host.querySelector('[role="alert"]'), null, 'background aggregate failure must not mark the holdings request as failed');
-  });
+  }, { simple: false });
 });
 
 test('refresh keeps visible holdings while loading and after a failed holdings request', async () => {

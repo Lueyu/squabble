@@ -50,7 +50,8 @@ export async function makeTeamFixture() {
     const before = { workspace: process.env.TEAM_WORKSPACE_ENABLED, research: process.env.TEAM_RESEARCH_ENABLED };
     process.env.TEAM_WORKSPACE_ENABLED = 'true';
     process.env.TEAM_RESEARCH_ENABLED = 'true';
-    async function team(name = 'Fixture team') {
+    let nextTeam = 1;
+    async function team(name = `Fixture team ${nextTeam++}`) {
         const created = await service.create(owner, { requestKey: randomUUID(), name }) as TeamDetail;
         const role = randomUUID(), config: TeamSemanticConfig = { schemaVersion: 1, departments: [], roles: [{ id: role, departmentId: null, participation: 'enabled', responsibility: 'Analyze fixture', expectedOutput: 'Structured evidence', executor: { executionMode: 'model', connectionId: connection.id, model: 'fixture', settings: {} }, allowedToolIds: [], sourceGrantIds: [] }], relations: [], defaults: { leadRoleId: role, parallelism: 1 } };
         const saved = await service.save(owner, created.id, 'draft', { requestKey: randomUUID(), expectedSemanticRevision: 1, config }) as TeamDetail;

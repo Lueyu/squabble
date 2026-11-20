@@ -18,6 +18,7 @@ export function assetHref(path: string, id: string, search = ''): string {
 }
 
 export const SIMULATION_ACCOUNTS_PATH = '/holdings/accounts';
+export const FORMER_TEAM_ACCOUNTS_PATH = `${SIMULATION_ACCOUNTS_PATH}?status=former-team`;
 
 export const holdingsHref = (id: string) => assetHref('/holdings', id);
 

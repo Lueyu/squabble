@@ -20,6 +20,9 @@ export interface AgentPreferences {
   language: 'zh-CN' | 'en'; responseStyle: 'concise' | 'detailed'; userPreferences: string;
 }
 export interface AgentVersionConfig {
+  origin?: 'builtin';
+  /** Frozen specialty guidance for team execution. Personal research uses instructions. */
+  teamInstructions?: string;
   schemaVersion: 1; templateId: AgentTemplateId; instructions: string; executor: AgentExecutor;
   /** Ceilings only: neither these declarations nor a template grant live access. */
   allowedToolIds: string[]; allowedSources: ResearchSourceRef[]; preferences: AgentPreferences;
@@ -28,6 +31,9 @@ export interface AgentVersion {
   id: string; agentId: string; version: number; config: AgentVersionConfig; createdAt: string;
 }
 export interface AgentProfile {
+  origin?: 'builtin';
+  /** Currently resolvable personal route for a built-in friend; never part of its saved version. */
+  effectiveExecutor?: AgentExecutor;
   avatar: AnimalAvatarId;
   id: string; name: string; specialty: string; description: string; status: 'active' | 'archived';
   revision: number; currentVersionId: string; currentVersion: AgentVersion;

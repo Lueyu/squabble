@@ -76,7 +76,7 @@ function harness(file, options = {}) {
   return {
     states,
     exports,
-    render(props, component = exports.default) { cursor = 0; effectCursor = 0; effects.length = 0; return component(props); },
+    render(props = {}, component = exports.default) { cursor = 0; effectCursor = 0; effects.length = 0; return component(props); },
     async runEffects() { for (const effect of effects.splice(0)) await effect(); await Promise.resolve(); await Promise.resolve(); },
   };
 }

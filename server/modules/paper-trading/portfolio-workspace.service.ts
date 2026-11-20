@@ -7,6 +7,7 @@ import { investmentPolicies, investmentRequests } from '../../database/investmen
 import { portfolioAccountCompanions, portfolioCombinationDrafts, portfolioCombinationPreviews, portfolioCombinationRevisions,
   portfolioStrategyAssignments } from '../../database/portfolio-workspace.schema';
 import { strategyMandates } from '../../database/strategy-mandates.schema';
+import { teamAccountBindings, teams } from '../../database/teams.schema';
 import { lockMemoryOwner } from '../research-memory/research-memory.fence';
 import { SimpleCouncilService } from '../council/simple-council.service';
 import { cancelInvestmentCandidates, expireInvestmentConstraints, InvestmentPolicyService, policyView,
@@ -81,22 +82,43 @@ export class PortfolioWorkspaceService {
     });
   }
   async list(owner: string): Promise<PortfolioAccountSummary[]> {
-    const [accounts, policies, snapshots, assignments, companions] = await Promise.all([
-      this.db.select().from(paperAccounts).where(eq(paperAccounts.owner, owner)).orderBy(desc(paperAccounts.createdAt)),
-      this.db.select().from(investmentPolicies).where(eq(investmentPolicies.owner, owner)),
+    return this.summaries(owner, true);
+  }
+  private async summaries(owner: string, includeFormerTeam = false): Promise<PortfolioAccountSummary[]> {
+    const latestBinding = this.db.selectDistinctOn([teamAccountBindings.accountId], {
+      accountId: teamAccountBindings.accountId,
+      state: teamAccountBindings.state,
+      teamStatus: teams.status,
+      id: teams.id,
+      name: teams.name,
+    }).from(teamAccountBindings).innerJoin(teams, and(eq(teams.id, teamAccountBindings.teamId), eq(teams.ownerId, teamAccountBindings.ownerId)))
+      .where(eq(teamAccountBindings.ownerId, owner))
+      .orderBy(teamAccountBindings.accountId, desc(teamAccountBindings.effectiveFrom), desc(teamAccountBindings.effectiveTo),
+        desc(teamAccountBindings.createdAt), desc(teamAccountBindings.id))
+      .as('latest_binding');
+    const accountQuery = this.db.select().from(paperAccounts)
+      .leftJoin(investmentPolicies, and(eq(investmentPolicies.accountId, paperAccounts.id), eq(investmentPolicies.owner, paperAccounts.owner)))
+      .where(eq(paperAccounts.owner, owner)).orderBy(desc(paperAccounts.createdAt));
+    const [accounts, snapshots, assignments, companions] = await Promise.all([
+      includeFormerTeam ? accountQuery.leftJoin(latestBinding, and(eq(latestBinding.accountId, paperAccounts.id),
+        eq(latestBinding.state, 'archived'), eq(latestBinding.teamStatus, 'archived')))
+        : accountQuery.then(rows => rows.map(row => ({ ...row, latest_binding: null }))),
       this.db.selectDistinctOn([paperSnapshots.accountId]).from(paperSnapshots).where(eq(paperSnapshots.owner, owner))
         .orderBy(paperSnapshots.accountId, desc(paperSnapshots.valuedAt), desc(paperSnapshots.snapshotDate)),
       this.db.select().from(portfolioStrategyAssignments).where(eq(portfolioStrategyAssignments.owner, owner)),
       this.db.select().from(portfolioAccountCompanions).where(eq(portfolioAccountCompanions.owner, owner)),
     ]);
-    const colorOrder = [...accounts].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
-    return accounts.map(account => {
-      const policy = policies.find(p => p.accountId === account.id);
+    const colorOrder = accounts.map(row => row.paper_accounts)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+    return accounts.map(row => {
+      const { paper_accounts: account, investment_policies: policy } = row;
       const companion = companions.find(item => item.accountId === account.id);
+      const status = !account.isActive || policy?.status === 'archived' ? 'archived'
+        : policy ? policy.status === 'running' ? 'running' : 'paused' : account.botEnabled ? 'running' : 'paused';
+      const formerTeam = row.latest_binding;
       return { id: account.id, colorIndex: colorOrder.findIndex(a => a.id === account.id), name: account.name, createdAt: account.createdAt.toISOString(),
         companionId: companion?.companionId ?? null, companionRevision: companion?.revision ?? 0,
-        status: !account.isActive || policy?.status === 'archived' ? 'archived'
-          : policy ? policy.status === 'running' ? 'running' : 'paused' : account.botEnabled ? 'running' : 'paused',
+        status, ...(status === 'paused' && formerTeam && { formerTeam: { id: formerTeam.id, name: formerTeam.name } }),
         policyRevision: policy?.revision ?? null, equityUsd: snapshots.find(s => s.accountId === account.id)?.equity ?? null,
         cashBalance: account.cashBalance, strategyCount: assignments.filter(a => a.accountId === account.id && a.enabled).length };
     });
@@ -104,7 +126,7 @@ export class PortfolioWorkspaceService {
   async detail(owner: string, accountId: string): Promise<PortfolioAccountDetail> {
     await this.account(owner, accountId);
     const [accounts, investment, combination] = await Promise.all([
-      this.list(owner), this.policies.overview(owner, accountId), this.combination(owner, accountId),
+      this.summaries(owner), this.policies.overview(owner, accountId), this.combination(owner, accountId),
     ]);
     return { ...accounts.find(a => a.id === accountId)!, investment, combination };
   }

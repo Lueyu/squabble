@@ -65,7 +65,7 @@ function TeamEditor({ team, zh }: { team: TeamDetail; zh: boolean }) {
     return initial ? [initial.id] : [];
   });
   const [locateId, setLocateId] = useState<string | null>(null);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('organization');
   const requestedPanel = params.get('panel');
   const panel = requestedPanel === 'relations' ? 'organization'
     : requestedPanel && ['organization', 'history', 'sources', 'versions'].includes(requestedPanel) ? requestedPanel : 'overview';
@@ -223,13 +223,18 @@ function TeamEditor({ team, zh }: { team: TeamDetail; zh: boolean }) {
         <section className="team-organization-card">
           <div className="team-section-title">
             <h2>{zh ? '团队组织' : 'Team organization'}</h2>
-            <div className="team-view-switch" role="group" aria-label={zh ? '组织视图' : 'Organization view'}>
-              <Button variant={!outline ? 'secondary' : 'ghost'} size="sm" aria-pressed={!outline}
-                onClick={() => setViewMode('canvas')}>{zh ? '画布' : 'Canvas'}</Button>
-              <Button variant={outline ? 'secondary' : 'ghost'} size="sm" aria-pressed={outline}
-                onClick={() => setViewMode('list')}>{zh ? '列表' : 'List'}</Button>
+            <div className="team-canvas-header-actions">
+              <div className="team-view-switch" role="group" aria-label={zh ? '组织视图' : 'Organization view'}>
+                <Button variant="outline" size="sm" aria-pressed={!outline}
+                  onClick={() => setViewMode('canvas')}>{zh ? '画布' : 'Canvas'}</Button>
+                <Button variant="outline" size="sm" aria-pressed={outline}
+                  onClick={() => setViewMode('list')}>{zh ? '列表' : 'List'}</Button>
+              </div>
+              {!outline && <Button variant="outline" size="sm" onClick={() => canvasControls.current?.fit()}>{zh ? '适应画布' : 'Fit canvas'}</Button>}
             </div>
           </div>
+          {!outline && <TeamEditorToolbar zh={zh} onZoomIn={() => canvasControls.current?.zoomIn()}
+            onZoomOut={() => canvasControls.current?.zoomOut()} onResetZoom={() => canvasControls.current?.resetZoom()} zoom={zoom} />}
           {outline
             ? <TeamOutline state={state} selected={selected} select={selectObjects} edit={edit} locate={locate} zh={zh} readOnly={readOnly} />
             : <TeamCanvas state={state} selected={selected} select={selectObjects} edit={edit}
@@ -239,7 +244,22 @@ function TeamEditor({ team, zh }: { team: TeamDetail; zh: boolean }) {
               fitInitial={draft.baseline.layoutRevision <= 1 || (state.layout.viewport.x === 0 && state.layout.viewport.y === 0)}
               assignAgent={assignAgent}
               onZoomChange={setZoom} registerControls={controls => { canvasControls.current = controls; }} />}
-          {!outline && <p className="team-muted team-small">{zh ? '实线表示汇报，虚线表示协作。' : 'Solid lines show reporting. Dashed lines show collaboration.'}</p>}
+          {(!outline || (selected.length === 1 && selectedRole)) && <div className="team-canvas-footer">
+            {!outline && <>
+              <span className="team-canvas-key">{zh ? '汇报' : 'Reporting'}</span>
+              <span className="team-canvas-key team-canvas-key-dashed">{filter === 'organization'
+                ? (zh ? '当前岗位的复核关系' : 'Review links for the selected role')
+                : (zh ? '协作与复核' : 'Collaboration and review')}</span>
+            </>}
+            {selected.length === 1 && selectedRole && <>
+              <span className="team-canvas-selected">{zh ? '已选岗位：' : 'Selected role: '}{state.display.roleLabels[selectedRole.id]}</span>
+              <Button size="sm" variant="outline" onClick={() => {
+                const settings = organizationRef.current?.querySelector<HTMLElement>('.team-inspector');
+                settings?.scrollIntoView({ block: 'nearest' });
+                settings?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+              }}>{zh ? '岗位设置' : 'Role settings'}</Button>
+            </>}
+          </div>}
           <div className="team-inline-actions">
             {!readOnly && <>
               <Button variant="outline" size="sm" disabled={state.config.roles.length >= 30} onClick={() => add('role')}>{zh ? '新增岗位' : 'Add role'}</Button>
@@ -256,12 +276,10 @@ function TeamEditor({ team, zh }: { team: TeamDetail; zh: boolean }) {
                 <Button ref={allRelationsTrigger} variant="outline" size="sm" onClick={event => openRelation({ kind: 'all' }, event.currentTarget)}>{zh ? '查看全部关系' : 'View all relations'}</Button>
                 {!readOnly && <Button variant="outline" size="sm" onClick={() => add('department')}>{zh ? '新增部门' : 'Add department'}</Button>}
               </div>
-              <TeamEditorToolbar view={outline ? 'list' : 'canvas'} readOnly={readOnly} zh={zh}
-                onAutoLayout={applyAutoLayout} onFit={() => canvasControls.current?.fit()}
-                onZoomIn={() => canvasControls.current?.zoomIn()} onZoomOut={() => canvasControls.current?.zoomOut()}
-                onResetZoom={() => canvasControls.current?.resetZoom()} zoom={zoom} />
+              {!readOnly && <Button variant="outline" size="sm" onClick={applyAutoLayout}>{zh ? '自动布局' : 'Auto layout'}</Button>}
               {!outline && <TeamSelect label={zh ? '显示关系' : 'Visible relations'} value={filter} onChange={setFilter}
-                options={[{ value: 'all', label: zh ? '全部关系' : 'All relations' }, { value: 'selected', label: zh ? '选中岗位的关系' : 'Selected role relations' },
+                options={[{ value: 'organization', label: zh ? '汇报与当前岗位的复核' : 'Reporting and current role reviews' },
+                  { value: 'all', label: zh ? '全部关系' : 'All relations' }, { value: 'selected', label: zh ? '选中岗位的关系' : 'Selected role relations' },
                   ...(['reports_to', 'delegates_to', 'reviews'] as const).map(kind => ({ value: kind, label: relationLabel(kind, zh) }))]} />}
               <TeamEditorSidebar state={state} selected={selected} select={selectObjects} edit={edit}
                 zh={zh} readOnly={readOnly} notify={notify} models={models.data ?? []} assignAgent={assignAgent} />
@@ -277,7 +295,7 @@ function TeamEditor({ team, zh }: { team: TeamDetail; zh: boolean }) {
           workPlan={<TeamWorkPlanPreview teamId={team.id} semanticRevision={draft.baseline.semanticRevision} state={state}
             edit={edit} zh={zh} readOnly={readOnly} online={networkReady} />}
           saveAction={readOnly ? null : <div className="team-inline-actions">
-            <Button variant="outline" disabled={readOnly || !networkReady || draft.save.isPending || !!draft.conflict || !!draft.recovery} onClick={() => void saveAll().catch(errorMessage)}>{draft.save.isPending ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存草稿' : 'Save draft')}</Button>
+            <Button variant={selected.length === 1 && selectedRole ? "default" : "outline"} disabled={readOnly || !networkReady || draft.save.isPending || !!draft.conflict || !!draft.recovery} onClick={() => void saveAll().catch(errorMessage)}>{draft.save.isPending ? (zh ? '保存中…' : 'Saving…') : (zh ? (selected.length === 1 && selectedRole ? '保存岗位草稿' : '保存草稿') : (selected.length === 1 && selectedRole ? 'Save role draft' : 'Save draft'))}</Button>
             {draft.dirty && <span role="status" className="team-muted team-small">{zh ? '有未保存更改' : 'Unsaved changes'}</span>}
           </div>}
         />

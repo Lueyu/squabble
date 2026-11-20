@@ -25,7 +25,7 @@ async function installRoutes(context, origin, base, seedBase) {
   const config = copy(readyConfig);
   config.roles = config.roles.map(role => ({ ...role, participation: 'placeholder', agentId: undefined, agentVersionId: undefined, executor: null }));
   const version = { id: versionId, teamId, version: 1, semanticRevision: 1, semanticHash: 'f'.repeat(64), config, displaySnapshot: base.display, createdAt: fixed };
-  const detail = { ...base, id: teamId, name: base.display.name, currentVersion: 1, currentVersionId: versionId, publishedVersion: version,
+  const detail = { ...base, display: copy(base.display), id: teamId, name: base.display.name, currentVersion: 1, currentVersionId: versionId, publishedVersion: version,
     semanticRevision: 1, layoutRevision: 1, displayRevision: 1, bindingRevision: 0, scopeRevision: 0, hasDraft: false,
     roleCount: config.roles.length, departmentCount: config.departments.length, connectionCount: 0, runningCommissionCount: 0,
     accountId: null, binding: null, draft: { semanticRevision: 1, baseVersionId: versionId, config },
@@ -131,8 +131,10 @@ async function main() {
         }
         await page.getByRole('button', { name: 'New team', exact: true }).click();
         await page.getByRole('dialog').waitFor();
+        await page.getByRole('button', { name: 'Blank organization', exact: true }).click();
+        await page.getByLabel('Team name', { exact: true }).fill('Fictional automatic team');
+        await page.getByRole('button', { name: 'Next', exact: true }).click();
         for (const currency of ['CNY', 'USD', 'HKD']) assert.equal(await page.getByLabel(`${currency} virtual capital`, { exact: true }).inputValue(), '10000');
-        await page.getByLabel('Team name *', { exact: true }).fill('Fictional automatic team');
         await page.getByLabel('CNY virtual capital', { exact: true }).fill('12500');
         await page.getByLabel('HKD virtual capital', { exact: true }).scrollIntoViewIfNeeded();
         await shot('create-cash');

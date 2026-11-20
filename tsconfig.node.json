@@ -26,5 +26,13 @@
     "excludeDirectories": ["node_modules/**"]
   },
   "include": ["server/**/*", "shared/**/*.ts"],
-  "exclude": ["server/mcp/ui", "node_modules", "dist", "client", "source_package", "**/*.spec.ts", "**/*.e2e-spec.ts"]
+  "exclude": [
+    "server/mcp/ui",
+    "node_modules",
+    "dist",
+    "client",
+    "source_package",
+    "**/*.spec.ts",
+    "**/*.e2e-spec.ts"
+  ]
 }

@@ -1,0 +1,133 @@
+.team-dialog.team-create-template-dialog {
+  width: min(calc(100% - 24px), 1040px);
+  max-width: 1040px;
+}
+
+.team-create-template-picker {
+  container-type: inline-size;
+}
+
+.team-create-methods {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.team-create-template-layout,
+.team-create-template-detail {
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+}
+
+.team-create-template-layout {
+  align-items: start;
+}
+
+.team-create-template-list,
+.team-create-staffing {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.team-create-template-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.team-create-template-options button {
+  justify-content: flex-start;
+  min-height: 44px;
+  height: auto;
+  padding: 8px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+.team-create-template-options button[aria-pressed='true'] {
+  color: var(--foreground);
+  font-weight: 650;
+  background: color-mix(in srgb, var(--success) 15%, var(--card));
+}
+
+.team-create-staffing .team-create-staffing-count {
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.team-create-staffing-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-create-staffing-grid li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-inline-size: 0;
+  padding: 8px;
+  background: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.team-create-staffing-grid li[data-assigned='true'] {
+  background: color-mix(in srgb, var(--success) 7%, var(--card));
+  border-color: color-mix(in srgb, var(--success) 24%, var(--border));
+}
+
+.team-create-staffing-grid li > div {
+  display: grid;
+  min-inline-size: 0;
+}
+
+.team-create-staffing-grid strong {
+  font-size: 13px;
+}
+
+.team-create-staffing-grid li > div > span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.team-create-staffing-grid li[data-assigned='true'] .team-create-staffing-role {
+  color: var(--foreground);
+  font-weight: 550;
+}
+
+@container (min-width: 320px) {
+  .team-create-staffing-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 660px) {
+  .team-create-template-layout {
+    grid-template-columns: minmax(190px, 1fr) minmax(0, 3fr);
+  }
+
+  .team-create-template-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team-create-template-options button {
+    min-height: 36px;
+  }
+}
+
+@container (min-width: 860px) {
+  .team-create-staffing-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

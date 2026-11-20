@@ -40,6 +40,8 @@ export interface PortfolioAccountSummary {
   strategyCount: number;
   companionId?: PortfolioCompanionId | null;
   companionRevision?: number;
+  /** Paused account retained after its most recent owning team was archived. */
+  formerTeam?: { id: string; name: string };
 }
 export interface PortfolioAccountDetail extends PortfolioAccountSummary {
   investment: AiInvestmentView;

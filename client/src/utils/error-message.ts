@@ -49,6 +49,7 @@ const TEAM_FRIENDLY: Record<TeamErrorCode, { zh: string; en: string }> = {
   TEAM_NOT_FOUND: { zh: '团队不存在或当前无法访问，请返回团队列表核对。', en: 'This team is unavailable. Check the team list.' },
   TEAM_REFERENCE_NOT_FOUND: { zh: '关联的工作、尝试或版本无法核对，请重新读取原委托。', en: 'The linked work, attempt or version is unavailable. Reload the original commission.' },
   TEAM_REVISION_CONFLICT: { zh: '服务器已有新的修订。当前改动已保留，请读取并合并后再保存。', en: 'A newer revision exists. Your edits are retained; reload and merge before saving.' },
+  TEAM_NAME_CONFLICT: { zh: '已有同名团队。修改团队名称后继续。', en: 'A team already uses this name. Change the team name to continue.' },
   TEAM_REQUEST_KEY_CONFLICT: { zh: '同一请求标识对应不同内容，请核对原回执，再明确提交新操作。', en: 'This request key belongs to different content. Check its receipt before submitting a new action.' },
   TEAM_PREVIEW_STALE: { zh: '预览已过期或条件发生变化，请重新检查影响并确认。', en: 'The preview expired or its conditions changed. Review a new preview before confirming.' },
   TEAM_PREVIEW_CONSUMED: { zh: '此预览已经使用，请核对原请求回执和当前状态。', en: 'This preview was already used. Check the original receipt and current state.' },

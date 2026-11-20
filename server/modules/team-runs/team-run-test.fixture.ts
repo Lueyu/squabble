@@ -21,10 +21,12 @@ import { councilResearchTasks } from '../../database/research-workflow.schema';
 import { councilReports, councilSessions } from '../../database/council.schema';
 import type { TeamRunAgreementInput } from '../../../shared/team-run.interface';
 
-export async function setup(initialRun?: 'immediate' | 'scheduled', market: TeamRunAgreementInput['market'] = 'CN', budget?: TeamRunAgreementInput['budget']) {
+export async function setup(initialRun?: 'immediate' | 'scheduled', market: TeamRunAgreementInput['market'] = 'CN', budget?: TeamRunAgreementInput['budget'], friendKind: 'custom' | 'recommended' = 'custom') {
   const f = await makeTeamFixture(), team = await f.team(), roster = new AgentRosterService(f.db);
-  const friend = await roster.create(f.owner, { requestKey: randomUUID(), name: 'Fictional analyst', instructions: 'Frozen base instructions',
-    executor: { executionMode: 'model', connectionId: f.connection.id, model: 'slow' }, allowedToolIds: [], allowedSources: [] });
+  const executor = { executionMode: 'model', connectionId: f.connection.id, model: 'slow' };
+  const friend = friendKind === 'recommended'
+    ? (await roster.recommended(f.owner, { requestKey: randomUUID(), templateIds: ['financials'], executor })).items[0]
+    : await roster.create(f.owner, { requestKey: randomUUID(), name: 'Fictional analyst', instructions: 'Frozen base instructions', executor, allowedToolIds: [], allowedSources: [] });
   const config = structuredClone(team.version.config);
   config.roles[0].agentId = friend.id; config.roles[0].agentVersionId = friend.currentVersionId;
   const saved = await f.service.save(f.owner, team.team.id, 'draft', { requestKey: randomUUID(), expectedSemanticRevision: team.team.semanticRevision, config });

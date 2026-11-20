@@ -28,6 +28,7 @@ interface Props {
   series: PortfolioComparisonSeries[];
   metric: PortfolioComparisonMetric;
   compact?: boolean;
+  realOnly?: boolean;
   reference?: boolean;
   historySeries?: PortfolioHistorySeries[];
   partialAccountIds?: string[];
@@ -42,6 +43,7 @@ export default function PortfolioComparisonChart({
   series,
   metric,
   compact = false,
+  realOnly = false,
   reference = false,
   historySeries,
   partialAccountIds,
@@ -61,6 +63,7 @@ export default function PortfolioComparisonChart({
     ? comparisonReturnExtent(series) : undefined, [series, reference, period, metric]);
   const singleReturn = weeklyReturnExtent?.count === 1 ? weeklyReturnExtent.first : undefined;
   const singleTimestamp = singleReturn?.timestamp ?? (singleObservation ? timeWindow.first : undefined);
+  const useSelectedWindow = realOnly && singleObservation && comparisonWindow;
   const splitNumber = compact ? 3 : 4;
   const returnSpan = weeklyReturnExtent ? weeklyReturnExtent.max - weeklyReturnExtent.min : Infinity;
   const tickScale = returnSpan || Math.abs(weeklyReturnExtent?.min ?? 0) || 1;
@@ -122,12 +125,12 @@ export default function PortfolioComparisonChart({
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { show: false },
-      min: singleObservation ? timeWindow.first - 3600000 : undefined,
-      max: singleObservation ? timeWindow.first + 3600000 : undefined,
+      min: useSelectedWindow ? Date.parse(comparisonWindow.from) : singleObservation ? timeWindow.first - 3600000 : undefined,
+      max: useSelectedWindow ? Date.parse(comparisonWindow.to) : singleObservation ? timeWindow.first + 3600000 : undefined,
       minInterval: (reference ? referenceGranularity : granularity) === 'hourly'
         ? 3600000 : intraday ? 60000 : 86400000,
       axisLabel: {
-        show: singleTimestamp === undefined,
+        show: realOnly || singleTimestamp === undefined,
         showMaxLabel: true,
         color: muted,
         hideOverlap: true,
@@ -232,6 +235,10 @@ export default function PortfolioComparisonChart({
   );
   if (!hasValues)
     return (
+      realOnly ? <div className="min-h-24 space-y-5 text-xs text-muted-foreground" role="status">
+        <p>{zh ? '当前时间范围暂无完整估值' : 'No complete valuations in this period'}</p>
+        <p>{zh ? '可切换时间范围查看历史。' : 'Choose another date range to view history.'}</p>
+      </div> :
       <div
         className={`portfolio-chart-empty ${compact ? 'compact' : ''}`}
         role="status"
@@ -271,7 +278,7 @@ export default function PortfolioComparisonChart({
   return (
     <>
       <div
-        className={`portfolio-chart ${compact ? 'compact' : ''}`}
+        className={`portfolio-chart ${compact ? 'compact' : ''} ${realOnly && singleObservation ? 'portfolio-chart-single-point' : ''}`}
         role="img"
         aria-label={
           zh
@@ -287,7 +294,7 @@ export default function PortfolioComparisonChart({
           opts={{ renderer: 'svg' }}
         />
       </div>
-      {singleTimestamp !== undefined && (
+      {!realOnly && singleTimestamp !== undefined && (
         <p className="px-3 text-center text-xs leading-6 text-muted-foreground">
           {reference
             ? zh

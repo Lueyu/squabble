@@ -24,32 +24,41 @@
   min-width: 0;
 }
 
-.settings-navigation-sidebar {
-  --settings-link-text: var(--sidebar-foreground);
-  --settings-link-active: var(--sidebar-accent-foreground);
-  --settings-link-background: var(--sidebar-accent);
-
-  display: grid;
-  gap: 2px;
-  margin: 0 0 4px 16px;
+.settings-navigation-rail {
+  flex: 0 0 clamp(154px, 20vw, 296px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 12px;
+  border-inline-end: 1px solid var(--border);
+  background: var(--background);
 }
 
 .settings-navigation-page {
   display: none;
 }
 
-.settings-connection-links,
-.settings-more-links > div {
-  display: grid;
-  gap: 2px;
+.settings-category-title {
+  margin: 0 8px 16px;
+  font-size: 15px;
+  font-weight: 650;
 }
 
-.settings-navigation :is(a, summary) {
+.settings-category-group + .settings-category-group {
+  margin-top: 16px;
+}
+
+.settings-category-group h3 {
+  margin: 0 8px 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.settings-navigation a {
   display: flex;
-  min-height: 40px;
+  min-height: 36px;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 10px;
   border-radius: var(--radius);
   color: var(--settings-link-text);
   font-size: 13px;
@@ -58,7 +67,7 @@
   overflow-wrap: anywhere;
 }
 
-.settings-navigation :is(a, summary):hover {
+.settings-navigation a:hover {
   background: var(--settings-link-background);
 }
 
@@ -68,23 +77,13 @@
   font-weight: 650;
 }
 
-.settings-navigation summary,
 .settings-panel-details summary {
   cursor: pointer;
   list-style: none;
 }
 
-.settings-navigation summary::-webkit-details-marker,
 .settings-panel-details summary::-webkit-details-marker {
   display: none;
-}
-
-.settings-more-links > summary {
-  justify-content: space-between;
-}
-
-.settings-more-links > div {
-  padding-inline-start: 8px;
 }
 
 .settings-content {
@@ -197,14 +196,10 @@
   color: var(--muted-foreground);
 }
 
-.settings-navigation :is(a, summary):focus-visible,
+.settings-navigation :is(a, button):focus-visible,
 .settings-panel-details summary:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
-}
-
-.settings-more-links[open] > summary svg {
-  transform: rotate(180deg);
 }
 
 .settings-panel-details[open] > summary svg {
@@ -212,40 +207,45 @@
 }
 
 @media (width < 768px) {
-  .settings-navigation-sidebar {
+  .settings-navigation-rail {
     display: none;
   }
 
   .settings-navigation-page {
+    display: block;
+  }
+
+  .settings-category-toggle {
     display: flex;
-    align-items: flex-start;
+    width: 100%;
+    min-height: 44px;
+    align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .settings-navigation-page .settings-connection-links {
-    display: flex;
-    flex-wrap: wrap;
-    padding: 3px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: var(--muted);
+    background: var(--background);
+    font-size: 13px;
+    text-align: start;
   }
 
-  .settings-navigation-page .settings-more-links {
-    min-height: 46px;
+  .settings-category-toggle svg {
+    margin-inline-start: auto;
   }
 
-  .settings-navigation-page .settings-more-links[open] {
-    flex-basis: 100%;
+  .settings-category-toggle[aria-expanded='true'] svg {
+    transform: rotate(180deg);
   }
 
-  .settings-navigation-page .settings-more-links > div {
-    grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
-    padding-inline-start: 0;
+  .settings-navigation-page .settings-category-list {
+    margin-top: 8px;
+    padding: 12px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
   }
 
-  .settings-navigation-page summary {
-    min-height: 46px;
+  .settings-navigation-page a {
+    min-height: 44px;
   }
 
   .settings-content {

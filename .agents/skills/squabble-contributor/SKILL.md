@@ -55,9 +55,11 @@ description: Use when developing, debugging, testing, documenting, deploying or 
 
 `a2a-agents`支持真实A2A1.0 JSON-RPC的SendMessage/GetTask/CancelTask，原始结果和凭据加密保存，先持久化send意图再出站；未知派发不自动重发。能力卡声明不等于结构化交付已验证，遥测中的模型/工具/费用未知不能推断。公网固定DNS/禁止重定向/同源鉴权；本地地址需要用户trust及`A2A_LOCAL_SERVICES_JSON`精确登记能力卡与RPC地址。迁移62–65分别覆盖名册、运行协议、A2A与遥测维度，66覆盖动物身份及幂等回填。RL/RSI训练尚未实现。入口、测试与实际限制见`docs/independent-agents.md`、`docs/independent-agents.zh-CN.md`和`docs/independent-agents-validation.md`。
 
+固定模板创建按 specialty 固定当前 owner 的内置股友及能力版本。名册的 `origin: builtin` 标记控制原型编辑和归档，旧自建股友及历史版本保留。个人可用连接通过 `effectiveExecutor` 投影，已确定的连接随新会话冻结。团队通过岗位的 `executor`、`participation` 和可选 `workingInstructions` 保存单岗设置，发布后进入既有委托与 Council 快照；股友版本、团队来源权限及记忆分域继续各自复核。
+
 ## Agent 运行分析
 
-自动团队启动排查先看 `TeamRunPanel.tsx` 的运行状态与可执行前置步骤，再看成员是否固定股友版本、团队是否发布及模拟账户是否关联。创建后从运行概览完成配员、发布与账户设置；账户创建回到同一关联检查。运行规则先取得服务端预览再确认。协议可固定 `initialRun: immediate`，首轮沿原持久周期运行；旧协议缺省保持定时，暂停/恢复或重启不重复首轮。后续收盘后研究和模拟策略调度保持分离，已应用策略不代表已成交。每个新团队准备独立模拟账户；研究金额、每日/每月调用预算默认null不设上限，可设置日金额上限，单轮调用仍有限。迁移68允许费用预留NULL表示未限定，后来有限预算不能把此前未知费用当零。实际启用沿用用户明确确认的账户和协议，测试使用隔离数据与假提供方。
+自动团队启动排查先看 `TeamRunPanel.tsx` 的运行状态与可执行前置步骤，再看成员是否固定股友版本、团队是否发布及模拟账户是否关联。新建固定模板时自动绑定对应的内置股友，并在首次发布前使用已连接且支持团队研究的本地 Agent 或通过测试的模型 API。空白组织与旧团队仍可在运行概览补配员。岗位配置保存到当前团队草稿，发布后供该团队使用。运行规则先取得服务端预览再确认。协议可固定 `initialRun: immediate`，首轮沿原持久周期运行；旧协议缺省保持定时，暂停/恢复或重启不重复首轮。后续收盘后研究和模拟策略调度保持分离，已应用策略不代表已成交。每个新团队准备独立模拟账户；研究金额、每日/每月调用预算默认null不设上限，可设置日金额上限，单轮调用仍有限。迁移68允许费用预留NULL表示未限定，后来有限预算不能把此前未知费用当零。实际启用沿用用户明确确认的账户和协议，测试使用隔离数据与假提供方。
 
 `/telemetry` 提供总览、成员比较、运行列表、Trace 与反馈/质量视图；`shared/telemetry.interface.ts` 定义未知值与统计口径。`server/modules/telemetry/` 读取所属用户来源并尊重删除墓碑，迁移52持久化观测元数据和反馈。模型/本地助手/工具的采集不改变执行结果。Langfuse 默认不启用，只有显式配置后导出元数据；不得将提示词、回答、持仓或密钥写入导出。详见 `docs/agent-telemetry.md`；使用临时 `TELEMETRY_TEST_DATABASE_URL` 运行 `npm run test:telemetry`，浏览界面不能触发研究。
 

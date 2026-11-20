@@ -181,7 +181,10 @@ test('an expired seed before first dispatch still revalidates agent versions bef
   await scenario(async ({ f, click }) => {
     let expired = true; let changed = false;
     f.load('api/ai-investment.ts').previewAiInvestment = async () => ({ previewId: expired ? 'expired' : 'refreshed', expiresAt: expired ? '2000-01-01' : '2099-01-01', needsInput: [], markets: ['CN'], seed: { positions: [], cash: [], capturedAt: '2026-11-12' } });
-    f.load('api/agent-roster.ts').agentRosterApi.list = async () => ({ items: agents.map(agent => ({ ...agent, currentVersionId: changed ? `${agent.id}-v2` : agent.currentVersionId })) });
+    const { agentRosterApi } = f.load('api/agent-roster.ts');
+    agentRosterApi.list = async () => ({ items: changed ? agents.slice(1) : agents });
+    const details = [];
+    agentRosterApi.detail = async id => { details.push(id); return { ...agents[0], currentVersionId: 'good-v2' }; };
     f.load('api/model-connections.ts').fetchModelConnections = async () => [{ id: 'model', available: true, fastModel: 'fast' }];
     await click('Next: choose agents'); await click('Next: review startup');
     await React.act(async () => document.querySelector('[role=checkbox]').click());
@@ -190,9 +193,53 @@ test('an expired seed before first dispatch still revalidates agent versions bef
     await click('Refresh review and keep progress');
     await React.act(async () => document.querySelector('[role=checkbox]').click());
     await click('Check and continue');
+    assert.deepEqual(details, ['good']);
     assert.equal(f.state.requests.filter(request => request.method === 'post').length, 0);
     assert.match(document.body.textContent, /Review the members again/);
     assert.ok(document.querySelector('[aria-label="Select Cashflow owl"]'));
+  });
+});
+
+test('an unlisted draft selection restores by ID and remains selected for review', async () => {
+  await scenario(async ({ f, click, remount }) => {
+    const storage = f.load('features/teams/guided-team-storage.ts');
+    storage.saveGuidedDraft('local', { name: 'Saved draft', selected: ['good'], daily: '2', market: 'CN', step: 2 });
+    f.state.queries.set('agent-roster', { data: { items: agents.slice(1) } });
+    f.state.queries.set(JSON.stringify(['agent-roster', 'good']), { data: agents[0] });
+    await remount();
+    assert.equal(document.querySelector('[aria-label="Select Cashflow owl"]')?.getAttribute('aria-checked'), 'true');
+    await click('Next: review startup');
+    assert.match(document.body.textContent, /Agents: Cashflow owl/);
+  });
+});
+
+test('an expired seed resumes with an unlisted member after a fresh exact-ID check', async () => {
+  await scenario(async ({ f, click, remount }) => {
+    const storage = f.load('features/teams/guided-team-storage.ts');
+    const preview = await f.load('api/ai-investment.ts').previewAiInvestment();
+    storage.saveGuidedProgress('local', {
+      version: 1, key: 'original-progress', name: 'Retained team', agents: [agents[0]],
+      preview: { ...preview, previewId: 'expired-seed', expiresAt: '2000-01-01' }, market: 'HK', dailyUsd: '7',
+      language: 'en', reviewRequired: 'seed',
+    });
+    const { agentRosterApi } = f.load('api/agent-roster.ts');
+    f.state.queries.set('agent-roster', { data: { items: agents.slice(1) } });
+    f.state.queries.set(JSON.stringify(['agent-roster', 'good']), { data: { ...agents[0], currentVersionId: 'stale-cache' } });
+    agentRosterApi.list = async () => ({ items: agents.slice(1) });
+    const details = [];
+    agentRosterApi.detail = async id => { details.push(id); return agents[0]; };
+    f.load('api/model-connections.ts').fetchModelConnections = async () => [{ id: 'model', available: true, fastModel: 'fast' }];
+    const creates = [];
+    f.load('api/teams.ts').teamsApi.create = async input => { creates.push(input); throw new Error('Fixture stops after team dispatch'); };
+    await remount(); await click('Refresh review and keep progress');
+    assert.equal(document.getElementById('guided-market').value, 'HK');
+    await React.act(async () => document.querySelector('[role=checkbox]').click());
+    await click('Check and continue');
+    assert.deepEqual(details, ['good']);
+    assert.deepEqual(creates.map(input => [input.requestKey, input.name]), [['original-progress--team', 'Retained team']]);
+    const saved = storage.readGuidedProgress('local', window.sessionStorage);
+    assert.equal(saved.preview.previewId, 'fixture-seed');
+    assert.equal(saved.agents[0].currentVersionId, 'good-v1');
   });
 });
 

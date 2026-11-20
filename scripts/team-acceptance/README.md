@@ -23,7 +23,7 @@ bundled US calendar.
 The desktop user registers, opens Holdings from the investment overview, and
 uses the header import link. The test checks that empty real holdings open
 the guided import. The user tests a model connection after one rejection,
-creates a team with saved friends, and explicitly authorizes a run. The
+creates a fixed-template team, and checks every assigned built-in specialty and version in the creation response and first publication. The user edits one role responsibility and publishes it. The test compares the roster versions before and after publication, then checks the edited responsibility on the authorized commission. The
 browser loses the first successful startup response. The test checks
 the exact retry payload and persisted agreement revision. The accepted model
 summary proposes a fixed order and cites the actual frozen team-account

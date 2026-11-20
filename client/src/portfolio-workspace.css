@@ -1345,3 +1345,7 @@
 .portfolio-overview .portfolio-comparison .portfolio-chart:not(.compact) {
   height: clamp(185px, 26vw, 248px);
 }
+
+.portfolio-overview .portfolio-comparison .portfolio-chart-single-point:not(.compact) {
+  height: clamp(108px, 13vw, 156px);
+}

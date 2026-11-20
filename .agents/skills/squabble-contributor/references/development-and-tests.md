@@ -302,8 +302,7 @@ parent-relative.
 
 After a Web build, run `node scripts/ui-probe/team-organization-browser.cjs` for
 desktop and mobile organization actions and
-`node scripts/ui-probe/settings-navigation-browser.cjs` for the integrated
-settings navigation and both connection forms. The probes use a loopback
+`node scripts/ui-probe/settings-navigation-browser.cjs` for the fixed secondary settings rail, narrow-screen category picker and both connection forms. Run the fixed-template creation probe and the real team acceptance journey to verify initial staffing, per-role configuration and explicit startup consent. The probes use a loopback
 fixture and write screenshots under `dist/ui-probe`. For publication
 persistence and revision checks, run the focused team publication integration
 test with a disposable `TEAM_TEST_DATABASE_URL`.

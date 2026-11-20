@@ -1,27 +1,35 @@
 /**
  * @file utils/format.ts
- * @brief Display formatting helpers shared across pages.
+ * @description 各页面共享的展示格式化工具。
  *
- * All functions are null/undefined-safe and return a stable placeholder string
- * for missing input rather than throwing. Currency helpers support multi-currency
- * display (USD / CNY / HKD) used by holdings across US/HK/CN markets.
+ * 所有函数对 null/undefined 安全：输入缺失时返回稳定的占位字符串而不是抛错。
+ * 货币类函数支持多币种展示（USD / CNY / HKD），对应美/港/A 股持仓的原币种。
  *
- * Coloring helpers (`plClass`, `ratingColor`, `signalColor`, `actionColor`)
- * return Tailwind class strings consumed directly in JSX; positive = success
- * green, negative = destructive red, neutral = muted.
+ * 职责边界：
+ *  - 只做"值 → 展示字符串/类名"的纯转换；不做任何请求或状态管理
+ * 上下游：
+ *  - 上游（谁调用这里）：多页面通用展示格式化（Dashboard/Holdings/Watchlist/
+ *    Analysis 等）
+ *  - 下游（本文件调用谁）：无外部依赖（纯函数）
+ * 关键约定：
+ *  - 着色类函数（plClass、ratingColor、signalColor、actionColor）直接返回
+ *    Tailwind 类字符串供 JSX 使用：正=success 绿、负=destructive 红、中性=muted
  */
 
 /**
- * Format a USD-denominated amount with adaptive magnitude suffix.
- * Large numbers are shortened to `X.XXB` / `X.XXM`; thousands use grouping.
- * @param value - Numeric amount (string accepted and parsed).
- * @returns e.g. `$1,234.56`, `$1.20M`, `$0.00` for empty input.
+ * 以自适应量级后缀格式化 USD 金额。
+ * 大数缩写为 `X.XXB` / `X.XXM`；千位使用分组。空输入返回 `$0.00`。
+ * @param value - 数值（接受字符串并解析）。
+ * @returns 例如 `$1,234.56`、`$1.20M`；空输入返回 `$0.00`。
  */
 export function formatCurrency(value: string | number | null | undefined): string {
+  // 步骤 1：空值与非数字一律回退 $0.00。
   if (value === null || value === undefined || value === '') return '$0.00';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return '$0.00';
   const abs = Math.abs(num);
+
+  // 步骤 2：按量级选缩写格式（B/M/千分位/两位小数）。
   let formatted: string;
   if (abs >= 1e9) {
     formatted = (num / 1e9).toFixed(2) + 'B';
@@ -39,11 +47,12 @@ export function formatCurrency(value: string | number | null | undefined): strin
 }
 
 /**
- * Format a per-share price with USD symbol and two decimals.
- * @param value - Price value.
- * @returns e.g. `$123.45`, or `—` for empty/invalid input.
+ * 以 USD 符号 + 两位小数格式化每股价格。
+ * @param value - 价格数值。
+ * @returns 例如 `$123.45`；空/非法输入返回 `—`。
  */
 export function formatPrice(value: string | number | null | undefined): string {
+  // 空值与非数字回退占位符 —。
   if (value === null || value === undefined || value === '') return '—';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return '—';
@@ -51,32 +60,29 @@ export function formatPrice(value: string | number | null | undefined): string {
 }
 
 /**
- * Format a ratio as a signed percentage.
- * @param value - Percent number (e.g. `3.5` -> `+3.50%`).
- * @param digits - Decimal places; defaults to 2.
- * @returns e.g. `+2.15%`, `-0.80%`, `0.00%` for empty input.
+ * 把比率格式化为带符号的百分比。
+ * @param value - 百分数（如 `3.5` → `+3.50%`）。
+ * @param digits - 小数位数；默认 2。
+ * @returns 例如 `+2.15%`、`-0.80%`；空输入返回 `0.00%`。
  */
-export function formatPercent(
-  value: string | number | null | undefined,
-  digits = 2
-): string {
+export function formatPercent(value: string | number | null | undefined, digits = 2): string {
+  // 空值与非数字回退 0.00%。
   if (value === null || value === undefined || value === '') return '0.00%';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return '0.00%';
+  // 正数补 + 号；负数自带 - 号。
   const sign = num > 0 ? '+' : '';
   return sign + num.toFixed(digits) + '%';
 }
 
 /**
- * Format a plain number with thousands grouping and a fixed number of decimals.
- * @param value - Number to format.
- * @param digits - Decimal places; defaults to 2.
- * @returns Localized number string, or `0` for empty/invalid input.
+ * 把普通数字格式化为千位分组 + 固定小数位。
+ * @param value - 要格式化的数字。
+ * @param digits - 小数位数；默认 2。
+ * @returns 本地化数字字符串；空/非法输入返回 `0`。
  */
-export function formatNumber(
-  value: string | number | null | undefined,
-  digits = 2
-): string {
+export function formatNumber(value: string | number | null | undefined, digits = 2): string {
+  // 空值与非数字回退 '0'。
   if (value === null || value === undefined || value === '') return '0';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return '0';
@@ -87,12 +93,12 @@ export function formatNumber(
 }
 
 /**
- * Format a share count: whole shares shown without decimals, fractional
- * positions up to 4 decimal places.
- * @param value - Number of shares.
- * @returns e.g. `120` or `45.5625`.
+ * 格式化股数：整数股不带小数，碎股最多保留 4 位小数。
+ * @param value - 股数。
+ * @returns 例如 `120` 或 `45.5625`。
  */
 export function formatShares(value: string | number | null | undefined): string {
+  // 空值与非数字回退 '0'。
   if (value === null || value === undefined || value === '') return '0';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return '0';
@@ -103,17 +109,18 @@ export function formatShares(value: string | number | null | undefined): string 
 }
 
 /**
- * Coerce a string/Date value into a valid Date, returning null on bad input.
- * @param value - ISO string or Date instance.
- * @returns A valid Date, or null when missing/invalid.
+ * 把字符串/Date 强转为合法 Date，非法输入返回 null。
+ * @param value - ISO 字符串或 Date 实例。
+ * @returns 合法 Date；缺失/非法时返回 null。
  */
-export function toDate(
-  value: string | Date | null | undefined
-): Date | null {
+export function toDate(value: string | Date | null | undefined): Date | null {
+  // 步骤 1：空值直接 null。
   if (!value) return null;
+  // 步骤 2：Date 实例校验时间有效性。
   if (value instanceof Date) {
     return isNaN(value.getTime()) ? null : value;
   }
+  // 步骤 3：字符串尝试解析并校验。
   if (typeof value === 'string') {
     const d = new Date(value);
     return isNaN(d.getTime()) ? null : d;
@@ -122,13 +129,12 @@ export function toDate(
 }
 
 /**
- * Format a date as a localized `YYYY/MM/DD` string.
- * @param value - Date to format.
- * @returns e.g. `2026/10/10`, or `—` for invalid input.
+ * 把日期格式化为本地化的 `YYYY/MM/DD`。
+ * @param value - 要格式化的日期。
+ * @returns 例如 `2026/10/10`；非法输入返回 `—`。
  */
-export function formatDate(
-  value: string | Date | null | undefined
-): string {
+export function formatDate(value: string | Date | null | undefined): string {
+  // 先强转；失败回退占位符。
   const date = toDate(value);
   if (!date) return '—';
   return date.toLocaleDateString('zh-CN', {
@@ -139,15 +145,15 @@ export function formatDate(
 }
 
 /**
- * Format a date with both date and 24h time components.
- * @param value - Date to format.
- * @returns e.g. `2026/10/10 14:30`, or `—` for invalid input.
+ * 格式化"日期 + 24 小时制时间"。
+ * @param value - 要格式化的日期。
+ * @returns 例如 `2026/10/10 14:30`；非法输入返回 `—`。
  */
-export function formatDateTime(
-  value: string | Date | null | undefined
-): string {
+export function formatDateTime(value: string | Date | null | undefined): string {
+  // 先强转；失败回退占位符。
   const date = toDate(value);
   if (!date) return '—';
+  // 分别取日期与时间部分再拼接。
   const dateStr = date.toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
@@ -162,9 +168,9 @@ export function formatDateTime(
 }
 
 /**
- * Format a Date as a `HH:mm:ss` wall-clock string.
- * @param date - Date to format.
- * @returns e.g. `14:30:05`.
+ * 把 Date 格式化为 `HH:mm:ss` 时钟字符串。
+ * @param date - 要格式化的 Date。
+ * @returns 例如 `14:30:05`。
  */
 export function formatTime(date: Date): string {
   return date.toLocaleTimeString('zh-CN', {
@@ -175,25 +181,28 @@ export function formatTime(date: Date): string {
 }
 
 /**
- * Return the Tailwind text color class for a P/L value.
- * @param value - Signed P/L amount.
- * @returns `text-success` for positive, `text-destructive` for negative,
- *          `text-muted-foreground` for zero/empty.
+ * 根据盈亏值返回 Tailwind 文字颜色类。
+ * @param value - 带符号的盈亏金额。
+ * @returns 正数 `text-success`，负数 `text-destructive`，
+ *          零/空返回 `text-muted-foreground`。
  */
 export function plClass(value: string | number | null | undefined): string {
+  // 空值返回空类串。
   if (value === null || value === undefined || value === '') return '';
   const num = typeof value === 'string' ? parseFloat(value) : value;
+  // 非数字或 0 归为中性色。
   if (isNaN(num) || num === 0) return 'text-muted-foreground';
   return num > 0 ? 'text-success' : 'text-destructive';
 }
 
 /**
- * Return badge classes for an English analyst rating.
- * @param rating - `Strong Buy | Buy | Hold | Sell | Strong Sell`.
- * @returns Tailwind `bg-* text-*` pair; default muted for unknown values.
+ * 根据英文分析师评级返回徽章类。
+ * @param rating - `Strong Buy | Buy | Hold | Sell | Strong Sell`。
+ * @returns Tailwind `bg-* text-*` 组合；未知值默认 muted。
  */
 export function ratingColor(rating: string | null | undefined): string {
   if (!rating) return 'bg-muted text-muted-foreground';
+  // 评级 → 颜色映射。
   switch (rating) {
     case 'Strong Buy':
     case 'Buy':
@@ -209,12 +218,13 @@ export function ratingColor(rating: string | null | undefined): string {
 }
 
 /**
- * Return badge classes for a Chinese buy/hold/sell signal.
- * @param signal - One of `强烈买入 | 买入 | 观望 | 回避`.
- * @returns Tailwind `bg-* text-*` pair.
+ * 根据中文买卖信号返回徽章类。
+ * @param signal - `强烈买入 | 买入 | 观望 | 回避` 之一。
+ * @returns Tailwind `bg-* text-*` 组合。
  */
 export function signalColor(signal: string | null | undefined): string {
   if (!signal) return 'bg-muted text-muted-foreground';
+  // 信号 → 颜色映射。
   switch (signal) {
     case '强烈买入':
     case '买入':
@@ -229,12 +239,13 @@ export function signalColor(signal: string | null | undefined): string {
 }
 
 /**
- * Return badge classes for a Chinese portfolio action recommendation.
- * @param action - One of `加仓 | 买入 | 持有 | 减仓 | 卖出 | 观望`.
- * @returns Tailwind `bg-* text-*` pair.
+ * 根据中文组合操作建议返回徽章类。
+ * @param action - `加仓 | 买入 | 持有 | 减仓 | 卖出 | 观望` 之一。
+ * @returns Tailwind `bg-* text-*` 组合。
  */
 export function actionColor(action: string | null | undefined): string {
   if (!action) return 'bg-muted text-muted-foreground';
+  // 操作建议 → 颜色映射。
   switch (action) {
     case '加仓':
     case '买入':
@@ -252,20 +263,24 @@ export function actionColor(action: string | null | undefined): string {
 }
 
 /**
- * Format an amount with the correct currency symbol for the given ISO code.
- * CNY uses `¥`, HKD uses `HK$`, anything else falls back to `$`.
- * @param value - Numeric amount.
- * @param currency - ISO currency code; defaults to USD.
- * @returns Formatted amount with currency symbol.
+ * 按给定 ISO 币种代码用正确符号格式化金额。
+ * CNY 用 `¥`，HKD 用 `HK$`，其余回退 `$`。
+ * @param value - 数值金额。
+ * @param currency - ISO 币种代码；默认 USD。
+ * @returns 带货币符号的格式化金额。
  */
 export function formatCurrencyWithCode(
   value: string | number | null | undefined,
   currency: string = 'USD',
 ): string {
-  if (value === null || value === undefined || value === '') return formatCurrencyWithCode('0', currency);
+  // 步骤 1：空值/非法输入递归格式化 '0'（保证币种符号仍正确）。
+  if (value === null || value === undefined || value === '')
+    return formatCurrencyWithCode('0', currency);
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return formatCurrencyWithCode('0', currency);
   const abs = Math.abs(num);
+
+  // 步骤 2：按量级选缩写格式（与 formatCurrency 同一套阈值）。
   let formatted: string;
   if (abs >= 1e9) {
     formatted = (num / 1e9).toFixed(2) + 'B';
@@ -279,6 +294,8 @@ export function formatCurrencyWithCode(
   } else {
     formatted = num.toFixed(2);
   }
+
+  // 步骤 3：按币种挑符号。
   const cur = currency.toUpperCase();
   if (cur === 'CNY') return '¥' + formatted;
   if (cur === 'HKD') return 'HK$' + formatted;
@@ -286,9 +303,9 @@ export function formatCurrencyWithCode(
 }
 
 /**
- * Resolve the display symbol for an ISO currency code.
- * @param currency - ISO currency code.
- * @returns `CN¥` for CNY, `HK$` for HKD, otherwise `$`.
+ * 解析 ISO 币种代码对应的展示符号。
+ * @param currency - ISO 币种代码。
+ * @returns CNY → `CN¥`，HKD → `HK$`，其余 → `$`。
  */
 function currencySymbol(currency: string): string {
   const cur = currency.toUpperCase();
@@ -298,15 +315,16 @@ function currencySymbol(currency: string): string {
 }
 
 /**
- * Format a per-share price with the currency symbol appropriate to its quote currency.
- * @param value - Price value.
- * @param currency - ISO currency code; defaults to USD.
- * @returns e.g. `HK$38.50`, or `—` for empty input.
+ * 按报价币种选符号格式化每股价格。
+ * @param value - 价格数值。
+ * @param currency - ISO 币种代码；默认 USD。
+ * @returns 例如 `HK$38.50`；空输入返回 `—`。
  */
 export function formatPriceWithCurrency(
   value: string | number | null | undefined,
   currency: string = 'USD',
 ): string {
+  // 空值与非数字回退占位符 —。
   if (value === null || value === undefined || value === '') return '—';
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return '—';
@@ -314,22 +332,25 @@ export function formatPriceWithCurrency(
 }
 
 /**
- * Format an amount with adaptive magnitude suffix and the correct currency symbol.
- * Used when rendering native-currency market values (USD / CNY / HKD).
- * @param value - Numeric amount.
- * @param currency - ISO currency code; defaults to USD.
- * @returns Formatted amount, e.g. `HK$1.20M`, `¥3,456.78`.
+ * 带自适应量级后缀 + 正确货币符号的金额格式化。
+ * 用于渲染原币种市值（USD / CNY / HKD）。
+ * @param value - 数值金额。
+ * @param currency - ISO 币种代码；默认 USD。
+ * @returns 格式化金额，例如 `HK$1.20M`、`¥3,456.78`。
  */
 export function formatCurrencyWithCurrency(
   value: string | number | null | undefined,
   currency: string = 'USD',
 ): string {
+  // 步骤 1：空值/非法输入递归格式化 '0'（保证币种符号仍正确）。
   if (value === null || value === undefined || value === '') {
     return formatCurrencyWithCurrency('0', currency);
   }
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return formatCurrencyWithCurrency('0', currency);
   const abs = Math.abs(num);
+
+  // 步骤 2：按量级选缩写格式（与 formatCurrency 同一套阈值）。
   let formatted: string;
   if (abs >= 1e9) {
     formatted = (num / 1e9).toFixed(2) + 'B';
@@ -343,15 +364,17 @@ export function formatCurrencyWithCurrency(
   } else {
     formatted = num.toFixed(2);
   }
+
+  // 步骤 3：按币种挑符号。
   return currencySymbol(currency) + formatted;
 }
 
 /**
- * Join conditional class names, dropping falsy values.
- * Note: this is a simple string-join helper; for Tailwind conflict resolution
- * use `cn` from `lib/utils.ts` instead.
- * @param classes - Class names to merge.
- * @returns Space-separated class string.
+ * 拼接条件类名，跳过假值。
+ * 注意：这只是简单的字符串拼接工具；需要 Tailwind 类冲突消解时请改用
+ * `lib/utils.ts` 的 `cn`。
+ * @param classes - 要合并的类名。
+ * @returns 空格分隔的类名串。
  */
 export function cn(...classes: (string | undefined | false | null)[]): string {
   return classes.filter(Boolean).join(' ');

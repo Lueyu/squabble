@@ -2,14 +2,14 @@
  * @file client/src/tailwind-theme.css
  * @description Design-token layer (CSS variables) for light/dark themes.
  *
- * 吵股 Squabble design language:
- *  - Monochrome ink primary (near-white on dark, near-black on light) keeps the
- *    interface calm; color is reserved for market semantics.
- *  - Bull green / bear red are the brand's semantic pair — use them only for
- *    market up/down and rating outcomes.
- *  - Warm matte paper surfaces for light mode, with cool graphite retained in
- *    dark mode. Green and red remain reserved for market semantics.
+ * 吵股 Squabble 设计语言：
+ *  - 主色为单色墨色（深色模式近白、浅色模式近黑），保持界面沉稳；
+ *    彩色仅保留给市场语义。
+ *  - 牛市绿 / 熊市红是品牌语义配对 —— 只用于行情涨跌与评级结果。
+ *  - 浅色模式为暖色哑光纸面，深色模式保持冷色石墨。绿与红仍保留给市场语义。
  */
+
+/* ===== 全局设计令牌（:root） ===== */
 :root {
   --button-outline: rgb(0 0 0 / 10%);
   --badge-outline: rgb(0 0 0 / 5%);
@@ -17,7 +17,7 @@
   --elevate-1: rgb(0 0 0 / 3%);
   --elevate-2: rgb(0 0 0 / 7%);
 
-  /* ---- Light: warm matte paper ---- */
+  /* ---- 浅色模式：暖色哑光纸面 ---- */
   --background: hsl(38deg 32% 94.5%);
   --foreground: hsl(28deg 22% 15%);
   --card: hsl(40deg 30% 98%);
@@ -49,7 +49,7 @@
   --chart-4: hsl(0deg 66% 50%);
   --chart-5: hsl(265deg 55% 58%);
 
-  /* A subtly deeper paper tone separates navigation from page content. */
+  /* 用略深一档的纸色把导航区与页面内容区分开。 */
   --sidebar: hsl(36deg 26% 91.5%);
   --sidebar-foreground: hsl(28deg 18% 25%);
   --sidebar-primary: hsl(28deg 24% 19%);
@@ -58,21 +58,28 @@
   --sidebar-accent-foreground: hsl(28deg 22% 15%);
   --sidebar-border: hsl(34deg 17% 80%);
   --sidebar-ring: hsl(28deg 19% 42%);
-  --primary-border: hsl(from hsl(221deg 26% 12%) h s calc(l + var(--opaque-button-border-intensity)));
-  --secondary-border: hsl(from hsl(220deg 16% 94%) h s calc(l + var(--opaque-button-border-intensity)));
-  --destructive-border: hsl(from hsl(0deg 68% 47%) h s calc(l + var(--opaque-button-border-intensity)));
-  --accent-border: hsl(from hsl(220deg 16% 93.5%) h s calc(l + var(--opaque-button-border-intensity)));
-  --muted-border: hsl(from hsl(220deg 16% 94.5%) h s calc(l + var(--opaque-button-border-intensity)));
+  --primary-border: hsl(
+    from hsl(221deg 26% 12%) h s calc(l + var(--opaque-button-border-intensity))
+  );
+  --secondary-border: hsl(
+    from hsl(220deg 16% 94%) h s calc(l + var(--opaque-button-border-intensity))
+  );
+  --destructive-border: hsl(
+    from hsl(0deg 68% 47%) h s calc(l + var(--opaque-button-border-intensity))
+  );
+  --accent-border: hsl(
+    from hsl(220deg 16% 93.5%) h s calc(l + var(--opaque-button-border-intensity))
+  );
+  --muted-border: hsl(
+    from hsl(220deg 16% 94.5%) h s calc(l + var(--opaque-button-border-intensity))
+  );
   --font-sans:
-    'Inter', 'Inter var', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI',
-    'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Microsoft YaHei UI',
-    'Microsoft YaHei', 'Noto Sans SC', 'Helvetica Neue', 'Tahoma', 'Arial',
-    'sans-serif',
-    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-  --font-serif:
-    'Playfair Display', 'Georgia', 'Cambria', 'Times New Roman', times, serif;
-  --font-mono:
-    'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+    'Inter', 'Inter var', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'PingFang SC',
+    'HarmonyOS Sans SC', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC',
+    'Helvetica Neue', 'Tahoma', 'Arial', 'sans-serif', 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-serif: 'Playfair Display', 'Georgia', 'Cambria', 'Times New Roman', times, serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
   --radius: 0.75rem;
   --shadow-x: 0px;
   --shadow-y: 2px;
@@ -82,23 +89,19 @@
   --shadow-color: #000;
   --shadow-2xs: 0px 2px 12px 0px hsl(0deg 0% 0% / 2%);
   --shadow-xs: 0px 2px 12px 0px hsl(0deg 0% 0% / 2%);
-  --shadow-sm:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 1px 2px -1px hsl(0deg 0% 0% / 3%);
-  --shadow:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 1px 2px -1px hsl(0deg 0% 0% / 3%);
-  --shadow-md:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 2px 4px -1px hsl(0deg 0% 0% / 3%);
-  --shadow-lg:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 4%), 0px 4px 6px -1px hsl(0deg 0% 0% / 3%);
-  --shadow-xl:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 4%), 0px 8px 10px -1px hsl(0deg 0% 0% / 3%);
+  --shadow-sm: 0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 1px 2px -1px hsl(0deg 0% 0% / 3%);
+  --shadow: 0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 1px 2px -1px hsl(0deg 0% 0% / 3%);
+  --shadow-md: 0px 2px 12px 0px hsl(0deg 0% 0% / 3%), 0px 2px 4px -1px hsl(0deg 0% 0% / 3%);
+  --shadow-lg: 0px 2px 12px 0px hsl(0deg 0% 0% / 4%), 0px 4px 6px -1px hsl(0deg 0% 0% / 3%);
+  --shadow-xl: 0px 2px 12px 0px hsl(0deg 0% 0% / 4%), 0px 8px 10px -1px hsl(0deg 0% 0% / 3%);
   --shadow-2xl: 0px 2px 12px 0px hsl(0deg 0% 0% / 6%);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
 
+/* ===== 深色模式覆盖 ===== */
 .dark {
-  /* ---- Dark (first-class): cool charcoal ---- */
+  /* ---- 深色模式（一等公民）：冷色石墨 ---- */
   --background: hsl(222deg 16% 6.5%);
   --foreground: hsl(220deg 18% 91%);
   --card: hsl(222deg 15% 9%);
@@ -141,19 +144,15 @@
   --elevate-2: rgb(255 255 255 / 8%);
   --shadow-2xs: 0px 2px 12px 0px hsl(0deg 0% 0% / 15%);
   --shadow-xs: 0px 2px 12px 0px hsl(0deg 0% 0% / 15%);
-  --shadow-sm:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 1px 2px -1px hsl(0deg 0% 0% / 20%);
-  --shadow:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 1px 2px -1px hsl(0deg 0% 0% / 20%);
-  --shadow-md:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 2px 4px -1px hsl(0deg 0% 0% / 20%);
-  --shadow-lg:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 25%), 0px 4px 6px -1px hsl(0deg 0% 0% / 25%);
-  --shadow-xl:
-    0px 2px 12px 0px hsl(0deg 0% 0% / 30%), 0px 8px 10px -1px hsl(0deg 0% 0% / 30%);
+  --shadow-sm: 0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 1px 2px -1px hsl(0deg 0% 0% / 20%);
+  --shadow: 0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 1px 2px -1px hsl(0deg 0% 0% / 20%);
+  --shadow-md: 0px 2px 12px 0px hsl(0deg 0% 0% / 20%), 0px 2px 4px -1px hsl(0deg 0% 0% / 20%);
+  --shadow-lg: 0px 2px 12px 0px hsl(0deg 0% 0% / 25%), 0px 4px 6px -1px hsl(0deg 0% 0% / 25%);
+  --shadow-xl: 0px 2px 12px 0px hsl(0deg 0% 0% / 30%), 0px 8px 10px -1px hsl(0deg 0% 0% / 30%);
   --shadow-2xl: 0px 2px 12px 0px hsl(0deg 0% 0% / 40%);
 }
 
+/* ===== Tailwind @theme 映射（把 CSS 变量暴露为 Tailwind 颜色/字体/圆角/阴影） ===== */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -211,8 +210,9 @@
   --shadow-2xl: var(--shadow-2xl);
 }
 
+/* ===== 工具层：搜索框清理 / 占位符 / 交互提升 / 数字字体 / 安全区 ===== */
 @layer utilities {
-  input[type="search"]::-webkit-search-cancel-button {
+  input[type='search']::-webkit-search-cancel-button {
     @apply hidden;
   }
 
@@ -222,12 +222,15 @@
     pointer-events: none;
   }
 
-  .no-default-hover-elevate {}
-  .no-default-active-elevate {}
+  .no-default-hover-elevate {
+  }
+
+  .no-default-active-elevate {
+  }
 
   .toggle-elevate::before,
   .toggle-elevate-2::before {
-    content: "";
+    content: '';
     pointer-events: none;
     position: absolute;
     inset: 0;
@@ -255,7 +258,7 @@
   .active-elevate:not(.no-default-active-elevate)::after,
   .hover-elevate-2:not(.no-default-hover-elevate)::after,
   .active-elevate-2:not(.no-default-active-elevate)::after {
-    content: "";
+    content: '';
     pointer-events: none;
     position: absolute;
     inset: 0;
@@ -290,7 +293,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* All financial figures align in columns, in every font */
+  /* 所有财务数字在任何字体下都按列对齐 */
   .font-sans-nums {
     font-family: var(--font-sans);
     font-variant-numeric: tabular-nums;

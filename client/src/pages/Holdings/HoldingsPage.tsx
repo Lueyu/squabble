@@ -7,7 +7,7 @@
  * `useMarketQuotes`, enriches each row with derived market value / P/L, and
  * supports search, group filter, multi-market filter, and column sorting.
  */
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   Briefcase,
@@ -15,6 +15,7 @@ import {
   Plus,
   RefreshCw,
   Check,
+  ChevronDown,
   AlertTriangle,
 } from 'lucide-react';
 import type {
@@ -23,6 +24,7 @@ import type {
   QuoteResponse,
   Market,
   CashAccount,
+  Currency,
   DashboardOverview,
   LatestRating,
 } from '@shared/api.interface';
@@ -40,6 +42,13 @@ import { Button } from '@/components/ui/button';
 import { MarketStatusBadges } from '@/components/MarketStatusBadges';
 import { Input } from '@/components/ui/input';
 import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -50,6 +59,8 @@ import HoldingDetailDialog from './HoldingDetailDialog';
 import AddHoldingDialog from './AddHoldingDialog';
 import HoldingsMobileList from './HoldingsMobileList';
 import HoldingsTable from './HoldingsTable';
+import AddTransactionDialog from '@/pages/Transactions/AddTransactionDialog';
+import CashBalanceDialog from '@/pages/Today/CashBalanceDialog';
 import AgentRunDetailModal from '@/components/MultiAgent/AgentRunDetailModal';
 import {
   Alert,
@@ -59,14 +70,15 @@ import {
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigationType, useSearchParams } from 'react-router-dom';
 import { AccountAssetsPage } from '@/features/assets/AccountAssetsPage';
-import { SIMULATION_ACCOUNTS_PATH } from '@/features/assets/account-context';
+import { assetHref, SIMULATION_ACCOUNTS_PATH } from '@/features/assets/account-context';
 import { formatComparisonTime } from '@/features/portfolio-comparison/comparison-chart-options';
-import { useSimpleExperience } from '@/hooks/use-simple-experience';
 
 /** Columns that the holdings table can sort by. */
 const sortKeys = ['ticker', 'company', 'buyPrice', 'currentPrice', 'shares', 'marketValue', 'cost', 'pl', 'returnPct'] as const;
 type SortKey = typeof sortKeys[number];
 const markets: Market[] = ['US', 'HK', 'CN'];
+const currencies: Currency[] = ['CNY', 'USD', 'HKD'];
+const marketOptionClass = 'w-full pl-2 pr-8 [&>span:first-child]:left-auto [&>span:first-child]:right-2 aria-checked:text-primary';
 
 /** Holding record augmented with derived numeric values used by the table. */
 interface DerivedHolding extends Holding {
@@ -74,6 +86,95 @@ interface DerivedHolding extends Holding {
   cost: number;
   pl: number;
   returnPct: number;
+}
+
+function isNumeric(value: string | null | undefined): value is string {
+  return value != null && value.trim() !== '' && Number.isFinite(Number(value));
+}
+
+function RealPositionsTable({ holdings, allHoldings, quotes, cashAccounts, sortKey, sortDir, onSort, onDetail }: {
+  holdings: DerivedHolding[];
+  allHoldings: DerivedHolding[];
+  quotes: Record<string, QuoteResponse | undefined>;
+  cashAccounts: CashAccount[];
+  sortKey: SortKey;
+  sortDir: 'asc' | 'desc';
+  onSort: (key: SortKey) => void;
+  onDetail: (holding: DerivedHolding) => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const zh = i18n.language.startsWith('zh');
+  const headers: { label: string; sort?: SortKey }[] = [
+    { label: zh ? '标的 / 代码' : 'Name / ticker', sort: 'ticker' },
+    { label: zh ? '市场' : 'Market' },
+    { label: zh ? '持有数量' : 'Quantity', sort: 'shares' },
+    { label: zh ? '平均成本' : 'Average cost', sort: 'buyPrice' },
+    { label: zh ? '最新价' : 'Latest price', sort: 'currentPrice' },
+    { label: zh ? '市值' : 'Market value', sort: 'marketValue' },
+    { label: zh ? '浮动盈亏' : 'Unrealized P/L', sort: 'pl' },
+    { label: zh ? '仓位占比' : 'Portfolio weight' },
+    { label: zh ? '报价时间' : 'Quote time' },
+  ];
+  const portfolioCurrency = allHoldings[0]?.currency;
+  const completeCash = currencies.every(currency => cashAccounts.some(cash =>
+    cash.currency === currency && cash.reconciliationStatus === 'confirmed' && isNumeric(cash.balance)
+    && (currency === portfolioCurrency || Number(cash.balance) === 0)));
+  const equity = completeCash && allHoldings.every(holding =>
+    holding.currency === portfolioCurrency && isNumeric(holding.currentPrice) && isNumeric(holding.shares))
+    ? allHoldings.reduce((sum, holding) => sum + holding.marketValue, 0)
+      + Number(cashAccounts.find(cash => cash.currency === portfolioCurrency)?.balance)
+    : null;
+  const percent = new Intl.NumberFormat(i18n.language, { style: 'percent', maximumFractionDigits: 1 });
+
+  return <>
+    <div className="max-w-full overflow-x-auto focus-visible:outline focus-visible:outline-ring"
+      tabIndex={0} role="region" aria-label={zh ? '持仓明细表，可横向滚动' : 'Position details table, scrollable horizontally'}>
+      <table className="w-full text-left text-sm">
+        <thead className="bg-muted/60 text-xs">
+          <tr>{headers.map(({ label, sort }) => <th key={label} scope="col" className="whitespace-nowrap px-3 py-2.5 font-medium"
+            aria-sort={sort && sort === sortKey ? sortDir === 'asc' ? 'ascending' : 'descending' : undefined}>
+            {sort ? <button type="button" className="inline-flex items-center gap-1 hover:underline" onClick={() => onSort(sort)}>
+              {label}{sort === sortKey && <span aria-hidden="true">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+            </button> : label}
+          </th>)}</tr>
+        </thead>
+        <tbody>{holdings.map(holding => {
+          const { ticker, company, currency, market, shares, buyPrice, currentPrice, marketValue, pl } = holding;
+          const quote = quotes[ticker];
+          const quoteAt = quote?.currency === currency && isNumeric(quote.price) && quote.quoteAt
+            && Number.isFinite(Date.parse(quote.quoteAt)) ? quote.quoteAt : null;
+          const hasValue = isNumeric(currentPrice) && isNumeric(shares) && Number.isFinite(marketValue);
+          const hasProfit = hasValue && isNumeric(buyPrice) && Number.isFinite(pl);
+          const symbol = holding.displaySymbol || ticker;
+          return <tr key={holding.id} className="border-t">
+            <th scope="row" className="min-w-32 px-3 py-2.5 font-medium">
+              <button type="button" className="min-h-8 text-left [overflow-wrap:anywhere] hover:underline" onClick={() => onDetail(holding)}>
+                {company && <>{company}{' · '}</>}{symbol}
+              </button>
+            </th>
+            <td className="whitespace-nowrap px-3 py-2.5">{t(market === 'CN' ? 'dash.cn' : market === 'HK' ? 'dash.hk' : 'dash.us')}</td>
+            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{isNumeric(shares) ? formatShares(shares) : '—'}</td>
+            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{isNumeric(buyPrice) ? formatPriceWithCurrency(buyPrice, currency) : '—'}</td>
+            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{isNumeric(currentPrice) ? formatPriceWithCurrency(currentPrice, currency) : '—'}</td>
+            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{hasValue ? formatCurrencyWithCurrency(marketValue, currency) : '—'}</td>
+            <td className={cn('whitespace-nowrap px-3 py-2.5 tabular-nums', hasProfit && plClass(pl))}>
+              {hasProfit ? (pl > 0 ? '+' : '') + formatCurrencyWithCurrency(pl, currency) : '—'}
+            </td>
+            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{equity !== null && equity > 0 && hasValue
+              ? percent.format(marketValue / equity) : '—'}</td>
+            <td className="whitespace-nowrap px-3 py-2.5 text-xs">
+              {quoteAt ? <time dateTime={quoteAt}>{formatComparisonTime(quoteAt, i18n.language)}</time>
+                : isNumeric(currentPrice) ? '—' : zh ? '暂无报价' : 'No quote'}
+            </td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+    <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+      {zh ? '— 表示该项数据暂缺。' : 'A dash indicates unavailable data.'}
+      <span className="ml-2 md:hidden">{zh ? '横向滑动查看全部列。' : 'Scroll horizontally to see all columns.'}</span>
+    </p>
+  </>;
 }
 
 /**
@@ -100,12 +201,12 @@ function computeDerived(h: Holding): DerivedHolding {
  * multi-select and AI ratings.
  */
 export default function HoldingsPage() {
-  return <AccountAssetsPage mode="holdings" real={<RealHoldingsPage />} />;
+  return <AccountAssetsPage mode="holdings" real={<RealHoldingsPage />}
+    renderRealHoldings={context => <RealHoldingsPage ledger={context} />} />;
 }
 
-function RealHoldingsPage() {
+function RealHoldingsPage({ ledger }: { ledger?: { accountSelector: ReactNode; importPath: string; returnTo: string } }) {
   const { t, i18n } = useTranslation();
-  const { enabled: simple } = useSimpleExperience();
   const zh = i18n.language.startsWith('zh');
   const [accountParams, setAccountParams] = useSearchParams();
   const [holdings, setHoldings] = useState<DerivedHolding[]>([]);
@@ -121,11 +222,14 @@ function RealHoldingsPage() {
     if (navigationType !== 'REPLACE') setSearch(urlSearch);
   }, [navigationType, urlSearch]);
   const groupId = accountParams.get('group') ?? '';
+  const currencyFilter = currencies.find(currency => currency === accountParams.get('currency'));
   const sortKey = sortKeys.find(key => key === accountParams.get('sort')) ?? 'marketValue';
   const sortDir = accountParams.get('direction') === 'asc' ? 'asc' : 'desc';
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<Holding | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [tradeOpen, setTradeOpen] = useState(false);
+  const [cashOpen, setCashOpen] = useState(false);
   const marketFilter = accountParams.get('markets');
   const selectedMarkets = useMemo(() => {
     const selected = marketFilter?.split(',');
@@ -185,7 +289,7 @@ function RealHoldingsPage() {
     void fetchCashAccounts().then((cash) => {
       if (isCurrent()) setCashAccounts(cash);
     }).catch(() => {});
-    void fetchDashboard('USD').then((dashboard) => {
+    if (!ledger) void fetchDashboard('USD').then((dashboard) => {
       if (isCurrent()) setOverview(dashboard);
     }).catch(() => {});
 
@@ -254,9 +358,8 @@ function RealHoldingsPage() {
   const enrichedHoldings = useMemo<DerivedHolding[]>(() => {
     return holdings.map((h) => {
       const q: QuoteResponse | undefined = quotes[h.ticker];
-      if (!q || q.price === undefined) return h;
-      const quotePrice = parseFloat(q.price);
-      if (isNaN(quotePrice)) return h;
+      if (!q || q.currency !== h.currency || !isNumeric(q.price)) return h;
+      const quotePrice = Number(q.price);
       const shares = parseFloat(h.shares || '0');
       const buyPrice = parseFloat(h.buyPrice || '0');
       const marketValue = shares * quotePrice;
@@ -281,6 +384,9 @@ function RealHoldingsPage() {
     if (groupId) {
       list = list.filter((h) => h.groupId === groupId);
     }
+    if (ledger && currencyFilter) {
+      list = list.filter(holding => holding.currency === currencyFilter);
+    }
     if (selectedMarkets.size > 0) {
       list = list.filter((h) => selectedMarkets.has(h.market));
     }
@@ -302,7 +408,7 @@ function RealHoldingsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return list;
-  }, [enrichedHoldings, search, groupId, selectedMarkets, sortKey, sortDir]);
+  }, [enrichedHoldings, search, groupId, currencyFilter, ledger, selectedMarkets, sortKey, sortDir]);
 
   /** Open the holding detail dialog for the given row. */
   const openDetail = (h: DerivedHolding) => {
@@ -317,10 +423,10 @@ function RealHoldingsPage() {
   const details = <div className="space-y-4">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          {!simple && <h1 className="font-serif text-2xl md:text-3xl font-semibold tracking-tight flex items-center gap-2.5">
+          <h1 className="font-serif text-2xl md:text-3xl font-semibold tracking-tight flex items-center gap-2.5">
             <Briefcase className="size-6 text-primary" />
             {t('holdings.title')}
-          </h1>}
+          </h1>
           <div className="text-sm text-muted-foreground mt-1 flex items-center flex-wrap gap-1.5">
             <MarketStatusBadges
               marketStatus={marketStatus}
@@ -460,6 +566,14 @@ function RealHoldingsPage() {
     Number.isFinite(Date.parse(holding.updatedAt)) && (!latest || Date.parse(holding.updatedAt) > Date.parse(latest))
       ? holding.updatedAt : latest, null);
 
+  const marketLabels: Record<Market, string> = { US: t('dash.us'), HK: t('dash.hk'), CN: t('dash.cn') };
+  const allMarkets = selectedMarkets.size === 0 || selectedMarkets.size === markets.length;
+  const onlyMarket = markets.find(market => selectedMarkets.has(market));
+  const marketValue = allMarkets ? t('assets.allMarkets')
+    : selectedMarkets.size === 1 && onlyMarket ? marketLabels[onlyMarket]
+      : zh ? '多个市场' : 'Multiple markets';
+  const allCurrencies = zh ? '全部币种' : 'All currencies';
+
   return (
     <div className="space-y-5">
       {hasLoadedHoldings && error && (
@@ -469,54 +583,119 @@ function RealHoldingsPage() {
         </Alert>
       )}
 
-      {simple ? <>
-        <section className="rounded-xl border bg-card p-4 sm:p-5" aria-labelledby="real-holdings-heading">
-          <div className="flex items-start justify-between gap-3">
-            <h2 id="real-holdings-heading" className="text-lg font-semibold">{zh ? '我的实仓' : 'My real portfolio'}</h2>
-            <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">{zh ? '实仓' : 'Real'}</span>
+      {ledger ? <>
+        <header className="space-y-2 border-b pb-4">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-[32px]">{zh ? '我的实仓' : 'My real portfolio'}</h1>
+          <p className="text-sm text-muted-foreground">
+            {zh ? '实仓账本' : 'Real account ledger'}
+            {updatedAt && <> · {zh ? '持仓记录截至 ' : 'Positions updated '}
+              <time dateTime={updatedAt}>{formatComparisonTime(updatedAt, i18n.language)}</time>
+              {' '}{zh ? '北京时间' : 'Beijing time'}</>}
+          </p>
+        </header>
+
+        <div className="flex min-w-0 flex-wrap items-start gap-2">
+          {ledger.accountSelector}
+          <DropdownMenu>
+            <DropdownMenuTrigger aria-label={t('assets.marketFilter')} aria-describedby="real-holdings-market-value" className={cn(
+              'border-input data-[state=open]:border-ring focus-visible:border-ring focus-visible:ring-ring/20 dark:bg-input/30 dark:hover:bg-input/50',
+              'flex h-9 w-fit max-w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap',
+              'transition-[color,box-shadow] outline-none focus-visible:ring-[3px] enabled:hover:border-ring data-[state=open]:[&_svg]:rotate-180',
+            )}>
+              <span id="real-holdings-market-value" className="truncate">{marketValue}</span>
+              <ChevronDown aria-hidden="true" className="text-muted-foreground size-4 shrink-0 opacity-50 transition-transform duration-200" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="min-w-[max(8rem,var(--radix-dropdown-menu-trigger-width))]">
+              <DropdownMenuItem className="w-full pl-2 pr-8" onSelect={() => updateFilters({ markets: null })}>
+                {t('assets.allMarkets')}
+              </DropdownMenuItem>
+              {markets.map(market => (
+                <DropdownMenuCheckboxItem key={market} checked={allMarkets || selectedMarkets.has(market)}
+                  className={marketOptionClass} onSelect={event => event.preventDefault()}
+                  onCheckedChange={checked => {
+                    const next = markets.filter(item => item === market ? checked : allMarkets || selectedMarkets.has(item));
+                    updateFilters({ markets: next.length > 0 && next.length < markets.length ? next.join(',') : null });
+                  }}>
+                  {marketLabels[market]}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Select value={currencyFilter ?? 'all'} onValueChange={value => updateFilters({ currency: value === 'all' ? null : value })}>
+            <SelectTrigger aria-label={zh ? '币种' : 'Currency'} className="max-w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{allCurrencies}</SelectItem>
+              {currencies.map(currency => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input className="w-full sm:w-48" placeholder={t('ui.holdings.searchPlaceholder')}
+            aria-label={zh ? '搜索名称或代码' : 'Search name or ticker'} value={search}
+            onChange={event => {
+              setSearch(event.target.value);
+              updateFilters({ q: event.target.value || null });
+            }} />
+          {(groups.length > 0 || groupId) && <Select value={groupId || '__all__'}
+            onValueChange={value => updateFilters({ group: value === '__all__' ? null : value })}>
+            <SelectTrigger aria-label={t('ui.holdings.allGroups')} className="w-auto max-w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t('ui.holdings.allGroups')}</SelectItem>
+              {groups.map(group => <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>)}
+            </SelectContent>
+          </Select>}
+          <Button type="button" variant="outline" onClick={() => {
+            setSearch('');
+            updateFilters({ markets: null, currency: null, q: null, group: null, sort: null, direction: null });
+          }}>{zh ? '重置' : 'Reset'}</Button>
+        </div>
+
+        <section className="min-w-0 overflow-hidden rounded-xl border bg-card" aria-labelledby="real-holdings-heading">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+            <h2 id="real-holdings-heading" className="font-semibold">{zh ? '持仓明细' : 'Position details'}</h2>
+            {hasLoadedHoldings && <p className="text-xs text-muted-foreground">{zh ? `${filtered.length} 项持仓` : `${filtered.length} positions`}</p>}
           </div>
-          {updatedAt && <p className="mt-3 text-xs text-muted-foreground">
-            {zh ? '持仓记录更新于' : 'Holdings updated'}{' '}
-            <time dateTime={updatedAt}>{formatComparisonTime(updatedAt, i18n.language)}</time>
-          </p>}
-          {loading && !hasLoadedHoldings ? <p role="status" className="mt-4 text-sm text-muted-foreground">{t('common.loading')}</p>
-            : !hasLoadedHoldings && error ? <div className="mt-4 flex flex-wrap items-center gap-3">
-              <p role="alert" className="text-destructive">{error}</p>
-              <Button size="sm" variant="outline" onClick={() => void loadData()}>{t('common.retry')}</Button>
+          {loading && !hasLoadedHoldings ? <p role="status" className="px-4 pb-4 text-sm text-muted-foreground">{t('common.loading')}</p>
+            : !hasLoadedHoldings && error ? <div className="flex flex-wrap items-center gap-3 px-4 pb-4">
+              <p role="alert" className="text-sm text-destructive">{error}</p>
+              <Button type="button" size="sm" variant="outline" onClick={() => void loadData()}>{t('common.retry')}</Button>
             </div>
-            : filtered.length ? <ul className="mt-4 divide-y border-t">
-              {filtered.map(holding => <li key={holding.id}>
-                <button type="button" className="flex w-full min-h-14 items-center justify-between gap-3 rounded-sm py-2.5 text-start focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" onClick={() => openDetail(holding)}>
-                  <span className="min-w-0 break-words">
-                    <strong className="block font-semibold">{holding.company || holding.ticker}</strong>
-                    {holding.company && <span className="text-xs text-muted-foreground">{holding.ticker}</span>}
-                  </span>
-                  <span className="text-end">
-                    <span className="block text-sm font-medium tabular-nums">{formatShares(holding.shares)} {zh ? '股' : 'shares'}</span>
-                    <span className="block text-xs text-muted-foreground">{zh ? '成本' : 'Cost'} {formatPriceWithCurrency(holding.buyPrice, holding.currency)}</span>
-                  </span>
-                </button>
-              </li>)}
-            </ul> : <p className="mt-4 text-sm text-muted-foreground">
-              {t(holdings.length ? 'assets.noMatchingHoldings' : 'holdings.noHoldings')}
-            </p>}
+            : filtered.length ? <RealPositionsTable holdings={filtered} allHoldings={enrichedHoldings} quotes={quotes}
+              cashAccounts={cashAccounts} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onDetail={openDetail} />
+            : <p className="px-4 pb-4 text-sm text-muted-foreground">{t(holdings.length ? 'assets.noMatchingHoldings' : 'holdings.noHoldings')}</p>}
         </section>
-        <section className="rounded-xl border bg-card p-4 sm:p-5" aria-label={zh ? '现金' : 'Cash'}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <h2 className="text-lg font-semibold">{zh ? '现金' : 'Cash'}</h2>
-            {cashAccounts.length ? <dl className="flex flex-wrap gap-x-6 gap-y-3">
-              {cashAccounts.map(cash => <div key={cash.currency}>
-                <dt className="text-xs text-muted-foreground">{cash.currency}</dt>
-                <dd className="font-semibold tabular-nums">{cash.balance != null && String(cash.balance).trim() && Number.isFinite(Number(cash.balance))
-                  ? formatCurrencyWithCurrency(cash.balance, cash.currency) : '—'}</dd>
-              </div>)}
-            </dl> : <p className="text-sm text-muted-foreground">{t('assets.cashUnknown')}</p>}
+
+        <section className="rounded-xl border bg-card p-4" aria-labelledby="real-cash-heading">
+          <h2 id="real-cash-heading" className="font-semibold">{zh ? '现金余额' : 'Cash balances'}</h2>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-3">
+            {currencies.map(currency => {
+              const cash = cashAccounts.find(account => account.currency === currency);
+              return <div key={currency} className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm">
+                <dt className="text-muted-foreground">{new Intl.DisplayNames(i18n.language, { type: 'currency' }).of(currency)}</dt>
+                <dd className="break-words font-medium tabular-nums">{cash && cash.reconciliationStatus !== 'review'
+                  && cash.reconciliationStatus !== 'unconfirmed' && isNumeric(cash.balance)
+                  ? formatCurrencyWithCurrency(cash.balance, currency) : '—'}</dd>
+              </div>;
+            })}
+          </dl>
+        </section>
+
+        <section className="rounded-xl border bg-card p-4" aria-labelledby="real-ledger-actions-heading">
+          <h2 id="real-ledger-actions-heading" className="font-semibold">{zh ? '账本操作' : 'Ledger actions'}</h2>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button asChild size="sm"><Link to={ledger.importPath} state={{ returnTo: ledger.returnTo }}>{zh ? '导入持仓' : 'Import holdings'}</Link></Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => setTradeOpen(true)}>{zh ? '录入交易' : 'Record a trade'}</Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => setCashOpen(true)}>{zh ? '调整现金' : 'Adjust cash'}</Button>
+            <Button asChild size="sm" variant="outline"><Link to={assetHref('/transactions', 'real')} state={{ returnTo: ledger.returnTo }}>{zh ? '查看操作记录' : 'View ledger activity'}</Link></Button>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1">
+            <Button size="sm" variant="ghost" onClick={() => setAddOpen(true)}>{t('holdings.addHolding')}</Button>
+            <Button size="sm" variant="ghost" disabled={loading} onClick={() => { refreshQuotes(); void loadData(); }}>{t('ui.tx.refresh')}</Button>
+            <Button asChild size="sm" variant="ghost"><Link to={SIMULATION_ACCOUNTS_PATH + '?seedReal=1'}>{zh ? '复制到模拟盘' : 'Copy to simulation'}</Link></Button>
+            <Button asChild size="sm" variant="ghost"><Link to={assetHref('/watchlist', 'real', new URLSearchParams({ returnTo: ledger.returnTo }).toString())}>{t('assets.watchlist')}</Link></Button>
           </div>
         </section>
-        <details className="rounded-xl border bg-card p-4 sm:p-5">
-          <summary className="cursor-pointer py-1 text-sm font-medium">{zh ? '筛选与管理持仓' : 'Filter and manage holdings'}</summary>
-          <div className="pt-4">{details}</div>
-        </details>
+        <AddTransactionDialog open={tradeOpen} onOpenChange={setTradeOpen}
+          onCreated={() => window.dispatchEvent(new CustomEvent('portfolio-updated'))} />
+        <CashBalanceDialog open={cashOpen} onClose={() => { setCashOpen(false); void loadData(); }} />
       </> : details}
 
       <HoldingDetailDialog

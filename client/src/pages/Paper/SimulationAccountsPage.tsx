@@ -18,12 +18,21 @@ import CreateSimulationAccount from './CreateSimulationAccount';
 import AccountStatusControl from './AccountStatusControl';
 import LegacyDecisionPage from './LegacyDecisionPage';
 import { assetHref, holdingsHref } from '@/features/assets/account-context';
-import type { PortfolioCompanionId } from '@shared/portfolio-workspace.interface';
+import type { PortfolioAccountSummary, PortfolioCompanionId } from '@shared/portfolio-workspace.interface';
 import AnimalAvatar from '@/components/AnimalAvatar';
 import { companionById } from '@/features/companions/companions';
 import CompanionPicker from '@/features/companions/CompanionPicker';
 import DeleteCompanionAccount from '@/features/companions/DeleteCompanionAccount';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
+const accountFilters = ['all', 'running', 'paused', 'former-team', 'archived'] as const;
+type AccountFilter = typeof accountFilters[number];
+
+function matchesAccountFilter(account: PortfolioAccountSummary, filter: AccountFilter): boolean {
+  if (filter === 'former-team') return Boolean(account.formerTeam);
+  if (account.formerTeam) return false;
+  return filter === 'all' ? account.status !== 'archived' : account.status === filter;
+}
 
 export default function SimulationAccountsPage() {
   const { i18n } = useTranslation();
@@ -41,8 +50,8 @@ export default function SimulationAccountsPage() {
   const [creating, setCreating] = useState(
     () => params.get('seedReal') === '1' || params.get('create') === '1',
   );
-  const filter = ['running', 'paused', 'archived'].includes(params.get('status') ?? '') ? params.get('status')! : 'all';
-  const setFilter = (value: string) => {
+  const filter = accountFilters.find(value => value === params.get('status')) ?? 'all';
+  const setFilter = (value: AccountFilter) => {
     const next = new URLSearchParams(params);
     if (value === 'all') next.delete('status'); else next.set('status', value);
     setParams(next, { replace: true });
@@ -62,11 +71,14 @@ export default function SimulationAccountsPage() {
       />
     );
   const items = accounts.data ?? [];
-  const filtered = items.filter((account) =>
-    filter === 'all'
-      ? account.status !== 'archived'
-      : account.status === filter,
-  );
+  const filtered = items.filter(account => matchesAccountFilter(account, filter));
+  const filterLabels: Record<AccountFilter, string> = {
+    all: zh ? '当前账户' : 'Current accounts',
+    running: zh ? '运行中' : 'Running',
+    paused: zh ? '已暂停' : 'Paused',
+    'former-team': zh ? '已归档团队账户' : 'Accounts from archived teams',
+    archived: zh ? '已归档账户' : 'Archived accounts',
+  };
   const closeCreate = () => {
     setCreating(false);
     if (params.has('seedReal') || params.has('create')) {
@@ -118,27 +130,16 @@ export default function SimulationAccountsPage() {
         role="group"
         aria-label={zh ? '账户状态' : 'Account status'}
       >
-        {[
-          ['all', zh ? '全部' : 'All'],
-          ['running', zh ? '运行中' : 'Running'],
-          ['paused', zh ? '已暂停' : 'Paused'],
-          ['archived', zh ? '已归档' : 'Archived'],
-        ].map(([value, label]) => (
+        {accountFilters.map(value => (
           <Button
             key={value}
             variant={filter === value ? 'default' : 'ghost'}
             aria-pressed={filter === value}
             onClick={() => setFilter(value)}
           >
-            {label}{' '}
+            {filterLabels[value]}{' '}
             <span className="tabular-nums opacity-70">
-              {
-                items.filter((item) =>
-                  value === 'all'
-                    ? item.status !== 'archived'
-                    : item.status === value,
-                ).length
-              }
+              {items.filter(item => matchesAccountFilter(item, value)).length}
             </span>
           </Button>
         ))}
@@ -227,6 +228,12 @@ export default function SimulationAccountsPage() {
                 <span className="rounded-md bg-primary/5 px-2 py-1 text-xs text-primary">{accountStatusLabel(account.status, zh)}</span>
                 <span className="text-xs text-muted-foreground">{account.strategyCount} {zh ? '个策略' : 'strategies'}</span>
               </div>
+              {account.formerTeam && <p className="text-xs text-muted-foreground">
+                {zh ? '原团队已归档 · ' : 'Former team archived · '}
+                <Link className="underline underline-offset-2" to={`/teams/${encodeURIComponent(account.formerTeam.id)}?panel=overview`}>
+                  {account.formerTeam.name}
+                </Link>
+              </p>}
               <div className="companion-card-actions">
               <Button asChild className="flex-1">
                 <Link to={targetPath(account.id)} state={returnState}>

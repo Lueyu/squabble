@@ -1,25 +1,33 @@
 /**
- * Closed positions service.
+ * closed.service.ts — 已平仓服务。
  *
- * Business logic and PostgreSQL (Drizzle) data access for realized, closed-out
- * positions. Most closed rows are derived automatically by the transactions
- * reconciliation, but this service also supports manual create/update/delete.
- * All queries are owner-scoped. The `getRealizedSummary` aggregates realized P&L
- * per ticker and per currency (currency is looked up from the transactions table,
- * since closed rows themselves store no currency).
+ * 职责边界：
+ *  - 承载已实现（平仓）持仓的业务规则与 PostgreSQL（Drizzle）数据访问；
+ *    大多数已平仓记录由 transactions 的对账逻辑自动派生，本服务另外支持手工增删改。
+ * 上下游：
+ *  - 上游（谁调用本服务）：ClosedController（CRUD 与汇总）、transactions 模块的对账逻辑。
+ *  - 下游（本文件调用谁）：Drizzle 数据库（closed、transactions 两张表）、shared 契约类型。
+ * 关键约定：
+ *  - 所有查询都按 owner（userId）过滤，跨用户不可见。
+ *  - closed 表本身不存币种；汇总时从 transactions 表反查每个 ticker 的币种。
+ *  - 价格/股数/盈亏字段：DB 内为 numeric，API 层一律转换为字符串数值返回。
  */
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
 import { eq, and, desc, inArray } from 'drizzle-orm';
 import { closed, transactions } from '@server/database/schema';
-import type { ClosedPosition, CreateClosedDto, RealizedPlSummary, RealizedPlItem } from '@shared/api.interface';
+import type {
+  ClosedPosition,
+  CreateClosedDto,
+  RealizedPlSummary,
+  RealizedPlItem,
+} from '@shared/api.interface';
 
-/** Partial-update variant of the create DTO. */
+/** 新建 DTO 的部分更新变体。 */
 type UpdateClosedDto = Partial<CreateClosedDto>;
 
 /**
- * Provides closed-position CRUD and realized-P&L aggregation. Depends on the
- * Drizzle database connection.
+ * 提供已平仓记录的 CRUD 与已实现盈亏聚合，依赖注入的 Drizzle 数据库连接。
  */
 @Injectable()
 export class ClosedService {
@@ -28,9 +36,10 @@ export class ClosedService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
   /**
-   * Lists all closed positions for a user, most recently closed first.
+   * 列出用户全部已平仓记录，按平仓日期倒序（最近平仓的在前）。
    *
-   * @param userId Owner id from the authenticated request.
+   * @param userId 来自鉴权请求的 owner id。
+   * @returns 转换为 API 形状的 ClosedPosition 数组。
    */
   async list(userId: string): Promise<ClosedPosition[]> {
     const rows = await this.db
@@ -55,12 +64,14 @@ export class ClosedService {
   }
 
   /**
-   * Manually creates a closed-position record.
+   * 手工新建一条已平仓记录。
    *
-   * @param userId Owner id.
-   * @param dto    Create payload.
+   * @param userId owner id。
+   * @param dto    新建载荷。
+   * @returns 新建后的 ClosedPosition。
    */
   async create(userId: string, dto: CreateClosedDto): Promise<ClosedPosition> {
+    // 数值字段在 DTO 里可为 number，落库前统一转字符串（numeric 列）。
     const rows = await this.db
       .insert(closed)
       .values({
@@ -95,15 +106,17 @@ export class ClosedService {
   }
 
   /**
-   * Partially updates an owned closed position; refreshes `updatedAt`/`updatedBy`.
+   * 部分更新一条属于当前用户的已平仓记录；同时刷新 `updatedAt`/`updatedBy` 审计字段。
    *
-   * @param userId Owner id used for the ownership filter and audit stamp.
-   * @param id     Closed-position primary key.
-   * @param dto    Partial update payload.
-   * @throws BadRequestException if no updatable field is supplied.
-   * @throws NotFoundException if the row does not belong to the user.
+   * @param userId 用于 owner 过滤与审计落款的用户 id。
+   * @param id     已平仓记录主键。
+   * @param dto    部分更新载荷。
+   * @returns 更新后的 ClosedPosition。
+   * @throws BadRequestException 当未提供任何可更新字段时。
+   * @throws NotFoundException 当记录不存在或不属于该用户时。
    */
   async update(userId: string, id: string, dto: UpdateClosedDto): Promise<ClosedPosition> {
+    // 只把 payload 中显式给出的字段搬进 patch，未提及的字段保持原值。
     const patch: Record<string, unknown> = {};
     if (dto.ticker !== undefined) patch.ticker = dto.ticker;
     if (dto.company !== undefined) patch.company = dto.company;
@@ -117,9 +130,10 @@ export class ClosedService {
     if (dto.notes !== undefined) patch.notes = dto.notes;
 
     if (Object.keys(patch).length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new BadRequestException('未提供可更新字段');
 
+    // 补齐审计字段：修改时间与修改人。
     patch.updatedAt = new Date();
     patch.updatedBy = userId;
 
@@ -130,7 +144,7 @@ export class ClosedService {
       .returning();
 
     if (rows.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new NotFoundException('已平仓记录不存在');
 
     const row = rows[0];
@@ -150,11 +164,11 @@ export class ClosedService {
   }
 
   /**
-   * Deletes an owned closed position.
+   * 删除一条属于当前用户的已平仓记录。
    *
-   * @param userId Owner id used for the ownership filter.
-   * @param id     Closed-position primary key.
-   * @throws NotFoundException if the row does not belong to the user.
+   * @param userId 用于 owner 过滤的用户 id。
+   * @param id     已平仓记录主键。
+   * @throws NotFoundException 当记录不存在或不属于该用户时。
    */
   async remove(userId: string, id: string): Promise<void> {
     const rows = await this.db
@@ -163,16 +177,16 @@ export class ClosedService {
       .returning({ id: closed.id });
 
     if (rows.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // NOTE: 用户可见文案为中文，属既有行为而非乱码。
       throw new NotFoundException('已平仓记录不存在');
   }
 
   /**
-   * Aggregates realized P&L for the user's closed positions: totals per currency,
-   * winner/loser counts, and a per-ticker breakdown sorted by P&L. Currency per
-   * ticker is resolved from the transactions table (closed rows carry no currency).
+   * 聚合用户已平仓记录的已实现盈亏：按币种合计、盈/亏标的数、按标的分组明细（按盈亏排序）。
+   * 每个 ticker 的币种从 transactions 表反查（closed 行本身不存币种）。
    *
-   * @param userId Owner id.
+   * @param userId owner id。
+   * @returns RealizedPlSummary 汇总对象。
    */
   async getRealizedSummary(userId: string): Promise<RealizedPlSummary> {
     const closedRows = await this.db
@@ -181,6 +195,7 @@ export class ClosedService {
       .where(eq(closed.owner, userId))
       .orderBy(desc(closed.closeDate));
 
+    // 无任何平仓记录时直接返回零值汇总，避免后续空集合运算。
     if (closedRows.length === 0) {
       return {
         totalByCurrency: { USD: '0.00', HKD: '0.00', CNY: '0.00' },
@@ -190,6 +205,7 @@ export class ClosedService {
       };
     }
 
+    // 收集出现过的 ticker 去重清单，保持首见顺序。
     const tickers: string[] = [];
     const tickerSet = new Set<string>();
     for (const row of closedRows) {
@@ -199,19 +215,14 @@ export class ClosedService {
       }
     }
 
-    // Look up distinct ticker -> currency from the transactions table.
+    // 从 transactions 表反查 ticker -> 币种（去重组合）。
     const currencyRows = await this.db
       .select({
         ticker: transactions.ticker,
         currency: transactions.currency,
       })
       .from(transactions)
-      .where(
-        and(
-          eq(transactions.owner, userId),
-          inArray(transactions.ticker, tickers),
-        ),
-      )
+      .where(and(eq(transactions.owner, userId), inArray(transactions.ticker, tickers)))
       .groupBy(transactions.ticker, transactions.currency);
 
     const currencyMap = new Map<string, string>();
@@ -221,25 +232,27 @@ export class ClosedService {
       }
     }
 
-    // Aggregate closed rows by ticker.
-    const byTicker = new Map<string, {
-      company: string | null;
-      totalPl: number;
-      totalCost: number;
-      totalShares: number;
-      closeCount: number;
-      lastCloseDate: string | null;
-      currency: string;
-    }>();
+    // 按 ticker 聚合平仓行：累加盈亏、成本、股数与平仓次数。
+    const byTicker = new Map<
+      string,
+      {
+        company: string | null;
+        totalPl: number;
+        totalCost: number;
+        totalShares: number;
+        closeCount: number;
+        lastCloseDate: string | null;
+        currency: string;
+      }
+    >();
 
     for (const row of closedRows) {
       const existing = byTicker.get(row.ticker);
       const pl = row.realizedPl != null ? Number(row.realizedPl) : 0;
       const shares = row.shares != null ? Number(row.shares) : 0;
-      // Cost basis for this closed lot = buyPrice * shares.
-      const cost = row.buyPrice != null && row.shares != null
-        ? Number(row.buyPrice) * Number(row.shares)
-        : 0;
+      // 该平仓批次的成本基础 = 买入价 × 股数。
+      const cost =
+        row.buyPrice != null && row.shares != null ? Number(row.buyPrice) * Number(row.shares) : 0;
 
       if (existing) {
         existing.totalPl += pl;
@@ -263,15 +276,15 @@ export class ClosedService {
       }
     }
 
+    // 汇总初始化：明细列表、按币种合计（number 形态）、盈亏标的计数。
     const items: RealizedPlItem[] = [];
     const totalByCurrency: Record<string, number> = { USD: 0, HKD: 0, CNY: 0 };
     let totalWinners = 0;
     let totalLosers = 0;
 
     for (const [ticker, data] of byTicker) {
-      const returnPct = data.totalCost > 0
-        ? ((data.totalPl / data.totalCost) * 100).toFixed(2)
-        : null;
+      const returnPct =
+        data.totalCost > 0 ? ((data.totalPl / data.totalCost) * 100).toFixed(2) : null;
 
       items.push({
         ticker,
@@ -298,9 +311,10 @@ export class ClosedService {
       }
     }
 
-    // Sort by realized P&L descending (best performers first).
+    // 按已实现盈亏降序排序（表现最好的在前）。
     items.sort((a, b) => parseFloat(b.realizedPl) - parseFloat(a.realizedPl));
 
+    // 币种合计从 number 转回字符串数值，对齐 API 契约。
     const totalByCurrencyStr: Record<string, string> = {};
     for (const cur of Object.keys(totalByCurrency)) {
       totalByCurrencyStr[cur] = totalByCurrency[cur].toFixed(2);
