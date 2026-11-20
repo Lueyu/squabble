@@ -1,9 +1,18 @@
 /**
- * Trading journal service.
+ * Trading journal service（交易日志服务）。
  *
- * Business logic and PostgreSQL (Drizzle) data access for the user's per-day
- * trading journal. Entries are owner-scoped and keyed by (owner, journalDate);
- * `upsert` updates the existing entry for that date or creates one if absent.
+ * 职责边界：承载逐日交易日志的业务逻辑与 PostgreSQL（Drizzle）数据访问；
+ * 日志按 owner 隔离，业务键为 (owner, journalDate)；`upsert` 对该日期的
+ * 既有条目更新、缺失则新建。不管鉴权与路由。
+ *
+ * 上下游：import @nestjs/common（Logger/NotFoundException）、
+ * DRIZZLE_DATABASE/PostgresJsDatabase（common/platform 注入）、drizzle-orm
+ * 操作符、@server/database/schema 的 journal 表、@shared/api.interface
+ * 类型；由 journal.controller.ts 调用。
+ *
+ * 关键约定：列表按 journalDate 倒序；upsert 在事务内先查后更/插（依赖表上
+ * (owner,journal_date) 唯一约束兜底）；未命中删除抛 NotFoundException
+ * （文案'日志记录不存在'，既有中文行为）。
  */
 import { Injectable, Inject, Logger, NotFoundException } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '../../common/platform';
@@ -12,7 +21,7 @@ import { journal } from '@server/database/schema';
 import type { JournalEntry, CreateJournalDto, ListResponse } from '@shared/api.interface';
 
 /**
- * Provides journal read/upsert/delete. Depends on the Drizzle database connection.
+ * 提供日志的读/upsert/删除。依赖注入的 Drizzle 数据库连接。
  */
 @Injectable()
 export class JournalService {
@@ -21,12 +30,13 @@ export class JournalService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
   /**
-   * Lists journal entries for a user, newest first, optionally filtered by date.
+   * 列出某用户的日志，最新在前，可按日期过滤。
    *
-   * @param userId Owner id.
-   * @param date   Optional journal date filter.
+   * @param userId 属主 id。
+   * @param date   可选的日志日期过滤。
    */
   async list(userId: string, date?: string): Promise<ListResponse<JournalEntry>> {
+    // 基础条件：owner 必匹配；date 仅在传入时追加。
     const conditions = [eq(journal.owner, userId)];
     if (date) conditions.push(eq(journal.journalDate, date));
 
@@ -51,9 +61,9 @@ export class JournalService {
   }
 
   /**
-   * Returns the most recent journal entry for the user, or null if none.
+   * 返回该用户最近一条日志，无记录时返回 null。
    *
-   * @param userId Owner id.
+   * @param userId 属主 id。
    */
   async latest(userId: string): Promise<JournalEntry | null> {
     const rows = await this.db
@@ -78,14 +88,15 @@ export class JournalService {
   }
 
   /**
-   * Upserts the journal entry for a given date: updates it if one already exists
-   * for (owner, date), otherwise inserts a new one. Runs in a transaction.
+   * Upsert 指定日期的日志：(owner, date) 已存在则更新，否则插入新条目。
+   * 全程在事务内执行。
    *
-   * @param userId Owner id.
-   * @param dto    Journal payload keyed by `journalDate`.
+   * @param userId 属主 id。
+   * @param dto    以 `journalDate` 为键的日志载荷。
    */
   async upsert(userId: string, dto: CreateJournalDto): Promise<JournalEntry> {
     const result = await this.db.transaction(async (tx) => {
+      // 先按业务键（owner+date）查找既有条目。
       const existing = await tx
         .select()
         .from(journal)
@@ -93,7 +104,7 @@ export class JournalService {
         .limit(1);
 
       if (existing.length > 0) {
-        // Update only the fields supplied in the DTO.
+        // 命中：仅更新 DTO 中显式给出的字段。
         const patch: Record<string, unknown> = {};
         if (dto.marketSummary !== undefined) patch.marketSummary = dto.marketSummary;
         if (dto.portfolioSummary !== undefined) patch.portfolioSummary = dto.portfolioSummary;
@@ -111,6 +122,7 @@ export class JournalService {
         return updated;
       }
 
+      // 未命中：插入新条目；DTO 未提供的可空字段落 null。
       const [inserted] = await tx
         .insert(journal)
         .values({
@@ -128,6 +140,7 @@ export class JournalService {
       return inserted;
     });
 
+    // 统一映射为 API 形状（updatedAt 由 Date 转 ISO 字符串）。
     return {
       id: result.id,
       journalDate: result.journalDate,
@@ -141,11 +154,11 @@ export class JournalService {
   }
 
   /**
-   * Deletes an owned journal entry.
+   * 删除一条属于该用户的日志。
    *
-   * @param userId Owner id.
-   * @param id     Journal entry primary key.
-   * @throws NotFoundException if the entry does not belong to the user.
+   * @param userId 属主 id。
+   * @param id     日志主键。
+   * @throws NotFoundException 当条目不存在或不属于该用户时抛出。
    */
   async remove(userId: string, id: string): Promise<{ success: boolean }> {
     const deleted = await this.db
@@ -154,7 +167,7 @@ export class JournalService {
       .returning({ id: journal.id });
 
     if (deleted.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // 中文用户可见文案（既有行为，非乱码）。
       throw new NotFoundException('日志记录不存在');
     return { success: true };
   }

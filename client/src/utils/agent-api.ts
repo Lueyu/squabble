@@ -1,32 +1,40 @@
 /**
  * @file utils/agent-api.ts
- * @brief Embedded multi-agent bridge exposed on `window.__pt`.
+ * @description 挂在 `window.__pt` 上的嵌入式多智能体桥接 API。
  *
- * Local browser integrations can use this stable surface to read/write
- * portfolio data without knowing backend URLs. `initAgentAPI` installs it
- * on `window.__pt`, merging over any pre-existing fields so it is safe to
- * call more than once.
+ * 本地浏览器集成（如内嵌的智能体运行时）可以用这套稳定接口读写组合数据，
+ * 而无需知道后端 URL。`initAgentAPI` 负责把它安装到 `window.__pt` 上，
+ * 并与已有字段合并，因此可以安全地多次调用。
  *
- * The methods here intentionally mirror backend `/api/agent/*` routes and are
- * called out-of-process; the UI itself should prefer the typed functions in
- * `api/index.ts`.
+ * 这里的方法刻意与后端 `/api/agent/*` 路由一一对应，且是跨进程调用的；
+ * SPA 自身的 UI 应优先使用 `api/index.ts` 里的类型化函数。
+ *
+ * 职责边界：
+ *  - 只做"桥接面"安装与转发；页面内部的 API 调用不走这里
+ * 上下游：
+ *  - 上游（谁调用这里）：app.tsx 在应用挂载时调用 initAgentAPI
+ *  - 下游（本文件调用谁）：../api/http（axios 实例）、./logger；
+ *    另外行情 hook（use-market-quotes）会向 window.__pt 追加 getMarketStatus
+ * 关键约定：
+ *  - window.__pt 已存在的字段不会被覆盖（合并安装）
+ *  - 深度报告的 url 一律用 resolveAppUrl 拼同源绝对地址，供 SPA 之外使用
  */
 import http from '../api/http';
-/** Same-origin absolute URL for links shared outside the SPA. */
+/** 拼接同源绝对 URL，供 SPA 外部（智能体进程）使用的链接。 */
 const resolveAppUrl = (path: string) => `${window.location.origin}${path}`;
 import { logger } from './logger';
 
 declare global {
   interface Window {
-    /** Bridge surface exposed to the embedded agent runtime. */
+    /** 暴露给嵌入式智能体运行时的桥接面。 */
     __pt?: PortfolioTerminalAPI;
   }
 }
 
 /**
- * Shape of the agent bridge installed on `window.__pt`.
- * All methods are async and reject on backend error; read methods return the
- * raw backend payload, write methods return the persisted record.
+ * 安装到 `window.__pt` 上的智能体桥接接口形状。
+ * 所有方法都是异步的，后端出错时 reject；读方法返回后端原始负载，
+ * 写方法返回落库后的记录。
  */
 interface PortfolioTerminalAPI {
   getState: () => Promise<unknown>;
@@ -45,28 +53,32 @@ interface PortfolioTerminalAPI {
   listDeepReports: () => Promise<unknown>;
   getMarketStatus?: () => {
     utcNow: string;
-    markets: Record<string, {
-      phase: string;
-      timezone: string;
-      localTime: string;
-      weekday: number;
-      nextRefresh: number;
-      lastUpdated: Date | null;
-      error: boolean;
-      tickerCount: number;
-    }>;
+    markets: Record<
+      string,
+      {
+        phase: string;
+        timezone: string;
+        localTime: string;
+        weekday: number;
+        nextRefresh: number;
+        lastUpdated: Date | null;
+        error: boolean;
+        tickerCount: number;
+      }
+    >;
   };
 }
 
 /**
- * Install the agent bridge on `window.__pt`.
- * Safe to call multiple times: existing fields on `window.__pt` are preserved
- * and merged under the API surface. No-op during SSR.
+ * 把智能体桥接安装到 `window.__pt` 上。
+ * 可安全地多次调用：`window.__pt` 上已有的字段会被保留并与 API 面合并。
+ * SSR 环境下是空操作。
  */
 export function initAgentAPI() {
   if (typeof window === 'undefined') return;
 
   const api: PortfolioTerminalAPI = {
+    // 读取多智能体运行状态。
     async getState() {
       try {
         const response = await http.get('/api/agent/state');
@@ -77,6 +89,7 @@ export function initAgentAPI() {
       }
     },
 
+    // 读取多智能体运行历史。
     async getHistory() {
       try {
         const response = await http.get('/api/agent/history');
@@ -87,6 +100,7 @@ export function initAgentAPI() {
       }
     },
 
+    // 保存某天的每日分析快照。
     async saveDailyAnalysis(date: string, items: unknown[]) {
       try {
         const response = await http.post('/api/agent/daily-analysis', {
@@ -100,6 +114,7 @@ export function initAgentAPI() {
       }
     },
 
+    // 把评级批量应用到持仓。
     async applyHoldingRatings(items: unknown[]) {
       try {
         const response = await http.post('/api/agent/holding-ratings', {
@@ -112,6 +127,7 @@ export function initAgentAPI() {
       }
     },
 
+    // 批量新增自选条目。
     async addWatchItems(items: unknown[]) {
       try {
         const response = await http.post('/api/agent/watch-items/add', {
@@ -124,12 +140,10 @@ export function initAgentAPI() {
       }
     },
 
+    // 按 ticker 批量移除自选条目。
     async removeWatchItems(tickers: string[]) {
       try {
-        const response = await http.post(
-          '/api/agent/watch-items/remove',
-          { tickers }
-        );
+        const response = await http.post('/api/agent/watch-items/remove', { tickers });
         return response.data;
       } catch (error) {
         logger.error('agent removeWatchItems failed', error);
@@ -137,6 +151,7 @@ export function initAgentAPI() {
       }
     },
 
+    // 保存交易日志（Journal）。
     async saveJournal(data: unknown) {
       try {
         const response = await http.post('/api/agent/journal', data);
@@ -147,11 +162,11 @@ export function initAgentAPI() {
       }
     },
 
+    // 读取交易日志，可按日期过滤。
     async getJournal(date?: string) {
       try {
-        const url = date
-          ? `/api/agent/journal?date=${date}`
-          : '/api/agent/journal';
+        // 有 date 时拼查询参数，否则请求全量端点。
+        const url = date ? `/api/agent/journal?date=${date}` : '/api/agent/journal';
         const response = await http.get(url);
         return response.data;
       } catch (error) {
@@ -160,6 +175,7 @@ export function initAgentAPI() {
       }
     },
 
+    // 保存一份组合快照。
     async saveSnapshot(data: unknown) {
       try {
         const response = await http.post('/api/agent/snapshot', data);
@@ -170,11 +186,11 @@ export function initAgentAPI() {
       }
     },
 
+    // 读取历史组合快照，可用 limit 限制条数。
     async getSnapshots(limit?: number) {
       try {
-        const url = limit
-          ? `/api/agent/snapshots?limit=${limit}`
-          : '/api/agent/snapshots';
+        // 有 limit 时拼查询参数，否则请求全量端点。
+        const url = limit ? `/api/agent/snapshots?limit=${limit}` : '/api/agent/snapshots';
         const response = await http.get(url);
         return response.data;
       } catch (error) {
@@ -183,10 +199,12 @@ export function initAgentAPI() {
       }
     },
 
+    // 保存深度报告，并附上可分享的同源绝对链接。
     async saveDeepReport(input: unknown) {
       try {
         const response = await http.post('/api/agent/deep-report', input);
         const data = response.data;
+        // 用返回的 runId 拼报告页地址。
         const url = resolveAppUrl(`/analysis/deep-report/${data.runId}`);
         return { ...data, url };
       } catch (error) {
@@ -195,6 +213,7 @@ export function initAgentAPI() {
       }
     },
 
+    // 读取策略规则列表。
     async getStrategyRules() {
       try {
         const response = await http.get('/api/agent/strategy-rules');
@@ -205,12 +224,12 @@ export function initAgentAPI() {
       }
     },
 
+    // 读取某 ticker 的最新深度报告，有 runId 时附上绝对链接。
     async getLatestDeepReport(ticker: string) {
       try {
-        const response = await http.get(
-          `/api/agent/deep-report/latest?ticker=${ticker}`,
-        );
+        const response = await http.get(`/api/agent/deep-report/latest?ticker=${ticker}`);
         const data = response.data;
+        // 存在 runId 才拼链接；否则原样返回。
         if (data && data.runId) {
           const url = resolveAppUrl(`/analysis/deep-report/${data.runId}`);
           return { ...data, url };
@@ -222,9 +241,11 @@ export function initAgentAPI() {
       }
     },
 
+    // 列出全部深度报告，每条都附上同源绝对链接。
     async listDeepReports() {
       try {
         const response = await http.get('/api/agent/deep-reports');
+        // 兼容非数组响应：一律回退空数组再逐条补链接。
         const items = Array.isArray(response.data) ? response.data : [];
         return items.map((item: { runId: string }) => ({
           ...item,
@@ -237,6 +258,7 @@ export function initAgentAPI() {
     },
   };
 
+  // 合并安装：保留 __pt 上已有字段（例如行情 hook 注入的 getMarketStatus）。
   const existing = window.__pt ?? {};
   window.__pt = { ...existing, ...api };
   logger.info('Portfolio Terminal agent API initialized');

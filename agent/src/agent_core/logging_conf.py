@@ -2,9 +2,8 @@
 
 import logging
 
-# Third-party libraries that log one line per request at INFO; keep them at
-# WARNING so CLI output stays readable. Set them to DEBUG to inspect wire-level
-# details when troubleshooting.
+# 以下第三方库每个请求都以 INFO 打一行日志；压到 WARNING 以保持 CLI 输出
+# 可读。排查问题时可改为 DEBUG 查看线路级细节。
 _NOISY_LOGGERS = ("httpx", "httpcore")
 
 
@@ -14,8 +13,8 @@ def setup_logging(level: str = "INFO") -> None:
         level=root_level,
         format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
     )
+
     for name in _NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
-    # Keep our own package at the explicitly requested level.
+    # 本包自己的 logger 保持显式指定的级别。
     logging.getLogger("agent_core").setLevel(root_level)
-

@@ -1,8 +1,16 @@
-/* Compact portfolio overview; palettes are supplied by the selected theme. */
+/**
+ * @file client/src/pages/Dashboard/dashboard-design.css
+ * @description Dashboard 页专属样式：英雄区（吉祥物 + 欢迎文案 + 市场状态 +
+ * 币种切换）、指标卡网格、分析面板与 AI 统计小卡；配色全部取自当前 designTheme
+ * 的令牌，末尾附主题差异覆盖与响应式断点。
+ */
+
+/* 紧凑的持仓总览；配色一律来自当前选中的主题（designTheme）令牌。 */
 .dashboard-page {
   min-width: 0;
 }
 
+/* ===== 顶部英雄区（吉祥物 + 欢迎文案 + 市场状态 + 币种切换） ===== */
 .dashboard-hero {
   display: flex;
   align-items: center;
@@ -63,6 +71,7 @@
   gap: 0.45rem;
 }
 
+/* ===== 指标卡网格（container query 驱动数值字号缩放） ===== */
 .dashboard-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -117,6 +126,7 @@
   font-size: clamp(0.875rem, 9cqi, 1.25rem);
 }
 
+/* ===== 分析面板网格与 AI 统计小卡 ===== */
 .dashboard-analysis-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -206,25 +216,28 @@
   overflow-wrap: anywhere;
 }
 
-[data-design-theme="arcade"] .dashboard-mascot-frame {
+/* ===== designTheme 差异覆盖（吉祥物边框质感） ===== */
+[data-design-theme='arcade'] .dashboard-mascot-frame {
   border-style: dashed;
   border-radius: 0;
-  background-image: linear-gradient(var(--brand-soft) 1px, transparent 1px),
+  background-image:
+    linear-gradient(var(--brand-soft) 1px, transparent 1px),
     linear-gradient(90deg, var(--brand-soft) 1px, transparent 1px);
   background-size: 12px 12px;
 }
 
-[data-design-theme="comic"] .dashboard-mascot-frame {
+[data-design-theme='comic'] .dashboard-mascot-frame {
   border: 2px solid var(--foreground);
   box-shadow: 3px 3px 0 var(--foreground);
   transform: rotate(-3deg);
 }
 
-[data-design-theme="orbit"] .dashboard-mascot-frame {
+[data-design-theme='orbit'] .dashboard-mascot-frame {
   border-radius: 50%;
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--brand) 7%, transparent);
 }
 
+/* ===== 响应式断点（指标卡列数随宽度递增；窄屏英雄区折行） ===== */
 @media (width >= 640px) {
   .dashboard-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));

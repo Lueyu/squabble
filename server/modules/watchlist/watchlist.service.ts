@@ -1,10 +1,18 @@
 /**
- * Watchlist service.
+ * watchlist.service.ts — 自选列表（Watchlist）的业务逻辑与 PostgreSQL（Drizzle）数据访问。
  *
- * Business logic and PostgreSQL (Drizzle) data access for watchlist items. All
- * queries are owner-scoped (`owner = <userId>`). Numeric columns (prices) are
- * Postgres `numeric`, handled as JS strings to avoid float drift. On create,
- * market/currency metadata is auto-detected from the ticker via `QuoteService`.
+ * 职责边界：
+ *  - 负责自选项的增删改查与批量价格更新，以及 Drizzle 行 → API WatchItem 形状的映射。
+ *  - 不调用上游行情源；ticker 的市场/币种识别复用 QuoteService.detectMarket。
+ * 上下游：
+ *  - 上游：WatchlistController（/api/portfolio/watchlist 的 CRUD 路由）。
+ *  - 下游：Drizzle 数据库（watchlist 表）与 QuoteService（仅 detectMarket）。
+ * 关键约定：
+ *  - 所有查询都以 owner = <userId> 过滤，天然按登录用户隔离数据。
+ *  - 价格类列是 Postgres numeric，Drizzle 以 JS 字符串返回：写入用 String(...)
+ *    转换、读取原样透传，避免浮点精度漂移。
+ *  - 新增自选时 market/currency 由服务端从 ticker 推导，不由客户端提供。
+ *  - 归属校验失败抛 NotFoundException('关注项不存在')——面向用户的中文文案（既有行为，非乱码）。
  */
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { eq, desc, and } from 'drizzle-orm';
@@ -21,8 +29,8 @@ import type {
 } from '@shared/api.interface';
 
 /**
- * Provides watchlist CRUD and batch price updates. Depends on the Drizzle database
- * and `QuoteService` for ticker market detection.
+ * 提供自选项的增删改查与批量价格更新。依赖 Drizzle 数据库连接，
+ * 并用 QuoteService 做 ticker 市场识别。
  */
 @Injectable()
 export class WatchlistService {
@@ -32,46 +40,50 @@ export class WatchlistService {
   ) {}
 
   /**
-   * Returns all watchlist items for a user, most recently updated first.
+   * 返回某用户的全部自选项，按最近更新时间倒序。
    *
-   * @param userId Owner id from the authenticated request.
+   * @param userId 来自已认证请求的归属用户 id
    */
   async findAll(userId: string): Promise<ListResponse<WatchItem>> {
+    // 按 owner 过滤并按 updatedAt 倒序取全部自选项。
     const rows = await this.db
       .select()
       .from(watchlist)
       .where(eq(watchlist.owner, userId))
       .orderBy(desc(watchlist.updatedAt));
+    // 逐行映射为 API 形状后包装成列表响应。
     return { items: rows.map((r) => this.mapRow(r)) };
   }
 
   /**
-   * Fetches a single watchlist item by id, only when owned by the caller.
+   * 按 id 获取单条自选项，且仅当它属于调用者时返回。
    *
-   * @param id     Watch item primary key.
-   * @param userId Owner id used as the ownership filter.
-   * @throws NotFoundException if no matching (id, owner) row exists.
+   * @param id     自选项主键
+   * @param userId 用作归属过滤的用户 id
+   * @throws NotFoundException 当 (id, owner) 无匹配行时抛出
    */
   async findOne(id: string, userId: string): Promise<WatchItem> {
+    // 以 (id, owner) 双条件查询，天然防止跨用户读取。
     const rows = await this.db
       .select()
       .from(watchlist)
       .where(and(eq(watchlist.id, id), eq(watchlist.owner, userId)));
     if (rows.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // 注意：此处是面向用户的中文文案（既有行为，并非乱码）。
       throw new NotFoundException('关注项不存在');
     return this.mapRow(rows[0]);
   }
 
   /**
-   * Creates a watchlist item for the user. Market/currency fields are derived from
-   * the ticker rather than supplied by the client.
+   * 为某用户新增自选项。market/currency 字段由 ticker 推导，而非客户端提供。
    *
-   * @param dto    Create payload.
-   * @param userId Owner id stamped onto owner/createdBy/updatedBy.
+   * @param dto    创建载荷
+   * @param userId 写入 owner/createdBy/updatedBy 的归属用户 id
    */
   async create(dto: CreateWatchItemDto, userId: string): Promise<WatchItem> {
+    // 用 ticker 推导市场/币种元数据。
     const marketInfo = this.quoteService.detectMarket(dto.ticker);
+    // 插入新行：价格类列统一 String(...) 后落库以保留精确小数。
     const rows = await this.db
       .insert(watchlist)
       .values({
@@ -79,7 +91,7 @@ export class WatchlistService {
         company: dto.company,
         sector: dto.sector,
         dateAdded: dto.dateAdded,
-        // numeric price columns written as strings to preserve exact decimals.
+        // numeric 价格列以字符串写入，保留精确小数。
         entryPrice: dto.entryPrice !== undefined ? String(dto.entryPrice) : undefined,
         currentPrice: dto.currentPrice !== undefined ? String(dto.currentPrice) : undefined,
         rating: dto.rating,
@@ -97,14 +109,15 @@ export class WatchlistService {
   }
 
   /**
-   * Partially updates an owned watchlist item; refreshes `updatedAt`/`updatedBy`.
+   * 部分更新一条归属该用户的自选项；同时刷新 updatedAt/updatedBy。
    *
-   * @param id     Watch item primary key.
-   * @param dto    Partial update payload.
-   * @param userId Owner id used for the ownership filter and audit stamp.
-   * @throws NotFoundException if the item does not belong to the user.
+   * @param id     自选项主键
+   * @param dto    部分更新载荷
+   * @param userId 用于归属过滤与审计字段的用户 id
+   * @throws NotFoundException 当该项不属于该用户时抛出
    */
   async update(id: string, dto: UpdateWatchItemDto, userId: string): Promise<WatchItem> {
+    // 仅收集载荷中显式提供的字段；价格类字段转换成字符串落库。
     const patch: Partial<typeof watchlist.$inferInsert> = {};
     if (dto.company !== undefined) patch.company = dto.company;
     if (dto.sector !== undefined) patch.sector = dto.sector;
@@ -115,45 +128,49 @@ export class WatchlistService {
     if (dto.targetBuy !== undefined) patch.targetBuy = String(dto.targetBuy);
     if (dto.analysis !== undefined) patch.analysis = dto.analysis;
 
+    // 每次更新都刷新审计字段（updatedAt/updatedBy）。
     patch.updatedAt = new Date();
     patch.updatedBy = userId;
 
+    // 以 (id, owner) 双条件更新，天然防止跨用户改写。
     const rows = await this.db
       .update(watchlist)
       .set(patch)
       .where(and(eq(watchlist.id, id), eq(watchlist.owner, userId)))
       .returning();
     if (rows.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // 注意：此处是面向用户的中文文案（既有行为，并非乱码）。
       throw new NotFoundException('关注项不存在');
     return this.mapRow(rows[0]);
   }
 
   /**
-   * Deletes an owned watchlist item.
+   * 删除一条归属该用户的自选项。
    *
-   * @param id     Watch item primary key.
-   * @param userId Owner id used for the ownership filter.
-   * @throws NotFoundException if the item does not belong to the user.
+   * @param id     自选项主键
+   * @param userId 用于归属过滤的用户 id
+   * @throws NotFoundException 当该项不属于该用户时抛出
    */
   async remove(id: string, userId: string): Promise<{ success: true }> {
+    // 以 (id, owner) 双条件删除；仅返回被删行的 id 用于判断是否命中。
     const rows = await this.db
       .delete(watchlist)
       .where(and(eq(watchlist.id, id), eq(watchlist.owner, userId)))
       .returning({ id: watchlist.id });
     if (rows.length === 0)
-      // NOTE: Chinese user-facing message (existing behavior; not mojibake).
+      // 注意：此处是面向用户的中文文案（既有行为，并非乱码）。
       throw new NotFoundException('关注项不存在');
     return { success: true };
   }
 
   /**
-   * Batch-updates current prices by (ticker, owner) inside a single transaction.
+   * 在单个事务内按 (ticker, owner) 批量更新当前价格。
    *
-   * @param items  Ticker/price pairs to apply.
-   * @param userId Owner id scoping which rows may be updated.
+   * @param items  待应用的 ticker/价格对
+   * @param userId 限定可更新行的归属用户 id
    */
   async updatePrices(items: BatchPriceUpdateDto[], userId: string): Promise<{ success: true }> {
+    // 整批放在一个事务里：任一条失败则全部回滚。
     await this.db.transaction(async (tx) => {
       for (const item of items) {
         await tx
@@ -170,10 +187,10 @@ export class WatchlistService {
   }
 
   /**
-   * Maps a raw Drizzle row to the API `WatchItem` shape, defaulting market/currency
-   * for legacy rows and serializing the timestamp.
+   * 把 Drizzle 原始行映射为 API 的 WatchItem 形状：为遗留行补默认的
+   * market/currency，并序列化时间戳。
    *
-   * @param row Raw watchlist table row.
+   * @param row watchlist 表的原始行
    */
   private mapRow(row: typeof watchlist.$inferSelect): WatchItem {
     return {
@@ -188,7 +205,7 @@ export class WatchlistService {
       signal: row.signal,
       targetBuy: row.targetBuy,
       analysis: row.analysis,
-      // Default to US market / USD for legacy rows created before market detection.
+      // 早于市场识别功能创建的遗留行，默认按美股 / USD 处理。
       market: (row.market as WatchItem['market']) || 'US',
       currency: (row.currency as WatchItem['currency']) || 'USD',
       updatedAt: row.updatedAt.toISOString(),

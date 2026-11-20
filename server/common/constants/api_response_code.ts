@@ -1,27 +1,33 @@
 /**
- * Business response codes and their mapping to HTTP status codes.
+ * 业务响应码及其到 HTTP 状态码的映射。
  *
- * The API uses a stable, language-independent string `code` (e.g. `NOT_FOUND`)
- * in every response body so the frontend can branch on business semantics without
- * relying on HTTP status alone. This module defines the canonical `ResponseCode`
- * enum, the forward map (business code -> HTTP status), and the reverse map
- * (HTTP status -> business code) used by the global exception filter.
+ * 职责边界：只定义"业务码枚举 + 双向映射表"；不做序列化、不抛异常。
+ *
+ * 上下游：import HttpStatus（@nestjs/common）；被全局异常过滤器
+ * （exception.filter.ts）、BusinessException 等引用，为每个 API 响应体提供
+ * 稳定、语言无关的字符串 `code`（如 `NOT_FOUND`），前端据此按业务语义分支，
+ * 而不必只依赖 HTTP 状态码。
+ *
+ * 关键约定：
+ * - 正向映射：业务码 -> HTTP 状态码；反向映射：HTTP 状态码 -> 业务码；
+ * - 注意 VALIDATION_ERROR 与 BUSINESS_ERROR 都映射到 HTTP 422
+ *   (Unprocessable Entity)，而不是笼统的 400；
+ * - 反向映射由正向映射自动推导，两表必须保持单一来源。
  */
 import { HttpStatus } from '@nestjs/common';
 
 /**
- * Canonical business result codes returned in every API response body's
- * `error.code` / success envelope. Grouped by success, client error, server
- * error, and generic business error.
+ * 规范的业务结果码，出现在每个 API 响应体的 `error.code` / 成功信封里。
+ * 按成功、客户端错误、服务端错误、通用业务错误分组。
  */
 export enum ResponseCode {
-  // Successful outcomes.
+  // 成功类。
   SUCCESS = 'SUCCESS',
   CREATED = 'CREATED',
   ACCEPTED = 'ACCEPTED',
   NO_CONTENT = 'NO_CONTENT',
 
-  // Client-side errors.
+  // 客户端错误类。
   BAD_REQUEST = 'BAD_REQUEST',
   UNAUTHORIZED = 'UNAUTHORIZED',
   FORBIDDEN = 'FORBIDDEN',
@@ -30,19 +36,19 @@ export enum ResponseCode {
   CONFLICT = 'CONFLICT',
   TOO_MANY_REQUESTS = 'TOO_MANY_REQUESTS',
 
-  // Server-side errors.
+  // 服务端错误类。
   INTERNAL_ERROR = 'INTERNAL_ERROR',
   BAD_GATEWAY = 'BAD_GATEWAY',
   SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE',
 
-  // Generic domain-level error.
+  // 通用领域级错误。
   BUSINESS_ERROR = 'BUSINESS_ERROR',
 }
 
 /**
- * Forward mapping from each business `ResponseCode` to the HTTP status code that
- * should accompany it. Note: `VALIDATION_ERROR` and `BUSINESS_ERROR` both map to
- * HTTP 422 (Unprocessable Entity) rather than a generic 400.
+ * 正向映射：每个业务 `ResponseCode` 对应应返回的 HTTP 状态码。
+ * 注意：VALIDATION_ERROR 与 BUSINESS_ERROR 都映射到 HTTP 422
+ * （Unprocessable Entity），而非笼统的 400。
  */
 export const RESPONSE_CODE_TO_HTTP_STATUS_MAP: Record<ResponseCode, number> = {
   [ResponseCode.SUCCESS]: HttpStatus.OK,
@@ -62,14 +68,16 @@ export const RESPONSE_CODE_TO_HTTP_STATUS_MAP: Record<ResponseCode, number> = {
   [ResponseCode.BAD_GATEWAY]: HttpStatus.BAD_GATEWAY,
   [ResponseCode.SERVICE_UNAVAILABLE]: HttpStatus.SERVICE_UNAVAILABLE,
 
-  [ResponseCode.BUSINESS_ERROR]: HttpStatus.UNPROCESSABLE_ENTITY, // Generic business error status.
+  [ResponseCode.BUSINESS_ERROR]: HttpStatus.UNPROCESSABLE_ENTITY, // 通用业务错误的状态码。
 };
 
 /**
- * Reverse mapping derived automatically from
- * `RESPONSE_CODE_TO_HTTP_STATUS_MAP`. Used by the exception filter to translate
- * a thrown `HttpStatus` back into a business `ResponseCode`.
+ * 反向映射：由 `RESPONSE_CODE_TO_HTTP_STATUS_MAP` 自动推导生成。
+ * 全局异常过滤器用它把抛出的 `HttpStatus` 翻译回业务 `ResponseCode`。
  */
 export const HTTP_STATUS_TO_RESPONSE_CODE_MAP: Record<number, ResponseCode> = Object.fromEntries(
-  Object.entries(RESPONSE_CODE_TO_HTTP_STATUS_MAP).map(([code, status]) => [status, code as ResponseCode]),
+  Object.entries(RESPONSE_CODE_TO_HTTP_STATUS_MAP).map(([code, status]) => [
+    status,
+    code as ResponseCode,
+  ]),
 ) as Record<number, ResponseCode>;

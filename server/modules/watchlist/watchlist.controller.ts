@@ -1,21 +1,18 @@
 /**
- * Watchlist controller.
+ * watchlist.controller.ts — 自选列表（Watchlist）REST 控制器，挂载于 /api/portfolio/watchlist。
  *
- * Exposes CRUD endpoints for the user's watchlist (stocks being monitored but not
- * yet held) under `/api/portfolio/watchlist`. Requires login (`@NeedLogin()`) and
- * derives the owning `userId` from `req.userContext` so all access is scoped to
- * the current user. Business logic lives in `WatchlistService`.
+ * 职责边界：
+ *  - 只暴露自选（关注但尚未持有的股票）的 CRUD 端点：列表/单条/新增/批量价格/部分更新/删除。
+ *  - 业务逻辑全部在 WatchlistService 中，控制器不直接访问数据库。
+ * 上下游：
+ *  - 上游：客户端自选页调用；所有访问自动限定为当前登录用户的数据。
+ *  - 下游：调用 WatchlistService（findAll/findOne/create/updatePrices/update/remove）。
+ * 关键约定：
+ *  - 每条路由都要求登录（@NeedLogin()），归属 userId 取自 req.userContext。
+ *  - 'prices' 路由声明在 ':id' 之前，确保静态路径 'prices' 先于参数路径匹配。
+ *  - 新增自选时市场/币种元数据由服务端根据 ticker 自动推导。
  */
-import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Delete,
-  Param,
-  Body,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
 import type { Request } from 'express';
 
@@ -29,7 +26,7 @@ import type {
 } from '@shared/api.interface';
 
 /**
- * REST controller for managing watchlist items. Delegates to `WatchlistService`.
+ * 管理自选列表的 REST 控制器，业务逻辑委托给 WatchlistService。
  */
 @Controller('api/portfolio/watchlist')
 @NeedLogin()
@@ -37,9 +34,11 @@ export class WatchlistController {
   constructor(private readonly watchlistService: WatchlistService) {}
 
   /**
-   * Lists all watchlist items for the current user, most recently updated first.
+   * 列出当前用户的全部自选项，按最近更新时间倒序。
    *
-   * @param req Authenticated request carrying `req.userContext.userId`.
+   * 方法+路径：GET /api/portfolio/watchlist（需登录）。
+   *
+   * @param req 已认证请求，携带 `req.userContext.userId`
    */
   @Get()
   async findAll(@Req() req: Request): Promise<ListResponse<WatchItem>> {
@@ -48,42 +47,41 @@ export class WatchlistController {
   }
 
   /**
-   * Fetches a single watchlist item by id, only if owned by the caller.
+   * 按 id 获取单条自选项；仅当它属于调用者时才返回。
    *
-   * @param id  Watch item primary key.
-   * @param req Authenticated request.
+   * 方法+路径：GET /api/portfolio/watchlist/:id（需登录）。
+   *
+   * @param id  自选项主键
+   * @param req 已认证请求
    */
   @Get(':id')
-  async findOne(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ): Promise<WatchItem> {
+  async findOne(@Param('id') id: string, @Req() req: Request): Promise<WatchItem> {
     const { userId } = req.userContext;
     return this.watchlistService.findOne(id, userId);
   }
 
   /**
-   * Adds a new watchlist item for the current user. Market/currency metadata is
-   * derived from the ticker server-side.
+   * 为当前用户新增一条自选项。市场/币种元数据由服务端根据 ticker 推导。
    *
-   * @param dto Create payload.
-   * @param req Authenticated request.
+   * 方法+路径：POST /api/portfolio/watchlist（需登录）。
+   *
+   * @param dto 创建载荷
+   * @param req 已认证请求
    */
   @Post()
-  async create(
-    @Body() dto: CreateWatchItemDto,
-    @Req() req: Request,
-  ): Promise<WatchItem> {
+  async create(@Body() dto: CreateWatchItemDto, @Req() req: Request): Promise<WatchItem> {
     const { userId } = req.userContext;
     return this.watchlistService.create(dto, userId);
   }
 
   /**
-   * Batch-updates latest prices for multiple watchlist items. Declared before
-   * `:id` so the static `prices` route wins the match.
+   * 批量更新多条自选项的最新价格。声明在 ':id' 之前，
+   * 确保静态路由 'prices' 优先匹配。
    *
-   * @param body `{ items }` list of ticker/price updates.
-   * @param req  Authenticated request.
+   * 方法+路径：PATCH /api/portfolio/watchlist/prices（需登录）。
+   *
+   * @param body `{ items }` 形式的 ticker/价格更新列表
+   * @param req  已认证请求
    */
   @Patch('prices')
   async updatePrices(
@@ -95,11 +93,13 @@ export class WatchlistController {
   }
 
   /**
-   * Partially updates an owned watchlist item.
+   * 部分更新一条归属于当前用户的自选项。
    *
-   * @param id  Watch item primary key.
-   * @param dto Partial update payload.
-   * @param req Authenticated request.
+   * 方法+路径：PATCH /api/portfolio/watchlist/:id（需登录）。
+   *
+   * @param id  自选项主键
+   * @param dto 部分更新载荷
+   * @param req 已认证请求
    */
   @Patch(':id')
   async update(
@@ -112,16 +112,15 @@ export class WatchlistController {
   }
 
   /**
-   * Removes a watchlist item owned by the caller.
+   * 删除一条归属于调用者的自选项。
    *
-   * @param id  Watch item primary key.
-   * @param req Authenticated request.
+   * 方法+路径：DELETE /api/portfolio/watchlist/:id（需登录）。
+   *
+   * @param id  自选项主键
+   * @param req 已认证请求
    */
   @Delete(':id')
-  async remove(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ): Promise<{ success: true }> {
+  async remove(@Param('id') id: string, @Req() req: Request): Promise<{ success: true }> {
     const { userId } = req.userContext;
     return this.watchlistService.remove(id, userId);
   }

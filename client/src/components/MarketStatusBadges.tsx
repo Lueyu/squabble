@@ -1,12 +1,12 @@
 /**
  * @file components/MarketStatusBadges.tsx
- * @description Per-market phase badges (US/HK/CN) rendered on quote-bearing pages.
+ * @description 各市场（US/HK/CN）交易阶段徽章，渲染在带行情数据的页面上。
  *
- * Visual encoding:
- *  - trading = green, pre = blue, post = orange, closed = muted gray.
- *  - Markets with no holdings/watch items are dimmed and labeled "未持仓".
- *  - A red "!" + dot marks markets whose last quote fetch failed (stale data).
- *  - The "最后更新 HH:mm:ss" line shows the last successful quote refresh.
+ * 视觉编码约定：
+ *  - trading = 绿色，pre = 蓝色，post = 橙色，closed = 灰色弱化。
+ *  - 无持仓/自选条目的市场降灰并标注"未持仓"。
+ *  - 最近一次行情抓取失败（数据过期）的市场标红色 "!" 与红点。
+ *  - "最后更新 HH:mm:ss" 行展示最近一次成功刷新行情的时间。
  */
 import { Badge } from '@/components/ui/badge';
 import { formatTime, cn } from '@/utils/format';
@@ -14,10 +14,10 @@ import { useTranslation } from 'react-i18next';
 import type { Market } from '@shared/api.interface';
 import type { MarketPhase } from '@/hooks/use-market-quotes';
 
-/** Markets the app tracks, in display order. */
+/** 应用追踪的市场，按展示顺序排列。 */
 const MARKETS: Market[] = ['US', 'HK', 'CN'];
 
-/** Phase colors stay semantic; labels come from the active locale. */
+/** 阶段配色保持语义稳定；文案来自当前 locale。 */
 const PHASE_CLASSES: Record<MarketPhase, string> = {
   trading: 'bg-success/15 text-success border-transparent',
   pre: 'bg-blue-500/15 text-blue-600 border-transparent',
@@ -25,23 +25,23 @@ const PHASE_CLASSES: Record<MarketPhase, string> = {
   closed: 'bg-muted text-muted-foreground border-transparent',
 };
 
-/** Props for {@link MarketStatusBadges}. */
+/** {@link MarketStatusBadges} 的 props。 */
 export interface MarketStatusBadgesProps {
-  /** Current trading phase per market, as streamed by useMarketQuotes. */
+  /** 各市场当前交易阶段，来自 useMarketQuotes 的流式数据。 */
   marketStatus: Record<Market, MarketPhase>;
-  /** Whether the most recent quote fetch failed per market (stale-data flag). */
+  /** 各市场最近一次行情抓取是否失败（数据过期标记）。 */
   marketErrors: Record<Market, boolean>;
-  /** Timestamp of the last successful quote refresh; null before first fetch. */
+  /** 最近一次成功刷新行情的时间戳；首次抓取前为 null。 */
   lastUpdated: Date | null;
-  /** Markets that have no holdings/watch items — show dimmed "未持仓" state */
+  /** 无持仓/自选条目的市场 —— 显示降灰的"未持仓"状态 */
   inactiveMarkets?: Market[];
-  /** Layout variant — badges inline with time or stacked */
+  /** 布局变体 —— 徽章与时间同行（inline）或上下堆叠（stack） */
   layout?: 'inline' | 'stack';
 }
 
 /**
- * Render one badge per market showing its current session phase.
- * @param props - See {@link MarketStatusBadgesProps}.
+ * 每个市场渲染一枚当前交易阶段徽章。
+ * @param props - 见 {@link MarketStatusBadgesProps}。
  */
 export function MarketStatusBadges({
   marketStatus,
@@ -52,6 +52,7 @@ export function MarketStatusBadges({
 }: MarketStatusBadgesProps) {
   const { t } = useTranslation();
   const inactiveSet = new Set(inactiveMarkets);
+  // 市场名与阶段名的 i18n 文案映射。
   const marketLabels: Record<Market, string> = {
     US: t('common.usMarket'),
     HK: t('common.hkMarket'),
@@ -64,6 +65,7 @@ export function MarketStatusBadges({
     closed: t('layout.closed'),
   };
 
+  // 逐市场生成徽章：未持仓市场整体降灰；抓取失败且仍持仓的市场附加红色 "!" 与角标红点。
   const badges = MARKETS.map((market) => {
     const isInactive = inactiveSet.has(market);
     const hasError = marketErrors[market] === true;
@@ -76,17 +78,9 @@ export function MarketStatusBadges({
 
     return (
       <div key={market} className="relative inline-flex items-center">
-        <Badge
-          variant="outline"
-          className={cn(
-            'h-5 px-2 text-[11px] font-medium',
-            badgeClass
-          )}
-        >
+        <Badge variant="outline" className={cn('h-5 px-2 text-[11px] font-medium', badgeClass)}>
           {marketLabels[market]} · {label}
-          {hasError && !isInactive && (
-            <span className="ml-1 text-destructive font-bold">!</span>
-          )}
+          {hasError && !isInactive && <span className="ml-1 text-destructive font-bold">!</span>}
         </Badge>
         {hasError && !isInactive && (
           <span
@@ -98,6 +92,7 @@ export function MarketStatusBadges({
     );
   });
 
+  // stack 布局：徽章一行，"最后更新"时间另起一行。
   if (layout === 'stack') {
     return (
       <div className="flex flex-col gap-1">
@@ -111,6 +106,7 @@ export function MarketStatusBadges({
     );
   }
 
+  // 默认 inline 布局：徽章与"最后更新"时间同行，用中点分隔。
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {badges}

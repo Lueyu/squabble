@@ -1,11 +1,18 @@
 /**
- * @file pages/Dashboard/DailyPnLBreakdown.tsx
- * @description Per-holding daily P/L table on the Dashboard.
+ * DailyPnLBreakdown.tsx — 仪表盘"个股每日盈亏"明细表。
  *
- * For each holding, multiplies share count by the quote's day change to derive
- * daily P/L, then sorts by P/L descending and computes each row's contribution
- * share against the sum of absolute P/Ls. Shows at most 10 rows by default with
- * an expand toggle.
+ * 职责边界：
+ *  - 对每个持仓：股数 × 报价当日涨跌额 = 当日盈亏；按盈亏降序排序；
+ *  - 以各行 |盈亏| 之和为分母，计算每行的贡献度占比；
+ *  - 默认最多显示 10 行，超过时可展开 / 收起；
+ *  - 纯展示 + 本地派生，不发请求（行情由父组件经 useMarketQuotes 传入）。
+ * 上下游：
+ *  - 上游：DashboardPage（每日盈亏卡片底部）；
+ *  - 下游：@/utils/format（金额 / 百分比格式化、plClass 正负配色）、
+ *    ui 组件（Table / Badge / Empty / Button）。
+ * 关键约定：
+ *  - 行情未就绪（loading 或 quotes 为空）时显示占位文案；
+ *  - 有持仓但全部缺报价时显示空态。
  */
 import { useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
@@ -27,28 +34,23 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-} from '@/components/ui/empty';
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty';
 import { useTranslation } from 'react-i18next';
 import { displayCompanyName } from '@/utils/company-name';
 
-/** Props for {@link DailyPnLBreakdown}. */
+/** {@link DailyPnLBreakdown} 的入参。 */
 interface DailyPnLBreakdownProps {
-  /** Current open positions. */
+  /** 当前持仓列表。 */
   holdings: Holding[];
-  /** Live quote map keyed by ticker (from useMarketQuotes). */
+  /** 实时行情映射，key 为股票代码（来自 useMarketQuotes）。 */
   quotes: Record<string, QuoteResponse>;
-  /** Reporting currency for converted amounts. */
+  /** 折算金额使用的报告币种。 */
   baseCurrency: Currency;
-  /** Shows a placeholder while quotes are still warming up. */
+  /** 行情还在预热时显示占位。 */
   loading?: boolean;
 }
 
-/** Market labels for the row badges (built inside the component for i18n). */
+/** 行情行的市场徽标文案（在组件内构建以接入 i18n）。 */
 function marketLabels(t: (k: string) => string): Record<Market, string> {
   return {
     US: t('dash.us'),
@@ -58,8 +60,8 @@ function marketLabels(t: (k: string) => string): Record<Market, string> {
 }
 
 /**
- * Render the per-holding daily P/L breakdown table.
- * @param props - See {@link DailyPnLBreakdownProps}.
+ * 渲染个股每日盈亏明细表。
+ * @param props - 见 {@link DailyPnLBreakdownProps}。
  */
 export default function DailyPnLBreakdown({
   holdings,
@@ -69,17 +71,18 @@ export default function DailyPnLBreakdown({
 }: DailyPnLBreakdownProps) {
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage || i18n.language;
+  // 展开 / 收起全部行。
   const [showAll, setShowAll] = useState(false);
 
+  // ===== 派生计算区：由持仓 + 行情算出带贡献度的排序行 =====
   const rows = useMemo(() => {
+    // 步骤 1：逐持仓算当日盈亏（股数 × 当日涨跌额），公司名按语言显示。
     const result = holdings
       .map((h) => {
         const quote = quotes[h.ticker];
         const shares = parseFloat(h.shares || '0');
         const change = quote && quote.change ? parseFloat(quote.change) : 0;
-        const changePercent = quote && quote.changePercent
-          ? parseFloat(quote.changePercent)
-          : 0;
+        const changePercent = quote && quote.changePercent ? parseFloat(quote.changePercent) : 0;
         const dailyPl = shares * change;
         return {
           ticker: h.ticker,
@@ -93,13 +96,13 @@ export default function DailyPnLBreakdown({
           hasQuote: !!quote,
         };
       })
+      // 步骤 2：只保留有行情的持仓。
       .filter((r) => r.hasQuote)
+      // 步骤 3：按当日盈亏降序（赚得最多在最上）。
       .sort((a, b) => b.dailyPl - a.dailyPl);
 
-    const totalAbs = result.reduce(
-      (sum: number, r) => sum + Math.abs(r.dailyPl),
-      0
-    );
+    // 步骤 4：以 |盈亏| 之和为分母，算每行对总波动的贡献度。
+    const totalAbs = result.reduce((sum: number, r) => sum + Math.abs(r.dailyPl), 0);
 
     return result.map((r) => ({
       ...r,
@@ -109,6 +112,7 @@ export default function DailyPnLBreakdown({
 
   const hasQuotes = Object.keys(quotes).length > 0;
 
+  // 什么时候走到这里：行情还在加载（或没拿到任何报价）——显示占位文案。
   if (loading || !hasQuotes) {
     return (
       <div className="py-8 text-center text-xs text-muted-foreground">
@@ -117,6 +121,7 @@ export default function DailyPnLBreakdown({
     );
   }
 
+  // 什么时候走到这里：有行情，但持仓全部缺报价——显示空态。
   if (rows.length === 0) {
     return (
       <Empty className="py-8">
@@ -128,6 +133,7 @@ export default function DailyPnLBreakdown({
     );
   }
 
+  // 默认只展示前 10 行；超过 10 行才显示展开按钮。
   const visibleRows = showAll ? rows : rows.slice(0, 10);
   const hasMore = rows.length > 10;
 
@@ -157,9 +163,7 @@ export default function DailyPnLBreakdown({
                     {marketLabels(t)[r.market] || r.market}
                   </Badge>
                   <span className="truncate text-xs text-muted-foreground">
-                    {r.company || (
-                      <span className="text-muted-foreground/60">—</span>
-                    )}
+                    {r.company || <span className="text-muted-foreground/60">—</span>}
                   </span>
                 </div>
               </TableCell>
@@ -169,17 +173,14 @@ export default function DailyPnLBreakdown({
                 })}
               </TableCell>
               <TableCell
-                className={cn(
-                  'text-right font-mono tabular-nums text-sm',
-                  plClass(r.change)
-                )}
+                className={cn('text-right font-mono tabular-nums text-sm', plClass(r.change))}
               >
                 {formatPriceWithCurrency(r.change, r.currency)}
               </TableCell>
               <TableCell
                 className={cn(
                   'text-right font-mono tabular-nums text-sm',
-                  plClass(r.changePercent)
+                  plClass(r.changePercent),
                 )}
               >
                 {formatPercent(r.changePercent)}
@@ -187,7 +188,7 @@ export default function DailyPnLBreakdown({
               <TableCell
                 className={cn(
                   'text-right font-mono tabular-nums text-sm font-medium',
-                  plClass(r.dailyPl)
+                  plClass(r.dailyPl),
                 )}
               >
                 {formatCurrencyWithCurrency(r.dailyPl, r.currency)}
@@ -199,6 +200,7 @@ export default function DailyPnLBreakdown({
           ))}
         </TableBody>
       </Table>
+      {/* 超过 10 行时的展开 / 收起切换 */}
       {hasMore && (
         <div className="flex justify-center pt-1">
           <Button
@@ -207,7 +209,9 @@ export default function DailyPnLBreakdown({
             onClick={() => setShowAll((v) => !v)}
             className="text-xs text-muted-foreground"
           >
-            {showAll ? t('ui.dashboard.collapse') : t('ui.dashboard.showMore', { count: rows.length - 10 })}
+            {showAll
+              ? t('ui.dashboard.collapse')
+              : t('ui.dashboard.showMore', { count: rows.length - 10 })}
             <ChevronDown
               size={14}
               className={cn('transition-transform', showAll && 'rotate-180')}
