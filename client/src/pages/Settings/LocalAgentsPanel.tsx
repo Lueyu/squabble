@@ -30,6 +30,8 @@ export default function LocalAgentsPanel() {
   const companion = status.data?.companion;
   const hasCompanion = Boolean(companion?.connected || companion?.name
     || status.data?.items.some((agent: LocalAgentConnection) => agent.source === 'companion' && agent.connected));
+  const companionState = companion?.connected ? 'connected'
+    : hasCompanion ? 'companionOffline' : 'companionUnpaired';
   const refresh = async () => {
     await Promise.all([client.invalidateQueries({ queryKey: QUERY_KEY, exact: true }),
       client.invalidateQueries({ queryKey: STATUS_KEY }), client.invalidateQueries({ queryKey: LOCAL_AI_READINESS_KEY })]);
@@ -93,8 +95,7 @@ export default function LocalAgentsPanel() {
       {status.data?.mode === 'companion' && <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold"><Monitor className="size-4 text-primary" />{key('companionTitle')}</h3>
-          {hasCompanion && <Badge variant={companion?.connected ? 'secondary' : 'outline'}>
-            {key(companion?.connected ? 'states.connected' : 'states.offline')}</Badge>}
+          <Badge variant={companion?.connected ? 'secondary' : 'outline'}>{key(`states.${companionState}`)}</Badge>
         </div>
         <p className="text-sm leading-6 text-muted-foreground">{key(companion?.connected ? 'companionConnected'
           : hasCompanion ? 'companionOffline' : 'companionIntro')}</p>
@@ -114,9 +115,9 @@ export default function LocalAgentsPanel() {
       </div>}
       <div className="grid gap-3 sm:grid-cols-2">
         {status.data?.items.map((agent: LocalAgentConnection) => {
-          const offline = (agent.source === 'companion' && !companion?.connected)
-            || (agent.connected && agent.state === 'ready' && !agent.available);
-          const state = offline ? 'offline' : agent.busy ? 'busy'
+          const companionUnavailable = agent.source === 'companion' && !companion?.connected;
+          const offline = companionUnavailable || (agent.connected && agent.state === 'ready' && !agent.available);
+          const state = companionUnavailable ? companionState : offline ? 'offline' : agent.busy ? 'busy'
             : agent.state === 'ready' && agent.connected ? 'connected' : agent.state;
           const pending = action.isPending && action.variables?.id === agent.id;
           const agentHelp = t(`council.localAgents.providerHelp.${agent.provider}`, { defaultValue: agent.configurationHelp ?? '' });
