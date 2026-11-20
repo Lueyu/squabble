@@ -42,15 +42,20 @@ def health() -> None:
     """Probe webapp reachability via the public quote endpoint."""
     s = get_settings()
     setup_logging(s.log_level)
+
+    # 取一次 AAPL 行情作探针；网络 / HTTP 错误 -> 非零退出码，便于脚本判断。
     try:
         with WebappClient(s.webapp_base_url) as client:
             quote = client.get_quote("AAPL")
-    except Exception as exc:  # network / HTTP error -> non-zero exit for scripts
+    except Exception as exc:
         console.print(f"[red]webapp unreachable:[/red] {type(exc).__name__}: {exc}")
         raise typer.Exit(code=1)
+
+    # webapp 可达但未返回行情：同样视为异常并以非零退出码结束。
     if not quote:
         console.print("[yellow]webapp reachable, but no quote returned for AAPL[/yellow]")
         raise typer.Exit(code=1)
+
     console.print(
         f"[green]webapp OK[/green]  AAPL {quote.get('price')} "
         f"({quote.get('changePercent')}%)  {quote.get('currency')}"
@@ -64,15 +69,20 @@ def quote(
     """Fetch a live quote via the public webapp endpoint."""
     s = get_settings()
     setup_logging(s.log_level)
+
+    # 公开端点无需鉴权；请求失败即非零退出。
     try:
         with WebappClient(s.webapp_base_url) as client:
             data = client.get_quote(symbol)
     except Exception as exc:
         console.print(f"[red]request failed:[/red] {type(exc).__name__}: {exc}")
         raise typer.Exit(code=1)
+
+    # 未返回行情：提示并以非零退出码结束。
     if not data:
         console.print(f"[yellow]no quote returned for {symbol}[/yellow]")
         raise typer.Exit(code=1)
+
     console.print_json(data=data)
 
 
@@ -81,12 +91,16 @@ def holdings() -> None:
     """List the authenticated owner's holdings via the agent gateway."""
     s = get_settings()
     setup_logging(s.log_level)
+
+    # 网关要求 x-agent-token 头；未配置令牌则直接失败。
     if not s.webapp_agent_token:
         console.print(
             "[red]no WEBAPP_AGENT_TOKEN configured[/red] "
             "(the gateway requires x-agent-token)"
         )
         raise typer.Exit(code=1)
+
+    # 携带网关头请求 /openapi/agent-gateway/holdings。
     try:
         with WebappClient(
             s.webapp_base_url,
@@ -98,11 +112,14 @@ def holdings() -> None:
         console.print(f"[red]gateway request failed:[/red] {type(exc).__name__}: {exc}")
         raise typer.Exit(code=1)
 
+    # 输出汇总行；无持仓则到此结束。
     acting = s.webapp_default_user_id or "gateway default"
     console.print(f"[green]gateway OK[/green]  {len(rows)} holding(s) for "
                   f"{acting}")
     if not rows:
         return
+
+    # 以 rich 表格逐行渲染持仓字段；缺失字段以空串或 "-" 兜底。
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("Ticker")
     table.add_column("Company")
@@ -131,16 +148,26 @@ def modelping(
     """Send one minimal chat request to verify a model tier on Ark."""
     s = get_settings()
     setup_logging(s.log_level)
+
+    # 未显式指定档位时回退到配置的默认档位。
     chosen = tier or s.default_tier
+
+    # 构造 provider 并发送一次最小请求；失败即非零退出。
     try:
         result = build_provider(s, chosen).ping()
     except Exception as exc:
-        console.print(f"[red]model ping failed ({chosen}):[/red] {type(exc).__name__}: {exc}")
+        console.print(
+            f"[red]model ping failed ({chosen}):[/red] {type(exc).__name__}: {exc}"
+        )
         raise typer.Exit(code=1)
+
+    # 输出延迟与 token 用量。
     console.print(
         f"[green]model OK[/green]  tier={result.tier}  model={result.model}  "
         f"{result.latency_ms}ms  tokens={result.prompt_tokens}+{result.completion_tokens}"
     )
+
+    # 推理模型可能没有可见回复、只有隐藏 reasoning；此时打印其尾部片段。
     if result.reply:
         console.print(f"reply: {result.reply}")
     elif result.reasoning:

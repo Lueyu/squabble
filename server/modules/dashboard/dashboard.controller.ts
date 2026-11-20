@@ -1,9 +1,17 @@
 /**
- * Dashboard controller.
+ * dashboard.controller.ts — 投资组合总览（Dashboard）REST 控制器，挂载于 /api/portfolio/dashboard。
  *
- * Exposes aggregated portfolio endpoints under `/api/portfolio/dashboard`: an
- * overview (totals, per-currency and per-market breakdowns in a chosen base
- * currency) and a daily P&L time series. Requires login on every route.
+ * 职责边界：
+ *  - 只暴露总览聚合与手动刷新端点：组合概览（按基准币种折算的总市值/成本/现金/
+ *    盈亏/分组汇总）、每日盈亏时间序列、市场概览（指数观察值）、汇率刷新。
+ *  - 聚合计算全部委托给 DashboardService / MarketOverviewService，不直接访问数据。
+ * 上下游：
+ *  - 上游：客户端 Dashboard 页调用；所有路由均要求登录。
+ *  - 下游：调用 DashboardService（聚合/盈亏序列/汇率刷新）与
+ *    MarketOverviewService（市场概览）。
+ * 关键约定：
+ *  - 基准币种 baseCurrency 省略时默认 'USD'；daily-pl 的 days 省略时默认 30。
+ *  - market-overview 为公开指数观察值：只回传指数数据，不含任何持仓与账户信息。
  */
 import { Controller, Get, Post, Query, Req } from '@nestjs/common';
 import { NeedLogin } from '../../common/platform';
@@ -13,7 +21,7 @@ import { MarketOverviewService } from './market-overview.service';
 import type { DashboardOverview, MarketOverviewResponse } from '@shared/api.interface';
 
 /**
- * REST controller for the dashboard. Delegates aggregation to `DashboardService`.
+ * 总览页 REST 控制器，聚合计算委托给 DashboardService。
  */
 @NeedLogin()
 @Controller('api/portfolio/dashboard')
@@ -23,18 +31,26 @@ export class DashboardController {
     private readonly marketOverviewService: MarketOverviewService,
   ) {}
 
-  /** Public index observations; no holding or account data is sent upstream. */
+  /**
+   * 获取市场概览（公开指数观察值）。
+   *
+   * 方法+路径：GET /api/portfolio/dashboard/market-overview（需登录）。
+   *
+   * @returns 指数行情响应；不包含任何持仓或账户数据
+   */
   @Get('market-overview')
   async getMarketOverview(): Promise<MarketOverviewResponse> {
     return this.marketOverviewService.getOverview();
   }
 
   /**
-   * Returns the portfolio overview (market value, cost, cash, P&L, group summary)
-   * converted to the requested base currency (default USD).
+   * 返回投资组合总览：市值、成本、现金、盈亏、分组汇总，
+   * 全部折算为请求指定的基准币种。
    *
-   * @param req          Authenticated request carrying `req.userContext.userId`.
-   * @param baseCurrency Optional target currency (default USD).
+   * 方法+路径：GET /api/portfolio/dashboard/overview?baseCurrency=（需登录）。
+   *
+   * @param req          已认证请求，携带 `req.userContext.userId`
+   * @param baseCurrency 可选目标币种（省略时默认 USD）
    */
   @Get('overview')
   async getOverview(
@@ -46,11 +62,13 @@ export class DashboardController {
   }
 
   /**
-   * Returns a daily P&L series for the last N days.
+   * 返回最近 N 天的每日盈亏时间序列。
    *
-   * @param req          Authenticated request.
-   * @param days         Optional number of days (default 30).
-   * @param baseCurrency Optional target currency (default USD).
+   * 方法+路径：GET /api/portfolio/dashboard/daily-pl?days=&baseCurrency=（需登录）。
+   *
+   * @param req          已认证请求
+   * @param days         可选天数（省略时默认 30）
+   * @param baseCurrency 可选目标币种（省略时默认 USD）
    */
   @Get('daily-pl')
   async getDailyPl(
@@ -64,7 +82,9 @@ export class DashboardController {
   }
 
   /**
-   * Manually refreshes FX rates from the upstream provider.
+   * 手动从上游汇率源刷新汇率。
+   *
+   * 方法+路径：POST /api/portfolio/dashboard/refresh-rates（需登录）。
    */
   @Post('refresh-rates')
   async refreshRates(): Promise<{ ok: true }> {

@@ -1,23 +1,35 @@
+/**
+ * SettingsGuide.tsx — 设置页顶部引导卡：四节静态帮助内容（默认接入 / 免费模型 / LLM API 配置 / 金融数据源）。
+ *
+ * 职责边界：
+ *  - 纯展示组件：全部文案与链接来自 i18n 与硬编码外链，无状态、无请求、无交互逻辑。
+ *  - 链接指向第三方文档（OpenRouter/OpenAI/DeepSeek/火山引擎/Finnhub），均新标签页打开。
+ * 上下游：
+ *  - 上游（路由入口/谁引用）：SettingsPage 顶部。
+ *  - 下游（调用哪些 hooks/api/组件）：useTranslation；Card 组件族；本文件的 GuideLink/GuideStep。
+ * 关键约定：
+ *  - 无关键约定（静态内容）。
+ */
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, BookOpenText } from 'lucide-react';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface GuideLinkProps {
   href: string;
   label: string;
 }
 
+/** 带外跳图标的第三方链接（新标签页 + 安全 rel） */
 function GuideLink({ href, label }: GuideLinkProps) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer"
-      className="inline-flex items-center gap-1 rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-      {label}<ArrowUpRight className="size-3.5" aria-hidden="true" />
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {label}
+      <ArrowUpRight className="size-3.5" aria-hidden="true" />
     </a>
   );
 }
@@ -37,21 +49,26 @@ export default function SettingsGuide() {
         <CardTitle className="font-serif text-xl leading-snug">
           {t('ui.settings.guide.title')}
         </CardTitle>
-        <CardDescription className="leading-6">
-          {t('integrations.guideIntro')}
-        </CardDescription>
+        <CardDescription className="leading-6">{t('integrations.guideIntro')}</CardDescription>
       </CardHeader>
+      {/* 四节内容双列排布；小节标题 id 供 aria-labelledby 引用 */}
       <CardContent className="grid gap-8 lg:grid-cols-2">
+        {/* 第一节：默认接入三步 */}
         <section className="min-w-0 space-y-4" aria-labelledby="settings-default-guide">
-          <h2 id="settings-default-guide" className="text-base font-semibold">{t('integrations.guideDefaultTitle')}</h2>
+          <h2 id="settings-default-guide" className="text-base font-semibold">
+            {t('integrations.guideDefaultTitle')}
+          </h2>
           <ol className="list-decimal space-y-3 pl-5 text-sm leading-6 text-muted-foreground">
             <li>{t('integrations.guideDefaultStep1')}</li>
             <li>{t('integrations.guideDefaultStep2')}</li>
             <li>{t('integrations.guideDefaultStep3')}</li>
           </ol>
         </section>
+        {/* 第二节：免费模型接入四步 + OpenRouter 密钥/限额链接 */}
         <section className="min-w-0 space-y-4" aria-labelledby="settings-free-model-guide">
-          <h2 id="settings-free-model-guide" className="text-base font-semibold">{t('integrations.guideFreeTitle')}</h2>
+          <h2 id="settings-free-model-guide" className="text-base font-semibold">
+            {t('integrations.guideFreeTitle')}
+          </h2>
           <ol className="list-decimal space-y-3 pl-5 text-sm leading-6 text-muted-foreground">
             <li>{t('integrations.guideFreeStep1')}</li>
             <li className="break-words">{t('integrations.guideFreeStep2')}</li>
@@ -59,10 +76,17 @@ export default function SettingsGuide() {
             <li>{t('integrations.guideFreeStep4')}</li>
           </ol>
           <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-            <GuideLink href="https://openrouter.ai/settings/keys" label={t('integrations.freeKeyLink')} />
-            <GuideLink href="https://openrouter.ai/collections/free-models" label={t('integrations.freeLimitsLink')} />
+            <GuideLink
+              href="https://openrouter.ai/settings/keys"
+              label={t('integrations.freeKeyLink')}
+            />
+            <GuideLink
+              href="https://openrouter.ai/collections/free-models"
+              label={t('integrations.freeLimitsLink')}
+            />
           </div>
         </section>
+        {/* 第三节：LLM API 配置四步（三家厂商密钥/文档链接 + 官方 baseUrl 一览） */}
         <section className="min-w-0 space-y-5" aria-labelledby="settings-llm-guide">
           <h2 id="settings-llm-guide" className="text-base font-semibold">
             {t('integrations.guideLlmTitle')}
@@ -73,12 +97,15 @@ export default function SettingsGuide() {
               <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
                 <GuideLink href="https://platform.openai.com/api-keys" label="OpenAI API keys" />
                 <GuideLink href="https://platform.deepseek.com/" label="DeepSeek" />
-                <GuideLink href="https://docs.volcengine.com/docs/ark/manage-api-keys?lang=zh"
-                  label={t('ui.settings.guide.llm.doubaoKey')} />
+                <GuideLink
+                  href="https://docs.volcengine.com/docs/ark/manage-api-keys?lang=zh"
+                  label={t('ui.settings.guide.llm.doubaoKey')}
+                />
               </div>
             </GuideStep>
             <GuideStep number={2} title={t('ui.settings.guide.llm.step2Title')}>
               <p>{t('ui.settings.guide.llm.step2')}</p>
+              {/* 三家官方 baseUrl 速查（等宽字体块） */}
               <div className="space-y-1 rounded-lg bg-secondary/50 px-3 py-2 font-mono text-xs text-foreground">
                 <p className="break-all">OpenAI · https://api.openai.com/v1</p>
                 <p className="break-all">DeepSeek · https://api.deepseek.com</p>
@@ -87,12 +114,18 @@ export default function SettingsGuide() {
               <p>{t('integrations.deepSeekModelHint')}</p>
               <p>{t('integrations.deepSeekModeHint')}</p>
               <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
-                <GuideLink href="https://developers.openai.com/api/docs/models/all"
-                  label={t('ui.settings.guide.llm.openAiModels')} />
-                <GuideLink href="https://api-docs.deepseek.com/quick_start/pricing/"
-                  label={t('ui.settings.guide.llm.deepSeekDocs')} />
-                <GuideLink href="https://docs.volcengine.com/docs/ark/quick-start-beginner?lang=zh"
-                  label={t('ui.settings.guide.llm.doubaoDocs')} />
+                <GuideLink
+                  href="https://developers.openai.com/api/docs/models/all"
+                  label={t('ui.settings.guide.llm.openAiModels')}
+                />
+                <GuideLink
+                  href="https://api-docs.deepseek.com/quick_start/pricing/"
+                  label={t('ui.settings.guide.llm.deepSeekDocs')}
+                />
+                <GuideLink
+                  href="https://docs.volcengine.com/docs/ark/quick-start-beginner?lang=zh"
+                  label={t('ui.settings.guide.llm.doubaoDocs')}
+                />
               </div>
             </GuideStep>
             <GuideStep number={3} title={t('ui.settings.guide.llm.step3Title')}>
@@ -104,6 +137,7 @@ export default function SettingsGuide() {
           </ol>
         </section>
 
+        {/* 第四节：金融数据源（Finnhub）注册与配置四步 */}
         <section className="min-w-0 space-y-5" aria-labelledby="settings-data-guide">
           <h2 id="settings-data-guide" className="text-base font-semibold">
             {t('integrations.guideFinancialTitle')}
@@ -112,10 +146,14 @@ export default function SettingsGuide() {
             <GuideStep number={1} title={t('ui.settings.guide.financial.step1Title')}>
               <p>{t('ui.settings.guide.financial.step1')}</p>
               <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
-                <GuideLink href="https://finnhub.io/register"
-                  label={t('ui.settings.guide.financial.register')} />
-                <GuideLink href="https://finnhub.io/docs/api"
-                  label={t('ui.settings.guide.financial.docs')} />
+                <GuideLink
+                  href="https://finnhub.io/register"
+                  label={t('ui.settings.guide.financial.register')}
+                />
+                <GuideLink
+                  href="https://finnhub.io/docs/api"
+                  label={t('ui.settings.guide.financial.docs')}
+                />
               </div>
             </GuideStep>
             <GuideStep number={2} title={t('ui.settings.guide.financial.step2Title')}>
@@ -134,7 +172,12 @@ export default function SettingsGuide() {
   );
 }
 
-function GuideStep({ number, title, children }: {
+/** 编号步骤项：左侧圆形序号 + 右侧标题与内容（children） */
+function GuideStep({
+  number,
+  title,
+  children,
+}: {
   number: number;
   title: string;
   children: React.ReactNode;

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-#: Shape of a single logged event.
+#: 单条日志事件的形状。
 Event = dict[str, Any]
 
 
@@ -46,14 +46,22 @@ class CheckpointStore:
         run_id = run_id or uuid.uuid4().hex[:12]
         return Checkpoint(run_id=run_id, path=self.root / f"{run_id}.jsonl")
 
-    def append(self, cp: Checkpoint, event_type: str, payload: dict | None = None) -> Event:
+    def append(
+        self,
+        cp: Checkpoint,
+        event_type: str,
+        payload: dict | None = None,
+    ) -> Event:
         """Append one event and return the stored record.
 
         ``seq`` is derived from the existing line count so events are numbered
         consecutively even across process restarts.
         """
+        # 确保目录存在，并以现有行数推导连续序号。
         cp.path.parent.mkdir(parents=True, exist_ok=True)
         seq = self._count_lines(cp.path)
+
+        # 组装事件并追加写入（utf-8，保留非 ASCII 字符）。
         event: Event = {
             "seq": seq,
             "type": event_type,
@@ -68,6 +76,8 @@ class CheckpointStore:
         """Read all events back in append order (empty list if the log is absent)."""
         if not cp.path.exists():
             return []
+
+        # 逐行解析非空行，保持追加顺序。
         events: list[Event] = []
         with cp.path.open("r", encoding="utf-8") as f:
             for line in f:

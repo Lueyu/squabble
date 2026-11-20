@@ -29,15 +29,6 @@
       "@/*": ["./client/src/*"]
     }
   },
-  "include": [
-    "client/**/*",
-    "shared/**/*"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "public",
-    "source_package",
-    "client/src/api/gen"
-  ]
+  "include": ["client/**/*", "shared/**/*"],
+  "exclude": ["node_modules", "dist", "public", "source_package", "client/src/api/gen"]
 }

@@ -26,9 +26,12 @@ def _is_retryable_status(exc: BaseException) -> bool:
     return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
 
 
-# httpx.TransportError covers connect failures, resets and timeouts.
+# httpx.TransportError 涵盖连接失败、连接重置与超时。
 _retry_decorator = retry(
-    retry=retry_if_exception_type(httpx.TransportError) | retry_if_exception(_is_retryable_status),
+    retry=(
+        retry_if_exception_type(httpx.TransportError)
+        | retry_if_exception(_is_retryable_status)
+    ),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=8),
     reraise=True,
@@ -54,14 +57,17 @@ class WebappClient:
         timeout: float = 15.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        # 规整根地址，并按需组装网关头。
         self.base_url = base_url.rstrip("/")
         headers: dict[str, str] = {"Accept": "application/json"}
         if token:
             headers["x-agent-token"] = token
-            # Only send an explicit identity when one is provided; otherwise the
-            # gateway resolves its configured default owner server-side.
+            # 仅在显式提供身份时发送 x-agent-user-id；否则由网关在服务端
+            # 解析其配置的默认所有者。
             if user_id:
                 headers["x-agent-user-id"] = user_id
+
+        # 创建共享的 httpx 同步客户端（超时与自定义 transport 一并生效）。
         self._client = httpx.Client(
             base_url=self.base_url,
             timeout=timeout,
@@ -96,7 +102,7 @@ class WebappClient:
         body = resp.json()
         if isinstance(body, list):
             return body
-        # Tolerate either {items: [...]} or {data: [...]}.
+        # 兼容 {items: [...]} 或 {data: [...]} 两种响应形状。
         return body.get("items", body.get("data", []))
 
     def close(self) -> None:

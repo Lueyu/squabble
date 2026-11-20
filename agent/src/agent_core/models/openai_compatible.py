@@ -60,6 +60,7 @@ class OpenAICompatibleProvider:
         tokens on a hidden ``reasoning_content`` chain before answering; the token
         budget is kept large enough to still return a visible answer.
         """
+        # 发送单轮最小请求并计时。
         started = time.perf_counter()
         resp = self._client.chat.completions.create(
             model=self.model,
@@ -68,9 +69,12 @@ class OpenAICompatibleProvider:
             temperature=0,
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
+
+        # 提取可见回复、隐藏 reasoning 与用量信息。
         message = resp.choices[0].message
         reasoning = getattr(message, "reasoning_content", None) or ""
         usage = resp.usage
+
         return PingResult(
             tier=self.tier,
             model=resp.model or self.model,
@@ -82,7 +86,10 @@ class OpenAICompatibleProvider:
         )
 
 
-def build_provider(settings: Settings, tier: str | None = None) -> OpenAICompatibleProvider:
+def build_provider(
+    settings: Settings,
+    tier: str | None = None,
+) -> OpenAICompatibleProvider:
     """Construct a provider for a model tier ("flash" or "pro").
 
     Args:
@@ -90,6 +97,7 @@ def build_provider(settings: Settings, tier: str | None = None) -> OpenAICompati
         tier: ``"flash"`` / ``"pro"``; defaults to ``settings.default_tier``.
     """
     chosen = (tier or settings.default_tier).strip().lower()
+
     if chosen == "flash":
         return OpenAICompatibleProvider(
             "flash",
@@ -97,6 +105,7 @@ def build_provider(settings: Settings, tier: str | None = None) -> OpenAICompati
             settings.flash_api_key,
             settings.flash_model,
         )
+
     if chosen == "pro":
         return OpenAICompatibleProvider(
             "pro",
@@ -104,4 +113,5 @@ def build_provider(settings: Settings, tier: str | None = None) -> OpenAICompati
             settings.pro_api_key,
             settings.pro_model,
         )
+
     raise ValueError(f"unknown model tier '{chosen}' (expected 'flash' or 'pro')")

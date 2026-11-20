@@ -1,7 +1,16 @@
+/**
+ * @file client/src/pages/Dashboard/market-overview.css
+ * @description Dashboard 市场总览卡片样式：区域切换分段按钮（US/HK/CN）、
+ * 市场情绪面板（看多/看空色调 + 双向渐变轨道与指针）、指数列表，
+ * 以及 arcade 主题的直角覆盖。
+ */
+
+/* ===== 卡片容器 ===== */
 .market-overview-card {
   min-width: 0;
 }
 
+/* ===== 区域切换分段按钮（aria-pressed 标记选中态） ===== */
 .market-region-switch {
   display: flex;
   gap: 4px;
@@ -19,10 +28,12 @@
   color: var(--muted-foreground);
   font-size: 11px;
   font-weight: 600;
-  transition: color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    background-color 150ms;
 }
 
-.market-region-switch button[aria-pressed="true"] {
+.market-region-switch button[aria-pressed='true'] {
   background: var(--card);
   color: var(--foreground);
   box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
@@ -33,6 +44,7 @@
   outline-offset: 2px;
 }
 
+/* ===== 市场情绪面板（data-tone 控制数值颜色；轨道为红-灰-绿渐变） ===== */
 .market-mood {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -47,7 +59,7 @@
   color: var(--muted-foreground);
   font-size: 9px;
   font-weight: 600;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -56,11 +68,11 @@
   line-height: 1.2;
 }
 
-.market-mood[data-tone="bullish"] .market-mood-value {
+.market-mood[data-tone='bullish'] .market-mood-value {
   color: var(--success);
 }
 
-.market-mood[data-tone="bearish"] .market-mood-value {
+.market-mood[data-tone='bearish'] .market-mood-value {
   color: var(--destructive);
 }
 
@@ -69,7 +81,12 @@
   height: 7px;
   margin: 12px 5px 0;
   border-radius: 99px;
-  background: linear-gradient(90deg, var(--destructive), var(--muted-foreground) 50%, var(--success));
+  background: linear-gradient(
+    90deg,
+    var(--destructive),
+    var(--muted-foreground) 50%,
+    var(--success)
+  );
 }
 
 .market-mood-marker {
@@ -84,6 +101,7 @@
   box-shadow: 0 0 0 2px var(--card);
 }
 
+/* ===== 指数列表与计算口径折叠说明 ===== */
 .market-index-list li {
   display: flex;
   align-items: center;
@@ -99,14 +117,15 @@
 }
 
 .market-mood-method summary::marker {
-  content: "";
+  content: '';
 }
 
-html[data-design-theme="arcade"] .market-mood,
-html[data-design-theme="arcade"] .market-region-switch,
-html[data-design-theme="arcade"] .market-region-switch button,
-html[data-design-theme="arcade"] .market-estimate-label,
-html[data-design-theme="arcade"] .market-mood-track,
-html[data-design-theme="arcade"] .market-mood-marker {
+/* ===== designTheme=arcade 直角覆盖 ===== */
+html[data-design-theme='arcade'] .market-mood,
+html[data-design-theme='arcade'] .market-region-switch,
+html[data-design-theme='arcade'] .market-region-switch button,
+html[data-design-theme='arcade'] .market-estimate-label,
+html[data-design-theme='arcade'] .market-mood-track,
+html[data-design-theme='arcade'] .market-mood-marker {
   border-radius: 0;
 }
