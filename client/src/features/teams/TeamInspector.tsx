@@ -46,26 +46,44 @@ export function TeamInspector({ teamId, semanticRevision, state, selected, edit,
   const forbidden = new Set(selected.flatMap(objectId => [objectId, ...departmentDescendants(state.config, objectId)]));
   const departments = [{ value: '', label: zh ? '画布根层' : 'Canvas root' }, ...state.config.departments.filter(d => !forbidden.has(d.id)).map(d => ({ value: d.id, label: state.display.departmentLabels[d.id] || d.id }))];
   const executorValue = role?.executor ? role.executor.executionMode === 'local' ? `local:${role.executor.localAgentId}` : `${role.executor.executionMode}:${role.executor.connectionId}` : '';
-  const executorOptions = [{ value: '', label: zh ? '未配置' : 'Not configured' }, ...(models.data ?? []).map(c => ({ value: `model:${c.id}`, label: `${c.name} · ${c.available ? (zh ? '内置连接' : 'API connection') : (zh ? '不可用' : 'Unavailable')}` })), ...(locals.data ?? []).map(c => ({ value: `local:${c.id}`, label: `${c.name} · ${c.busy ? (zh ? '繁忙' : 'Busy') : c.available ? (zh ? '原生助手' : 'Native assistant') : (zh ? '未连接' : 'Offline')}` }))];
-  if (executorValue && !executorOptions.some(option => option.value === executorValue)) executorOptions.push({ value: executorValue, label: zh ? '原连接已不可用 / 需重新核实' : 'Previous connection unavailable / unverified' });
+  const executorOptions: { value: string; label: string; disabled?: boolean }[] = [
+    { value: '', label: zh ? '选择此岗位的连接' : 'Choose a connection for this role' },
+    ...(models.data ?? []).map(c => ({ value: `model:${c.id}`, disabled: !c.available,
+      label: `${c.name} · ${c.available ? 'API' : (zh ? '不可用' : 'Unavailable')}` })),
+    ...(locals.data ?? []).map(c => ({ value: `local:${c.id}`,
+      disabled: !c.available || c.researchTools?.mode !== 'mcp' || c.researchTools.reason !== 'supported',
+      label: `${c.name} · ${c.available ? (zh ? '本地助手' : 'Local assistant') : (zh ? '未连接' : 'Offline')}` })),
+  ];
+  if (executorValue && !executorOptions.some(option => option.value === executorValue)) executorOptions.push({ value: executorValue, disabled: false, label: zh ? '原连接已不可用 / 需重新核实' : 'Previous connection unavailable / unverified' });
   const selectedModel = role?.executor?.executionMode === 'model' ? models.data?.find(c => role.executor?.executionMode === 'model' && c.id === role.executor.connectionId) : null;
   const selectedLocal = role?.executor?.executionMode === 'local' ? locals.data?.find(c => role.executor?.executionMode === 'local' && c.id === role.executor.localAgentId) : null;
   const toolIds = [...new Set((tools.data ?? []).flatMap(c => c.allowedToolIds))];
   const relationCount = role ? state.config.relations.filter(relation => relation.fromRoleId === role.id || relation.toRoleId === role.id).length : 0;
-  const connection = selectedLocal ? {
-    name: selectedLocal.name,
-    status: selectedLocal.available ? (zh ? '可用' : 'Available') : (zh ? '当前不可用' : 'Unavailable'),
-  } : selectedModel ? {
-    name: selectedModel.name,
-    status: selectedModel.available ? (zh ? '已配置' : 'Configured') : (zh ? '当前不可用' : 'Unavailable'),
-  } : null;
-  const propertiesLabel = role ? (zh ? '岗位属性' : 'Role properties')
+  const setExecutor = (value: string) => {
+    if (!value) {
+      patchRole({ executor: null, participation: 'placeholder' });
+      return;
+    }
+    const [kind, connectionId] = value.split(':');
+    const model = models.data?.find(item => item.id === connectionId && item.available);
+    const local = locals.data?.find(item => item.id === connectionId && item.available
+      && item.researchTools?.mode === 'mcp' && item.researchTools.reason === 'supported');
+    if (kind === 'model' && model) {
+      patchRole({ executor: { executionMode: 'model', connectionId, model: model.slowModel, tier: 'slow', settings: {} },
+        participation: role?.responsibility.trim() && role.expectedOutput.trim() ? 'enabled' : 'placeholder' });
+    } else if (kind === 'local' && local) {
+      patchRole({ executor: { executionMode: 'local', localAgentId: connectionId, settings: {} },
+        participation: role?.responsibility.trim() && role.expectedOutput.trim() ? 'enabled' : 'placeholder' });
+    }
+  };
+  const propertiesLabel = role ? (zh ? '岗位设置' : 'Role settings')
     : department ? (zh ? '部门属性' : 'Department properties') : (zh ? '团队属性' : 'Team properties');
 
   return <aside className="team-inspector" aria-label={propertiesLabel}>
     <div className="team-section-title"><h2 tabIndex={-1}>{propertiesLabel}</h2>
       <span className="team-editor-draft-badge">{readOnly ? (zh ? '只读' : 'Read only') : (zh ? '草稿' : 'Draft')}</span>
     </div>
+    {role && <p className="team-small text-primary">{zh ? '仅作用于当前团队' : 'Applies only to this team'}</p>}
     {!selected.length && <>
       <p className="team-muted">{zh ? '选择一个岗位或部门查看属性。' : 'Select a role or department to view its properties.'}</p>
       <details className="team-editor-disclosure">
@@ -79,11 +97,12 @@ export function TeamInspector({ teamId, semanticRevision, state, selected, edit,
 
     {department && <><label className="team-field"><span>{zh ? '部门说明' : 'Department purpose'}</span><Textarea value={department.purpose} maxLength={1000} disabled={readOnly} onChange={e => edit({ ...state, config: { ...state.config, departments: state.config.departments.map(d => d.id === id ? { ...d, purpose: e.target.value } : d) } })} /></label></>}
     {role && <TeamRosterBinding key={`roster-${role.id}`} role={role} label={state.display.roleLabels[role.id] || role.id} models={models.data ?? []} zh={zh} disabled={readOnly} onBind={patchRole} />}
-    {connection && <p className="team-muted">{connection.name} · {connection.status}</p>}
     {role && <label className="team-field">
       <span>{zh ? '岗位职责' : 'Role responsibility'}</span>
-      <Textarea value={role.responsibility} maxLength={1000} rows={1} readOnly={readOnly} onChange={event => patchRole({ responsibility: event.target.value })} />
+      <Textarea value={role.responsibility} maxLength={1000} rows={3} readOnly={readOnly} onChange={event => patchRole({ responsibility: event.target.value })} />
     </label>}
+    {role && <TeamSelect label={zh ? '运行连接' : 'Runtime connection'} value={executorValue}
+      options={executorOptions} disabled={readOnly || models.isPending || locals.isPending} onChange={setExecutor} />}
     {role && <Button variant="outline" className="team-inspector-relations" onClick={event => openRelations(role.id, event.currentTarget)}>
       <span>{zh ? `汇报与协作 · ${relationCount} 条关系` : `Reporting and collaboration · ${relationCount}`}</span>
       <ChevronRight aria-hidden="true" />
@@ -95,13 +114,18 @@ export function TeamInspector({ teamId, semanticRevision, state, selected, edit,
         {!!selected.length && !selected.some(item => state.config.relations.some(r => r.id === item)) && <TeamSelect label={zh ? '移至部门' : 'Move to department'} value={id ? objectParent(state.config, id) ?? '' : ''} options={departments} disabled={readOnly} onChange={value => edit(moveTeamObjects(state, selected, value || null))} />}
         {department && <div className="team-form-grid"><label className="team-field"><span>{zh ? '容器宽度' : 'Container width'}</span><Input type="number" min={280} value={state.layout.positions[id!]?.width ?? 600} disabled={readOnly} onChange={e => edit({ ...state, layout: { ...state.layout, positions: { ...state.layout.positions, [id!]: { ...state.layout.positions[id!], width: Math.max(280, Number(e.target.value)) } } } })} /></label><label className="team-field"><span>{zh ? '容器高度' : 'Container height'}</span><Input type="number" min={180} value={state.layout.positions[id!]?.height ?? 400} disabled={readOnly} onChange={e => edit({ ...state, layout: { ...state.layout, positions: { ...state.layout.positions, [id!]: { ...state.layout.positions[id!], height: Math.max(180, Number(e.target.value)) } } } })} /></label></div>}
         {role && <><TeamSelect label={zh ? '参与状态' : 'Participation'} value={role.participation} options={[{ value: 'placeholder', label: zh ? '待配置 / 不参与运行' : 'Placeholder / inactive' }, { value: 'enabled', label: zh ? '已配置 / 可选入委托' : 'Enabled / eligible for commissions' }]} disabled={readOnly} onChange={value => patchRole({ participation: value === 'enabled' ? 'enabled' : 'placeholder' })} />
+      {role.agentId && <label className="team-field">
+        <span>{zh ? '此岗位的补充指令' : 'Additional instructions for this role'}</span>
+        <Textarea value={role.workingInstructions ?? ''} maxLength={2000} rows={3} disabled={readOnly}
+          onChange={event => patchRole({ workingInstructions: event.target.value || undefined })} />
+      </label>}
       <label className="team-field"><span>{zh ? '预期交付' : 'Expected delivery'}</span><Textarea value={role.expectedOutput} maxLength={1000} rows={3} disabled={readOnly} onChange={e => patchRole({ expectedOutput: e.target.value })} /></label>
-      {!role.agentId && <><TeamSelect label={zh ? '执行连接' : 'Executor connection'} value={executorValue} options={executorOptions} disabled={readOnly || models.isPending || locals.isPending} onChange={value => { const connectionId = value.slice(value.indexOf(':') + 1); if (!value) patchRole({ executor: null }); else if (value.startsWith('model:')) { const c = models.data?.find(item => item.id === connectionId); patchRole({ executor: { executionMode: 'model', connectionId, model: c?.slowModel || c?.fastModel || '', settings: {} } }); } else patchRole({ executor: { executionMode: 'local', localAgentId: connectionId, settings: {} } }); }} />
+
       {role.executor?.executionMode === 'model' && <label className="team-field"><span>{zh ? '明确模型标识' : 'Explicit model identifier'}</span><Input value={role.executor.model} disabled={readOnly} onChange={e => role.executor?.executionMode === 'model' && patchRole({ executor: { ...role.executor, model: e.target.value } })} /><small>{selectedModel ? `${selectedModel.fastModel} / ${selectedModel.slowModel}` : (zh ? '连接不可用，需在设置核对' : 'Connection unavailable; check settings')}</small></label>}
       {role.executor?.executionMode === 'model' && selectedModel && <TeamSelect label={zh ? '连接模型档位' : 'Connection model tier'} value={role.executor.tier === 'fast' ? 'fast' : 'slow'} disabled={readOnly} options={[{ value: 'slow', label: `${zh ? '深度' : 'Deep'} · ${selectedModel.slowModel}` }, { value: 'fast', label: `${zh ? '快速' : 'Fast'} · ${selectedModel.fastModel}` }]} onChange={value => role.executor?.executionMode === 'model' && patchRole({ executor: { ...role.executor, tier: value, model: value === 'fast' ? selectedModel.fastModel : selectedModel.slowModel } })} />}
-      {selectedLocal && role.executor?.executionMode === 'local' && <><TeamSelect label={zh ? '原生助手模型' : 'Native model'} value={typeof role.executor.settings.model === 'string' ? role.executor.settings.model : ''} disabled={readOnly} options={[{ value: '', label: zh ? '使用已核实的原生默认模型' : 'Use verified native default' }, ...(selectedLocal.models ?? []).map(model => ({ value: model.id, label: model.name }))]} onChange={value => { if (role.executor?.executionMode !== 'local') return; const settings = { ...role.executor.settings }; if (value) settings.model = value; else delete settings.model; patchRole({ executor: { ...role.executor, settings } }); }} /><TeamSelect label={zh ? '原生推理强度' : 'Native reasoning effort'} value={typeof role.executor.settings.reasoningEffort === 'string' ? role.executor.settings.reasoningEffort : ''} disabled={readOnly} options={[{ value: '', label: zh ? '默认' : 'Default' }, ...(selectedLocal.reasoningEfforts ?? []).map(value => ({ value, label: value }))]} onChange={value => { if (role.executor?.executionMode !== 'local') return; const settings = { ...role.executor.settings }; if (value) settings.reasoningEffort = value; else delete settings.reasoningEffort; patchRole({ executor: { ...role.executor, settings } }); }} /></>}
+      {selectedLocal && role.executor?.executionMode === 'local' && <><TeamSelect label={zh ? '原生助手模型' : 'Native model'} value={typeof role.executor.settings.model === 'string' ? role.executor.settings.model : ''} disabled={readOnly} options={[{ value: '', label: zh ? '使用已核实的原生默认模型' : 'Use verified native default' }, ...(selectedLocal.models ?? []).map(model => ({ value: model.id, label: model.name }))]} onChange={value => { if (role.executor?.executionMode !== 'local') return; const settings = { ...role.executor.settings }; if (value) settings.model = value; else delete settings.model; patchRole({ executor: { ...role.executor, settings } }); }} /><TeamSelect label={zh ? '原生推理强度' : 'Native reasoning effort'} value={typeof role.executor.settings.reasoningEffort === 'string' ? role.executor.settings.reasoningEffort : ''} disabled={readOnly} options={[{ value: '', label: zh ? '默认' : 'Default' }, ...(selectedLocal.models?.find(model => role.executor?.executionMode === 'local' && model.id === role.executor.settings.model)?.reasoningEfforts ?? selectedLocal.reasoningEfforts ?? []).map(value => ({ value, label: value }))]} onChange={value => { if (role.executor?.executionMode !== 'local') return; const settings = { ...role.executor.settings }; if (value) settings.reasoningEffort = value; else delete settings.reasoningEffort; patchRole({ executor: { ...role.executor, settings } }); }} /></>}
       {selectedLocal && <TeamNotice><p>{selectedLocal.name} · {selectedLocal.state} · {selectedLocal.busy ? (zh ? '繁忙' : 'Busy') : (zh ? '未报告繁忙' : 'Not reported busy')}</p><p>{zh ? '配置模型' : 'Configured model'}: {selectedLocal.defaultModel || (zh ? '未知' : 'Unknown')}</p><p>{zh ? '是否支持团队私有资料及统筹能力，须以服务器检查为准。' : 'Team-private input isolation and lead capability require server verification.'}</p></TeamNotice>}
-      </>}{(models.isError || locals.isError) && <TeamNotice error><p>{zh ? '连接目录读取失败。保留原选择，请重试读取或前往连接设置。' : 'Connection catalog failed to load. Existing selection is retained.'}</p><Button variant="outline" size="sm" onClick={() => { void models.refetch(); void locals.refetch(); }}>{zh ? '重读连接' : 'Reload connections'}</Button></TeamNotice>}
+      {(models.isError || locals.isError) && <TeamNotice error><p>{zh ? '连接目录读取失败。保留原选择，请重试读取或前往连接设置。' : 'Connection catalog failed to load. Existing selection is retained.'}</p><Button variant="outline" size="sm" onClick={() => { void models.refetch(); void locals.refetch(); }}>{zh ? '重读连接' : 'Reload connections'}</Button></TeamNotice>}
       <div className="team-inline-actions"><Button variant="outline" size="sm" disabled={check.isPending || !role.executor || needsSave} onClick={() => check.mutate()}>{zh ? '只读能力检查' : 'Check capabilities'}</Button><Link to="/settings/models">{zh ? '管理连接' : 'Manage connections'}</Link></div>{needsSave && <p className="team-muted team-small">{zh ? '先保存运行草稿，再核对本次已选连接的能力。' : 'Save the execution draft before checking the selected connection capabilities.'}</p>}
       {check.isError && <TeamNotice error>{friendlyError(check.error, zh, { zh: '检查失败', en: 'Capability check failed' })}</TeamNotice>}{check.data?.items.map(item => <TeamNotice key={item.roleId}><strong>{item.status}</strong><p>{item.evidence}</p><small>{item.checkedAt}</small></TeamNotice>)}
       <fieldset className="team-permission-list" disabled={readOnly}><legend>{zh ? '已有工具授权的子集' : 'Subset of existing tool grants'}</legend>{toolIds.map(toolId => <label key={toolId}><Checkbox checked={role.allowedToolIds.includes(toolId)} onCheckedChange={checked => patchRole({ allowedToolIds: checked ? [...role.allowedToolIds, toolId] : role.allowedToolIds.filter(value => value !== toolId) })} />{toolId}</label>)}{!toolIds.length && <p className="team-muted team-small">{zh ? '暂无可选已授权工具。编辑岗位不会开启新权限。' : 'No authorized tools available. Role edits never grant new permissions.'}</p>}</fieldset>

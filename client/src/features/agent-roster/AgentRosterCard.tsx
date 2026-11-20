@@ -25,9 +25,11 @@ export function AgentRosterCard({ agent, zh, template, memoryOpen, archiving, on
   onMemory: () => void;
   onArchive: () => void;
 }) {
-  const executor = agent.currentVersion.config.executor;
+  const builtin = agent.origin === 'builtin';
+  const executor = builtin ? agent.effectiveExecutor : agent.currentVersion.config.executor;
   const guide = template ? (zh ? template.guide : template.guideEn) : null;
-  const connectionLabel = executor.executionMode === 'model'
+  const connectionLabel = !executor ? (zh ? '需要明确可用连接' : 'Needs an unambiguous connection')
+    : executor.executionMode === 'model'
     ? (zh ? '共用模型连接' : 'Shared model connection')
     : executor.executionMode === 'a2a'
       ? (zh ? '外部助手' : 'External agent')
@@ -41,6 +43,7 @@ export function AgentRosterCard({ agent, zh, template, memoryOpen, archiving, on
       </span>
     </div>
     <h2 className="break-words font-semibold text-lg">{agent.name}</h2>
+    {builtin && <p className="text-xs text-muted-foreground">{zh ? '内置股友 · 原型只读' : 'Built-in friend · read-only'}</p>}
     <p className="break-words text-sm font-medium">{agent.specialty}</p>
     <p className="break-words text-sm text-muted-foreground">{agent.description}</p>
     {template && <p className="break-words text-sm">{zh ? '典型交付' : 'Typical delivery'}：{zh ? template.delivery : template.deliveryEn}</p>}
@@ -61,7 +64,7 @@ export function AgentRosterCard({ agent, zh, template, memoryOpen, archiving, on
             <MessageSquare size={14} />{zh ? '聊一聊' : 'Chat'}
           </Link>
         </Button>
-        <Button size="sm" variant="ghost" onClick={onEdit}>{zh ? '了解与调整' : 'Details and edit'}</Button>
+        {!builtin && <Button size="sm" variant="ghost" onClick={onEdit}>{zh ? '了解与调整' : 'Details and edit'}</Button>}
         <Button size="sm" variant="ghost" onClick={onMemory}>{zh ? '记忆' : 'Memory'}</Button>
       </div>
       {memoryOpen && <AgentMemoryPanel agent={agent} zh={zh} />}
@@ -69,11 +72,12 @@ export function AgentRosterCard({ agent, zh, template, memoryOpen, archiving, on
         <summary className="min-h-6 cursor-pointer py-1">{zh ? '能力版本与资料范围' : 'Version and data scope'}</summary>
         <p className="mt-2">{zh ? '能力版本' : 'Version'} {agent.currentVersion.version} · {connectionLabel}</p>
         <p>{zh ? '团队内部记忆各自隔离；只使用明确授权的资料和工具。' : 'Team memories are isolated; only explicitly allowed data and tools are used.'}</p>
-        {executor.executionMode === 'a2a' && <ExternalAgentStatus connectionId={executor.connectionId} zh={zh} />}
-        <p className="mt-2">{zh ? '归档后不能开始新工作，已派发任务按原权限结算。' : 'Archiving stops new work; dispatched tasks settle under existing permissions.'}</p>
+        {executor?.executionMode === 'a2a' && <ExternalAgentStatus connectionId={executor.connectionId} zh={zh} />}
+        {builtin && !executor && <p className="mt-2">{zh ? '个人研究需要一条可确定的连接。团队运行连接可在对应岗位设置。' : 'Personal research needs one unambiguous connection. Choose team runtime connections on individual roles.'}</p>}
+        {!builtin && <><p className="mt-2">{zh ? '归档后不能开始新工作，已派发任务按原权限结算。' : 'Archiving stops new work; dispatched tasks settle under existing permissions.'}</p>
         <Button className="mt-2" size="sm" variant="ghost" disabled={archiving} onClick={onArchive}>
           <Archive size={12} />{zh ? '归档股友' : 'Archive agent'}
-        </Button>
+        </Button></>}
       </details>
     </footer>
   </article>;

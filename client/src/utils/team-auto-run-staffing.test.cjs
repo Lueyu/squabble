@@ -50,9 +50,13 @@ test('a staffed lead cannot hide required unstaffed blueprint researchers', () =
   const f = fixture();
   const { TeamAutoRunStaffing } = f.load('features/teams/TeamAutoRunStaffing.tsx');
   const config = { roles: [{ id: 'lead', agentId: 'friend', agentVersionId: 'v1', executor: { executionMode: 'model' }, participation: 'enabled' }, { id: 'researcher', responsibility: 'Custom research', expectedOutput: 'Evidence', participation: 'placeholder' }], defaults: { leadRoleId: 'lead' }, workBlueprint: { works: [{ roleId: 'researcher', reviewerRoleId: 'lead' }], summary: { reviewerRoleId: 'researcher' } } };
+  f.state.queries.set(JSON.stringify(['agent-roster', 'friend']), { data: { id: 'friend', name: 'Pinned legacy friend' } });
   const html = f.render(TeamAutoRunStaffing, { state: { config, display: { roleLabels: {} } }, team: { currentVersionId: 'version', publishedVersion: { config } }, agents: [], models: [], zh: false, disabled: false, dirty: false });
   assert.match(html, /Staff the team first/);
   assert.match(html, /researcher/);
+  const selects = JSDOM.fragment(html).querySelectorAll('select');
+  assert.equal(selects[0].selectedOptions[0].text, 'Pinned legacy friend');
+  assert.ok([...selects[1].options].every(option => option.value !== 'friend'));
 });
 
 test('published unbound overview exposes account setup without searching the organization editor', async () => {

@@ -63,6 +63,12 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data;
 }
 
+function rosterExecutors(members: CouncilMember[]): ActualExecutor[] {
+  return members.map(member => ({ memberId: member.id, identity: `roster:${member.rosterAgentId}:${member.rosterAgentVersionId}`,
+    connection: member.agentId ?? member.connectionId ?? 'default', connectionId: member.agentId ?? member.connectionId,
+    provider: member.executionMode === 'local' ? 'local' : 'configured', model: 'unknown', identityVerified: true, modelVerified: false }));
+}
+
 /** Product entry layer. Only this service chooses members and pins owner-validated context. */
 @Injectable()
 export class SimpleCouncilService implements OnApplicationBootstrap {
@@ -228,16 +234,20 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       const [prior] = await tx.select().from(simpleCouncilRequests).where(and(eq(simpleCouncilRequests.owner, owner), eq(simpleCouncilRequests.requestKey, value.requestKey)));
       if (prior) { this.same(prior.inputHash, inputHash); return false; }
       const savedMembers = row.profileSnapshot.council?.members ?? [];
-      const selections = row.checkpoint?.simple?.agentSelections ?? (savedMembers.some(member => member.rosterAgentId)
-        ? savedMembers.map(member => ({ agentId: member.rosterAgentId!, agentVersionId: member.rosterAgentVersionId!, memberId: member.id, role: member.role })) : undefined);
       // Continuing private history never discovers new people or upgrades pinned versions.
       // Legacy unavailable conversations may retain user notes, but never discover people on continuation.
-      if (!savedMembers.length && selections?.length) throw new ConflictException('AGENT_SELECTION_REQUIRED');
-      const resolved = selections ? await this.resolveMembers(owner, selections) : undefined;
-      const actual = { members: savedMembers, executors: row.checkpoint?.simple?.executors ?? resolved?.executors ?? [] };
+      const savedSelections = row.checkpoint?.simple?.agentSelections;
+      if (!savedMembers.length && savedSelections?.length) throw new ConflictException('AGENT_SELECTION_REQUIRED');
       await assertCouncilRosterPublication(tx, row);
       if (row.checkpoint?.runtimePending?.length) throw new ConflictException('RUNTIME_RECOVERY_TARGET_REQUIRED');
       if (row.checkpoint?.simple?.overallDaily) throw new ConflictException('OVERALL_DAILY_NEW_REQUEST_REQUIRED');
+      const rosterMembers = savedMembers.filter(member => member.rosterAgentId && member.rosterAgentVersionId);
+      if ((rosterMembers.length || savedSelections?.length) && !this.roster) throw new BadRequestException('AGENT_ROSTER_UNAVAILABLE');
+      for (const member of rosterMembers) await this.roster!.assertFrozenExecutorAvailable(tx, owner, member);
+      const selections = savedSelections ?? (rosterMembers.length ? rosterMembers.map(member => ({
+        agentId: member.rosterAgentId!, agentVersionId: member.rosterAgentVersionId!, memberId: member.id, role: member.role,
+      })) : undefined);
+      const executors = row.checkpoint?.simple?.executors ?? rosterExecutors(rosterMembers);
       const selectedId = row.checkpoint?.simple?.skills?.at(-1)?.id ?? null;
       if (row.status === 'running' && value.skillId !== undefined && value.skillId !== selectedId) {
         throw new ConflictException('RESEARCH_SKILL_CHANGE_REQUIRES_SETTLEMENT');
@@ -262,14 +272,14 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
       }
       const convert = row.status !== 'running' && (!row.checkpoint?.simple || row.status === 'completed' || row.checkpoint.simple.stopped
         || !row.profileSnapshot.council?.members.length);
-      const checkpoint = convert ? newCheckpoint(actual.members, { independent: true }) : row.checkpoint;
-      if (convert && checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, executors: actual.executors, commonEvidence: row.evidenceSnapshot,
+      const checkpoint = convert ? newCheckpoint(savedMembers, { independent: true }) : row.checkpoint;
+      if (convert && checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, executors, commonEvidence: row.evidenceSnapshot,
         contextDate:row.checkpoint?.simple?.contextDate,contextLabel:row.checkpoint?.simple?.contextLabel,
         researchOnly:row.checkpoint?.simple?.researchOnly,overallDaily:row.checkpoint?.simple?.overallDaily,agentSelections:selections };
       if (checkpoint?.simple) checkpoint.simple = { ...checkpoint.simple, automaticTaskId: options.automaticTaskId,
         skills, steeringRevision: (checkpoint.simple.steeringRevision ?? 0) + 1 };
       await tx.update(councilSessions).set({ revision, updatedAt: new Date(), continuationSummary,
-        ...(convert ? { profileSnapshot: { ...row.profileSnapshot, council: { enabled: true, members: actual.members, webResearch: row.profileSnapshot.council?.webResearch ?? false } } } : {}),
+        ...(convert ? { profileSnapshot: { ...row.profileSnapshot, council: { enabled: true, members: savedMembers, webResearch: row.profileSnapshot.council?.webResearch ?? false } } } : {}),
         ...(checkpoint ? { checkpoint } : {}),
         status: row.status === 'running' ? 'running' : 'idle' }).where(and(isNull(councilSessions.deletedAt), eq(councilSessions.owner, owner), eq(councilSessions.id, id)));
       await tx.insert(simpleCouncilRequests).values({ owner, requestKey: value.requestKey, inputHash, sessionId: id });
@@ -323,14 +333,14 @@ export class SimpleCouncilService implements OnApplicationBootstrap {
   async resolveMembers(owner: string, selections?: AgentSelection[]): Promise<{ members: CouncilMember[]; executors: ActualExecutor[] }> {
     if (selections && !this.roster) throw new BadRequestException('AGENT_ROSTER_UNAVAILABLE');
     if (this.roster) {
-      const chosen = selections ?? (await this.roster.list(owner, {})).items.filter(row => row.status === 'active').slice(0, 3).map(row => ({ agentId: row.id, agentVersionId: row.currentVersionId }));
+      const chosen = selections ?? (await this.roster.list(owner, {})).items.filter(row => row.status === 'active' && row.origin !== 'builtin').slice(0, 3).map(row => ({ agentId: row.id, agentVersionId: row.currentVersionId }));
       if (chosen.length) {
         const resolved = await this.roster.resolveMembers(owner, chosen);
         const managers = resolved.filter(member => member.role === 'manager');
         if (resolved.length > 1 && managers.length > 1) throw new BadRequestException('AGENT_MULTIPLE_MANAGERS');
         const members = resolved.map((member, index) => ({ ...member,
           role: resolved.length > 1 && !managers.length && index === resolved.length - 1 ? 'manager' as const : member.role }));
-        return { members, executors: members.map(member => ({ memberId: member.id, identity: `roster:${member.rosterAgentId}:${member.rosterAgentVersionId}`, connection: member.agentId ?? member.connectionId ?? 'default', connectionId: member.agentId ?? member.connectionId, provider: member.executionMode === 'local' ? 'local' : 'configured', model: 'unknown', identityVerified: true, modelVerified: false })) };
+        return { members, executors: rosterExecutors(members) };
       }
     }
     const [preferences] = await this.db.select().from(experiencePreferences).where(eq(experiencePreferences.owner, owner));

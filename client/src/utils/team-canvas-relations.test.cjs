@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { getSmoothStepPath, Position } = require('@xyflow/react');
+const { MarkerType } = require('@xyflow/react');
 const f = require('./simple-test-loader.cjs')();
 const { toTeamFlow } = f.load('features/teams/team-flow-adapter.ts');
 
@@ -40,13 +40,17 @@ test('relation labels stay hidden until that relation is selected and each edge 
 
 test('parallel relationships draw distinct routes and keep source and target direction', () => {
   const value = state();
+  value.layout.positions = { financials: { x: 20, y: 50 }, lead: { x: 320, y: 50 }, risk: { x: 20, y: 250 } };
   const edges = toTeamFlow(value, [], 'all', false).edges.filter(edge => edge.id !== 'other');
-  const paths = edges.map(edge => {
-    const reverse = edge.source === 'lead';
-    return getSmoothStepPath({ sourceX: reverse ? 350 : 100, sourceY: reverse ? 60 : 250, sourcePosition: Position.Bottom, targetX: reverse ? 100 : 350, targetY: reverse ? 250 : 60, targetPosition: Position.Top, ...edge.pathOptions })[0];
+  assert.equal(new Set(edges.map(edge => edge.data.offset)).size, 3);
+  edges.forEach(edge => {
+    const relation = value.config.relations.find(relation => relation.id === edge.id);
+    assert.equal(edge.source, relation.fromRoleId);
+    assert.equal(edge.target, relation.toRoleId);
+    assert.equal(edge.type, 'teamParallel');
+    assert.equal(edge.data.horizontal, true);
+    assert.equal(edge.markerEnd.type, MarkerType.ArrowClosed);
   });
-  assert.equal(new Set(paths).size, 3, 'multiple relations between the same pair need separate visible routes');
-  assert.equal(edges.find(edge => edge.id === 'review').source, 'lead');
-  assert.equal(edges.find(edge => edge.id === 'review').target, 'financials');
-  assert.ok(edges.every(edge => edge.markerEnd));
+  assert.equal(edges.find(edge => edge.id === 'review').targetHandle, 'right-in');
+  assert.equal(edges.find(edge => edge.id === 'report').targetHandle, 'left-in');
 });

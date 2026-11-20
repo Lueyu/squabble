@@ -197,7 +197,7 @@ test('local settings hides account security on desktop and mobile and redirects 
     const menu = tree.find(node => node.type === SettingsNavigation);
     assert.equal(menu.props.localWorkspace, mode === 'local');
     assert.equal(menu.props.placement, 'page');
-    for (const placement of ['sidebar', 'page']) {
+    for (const placement of ['rail', 'page']) {
       const links = nodes(SettingsNavigation({ ...menu.props, placement })).filter(node => node.type === 'Link');
       assert.equal(links.some(link => link.props.to.pathname === '/settings/security'), mode === 'account');
       assert.equal(links.find(link => link.props['aria-current'] === 'page').props.to.pathname, `/settings/${active}`);

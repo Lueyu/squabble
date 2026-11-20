@@ -88,7 +88,8 @@ test('overview shows recorded returns, current equity and dated holdings referen
   const f = fixture();
   const observed = '2026-11-09T10:00:00Z';
   const current = '2026-11-10T10:00:00Z';
-  f.state.queries.set('portfolio-comparison', { data: { granularity: 'observations', series: [{
+  f.state.queries.set('portfolio-comparison', { data: {
+    from: '2026-11-05T10:00:00Z', to: current, granularity: 'observations', series: [{
     accountId: 'real', name: 'Real', kind: 'real', colorIndex: -1, status: 'real',
     points: [{ timestamp: observed, date: '2026-11-09', equityUsd: 200, returnPct: 10, gaps: [] }],
     gaps: [], equityUsd: 200, returnPct: 10, valuationAsOf: observed,
@@ -106,14 +107,21 @@ test('overview shows recorded returns, current equity and dated holdings referen
   const panel = page => page.querySelector('section[aria-label="Account performance"]');
   const defaultPage = overview('/');
   assert.deepEqual([...defaultPage.querySelectorAll('h2')].map(node => node.textContent), [
-    'Account returns', 'My accounts', 'Today’s investment daily',
+    'One valid observation', 'My accounts', 'Today’s investment daily',
   ]);
   assert.ok(defaultPage.querySelector('a[href="/holdings?accountId=real"]'));
   assert.ok(defaultPage.querySelector('a[href="/daily"]'));
-  const returns = panel(defaultPage);
+  const automatic = panel(defaultPage);
+  assert.match(automatic.textContent, /First valuation \$200\.00/);
+  assert.equal(automatic.querySelector('time').dateTime, observed);
+  assert.ok(automatic.querySelector('[role="img"]'));
+
+  const returns = panel(overview('/?basis=records&metric=return'));
+  assert.equal(returns.querySelector('h2').textContent, 'Account returns');
   assert.match(returns.querySelector('dl').textContent, /\+10\.00%/);
   assert.equal(returns.querySelector('time').dateTime, observed);
   assert.equal(returns.querySelector('summary').textContent, 'View historical valuations');
+  assert.ok(returns.querySelector('[role="img"]'));
 
   const equity = panel(overview('/?basis=records&metric=equity'));
   assert.equal(equity.querySelector('h2').textContent, 'Account equity');

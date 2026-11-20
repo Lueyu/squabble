@@ -10,6 +10,7 @@ import { TradingMarketService } from '../paper-trading/trading-market.service';
 import { TeamCommissionWorker } from '../teams/team-commission.worker';
 import { copyTeamExecutionLinks, recordTeamSignalLinks } from '../../database/team-execution-links';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
+import { modelConnections } from '../../database/model-connections.schema';
 import { DEFAULT_INVESTMENT_CONFIG } from '../paper-trading/investment-policy.rules';
 import { teamCommissions, teamDecisions, teamResearchLinks } from '../../database/teams.schema';
 import { teamRunAgreements, teamRunCycles } from '../../database/team-run.schema';
@@ -50,6 +51,33 @@ test('explicit immediate startup reserves once before close and preserves the fr
     assert.equal((await f.db.select().from(teamRunCycles)).length, 1, 'The initial reservation consumes its daily slot, and later days wait for close');
     await restarted.reserve(agreement, new Date('2026-11-13T09:00:00Z'));
     assert.equal((await f.db.select().from(teamRunCycles)).length, 2);
+  } finally { await f.dispose(); }
+});
+
+test('a running agreement retains its exact legacy friend after the directory folds it into the built-in roster', options, async () => {
+  const f = await setup('immediate', 'CN', undefined, 'recommended');
+  try {
+    const [before] = await f.db.select().from(teamRunAgreements);
+    assert.equal(before.state, 'running');
+    assert.equal(before.members[0].rosterAgentId, f.friend.id);
+    assert.equal(before.members[0].rosterAgentVersionId, f.friend.currentVersionId);
+
+    const beforeConnectionTest = await f.roster.list(f.owner);
+    assert.ok(beforeConnectionTest.items.some(friend => friend.id === f.friend.id));
+    await f.db.update(modelConnections).set({ testState: 'passed', testedAt: new Date() })
+      .where(eq(modelConnections.id, f.connection.id));
+
+    const roster = await f.roster.list(f.owner);
+    assert.equal(roster.items.length, 12);
+    assert.ok(roster.items.every(friend => friend.id !== f.friend.id && friend.origin === 'builtin'));
+    await f.runs.reconcileAuthority(before);
+    await f.scheduler.runOnce(new Date('2026-11-12T03:00:00Z'));
+
+    const [after] = await f.db.select().from(teamRunAgreements);
+    assert.deepEqual(after, before);
+    const [commission] = await f.db.select().from(teamCommissions);
+    assert.equal(commission.members[0].rosterAgentId, f.friend.id);
+    assert.equal(commission.members[0].rosterAgentVersionId, f.friend.currentVersionId);
   } finally { await f.dispose(); }
 });
 

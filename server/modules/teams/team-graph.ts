@@ -19,7 +19,7 @@ export const blueprintSchema = z.object({ schemaVersion: z.literal(1), works: z.
 export const semanticSchema = z.object({ schemaVersion: z.literal(1),
     departments: z.array(z.object({ id: uuidSchema, parentDepartmentId: uuidSchema.nullable(), purpose: text }).strict()),
     roles: z.array(z.object({ id: uuidSchema, departmentId: uuidSchema.nullable(), participation: z.enum(['placeholder', 'enabled']), responsibility: text, expectedOutput: text,
-        executor: executor.nullable(), agentId: uuidSchema.optional(), agentVersionId: uuidSchema.optional(), allowedToolIds: z.array(z.string().min(1).max(128)).max(100), sourceGrantIds: ids }).strict()).max(30),
+        executor: executor.nullable(), workingInstructions: z.string().trim().max(2000).transform(value => value || undefined).optional(), agentId: uuidSchema.optional(), agentVersionId: uuidSchema.optional(), allowedToolIds: z.array(z.string().min(1).max(128)).max(100), sourceGrantIds: ids }).strict()).max(30),
     relations: z.array(z.object({ id: uuidSchema, fromRoleId: uuidSchema, toRoleId: uuidSchema, kind: z.enum(['reports_to', 'delegates_to', 'reviews']), responsibilityScope: text }).strict()),
     defaults: z.object({ leadRoleId: uuidSchema.nullable(), parallelism: z.union([z.literal(1), z.literal(2)]) }).strict(),
     workBlueprint: blueprintSchema.optional(),
@@ -72,6 +72,8 @@ export function validateTeamGraph(config: TeamSemanticConfig): void {
     for (const role of config.roles) {
         if (Boolean(role.agentId) !== Boolean(role.agentVersionId))
             teamError('TEAM_GRAPH_INVALID', 'Persistent friend identity requires the exact version');
+        if (role.workingInstructions && !role.agentId)
+            teamError('TEAM_GRAPH_INVALID', 'Working instructions require an assigned friend', { roleId: role.id });
         if (role.departmentId && !departments.has(role.departmentId))
             teamError('TEAM_GRAPH_INVALID', 'Unknown department', { roleId: role.id });
         if (role.participation === 'enabled' && (!role.executor || !role.responsibility.trim() || !role.expectedOutput.trim()))

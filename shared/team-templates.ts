@@ -322,7 +322,7 @@ export const TEAM_TEMPLATES: readonly TeamTemplate[] = [
         responsibility: '拆清本次投资命题，综合专项交付', expectedOutput: '结论、依据、未知项和下一步' },
       { key: 'accounting', zh: '口径核对员', en: 'Accounting analyst', specialty: 'financials', dept: 'accounting',
         responsibility: '核查跨期会计口径、合并范围与一次性因素', expectedOutput: '口径对照表与可比数据' },
-      { key: 'cashflow', zh: '现金流专家', en: 'Cash-flow analyst', specialty: 'financials', dept: 'accounting',
+      { key: 'cashflow', zh: '现金流专家', en: 'Cash-flow analyst', specialty: 'business', dept: 'accounting',
         responsibility: '核查订单到回款的转化，排除营运资本和融资影响', expectedOutput: '现金流桥接表、来源及反证' },
       { key: 'industry', zh: '行业研究员', en: 'Industry analyst', specialty: 'industry', dept: 'industry',
         responsibility: '检验需求、竞争与行业传导机制', expectedOutput: '行业事实、竞争假设与范围' },

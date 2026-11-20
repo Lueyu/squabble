@@ -10,7 +10,7 @@ import { friendlyError } from '@/utils/error-message';
 import { workspaceOwnerScope, writeTabRecovery } from '@/utils/workspace-tab-recovery';
 import { teamOnboardingPath } from '@/features/onboarding/onboarding-state';
 import {
-  adoptCreatedAccount, applyQuickStartExecutors, clearStoredQuickStart, initialQuickStartKeys, initialQuickStartProgress,
+  adoptCreatedAccount, applyQuickStartExecutors, configureTemplateRoute, clearStoredQuickStart, initialQuickStartKeys, initialQuickStartProgress,
   quickStartAccountName, quickStartCreateAccountRequest, quickStartFailureKind, quickStartPreviewRequest, quickStartTeamRequest, readStoredQuickStart,
   storedQuickStartResumable, updateQuickStartStep, writeStoredQuickStart,
   type QuickStartFailureKind, type QuickStartInput, type QuickStartProgress, type QuickStartStepId, type StoredQuickStart,
@@ -88,7 +88,23 @@ export function useTeamQuickStart(zh: boolean) {
       setStep('team', 'done');
 
       // Step 2: enable every template role on the default connection (skipped when no connection was chosen).
-      if (record.progress.steps.some(step => step.id === 'draft')) {
+      if (input.templateRoute && record.progress.steps.some(step => step.id === 'draft' && step.state !== 'done')) {
+        setStep('draft', 'running');
+        try {
+          if (!record.draftRequest) {
+            const current = await teamsApi.detail(record.progress.teamId!);
+            record.draftRequest = {
+              requestKey: record.keys.draft,
+              expectedSemanticRevision: record.initialSemanticRevision ?? current.draft.semanticRevision,
+              config: configureTemplateRoute(current.draft.config, input.templateRoute),
+            };
+            persist(record);
+          }
+          const saved = await teamsApi.saveDraft(record.progress.teamId!, record.draftRequest);
+          record.initialSemanticRevision = saved.draft.semanticRevision;
+          setStep('draft', 'done');
+        } catch (error) { return fail(error, 'draft'); }
+      } else if (!input.templateRoute && record.progress.steps.some(step => step.id === 'draft')) {
         const current = await teamsApi.detail(record.progress.teamId!);
         if (current.draft.config.roles.some(role => role.participation !== 'enabled' || !role.executor)) {
           setStep('draft', 'running');
@@ -246,7 +262,7 @@ export function useTeamQuickStart(zh: boolean) {
   const run = useCallback((input: QuickStartInput, knownAccountIds: ReadonlySet<string>): void => {
     if (runningRef.current) return;
     const retained = recordRef.current ?? readStoredQuickStart();
-    if (storedQuickStartResumable(retained)) {
+    if (storedQuickStartResumable(retained) && retained?.failureKind !== 'name-conflict') {
       runningRef.current = true;
       void execute(retained!, knownAccountIds);
       return;
@@ -272,7 +288,7 @@ export function useTeamQuickStart(zh: boolean) {
   const resume = useCallback((knownAccountIds: ReadonlySet<string>): void => {
     if (runningRef.current) return;
     const record = recordRef.current ?? readStoredQuickStart();
-    if (!record || record.progress.steps.every(step => step.state === 'done') ||
+    if (!record || record.failureKind === 'name-conflict' || record.progress.steps.every(step => step.state === 'done') ||
         record.input.reviewedSeed && record.failureKind === 'recoverable-preview'
           && record.progress.steps.some(step => step.id === 'account' && step.state === 'failed')) return;
     runningRef.current = true;

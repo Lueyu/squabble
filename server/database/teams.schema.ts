@@ -10,7 +10,11 @@ export const teams = pgTable('teams', {
     layoutRevision: integer('layout_revision').notNull().default(1), bindingRevision: integer('binding_revision').notNull().default(0),
     scopeRevision: integer('scope_revision').notNull().default(0), accountId: uuid('account_id'), currentVersionId: uuid('current_version_id'),
     createdAt: time('created_at'), updatedAt: time('updated_at'),
-}, t => [uniqueIndex('teams_owner_id_idx').on(t.ownerId, t.id), index('teams_owner_status_idx').on(t.ownerId, t.status, t.updatedAt)]);
+}, t => [
+    uniqueIndex('teams_owner_id_idx').on(t.ownerId, t.id),
+    index('teams_owner_status_idx').on(t.ownerId, t.status, t.updatedAt),
+    index('teams_active_owner_name_idx').on(t.ownerId, sql `lower(btrim(${t.name}))`).where(sql `${t.status} = 'active'`),
+]);
 export const teamDrafts = pgTable('team_drafts', {
     teamId: uuid('team_id').primaryKey(), ownerId: text('owner_id').notNull(),
     semanticRevision: integer('semantic_revision').notNull().default(1), baseVersionId: uuid('base_version_id'),

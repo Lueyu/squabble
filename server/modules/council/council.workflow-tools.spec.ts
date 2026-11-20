@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { attachValuation, excerptToolData, compactPeerComparison, compactHandoffs, compactValuationHandoff, handoffEvidenceExcerpt, referenceEvidenceMetadata } from './council.workflow-tools';
+import { attachValuation, compactFrozenTeamAccount, excerptToolData, compactPeerComparison, compactHandoffs, compactValuationHandoff, handoffEvidenceExcerpt, referenceEvidenceMetadata } from './council.workflow-tools';
 import { nativeWorkflowSources } from './council.workflow-executor';
 import type { ResearchDelivery } from '../../../shared/research-workflow.interface';
 import { workflowReviewPrompt } from './council.workflow-review';
@@ -239,4 +239,23 @@ test('review retains atomic conditions and includes opposing evidence cited only
   assert.deepEqual(prompt.input.evidence.map(item => item.id), ['support', 'opposing']);
   assert.ok(JSON.stringify(prompt.input.submitted).includes('Margin below 10%'));
   assert.match(prompt.system, /boundaryOrigin/);
+});
+
+
+test('compact frozen accounts retain all positions, balances, nulls and per-position provenance', () => {
+  const holdings = Array.from({ length: 4 }, (_, i) => ({
+    owner: 'owner-uuid-for-the-portfolio', accountId: 'paper-account-uuid-for-the-portfolio',
+    timestamp: '2026-11-18T12:00:00Z', ticker: `FICT-${i}`, shares: i ? '2.00' : null,
+    currency: i % 2 ? 'USD' : 'HKD', cost: null,
+  }));
+  const snapshot = { holdings, cash: { HKD: null, USD: '0.00' }, readAt: holdings[0].timestamp };
+  const original = JSON.stringify(snapshot);
+  const compact = compactFrozenTeamAccount(original);
+  assert.ok(compact.length < original.length);
+  const { holdingColumns, holdingDefaults, holdings: rows, ...rest } = JSON.parse(compact);
+  assert.deepEqual({ ...rest, holdings: rows.map((row: unknown[]) => ({
+    ...holdingDefaults, ...Object.fromEntries(row.map((value, index) => [holdingColumns[index], value])),
+  })) }, snapshot);
+  const uneven = JSON.stringify({ holdings: [holdings[0], { ...holdings[1], lastPrice: null }] });
+  assert.equal(compactFrozenTeamAccount(uneven), uneven);
 });

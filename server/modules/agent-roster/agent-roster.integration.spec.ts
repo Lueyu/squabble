@@ -5,9 +5,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import { a2aAgentConnections } from '../../database/a2a-agents.schema';
 import { modelConnections } from '../../database/model-connections.schema';
 import { dataLibrarySources, dataLibraryVersions } from '../../database/data-library.schema';
-import type { AgentExecutor } from '../../../shared/agent-roster.interface';
+import { AGENT_TEMPLATE_IDS, type AgentExecutor } from '../../../shared/agent-roster.interface';
+import type { LocalAgentsStatus } from '../../../shared/local-agents.interface';
 import type { ResearchSourceRef } from '../../../shared/team-workspace.interface';
 
 const available = Boolean(process.env.AGENT_ROSTER_TEST_DATABASE_URL ?? process.env.TEAM_TEST_DATABASE_URL);
@@ -55,7 +57,7 @@ test('create replay survives service restart, owner isolation and immutable hist
     const { AgentRosterService } = await import('./agent-roster.service');
     const restarted = new AgentRosterService(f.db);
     assert.deepEqual(await restarted.detail(f.owner, a.id), a);
-    assert.equal((await restarted.list(f.stranger, {})).items.length, 0);
+    assert.ok((await restarted.list(f.stranger, {})).items.every(item => item.origin === 'builtin' && item.id !== a.id));
     await assert.rejects(restarted.detail(f.stranger, a.id), errorIs('AGENT_NOT_FOUND'));
     await assert.rejects(restarted.create(f.owner, { ...input, name: 'Changed' }), errorIs('AGENT_REQUEST_KEY_CONFLICT'));
     const changed = await restarted.update(f.owner, a.id, { requestKey: 'update-one', expectedRevision: a.revision, instructions: '新的财务核对职责' });
@@ -236,6 +238,246 @@ test('recommended templates are atomic and idempotent; duplicate people are reje
     assert.equal(archived.status, 'archived');
     await assert.rejects(f.service.resolveMembers(f.owner, [selections[0]]), errorIs('AGENT_ARCHIVED'));
     assert.equal((await f.service.version(f.owner, a.id, a.currentVersionId)).id, a.currentVersionId);
+  } finally { await f.dispose(); }
+});
+
+test('the upgraded roster shows twelve built-ins and preserves custom friends and pinned legacy versions', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    await f.client`UPDATE model_connections SET test_state='passed' WHERE owner=${f.owner}`;
+    const request = { requestKey: 'legacy-specialties', executor: f.executor, templateIds: [...AGENT_TEMPLATE_IDS] };
+    const legacy = await f.service.recommended(f.owner, request);
+    const [pinned, customized, withMemory, sharedMemory, archived] = legacy.items;
+    const team = await f.team('Older team', [pinned]);
+    const [originalTeam] = await f.client`SELECT config_json FROM team_versions WHERE team_id=${team.id}`;
+
+    const upgraded = await f.service.list(f.owner);
+    assert.equal(upgraded.items.length, 12);
+    assert.equal(upgraded.nextCursor, null);
+    assert.ok(upgraded.items.every(agent => agent.origin === 'builtin'));
+    assert.deepEqual(upgraded.items.map(agent => agent.currentVersion.config.templateId).sort(), [...AGENT_TEMPLATE_IDS].sort());
+    const fresh = await f.service.list(f.stranger);
+    assert.equal(fresh.items.length, 12);
+    assert.ok(fresh.items.every(agent => agent.origin === 'builtin' && !upgraded.items.some(other => other.id === agent.id)));
+    assert.deepEqual(await f.service.list(f.owner), upgraded);
+
+    const firstPage = await f.service.list(f.owner, { limit: 5 });
+    assert.ok(firstPage.nextCursor);
+    const secondPage = await f.service.list(f.owner, { cursor: firstPage.nextCursor, limit: 7 });
+    assert.equal(secondPage.nextCursor, null);
+    assert.deepEqual([...firstPage.items, ...secondPage.items], upgraded.items);
+    const search = await f.service.list(f.owner, { q: pinned.name });
+    assert.deepEqual(search.items, upgraded.items.filter(agent => agent.name === pinned.name));
+
+    assert.deepEqual(await f.service.detail(f.owner, pinned.id), pinned);
+    assert.deepEqual(await f.service.version(f.owner, pinned.id, pinned.currentVersionId), pinned.currentVersion);
+    const [member] = await f.service.resolveMembers(f.owner, [{ agentId: pinned.id, agentVersionId: pinned.currentVersionId }]);
+    assert.equal(member.rosterAgentId, pinned.id);
+    assert.equal(member.rosterAgentVersionId, pinned.currentVersionId);
+    const [storedTeam] = await f.client`SELECT config_json FROM team_versions WHERE team_id=${team.id}`;
+    assert.deepEqual(storedTeam, originalTeam);
+
+    const custom = await f.service.create(f.owner, { requestKey: 'handpicked', templateId: 'financials', executor: f.executor });
+    assert.equal(custom.name, pinned.name);
+    const edited = await f.service.update(f.owner, customized.id, { requestKey: 'rename', expectedRevision: customized.revision, name: 'My valuation friend' });
+    assert.equal(edited.currentVersionId, customized.currentVersionId);
+    const scope = { kind: 'personal' } as const;
+    const memory = await f.service.writeMemory(f.owner, withMemory.id, { requestKey: 'remember', expectedRevision: withMemory.revision, scope, content: 'A personal note', origin: 'user_note', sourceRefs: [] });
+    await f.service.shareMemory(f.owner, withMemory.id, memory.id, { requestKey: 'share', expectedRevision: withMemory.revision, targetAgentId: sharedMemory.id, targetScope: scope });
+    const inactive = await f.service.archive(f.owner, archived.id, { requestKey: 'archive', expectedRevision: archived.revision });
+    const all = await f.service.list(f.owner, { status: 'all' });
+    assert.deepEqual(new Set(all.items.map(agent => agent.id)), new Set([...upgraded.items, custom, edited, withMemory, sharedMemory, inactive].map(agent => agent.id)));
+    assert.deepEqual((await f.service.list(f.owner, { status: 'archived' })).items, [inactive]);
+    assert.deepEqual(await f.service.recommended(f.owner, request), legacy);
+  } finally { await f.dispose(); }
+});
+
+test('a built-in inherits its unique usable preset route while alternate routes and languages stay visible', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    await f.client`UPDATE model_connections SET test_state='passed' WHERE owner=${f.owner}`;
+    const [second] = await f.db.insert(modelConnections).values({
+      owner: f.owner, name: 'Second connection', baseUrl: 'https://second.invalid', fastModel: 'fast', slowModel: 'slow',
+      apiKeyEnc: 'never-used-secret', testState: 'passed',
+    }).returning();
+    const [failed] = await f.db.insert(modelConnections).values({
+      owner: f.owner, name: 'Failed connection', baseUrl: 'https://failed.invalid', fastModel: 'fast', slowModel: 'slow',
+      apiKeyEnc: 'never-used-secret', testState: 'failed',
+    }).returning();
+    const [external] = await f.db.insert(a2aAgentConnections).values({
+      owner: f.owner, name: 'Fixture external agent', cardName: 'Fixture card', cardHash: 'fixture-hash', cardVersion: '1',
+      cardUrl: 'https://external.invalid/card', interfaceUrl: 'https://external.invalid/rpc',
+      capabilities: { structuredOutput: false, structuredOutputVerified: false, toolsKnown: false, feesKnown: false },
+    }).returning();
+    const { items: [pinned] } = await f.service.recommended(f.owner, { requestKey: 'pinned-only', templateIds: ['financials'], executor: f.executor });
+    const { items: [unverified] } = await f.service.recommended(f.owner, {
+      requestKey: 'unverified', templateIds: ['valuation'], executor: { executionMode: 'model', connectionId: failed.id, model: 'slow' },
+    });
+    const { items: [externalPreset] } = await f.service.recommended(f.owner, {
+      requestKey: 'external', templateIds: ['financials'], executor: { executionMode: 'a2a', connectionId: external.id },
+    });
+
+    const ambiguous = await f.service.list(f.owner);
+    const configuredBuiltins = ambiguous.items.filter(agent => agent.origin === 'builtin' && agent.availability === 'configured');
+    assert.equal(configuredBuiltins.length, 1);
+    const [financials] = configuredBuiltins;
+    assert.deepEqual(financials.effectiveExecutor, f.executor);
+    assert.deepEqual(new Set(ambiguous.items.filter(agent => !agent.origin).map(agent => agent.id)), new Set([unverified.id, externalPreset.id]));
+    assert.ok(ambiguous.items.filter(agent => !agent.origin).every(agent => agent.availability === 'configured'));
+    const selections = [unverified, externalPreset].map(agent => ({ agentId: agent.id, agentVersionId: agent.currentVersionId }));
+    assert.deepEqual((await f.service.resolveMembers(f.owner, selections)).map(member => member.connectionId), [failed.id, external.id]);
+    assert.equal(ambiguous.items.filter(agent => agent.origin === 'builtin').length, 12);
+
+    await f.client`UPDATE model_connections SET test_state=NULL WHERE id=${second.id}`;
+    assert.ok(!(await f.service.list(f.owner)).items.some(agent => agent.id === pinned.id));
+
+    const { items: [alternate] } = await f.service.recommended(f.owner, {
+      requestKey: 'alternate-route', templateIds: ['financials'], executor: { executionMode: 'model', connectionId: second.id, model: 'fast' },
+    });
+    const { items: [english] } = await f.service.recommended(f.owner, {
+      requestKey: 'english-language', templateIds: ['financials'], executor: f.executor, language: 'en',
+    });
+    const listed = await f.service.list(f.owner);
+    assert.deepEqual(new Set(listed.items.filter(agent => !agent.origin).map(agent => agent.id)), new Set([alternate.id, english.id, unverified.id, externalPreset.id]));
+    assert.ok(listed.items.every(agent => agent.availability === 'configured'));
+    await f.client`UPDATE a2a_agent_connections SET status='disabled' WHERE id=${external.id}`;
+    assert.equal((await f.service.list(f.owner)).items.find(agent => agent.id === externalPreset.id)?.availability, 'unavailable');
+  } finally { await f.dispose(); }
+});
+
+test('canonical friends recover saved local routes and keep exact legacy identities and independent profiles', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    const { AgentRosterService } = await import('./agent-roster.service');
+    const primary: LocalAgentsStatus['items'][number] = { id: 'native-codex', provider: 'codex', source: 'native', name: 'Fixture Codex', state: 'ready',
+      loginCommand: '', installUrl: '', connected: true, available: false, busy: false,
+      models: [{ id: 'fixture-model', name: 'Fixture model', reasoningEfforts: ['high'] }],
+    };
+    const secondary: LocalAgentsStatus['items'][number] = { ...primary, id: 'native-claude', provider: 'claude', name: 'Fixture Claude' };
+    const status: LocalAgentsStatus = { mode: 'native', companion: { connected: false }, items: [primary, secondary] };
+    let statusReads = 0;
+    const readiness = { async status(owner: string) {
+      statusReads++;
+      return owner === f.owner ? status : { ...status, items: [] };
+    } };
+    const service = new AgentRosterService(f.db, readiness);
+    const executor = { executionMode: 'local', localAgentId: primary.id } satisfies AgentExecutor;
+    const alternate = { executionMode: 'local', localAgentId: secondary.id } satisfies AgentExecutor;
+    const request = { requestKey: 'default-native-batch', executor, templateIds: [...AGENT_TEMPLATE_IDS] };
+    const { items: legacy } = await service.recommended(f.owner, request);
+    assert.ok(legacy.every(agent => agent.availability === 'unavailable'));
+    const original = await service.list(f.owner);
+    assert.ok(original.items.every(agent => agent.origin === 'builtin' && agent.availability === 'unavailable'));
+    const [pinned] = legacy;
+    const team = await f.team('Older team', [pinned]);
+    const [originalTeam] = await f.client`SELECT config_json FROM team_versions WHERE team_id=${team.id}`;
+
+    primary.available = secondary.available = true;
+    const restarted = new AgentRosterService(f.db, readiness);
+    statusReads = 0;
+    const recovered = await restarted.list(f.owner);
+    assert.equal(statusReads, 1);
+    assert.equal(recovered.nextCursor, null);
+    assert.deepEqual(recovered.items.map(agent => agent.id).sort(), original.items.map(agent => agent.id).sort());
+    assert.equal(recovered.items.length, 12);
+    for (const agent of recovered.items) {
+      assert.equal(agent.origin, 'builtin');
+      assert.equal(agent.availability, 'configured');
+      assert.deepEqual(agent.effectiveExecutor, executor);
+    }
+    const [canonical] = recovered.items.filter(agent => agent.currentVersion.config.templateId === 'financials');
+    assert.deepEqual(await restarted.detail(f.owner, canonical.id), canonical);
+    await assert.rejects(restarted.update(f.owner, canonical.id, { requestKey: 'edit-canonical', expectedRevision: canonical.revision, name: 'Changed' }), errorIs('AGENT_BUILTIN_READ_ONLY'));
+    const [member, oldMember] = await restarted.resolveMembers(f.owner, [canonical, pinned].map(agent => ({ agentId: agent.id, agentVersionId: agent.currentVersionId })));
+    assert.equal(member.executionMode, 'local');
+    assert.equal(member.agentId, primary.id);
+    assert.equal(oldMember.agentId, primary.id);
+    assert.equal(oldMember.rosterAgentId, pinned.id);
+    assert.equal(oldMember.rosterAgentVersionId, pinned.currentVersionId);
+    assert.deepEqual(await restarted.version(f.owner, pinned.id, pinned.currentVersionId), pinned.currentVersion);
+    assert.deepEqual(await restarted.detail(f.owner, pinned.id), { ...pinned, availability: 'configured' });
+    const [storedTeam] = await f.client`SELECT config_json FROM team_versions WHERE team_id=${team.id}`;
+    assert.deepEqual(storedTeam, originalTeam);
+    assert.deepEqual((await restarted.recommended(f.owner, request)).items, legacy);
+    assert.ok((await restarted.list(f.stranger)).items.every(agent => agent.origin === 'builtin' && agent.availability === 'unavailable'));
+    await assert.rejects(restarted.detail(f.stranger, pinned.id), errorIs('AGENT_NOT_FOUND'));
+
+    const localPreset = async (requestKey: string, templateId: typeof AGENT_TEMPLATE_IDS[number], route: AgentExecutor, language = 'zh-CN') => {
+      const { items: [agent] } = await restarted.recommended(f.owner, { requestKey, templateIds: [templateId], executor: route, language });
+      return agent;
+    };
+    const [valuation, bear, risk] = legacy.slice(1);
+    const settings = { model: 'fixture-model', reasoningEffort: 'high' };
+    const customExecutor = { ...executor, settings } satisfies AgentExecutor;
+    const tuned = await localPreset('tuned-valuation', 'valuation', customExecutor);
+    const equivalent = await localPreset('equivalent-valuation', 'valuation', { ...executor, settings: { reasoningEffort: 'high', model: 'fixture-model' } });
+    await restarted.update(f.owner, valuation.id, { requestKey: 'edited-valuation', expectedRevision: valuation.revision, name: 'Own valuation' });
+    await restarted.writeMemory(f.owner, bear.id, { requestKey: 'bear-note', expectedRevision: bear.revision, scope: { kind: 'personal' }, content: 'Own note', origin: 'user_note', sourceRefs: [] });
+    const anotherRisk = await localPreset('alternate-risk', 'risk', alternate);
+    const english = await localPreset('english-financials', 'financials', alternate, 'en');
+    const custom = await restarted.create(f.owner, { requestKey: 'own-financials', templateId: 'financials', executor: alternate });
+    const independent = await restarted.list(f.owner);
+    assert.deepEqual(new Set(independent.items.filter(agent => !agent.origin).map(agent => agent.id)),
+      new Set([valuation.id, bear.id, risk.id, anotherRisk.id, english.id, custom.id]));
+    assert.ok(independent.items.every(agent => agent.id !== tuned.id && agent.id !== equivalent.id));
+    const builtins = new Map(independent.items.filter(agent => agent.origin === 'builtin').map(agent => [agent.currentVersion.config.templateId, agent]));
+    const tunedBuiltin = builtins.get('valuation')!;
+    assert.deepEqual(tunedBuiltin.effectiveExecutor, customExecutor);
+    assert.deepEqual(await restarted.detail(f.owner, tunedBuiltin.id), tunedBuiltin);
+    const [tunedMember] = await restarted.resolveMembers(f.owner, [{ agentId: tunedBuiltin.id, agentVersionId: tunedBuiltin.currentVersionId }]);
+    assert.equal(tunedMember.agentId, primary.id);
+    assert.deepEqual(tunedMember.agentSettings, settings);
+    assert.equal(builtins.get('bear')?.availability, 'unavailable');
+    const riskBuiltin = builtins.get('risk')!;
+    assert.equal(riskBuiltin.availability, 'unavailable');
+    assert.deepEqual(await restarted.detail(f.owner, riskBuiltin.id), riskBuiltin);
+    await assert.rejects(restarted.resolveMembers(f.owner, [{ agentId: riskBuiltin.id, agentVersionId: riskBuiltin.currentVersionId }]), errorIs('AGENT_EXECUTOR_UNAVAILABLE'));
+
+    primary.models = [{ id: 'fixture-model', name: 'Fixture model', reasoningEfforts: ['low'] }];
+    const unavailable = await restarted.detail(f.owner, tunedBuiltin.id);
+    assert.equal(unavailable.availability, 'unavailable');
+    assert.equal(unavailable.effectiveExecutor, undefined);
+    await assert.rejects(restarted.resolveMembers(f.owner, [{ agentId: tunedBuiltin.id, agentVersionId: tunedBuiltin.currentVersionId }]), errorIs('AGENT_EXECUTOR_UNAVAILABLE'));
+  } finally { await f.dispose(); }
+});
+
+test('offline local presets collapse into twelve built-ins and pagination skips entire batches of duplicates', { skip: !available }, async () => {
+  const f = await fixture();
+  try {
+    const { AgentRosterService } = await import('./agent-roster.service');
+    const status: LocalAgentsStatus = {
+      mode: 'companion', companion: { connected: false },
+      items: [{ id: 'paired-codex', provider: 'codex', source: 'companion', name: 'Fixture Codex', state: 'ready',
+        loginCommand: '', installUrl: '', connected: true, available: false, busy: false }],
+    };
+    let statusReads = 0;
+    const service = new AgentRosterService(f.db, { async status() { statusReads++; return status; } });
+    const baseline = await service.list(f.owner);
+    assert.equal(baseline.items.length, 12);
+    assert.ok(baseline.items.every(agent => agent.origin === 'builtin' && agent.availability === 'unavailable'));
+    const request = { executor: { executionMode: 'local', localAgentId: 'paired-codex' }, templateIds: [...AGENT_TEMPLATE_IDS] };
+    for (const key of ['old-local-a', 'old-local-b', 'old-local-c']) {
+      const legacy = await service.recommended(f.owner, { ...request, requestKey: key });
+      assert.ok(legacy.items.every(agent => agent.availability === 'unavailable'));
+    }
+    // Exercise an upgraded database retaining microseconds, with hidden rows before the built-ins in one millisecond.
+    await f.client`ALTER TABLE agent_roster_profiles ALTER COLUMN updated_at TYPE timestamptz(6)`;
+    await f.client`
+      WITH ordered AS (
+        SELECT profile.id, row_number() OVER (ORDER BY (version.config_json->>'origin' IS NOT DISTINCT FROM 'builtin'), profile.id DESC) AS rank
+        FROM agent_roster_profiles AS profile JOIN agent_roster_versions AS version ON version.id=profile.current_version_id
+        WHERE profile.owner_id=${f.owner}
+      )
+      UPDATE agent_roster_profiles AS profile SET updated_at='2026-11-01T01:02:03.000900Z'::timestamptz - ordered.rank * interval '1 microsecond'
+      FROM ordered WHERE profile.id=ordered.id`;
+    statusReads = 0;
+    const first = await service.list(f.owner, { limit: 5 });
+    assert.ok(first.nextCursor);
+    assert.match(JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString()).at, /\.000\d{3}Z$/);
+    const second = await service.list(f.owner, { limit: 7, cursor: first.nextCursor });
+    assert.equal(second.nextCursor, null);
+    assert.deepEqual([...first.items, ...second.items].map(agent => agent.id), baseline.items.map(agent => agent.id));
+    assert.equal(statusReads, 2);
   } finally { await f.dispose(); }
 });
 

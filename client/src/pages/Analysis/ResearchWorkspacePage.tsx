@@ -6,6 +6,7 @@ import { ChevronDown, History, Plus } from 'lucide-react';
 import { fetchResearchConversations } from '@/api/research-conversations';
 import { agentRosterApi } from '@/api/agent-roster';
 import { AgentIdentity } from '@/features/agent-roster/AgentIdentity';
+import { useUnlistedAgentProfiles } from '@/features/agent-roster/useUnlistedAgentProfiles';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -53,14 +54,17 @@ export default function ResearchWorkspacePage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [agentIds, setAgentIds] = useState<string[] | null>(() => params.get('agent') ? [params.get('agent')!] : null);
   const roster = useQuery({ queryKey: ['agent-roster'], queryFn: agentRosterApi.list });
-  const availableAgents = roster.data?.items?.filter(agent => agent.status === 'active') ?? [];
+  const { profiles: unlisted, pending: readingSelection } = useUnlistedAgentProfiles(roster.data?.items, selectedId ? [] : agentIds ?? []);
+  const availableAgents = [...(roster.data?.items ?? []), ...unlisted].filter(agent => agent.status === 'active');
   const readyAgents = availableAgents.filter(agent => agent.availability !== 'unavailable');
-  const recommendedAgents = ['financials', 'bear', 'moderator'].flatMap(templateId => readyAgents.find(agent => agent.currentVersion.config.templateId === templateId) ?? []).slice(0, 3);
-  const chosenAgents = agentIds === null ? (recommendedAgents.length ? recommendedAgents : readyAgents.slice(0, 3)) : availableAgents.filter(agent => agentIds.includes(agent.id));
+  const customAgents = readyAgents.filter(agent => agent.origin !== 'builtin');
+  const defaultCandidates = customAgents.length ? customAgents : readyAgents;
+  const recommendedAgents = ['financials', 'bear', 'moderator'].flatMap(templateId => defaultCandidates.find(agent => agent.currentVersion.config.templateId === templateId) ?? []).slice(0, 3);
+  const chosenAgents = agentIds === null ? (recommendedAgents.length ? recommendedAgents : defaultCandidates.slice(0, 3)) : availableAgents.filter(agent => agentIds.includes(agent.id));
   const agentSelection = chosenAgents.map(agent => ({ agentId: agent.id, agentVersionId: agent.currentVersionId }));
   const moderators = chosenAgents.filter(agent => agent.currentVersion.config.templateId === 'moderator');
   const moderator = moderators[0] ?? chosenAgents[chosenAgents.length - 1];
-  const participantProblem = selectedId ? null : roster.isPending
+  const participantProblem = selectedId ? null : roster.isPending || readingSelection
     ? (zh ? '正在读取股友，准备好后再发送问题。' : 'Loading your agents. Wait before sending a question.')
     : roster.isError || !roster.data
       ? (zh ? '暂时无法读取股友，请重新读取后继续。' : 'Your roster is unavailable. Reload it before continuing.')

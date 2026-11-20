@@ -9,12 +9,28 @@ const { start } = require('./fixture-server.cjs');
 const ROOT = path.resolve(__dirname, '../..');
 const EVIDENCE = path.join(ROOT, 'dist/ui-probe/settings-navigation');
 
+async function assertDesktopRail(page, rail) {
+  const [primary, secondary, content] = await Promise.all([
+    page.locator('.app-sidebar').boundingBox(),
+    rail.boundingBox(),
+    page.locator('.settings-content').boundingBox(),
+  ]);
+  assert.ok(primary && secondary && content, 'Both navigation levels and the settings form are visible');
+  assert.ok(Math.abs(primary.x + primary.width - secondary.x) <= 2, 'Settings navigation touches the right edge of primary navigation');
+  assert.ok(secondary.x + secondary.width <= content.x + 1, 'The form occupies the next column');
+  assert.equal(await rail.evaluate(el => Boolean(el.closest('.app-sidebar, .settings-content'))), false);
+  return { x: secondary.x, width: secondary.width };
+}
+
 async function exercise(page, url, mobile) {
   const pathName = pathname => url + pathname;
-  const scope = page.locator(mobile ? '.settings-navigation-page' : '.app-nav .settings-navigation-sidebar');
+  const scope = page.locator(mobile ? '.settings-navigation-page' : '.settings-navigation-rail');
   const agent = scope.getByRole('link', { name: mobile ? '本地 Agent' : 'Local Agent', exact: true });
   const model = scope.getByRole('link', { name: mobile ? '模型 API' : 'Model API', exact: true });
-  const more = scope.locator('summary');
+  const picker = scope.getByRole('button', { name: /设置类别/ });
+  async function openCategories() {
+    if (mobile && await picker.getAttribute('aria-expanded') !== 'true') await picker.tap();
+  }
   const record = { connects: 0, saves: 0, probes: 0 };
   const connections = [];
   const local = { id: 'fixture-codex', provider: 'codex', name: 'Codex CLI', available: false, busy: false,
@@ -61,9 +77,16 @@ async function exercise(page, url, mobile) {
   await page.waitForURL('**/settings/agents?from=probe#local-agents');
   assert.equal(await page.locator('.app-user-block .sr-only').textContent(), mobile ? '本地工作区' : 'Local workspace');
   assert.equal(await page.locator('.app-logout').count(), 0);
+  await openCategories();
   assert.equal(await agent.getAttribute('aria-current'), 'page');
-  assert.equal(await page.locator(mobile ? '.settings-navigation-sidebar' : '.settings-navigation-page').isVisible(), false);
+  assert.equal(await page.locator(mobile ? '.settings-navigation-rail' : '.settings-navigation-page').isVisible(), false);
   assert.equal(await page.locator('.settings-navigation a[href="/settings/security"]').count(), 0);
+  const initialRail = mobile ? null : await assertDesktopRail(page, scope);
+  if (mobile) {
+    await picker.focus();
+    await page.keyboard.press('Escape');
+    assert.equal(await picker.getAttribute('aria-expanded'), 'false');
+  }
   const host = page.locator('#local-agents');
   await host.getByRole('heading', { name: 'Codex CLI' }).waitFor();
   await page.screenshot({ animations: 'disabled', path: path.join(EVIDENCE, mobile ? 'local-mobile.png' : 'local-desktop.png') });
@@ -74,14 +97,16 @@ async function exercise(page, url, mobile) {
   assert.equal(record.connects, 1);
   await page.screenshot({ animations: 'disabled', path: path.join(EVIDENCE, mobile ? 'connected-mobile.png' : 'connected-desktop.png') });
 
+  await openCategories();
   if (mobile) await model.tap();
   else {
     await model.focus();
     await page.keyboard.press('Enter');
   }
   await page.waitForURL('**/settings/models?from=probe');
-  await scope.locator('a[href^="/settings/models"][aria-current="page"]').waitFor();
-  assert.equal(await model.getAttribute('aria-current'), 'page');
+  await scope.locator('a[href^="/settings/models"][aria-current="page"]').waitFor({ state: 'attached' });
+  if (mobile) assert.equal(await picker.getAttribute('aria-expanded'), 'false');
+  else assert.deepEqual(await assertDesktopRail(page, scope), initialRail);
   await page.locator('#settings-page-title:focus').waitFor();
   const modelPanel = page.locator('#model-connections');
   await modelPanel.getByRole('button', { name: /添加连接|Add connection/ }).click();
@@ -100,28 +125,25 @@ async function exercise(page, url, mobile) {
   await modelPanel.getByText('Fixture test receipt', { exact: true }).waitFor();
   assert.equal(record.probes, 1);
 
-  if (mobile) await more.tap();
-  else {
-    await more.focus();
-    await page.keyboard.press('Enter');
-  }
+  await openCategories();
   const budget = scope.getByRole('link', { name: /用量与预算|Usage & budget/ });
   await budget.click();
   await page.waitForURL('**/settings/budget');
-  await scope.locator('a[href="/settings/budget"][aria-current="page"]').waitFor();
-  assert.equal(await budget.getAttribute('aria-current'), 'page');
-  assert.equal(await more.evaluate(element => element.parentElement.open), true);
+  await scope.locator('a[href="/settings/budget"][aria-current="page"]').waitFor({ state: 'attached' });
+  if (mobile) assert.match(await picker.innerText(), /用量与预算/);
+  else assert.deepEqual(await assertDesktopRail(page, scope), initialRail);
   await page.getByRole('button', { name: /返回上一页|Go back/, exact: true }).click();
   await page.waitForURL('**/settings/models?from=probe');
   await page.goBack();
   await page.waitForURL('**/settings/agents?from=probe#local-agents');
-  assert.equal(await agent.getAttribute('aria-current'), 'page');
+  await scope.locator('a[href^="/settings/agents"][aria-current="page"]').waitFor({ state: 'attached' });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
 
   await page.goto(pathName('/settings/security?from=bookmark#saved'), { waitUntil: 'domcontentloaded' });
   await page.waitForURL('**/settings/models?from=bookmark#saved');
-  await scope.locator('a[href^="/settings/models"][aria-current="page"]').waitFor();
-  assert.equal(await model.getAttribute('aria-current'), 'page');
+  await scope.locator('a[href^="/settings/models"][aria-current="page"]').waitFor({ state: 'attached' });
+  if (mobile) assert.equal(await picker.getAttribute('aria-expanded'), 'false');
+  else assert.deepEqual(await assertDesktopRail(page, scope), initialRail);
   assert.equal(await page.locator('#current-password').count(), 0);
   await page.goBack();
   await page.waitForURL('**/settings/agents?from=probe#local-agents');
@@ -130,7 +152,7 @@ async function exercise(page, url, mobile) {
   await page.route('**/api/auth/me', route => route.fulfill({ json: { id: 'fixture-user', username: 'fixture', displayName: 'Fixture user' } }));
   await page.evaluate(() => localStorage.setItem('sq-at', 'fixture-session'));
   await page.goto(pathName('/settings/agents'));
-  await more.click();
+  await openCategories();
   await scope.locator('a[href="/settings/security"]').click();
   await page.waitForURL('**/settings/security');
   await page.locator('#current-password').waitFor();

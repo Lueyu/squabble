@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { AgentIdentity } from '@/features/agent-roster/AgentIdentity';
 import { agentRosterApi } from '@/api/agent-roster';
 import type { AgentExecutor, AgentProfile } from '@shared/agent-roster.interface';
 import type { ModelConnection } from '@shared/model-connections.interface';
@@ -22,8 +23,15 @@ export function TeamRosterBinding({ role, label, models, zh, disabled, onBind }:
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const bind = (agent: AgentProfile) => {
     try {
+      if (agent.origin === 'builtin') {
+        onBind({ agentId: agent.id, agentVersionId: agent.currentVersionId,
+          allowedToolIds: [], sourceGrantIds: [] });
+        setFailure('');
+        return;
+      }
       const seat = rosterTeamConfig([agent], models, [role.id]).roles[0];
-      onBind({ agentId: seat.agentId, agentVersionId: seat.agentVersionId, executor: seat.executor, allowedToolIds: seat.allowedToolIds, participation: 'enabled' });
+      onBind({ agentId: seat.agentId, agentVersionId: seat.agentVersionId, executor: role.executor ?? seat.executor, allowedToolIds: seat.allowedToolIds,
+        participation: role.executor ? role.participation : 'enabled' });
       setFailure('');
     } catch (error) { setFailure(friendlyError(error, zh, { zh: '请先修复这位股友的连接。', en: 'Restore this agent’s connection first.' })); }
   };
@@ -47,14 +55,44 @@ export function TeamRosterBinding({ role, label, models, zh, disabled, onBind }:
     await query.invalidateQueries({ queryKey: ['agent-roster'] });
   }, onError: error => setFailure(friendlyError(error, zh, { zh: '尚未完成转换，原岗位保留。请核对连接后继续。', en: 'Conversion is incomplete; the original seat is retained. Check the connection and continue.' })) });
   const active = roster.data?.items.filter(agent => agent.status === 'active') ?? [];
-  const current = roster.data?.items.find(agent => agent.id === role.agentId);
+  const listed = roster.data?.items.find(agent => agent.id === role.agentId);
+  const detail = useQuery({ queryKey: ['agent-roster', role.agentId], queryFn: () => agentRosterApi.detail(role.agentId!),
+    enabled: Boolean(role.agentId && !listed), retry: false });
+  const current = listed ?? (detail.data?.id === role.agentId ? detail.data : undefined);
   const needsAttention = failure || roster.isError || (!role.agentId && role.executor) ||
     (current && current.currentVersionId !== role.agentVersionId);
+  const options = [{ value: '', label: zh ? '选择股友' : 'Choose a friend', disabled: true },
+    ...active.map(agent => {
+      const unavailable = agent.origin !== 'builtin' && agent.availability === 'unavailable';
+      return { value: agent.id, label: agent.name + (unavailable ? (zh ? ' · 尚未连接' : ' · Connection required') : ''), disabled: unavailable };
+    }),
+    ...(role.agentId && !active.some(agent => agent.id === role.agentId)
+      ? [{ value: role.agentId, label: current?.name ?? (zh ? '原股友已固定' : 'Original friend pinned') }]
+      : []),
+  ];
+  const picker = <TeamSelect label={zh ? '指派已有股友' : 'Assign an existing friend'} value={role.agentId ?? ''}
+    disabled={disabled || roster.isPending} options={options} onChange={id => {
+      const agent = active.find(item => item.id === id);
+      if (agent) bind(agent);
+    }} />;
   return <div className="team-roster-binding">
-    <TeamSelect label={zh ? '指派已有股友' : 'Assign an existing friend'} value={role.agentId ?? ''} disabled={disabled || roster.isPending} options={[{ value: '', label: zh ? '尚未关联独立股友' : 'No persistent agent linked' }, ...active.map(agent => ({ value: agent.id, label: `${agent.name}${agent.availability === 'unavailable' ? (zh ? ' · 尚未连接' : ' · Connection required') : ''}`, disabled: agent.availability === 'unavailable' })), ...(role.agentId && !active.some(agent => agent.id === role.agentId) ? [{ value: role.agentId, label: zh ? '原股友已归档或不可用' : 'Original agent archived or unavailable' }] : [])]} onChange={id => { const agent = active.find(item => item.id === id); if (agent) bind(agent); }} />
+    {role.agentId ? <>
+      <p>{zh ? '已指派股友' : 'Assigned friend'}</p>
+      <div className="flex items-center gap-2 rounded-md bg-muted px-2 py-1.5">
+        <AgentIdentity avatar={current?.avatar} avatarClassName="size-8" />
+        <div className="min-w-0">
+          <strong className="block break-words">{current?.name ?? (zh ? '已固定股友' : 'Pinned friend')}</strong>
+          {current?.origin === 'builtin' && <small className="text-muted-foreground">{zh ? '内置股友 · 原型只读' : 'Built-in friend · read-only'}</small>}
+        </div>
+      </div>
+      {!disabled && <details className="team-roster-details">
+        <summary>{zh ? '更换已指派股友' : 'Replace assigned friend'}</summary>
+        {picker}
+      </details>}
+    </> : picker}
     <details className="team-roster-details" open={!!needsAttention}>
       <summary>{zh ? '股友版本与管理' : 'Friend version and management'}<ChevronRight aria-hidden="true" /></summary>
-    {active.some(agent => agent.availability === 'unavailable') && <p className="text-xs text-muted-foreground">{zh ? '未连接的股友暂不能选择。' : 'Agents without a connection cannot be selected yet.'}<Link className="underline ml-1" to="/friends">{zh ? '去设置连接' : 'Restore connections'}</Link></p>}
+    {active.some(agent => agent.origin !== 'builtin' && agent.availability === 'unavailable') && <p className="text-xs text-muted-foreground">{zh ? '未连接的股友暂不能选择。' : 'Agents without a connection cannot be selected yet.'}<Link className="underline ml-1" to="/friends">{zh ? '去设置连接' : 'Restore connections'}</Link></p>}
     {current && <p className="text-xs text-muted-foreground">{zh ? '已固定股友版本，个人聊天和其他团队记忆不会自动带入。' : 'This seat pins an agent version; personal chats and other teams’ memories are not imported.'}{current.currentVersionId !== role.agentVersionId && <Button variant="outline" size="sm" disabled={disabled || current.status !== 'active'} onClick={() => bind(current)}>{zh ? '改用最新版本' : 'Use latest version'}</Button>}</p>}
     {!role.agentId && role.executor && <><p className="text-xs text-muted-foreground">{zh ? '旧岗位仍可手动研究。转换后才可参与自动运行；只保留职责和连接，历史记忆仍归原团队。' : 'Legacy seats support manual research. Convert to enable automation; duties and connection are retained, and history stays in the original team.'}</p><Button variant="outline" size="sm" disabled={disabled || migrate.isPending} onClick={() => migrate.mutate()}>{zh ? '把此岗位保存为我的股友' : 'Save this seat as my agent'}</Button></>}
     <Link className="block text-xs underline" to="/friends">{zh ? '管理我的股友' : 'Manage my agents'}</Link>
