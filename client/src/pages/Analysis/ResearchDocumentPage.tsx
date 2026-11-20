@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 import { ArrowLeft, GitBranch, MessageSquare, Pencil, Check, LoaderCircle } from 'lucide-react';
-import type { ResearchDocumentSection, ResearchRevisionDraft, ResearchSectionDiff } from '@shared/research-document.interface';
+import type { ResearchDocumentSection, ResearchDocumentVersion, ResearchDocumentView, ResearchInputSnapshot, ResearchRevisionDraft, ResearchSectionDiff } from '@shared/research-document.interface';
 import { adoptResearchVersion, createResearchRevision, fetchResearchDocument, forkResearchVersion, publishResearchRevision, revokeResearchVersion, updateResearchRevision } from '@/api/research-documents';
 import { researchDiscussionPath, researchSectionChanges, researchSectionsContent, researchStrategyPath } from '@/utils/research-documents';
 import { Button } from '@/components/ui/button';
@@ -28,12 +28,167 @@ function Diff({ changes, en }: { changes: ResearchSectionDiff[]; en: boolean }) 
   </div>) : <p className="text-sm text-muted-foreground">{en ? 'No section changes.' : '章节内容尚无变化。'}</p>}</div>;
 }
 
+function linkedStrategies(report: ResearchDocumentView, returnTo: string, en: boolean) {
+  return report.strategyUses?.map(use => {
+    const params = new URLSearchParams({
+      strategyId: use.strategyId,
+      sourceReportVersionId: use.versionId,
+      returnTo,
+    });
+    const version = report.versions?.find(item => item.id === use.versionId);
+    return (
+      <Link key={`${use.strategyId}:${use.versionId}`} className="block break-words text-primary underline" to={`/paper?${params}`}>
+        {en ? 'Linked strategy' : '关联策略'}{version && ` · v${version.version}`}
+      </Link>
+    );
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function record(value: unknown) {
+  return isRecord(value) ? value : undefined;
+}
+
+function records(value: unknown) {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function text(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function currencies(value: unknown) {
+  return [...new Set(records(value).flatMap(item => text(item.currency) ?? []))].join(', ');
+}
+
+interface FrozenSource {
+  name?: string;
+  url?: string;
+  fetchedAt?: string;
+  metadata?: { publishedAt?: string; observedAt?: string; currencies: string };
+}
+
+function frozenSources(snapshot: ResearchInputSnapshot | null): FrozenSource[] {
+  return records(snapshot?.evidence).flatMap((item): FrozenSource[] => {
+    const sources = records(record(item.metadata)?.sources);
+    if (sources.length) return sources.map(source => ({
+      name: text(source.provider), url: text(source.sourceUrl),
+      metadata: {
+        publishedAt: text(source.publishedAt),
+        observedAt: text(source.observedAt),
+        currencies: currencies(source.facts),
+      },
+    }));
+    const name = text(item.sourceName);
+    const url = text(item.sourceUrl);
+    const fetchedAt = text(item.fetchedAt);
+    return name || url || fetchedAt ? [{ name, url, fetchedAt }] : [];
+  });
+}
+
+function FrozenInputs({ version: { snapshot, source }, en, showRaw = true }: {
+  version: Pick<ResearchDocumentVersion, 'snapshot' | 'source'>;
+  en: boolean;
+  showRaw?: boolean;
+}) {
+  const label = (english: string, chinese: string) => en ? english : chinese;
+  const unknown = label('Unknown', '未知');
+  const daily = record(snapshot?.dailyFacts);
+  const commission = record(record(snapshot?.teamExecutionContext)?.inputSnapshot);
+  const timeRows = [
+    { title: label('Captured at', '采集时间'), value: text(snapshot?.capturedAt) },
+    { title: label('Ledger captured at', '账本采集时间'), value: text(daily?.capturedAt) },
+    { title: label('Team inputs captured at', '团队输入采集时间'), value: text(commission?.capturedAt) },
+    { title: label('Overall daily inputs read at', '总体日报输入读取时间'), value: text(record(snapshot?.overallDaily)?.readAt) },
+  ].filter(row => row.value);
+  const currencyRows = [
+    { title: label('Holding currencies', '持仓币种'), value: currencies(snapshot?.holdings ?? commission?.positions) },
+    { title: label('Ledger currencies', '账本币种'), value: currencies(daily?.byCurrency) },
+    { title: label('Return calculation currency', '收益计算币种'), value: text(record(daily?.returnBasis)?.currency) },
+  ].filter(row => row.value);
+  const sources = frozenSources(snapshot);
+  const references = new Set([
+    ...records(snapshot?.references), ...records(snapshot?.reportReferences),
+  ].flatMap(ref => text(ref.versionId) ?? []));
+  const sourceType = text(source?.type);
+  const sourceId = text(source?.id);
+  return (
+    <section className="min-w-0 space-y-3 rounded-xl border p-4 text-sm">
+      <h2 className="font-semibold">{label('Frozen inputs', '固定输入快照')}</h2>
+      <dl className="space-y-2 break-words">
+        {(timeRows.length ? timeRows : [{ title: label('Captured at', '采集时间'), value: unknown }]).map(row => (
+          <div key={row.title}><dt className="text-muted-foreground">{row.title}</dt><dd>{row.value}</dd></div>
+        ))}
+        {!currencyRows.length && !sources.some(source => source.metadata?.currencies) && (
+          <div><dt className="text-muted-foreground">{label('Currencies', '币种')}</dt><dd>{unknown}</dd></div>
+        )}
+        {currencyRows.map(row => (
+          <div key={row.title}><dt className="text-muted-foreground">{row.title}</dt><dd>{row.value}</dd></div>
+        ))}
+        <div>
+          <dt className="text-muted-foreground">{label('Report source', '报告来源')}</dt>
+          <dd>{sourceType && sourceId ? `${sourceType} / ${sourceId}` : unknown}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">{label('Input sources', '输入来源')}</dt>
+          <dd>{sources.length || references.size ? (
+            <ul className="mt-1 space-y-2">
+              {sources.map(({ name, url, fetchedAt, metadata }, index) => (
+                <li key={index}>
+                  <p className="break-words">{name ?? url ?? unknown}</p>
+                  {name && url && <p className="break-all text-xs text-muted-foreground">{url}</p>}
+                  {metadata ? (
+                    <dl className="text-xs">
+                      <div><dt className="inline text-muted-foreground">{label('Published', '发布时间')} </dt><dd className="inline">{metadata.publishedAt ?? unknown}</dd></div>
+                      <div><dt className="inline text-muted-foreground">{label('Observed', '观测时间')} </dt><dd className="inline">{metadata.observedAt ?? unknown}</dd></div>
+                      <div><dt className="inline text-muted-foreground">{label('Evidence currencies', '证据币种')} </dt><dd className="inline">{metadata.currencies || unknown}</dd></div>
+                    </dl>
+                  ) : fetchedAt && <p className="text-xs">{label('Fetched', '获取时间')} {fetchedAt}</p>}
+                </li>
+              ))}
+              {[...references].map(id => <li key={id}>{label('Report version', '报告版本')} {id}</li>)}
+            </ul>
+          ) : unknown}</dd>
+        </div>
+      </dl>
+      {showRaw && snapshot != null && (
+        <details>
+          <summary className="cursor-pointer font-medium">{label('View raw snapshot', '查看原始快照')}</summary>
+          <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(snapshot, null, 2)}</pre>
+        </details>
+      )}
+    </section>
+  );
+}
+
 export default function ResearchDocumentPage() {
   const { versionId = '' } = useParams<{ versionId: string }>();
   const { enabled } = useSimpleExperience();
-  if (enabled) return <SimpleReportReader key={versionId} versionId={versionId} />;
+  if (enabled) return <SimpleResearchDocument key={versionId} versionId={versionId} />;
   // A route change remounts editing state so a draft cannot accidentally publish against another version.
   return <ResearchDocumentReader key={versionId} versionId={versionId} />;
+}
+
+function SimpleResearchDocument({ versionId }: { versionId: string }) {
+  const { i18n } = useTranslation();
+  const location = useLocation();
+  const reportPath = location.pathname + location.search + location.hash;
+  const { data } = useQuery({ queryKey: ['research-document', versionId], queryFn: () => fetchResearchDocument(versionId), enabled: Boolean(versionId) });
+  const en = i18n.language.startsWith('en');
+  return (
+    <>
+      <SimpleReportReader versionId={versionId} />
+      {data && (
+        <div className="mx-auto mb-6 max-w-5xl space-y-4 px-4">
+          <FrozenInputs version={data.version} en={en} showRaw={false} />
+          {Boolean(data.strategyUses?.length) && <aside className="text-sm">{linkedStrategies(data, reportPath, en)}</aside>}
+        </div>
+      )}
+    </>
+  );
 }
 function ResearchDocumentReader({ versionId }: { versionId: string }) {
   const { i18n } = useTranslation(); const en = Boolean(i18n.resolvedLanguage?.startsWith('en'));
@@ -61,7 +216,7 @@ function ResearchDocumentReader({ versionId }: { versionId: string }) {
   }
   if (query.isPending) return <div role="status" className="flex items-center gap-2 p-8"><LoaderCircle className="size-4 animate-spin" />{label('Loading report…', '正在加载报告…')}</div>;
   if (query.isError || !query.data) return <div role="alert" className="space-y-4 p-8"><p>{label('This report is unavailable or belongs to another workspace.', '报告不存在或不属于当前账户。')}</p><Button onClick={() => void query.refetch()}>{label('Retry', '重试')}</Button></div>;
-  const { version, document, versions = [], drafts = [], diff = [], strategyUses = [] } = query.data;
+  const { version, document, versions = [], drafts = [], diff = [] } = query.data;
   const adoptions = query.data.adoptions ?? [];
   const strategyVersionIds = document.strategyVersionIds ?? [];
   const invalid = version.status === 'revoked' || version.sourceStatus === 'missing';
@@ -123,11 +278,11 @@ function ResearchDocumentReader({ versionId }: { versionId: string }) {
       <div className="prose prose-sm max-w-none break-words dark:prose-invert"><ReactMarkdown remarkPlugins={[remarkGfm]}>{section.content}</ReactMarkdown></div>
     </section>)}</article>
       <aside className="space-y-4 text-sm"><div className="rounded-xl border p-4"><h2 className="mb-3 font-semibold">{label('Sections', '章节')}</h2><div className="space-y-2">{version.sections.map(section => <a key={section.id} className="block break-words text-muted-foreground hover:text-primary" href={`#${section.id}`}>{section.title}</a>)}</div></div>
-        <details className="rounded-xl border p-4"><summary className="cursor-pointer font-semibold">{label('Frozen inputs', '固定输入快照')}</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">{version.snapshot ? JSON.stringify(version.snapshot, null, 2) : label('Unknown — no historical snapshot was supplied.', '未知：历史报告未提供输入快照。')}</pre></details>
-        <div className="space-y-2 rounded-xl border p-4"><h2 className="font-semibold">{label('Provenance', '来源记录')}</h2><p className="break-all text-xs text-muted-foreground">{version.source ? `${version.source.type} / ${version.source.id}` : label('Research revision', '研究修订')}</p>
+        <FrozenInputs version={version} en={en} />
+        {(version.parentVersionId || Boolean(query.data.strategyUses?.length)) && <div className="space-y-2 rounded-xl border p-4"><h2 className="font-semibold">{label('Provenance', '来源记录')}</h2>
           {version.parentVersionId && <Link className="block underline" to={`/analysis/reports/${version.parentVersionId}`}>{label('Open parent version', '打开父版本')}</Link>}
-          {strategyUses.map(use => <Link key={`${use.strategyId}:${use.versionId}`} className="block underline" to={`/paper?strategyId=${use.strategyId}&sourceReportVersionId=${use.versionId}`}>{label('Linked strategy', '关联策略')} · {versionLabel(use.versionId)}</Link>)}
-        </div>
+          {linkedStrategies(query.data, location.pathname + location.search + location.hash, en)}
+        </div>}
       </aside></div>
     {diff.length > 0 && <details className="rounded-xl border p-4"><summary className="cursor-pointer font-semibold">{label('Changes from parent version', '相对父版本的差异')}</summary><div className="mt-4"><Diff changes={diff} en={en} /></div></details>}
     {version.changeReason && <p className="text-sm text-muted-foreground">{label('Change reason: ', '修订原因：')}{version.changeReason}</p>}

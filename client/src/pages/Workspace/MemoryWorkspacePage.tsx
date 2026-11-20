@@ -52,15 +52,35 @@ export default function MemoryWorkspacePage() {
 }
 function MemoryUsage() {
   const { i18n } = useTranslation(), zh = i18n.language.startsWith('zh');
-  const [sessionId, setSessionId] = useState('');
+  const [params, setParams] = useSearchParams();
+  const sessionId = params.get('sessionId') ?? '';
+  const validSession = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(sessionId);
+  const setSessionId = (id: string) => setParams(current => {
+    const next = new URLSearchParams(current);
+    if (id) next.set('sessionId', id);
+    else next.delete('sessionId');
+    return next;
+  }, { replace: true });
   const sessions = useQuery({ queryKey: ['memory-usage-sessions'], queryFn: () => fetchCouncilSessions() });
-  const session = useQuery({ queryKey: ['memory-usage-session', sessionId], queryFn: () => fetchCouncilSession(sessionId), enabled: Boolean(sessionId) });
-  const messages = session.data?.messages.filter(message => message.memory) ?? [];
+  const session = useQuery({ queryKey: ['memory-usage-session', sessionId], queryFn: () => fetchCouncilSession(sessionId), enabled: validSession });
+  const savedSession = session.isError ? undefined : session.data;
+  const messages = savedSession?.messages.filter(message => message.memory) ?? [];
+  const linkedTaskOutsideList = sessionId && !sessions.data?.some(item => item.id === sessionId);
   return <section className="workspace-v4-card"><h2>{zh ? '这次研究提交了哪些记忆' : 'Which memory was submitted to this research'}</h2><p className="muted">{zh ? '这是应用记录的提交清单。提交不等于模型实际引用；本地 Agent 的私有上下文不可观测。旧任务缺少记录时不会补造使用次数。' : 'These are recorded submissions, not proof of model use. Native agents’ private context is not observable. Missing historical inventories remain unknown.'}</p>
-    <label className="text-sm">{zh ? '选择研究任务' : 'Choose research'}<select className="mt-2 w-full rounded-md border bg-background p-2" value={sessionId} onChange={event => setSessionId(event.target.value)}><option value="">{zh ? '请选择' : 'Select a task'}</option>{sessions.data?.map(item => <option key={item.id} value={item.id}>{item.title || item.ticker} · {new Date(item.createdAt).toLocaleDateString(i18n.language)}</option>)}</select></label>
-    {(sessions.isError || session.isError) && <Button onClick={() => void (sessionId ? session.refetch() : sessions.refetch())}>{zh ? '重试读取记录' : 'Retry records'}</Button>}
+    <label className="text-sm">{zh ? '选择研究任务' : 'Choose research'}
+      <select className="mt-2 w-full rounded-md border bg-background p-2" value={sessionId} onChange={event => setSessionId(event.target.value)}>
+        <option value="">{zh ? '请选择' : 'Select a task'}</option>
+        {linkedTaskOutsideList && <option value={sessionId}>{savedSession?.title || savedSession?.ticker || (zh ? '链接指定的研究任务' : 'Linked research task')}</option>}
+        {sessions.data?.map(item => <option key={item.id} value={item.id}>{item.title || item.ticker} · {new Date(item.createdAt).toLocaleDateString(i18n.language)}</option>)}
+      </select>
+    </label>
+    {sessions.isError && <Button onClick={() => void sessions.refetch()}>{zh ? '重试读取任务列表' : 'Retry task list'}</Button>}
+    {(session.isError || (sessionId && !validSession)) && <div>
+      <p role="alert" className="text-sm text-destructive">{zh ? '无法读取该任务的记忆提交记录。' : 'Could not load submission records for this task.'}</p>
+      {session.isError && <Button onClick={() => void session.refetch()}>{zh ? '重试读取记录' : 'Retry records'}</Button>}
+    </div>}
     {session.isFetching && <p role="status">{zh ? '正在读取提交记录…' : 'Loading submission records…'}</p>}
-    {session.data && !messages.length && <p>{zh ? '该任务没有保存记忆提交清单，使用情况未知。' : 'No memory submission inventory was recorded for this task.'}</p>}
+    {savedSession && !messages.length && <p>{zh ? '该任务没有保存记忆提交清单，使用情况未知。' : 'No memory submission inventory was recorded for this task.'}</p>}
     {messages.map(message => <article key={message.id} className="rounded-md border p-3"><h3>{message.memberName} · {new Date(message.createdAt).toLocaleString(i18n.language)}</h3><CouncilMemoryInventory inventory={message.memory} applicable /></article>)}
   </section>;
 }

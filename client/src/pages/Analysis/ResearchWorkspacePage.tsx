@@ -92,11 +92,13 @@ export default function ResearchWorkspacePage() {
   };
   const history = (
     <ResearchHistoryList
-      sessions={(sessions.data ?? []).filter(item => `${item.title ?? ''} ${item.subject ?? ''}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()))}
+      sessions={sessions.data ?? []}
+      search={search}
       selectedId={selectedId}
       pending={sessions.isPending}
       error={sessions.isError}
       onRetry={() => void sessions.refetch()}
+      onClearSearch={() => setSearch('')}
       onSelect={select}
       onDeleted={(id) => {
         if (selectedRef.current === id) select(null);

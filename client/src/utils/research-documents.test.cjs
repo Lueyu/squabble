@@ -29,7 +29,7 @@ test('section edits preserve citation ids and produce inspectable before/after c
   assert.match(researchSectionsContent(edited), /New risk/); assert.equal(original[0].content, 'Old risk');
 });
 
-test('report reader tolerates an older server response without adoption history during upgrade', () => {
+function renderReport(strategyUses) {
   const React = require('react');
   const { renderToStaticMarkup } = require('react-dom/server');
   const navigation = require('./simple-test-loader.cjs')().load('features/navigation/workspace-navigation.ts');
@@ -42,11 +42,11 @@ test('report reader tolerates an older server response without adoption history 
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText, { exports: exported, Date, URLSearchParams, require: name => {
     if (name === 'react' || name === 'react/jsx-runtime') return require(name);
-    if (name === 'react-router-dom') return { Link: ui, useNavigate: () => () => {}, useParams: () => ({ versionId: 'v1' }),
+    if (name === 'react-router-dom') return { Link: ({ to, children }) => React.createElement('a', { href: to }, children), useNavigate: () => () => {}, useParams: () => ({ versionId: 'v1' }),
       useLocation: () => ({ pathname: '/analysis/reports/v1', search: '', hash: '', state: { returnTo: '/analysis?date=2026-11-05' }, key: 'saved-report' }),
       useSearchParams: () => [new URLSearchParams(), () => {}] };
     if (name === '@/features/navigation/workspace-navigation') return navigation;
-    if (name === '@tanstack/react-query') return { useQuery: () => ({ data: { version, document: { strategyVersionIds: [] }, versions: [version], drafts: [], diff: [], strategyUses: [] } }) };
+    if (name === '@tanstack/react-query') return { useQuery: () => ({ data: { version, document: { strategyVersionIds: [] }, versions: [version], drafts: [], diff: [], strategyUses } }) };
     if (name === 'react-i18next') return { useTranslation: () => ({ i18n: { resolvedLanguage: 'en' } }) };
     if (name === 'sonner') return { toast: {} };
     if (name === '@/hooks/use-simple-experience') return { useSimpleExperience: () => ({ enabled: false }) };
@@ -54,5 +54,23 @@ test('report reader tolerates an older server response without adoption history 
     if (name.startsWith('@/components/ui/')) return { Button: ui, Badge: ui, Input: ui, Textarea: ui };
     return {};
   } });
-  assert.match(renderToStaticMarkup(React.createElement(exported.default)), /Saved research/);
+  return renderToStaticMarkup(React.createElement(exported.default));
+}
+
+test('report reader tolerates an older server response without adoption history during upgrade', () => {
+  assert.match(renderReport(undefined), /Saved research/);
+});
+
+test('report strategy links pin each mandate, its evidence version and the open report', () => {
+  const html = renderReport([
+    { strategyId: 'A&?', versionId: 'evidence-v1' },
+    { strategyId: 'B', versionId: 'evidence-v1' },
+  ]);
+  const links = [...html.matchAll(/href="(\/paper\?[^"]+)"[^>]*>Linked strategy/g)]
+    .map(([, href]) => new URLSearchParams(href.replaceAll('&amp;', '&').split('?')[1]));
+  assert.deepEqual(links.map(params => params.get('strategyId')), ['A&?', 'B']);
+  for (const params of links) {
+    assert.equal(params.get('sourceReportVersionId'), 'evidence-v1');
+    assert.equal(params.get('returnTo'), '/analysis/reports/v1');
+  }
 });
