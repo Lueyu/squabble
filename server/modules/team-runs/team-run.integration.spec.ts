@@ -10,6 +10,7 @@ import { TradingMarketService } from '../paper-trading/trading-market.service';
 import { TeamCommissionWorker } from '../teams/team-commission.worker';
 import { copyTeamExecutionLinks, recordTeamSignalLinks } from '../../database/team-execution-links';
 import { researchDocumentVersions } from '../../database/research-documents.schema';
+import { modelConnections } from '../../database/model-connections.schema';
 import { DEFAULT_INVESTMENT_CONFIG } from '../paper-trading/investment-policy.rules';
 import { teamCommissions, teamDecisions, teamResearchLinks } from '../../database/teams.schema';
 import { teamRunAgreements, teamRunCycles } from '../../database/team-run.schema';
@@ -60,6 +61,11 @@ test('a running agreement retains its exact legacy friend after the directory fo
     assert.equal(before.state, 'running');
     assert.equal(before.members[0].rosterAgentId, f.friend.id);
     assert.equal(before.members[0].rosterAgentVersionId, f.friend.currentVersionId);
+
+    const beforeConnectionTest = await f.roster.list(f.owner);
+    assert.ok(beforeConnectionTest.items.some(friend => friend.id === f.friend.id));
+    await f.db.update(modelConnections).set({ testState: 'passed', testedAt: new Date() })
+      .where(eq(modelConnections.id, f.connection.id));
 
     const roster = await f.roster.list(f.owner);
     assert.equal(roster.items.length, 12);

@@ -173,16 +173,23 @@ async function exercise(browser, origin, guided) {
     await verifyOrganization(organization, { roles: 6, departments: 3, reports: 5, reviews: 6 });
     assert.match(await organization.innerText(), guided ? /投委会主席\s*组合经理股友/ : /Chair\s*Portfolio manager friend/);
     await scope.getByRole('region', { name: guided ? '核对模拟起点' : 'Review the new paper account seed' }).waitFor();
-    const viewport = organization.locator('.react-flow__viewport');
-    const fit = organization.getByRole('button', { name: guided ? '适应画布' : 'Fit canvas' });
-    await fit.click();
-    const beforeZoom = await viewport.evaluate(element => element.style.transform);
+    const viewportSelector = '.team-create-organization-preview .react-flow__viewport';
+    const initialFit = await page.waitForFunction(selector => {
+      const transform = document.querySelector(selector)?.style.transform;
+      return transform && new DOMMatrixReadOnly(transform).a < 1 ? transform : false;
+    }, viewportSelector);
+    const beforeZoom = await initialFit.jsonValue();
     const zoomIn = organization.getByRole('button', { name: guided ? '放大' : 'Zoom in' });
     if (guided) await zoomIn.tap();
     else await zoomIn.press('Enter');
-    await page.waitForFunction(before => document.querySelector('.team-create-organization-preview .react-flow__viewport').style.transform !== before, beforeZoom);
+    await page.waitForFunction(({ selector, before }) => {
+      const transform = document.querySelector(selector)?.style.transform;
+      return transform && new DOMMatrixReadOnly(transform).a > new DOMMatrixReadOnly(before).a;
+    }, { selector: viewportSelector, before: beforeZoom });
+    const fit = organization.getByRole('button', { name: guided ? '适应画布' : 'Fit canvas' });
     await fit.click();
-    await page.waitForFunction(before => document.querySelector('.team-create-organization-preview .react-flow__viewport').style.transform === before, beforeZoom);
+    await page.waitForFunction(({ selector, before }) => document.querySelector(selector)?.style.transform === before,
+      { selector: viewportSelector, before: beforeZoom });
     assert.ok(await scope.evaluate(element => element.scrollWidth <= element.clientWidth + 1));
     await organization.screenshot({
       path: path.join(evidence, guided ? 'organization-mobile.png' : 'organization-desktop.png'),
