@@ -78,6 +78,22 @@ Windows 已验证隔离环境的启动、能力查询和未登录检测，真实
 显式使用 `AUTH_MODE=account` 时，仍保留原来的账号隔离和运行环境归属。
 使用期间需要保持桌面应用开启。模型 API 的执行方式仍然可用。
 
+## Windows 源码预览中的 Codex / Codex in a Windows source preview
+
+在 Windows 宿主机直接启动源码预览时，为后端设置 `SERVER_HOST=127.0.0.1` 和
+`LOCAL_AGENTS_MODE=native`。用启动后端的同一个 Windows 用户运行 `codex login`。
+如果设置了 `CODEX_HOME`，登录和后端应使用同一个目录。若设置页仍未检测到 Codex，
+检查后端进程的 `PATH` 和 `LOCALAPPDATA`。吵股在 `PATH` 和桌面版缓存之后查找
+独立安装目录 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`。Docker 网页版使用已配对的桌面助手。
+
+For a source preview running directly on Windows, set `SERVER_HOST=127.0.0.1`
+and `LOCAL_AGENTS_MODE=native` in the backend launch environment. Run
+`codex login` as the Windows user who starts the backend. If you set
+`CODEX_HOME`, use the same directory for login and the backend. If Settings
+still cannot find Codex, check the backend's `PATH` and `LOCALAPPDATA`.
+Squabble checks `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin` after `PATH`
+and the desktop cache. Docker uses the paired desktop companion.
+
 ## Docker 网页版
 
 Docker 使用同一台电脑上的吵股桌面应用作为助手：

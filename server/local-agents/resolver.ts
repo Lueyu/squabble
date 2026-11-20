@@ -99,7 +99,7 @@ function hasNodeShebang(path: string): boolean {
 }
 
 /** 兜底搜索目录：用户家目录下的常见安装位 + 平台相关的系统目录。 */
-function fallbackDirs(options: NativeResolverOptions): string[] {
+function fallbackDirs(options: NativeResolverOptions, provider?: LocalAgentProvider): string[] {
   if (options.fallbackDirectories) return options.fallbackDirectories;
   const env: NodeJS.ProcessEnv = options.env ?? process.env;
   const home: string = options.home ?? homedir();
@@ -127,6 +127,9 @@ function fallbackDirs(options: NativeResolverOptions): string[] {
         }
       });
       common.push(...versions);
+      if (provider === 'codex') {
+        common.push(join(env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin'));
+      }
     }
   } else {
     common.push(
@@ -226,7 +229,7 @@ export function resolveNativeCommand(
   if (!Object.hasOwn(BIN_NAMES, provider)) throw new Error('NATIVE_AGENT_UNSUPPORTED');
   const bin: string = BIN_NAMES[provider];
   const windows: boolean = (options.platform ?? process.platform) === 'win32';
-  const search: string[] = [...new Set([...pathDirs(options), ...fallbackDirs(options)])];
+  const search: string[] = [...new Set([...pathDirs(options), ...fallbackDirs(options, provider)])];
   for (const directory of search) {
     const executable: string = resolve(directory, windows ? `${bin}.exe` : bin);
     if (isFile(executable, !windows)) {
