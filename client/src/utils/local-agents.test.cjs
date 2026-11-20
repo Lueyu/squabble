@@ -365,6 +365,57 @@ test('native settings offer install, login, connect, and disconnect from provide
   assert.deepEqual(view.calls.pop(), ['disconnectLocalAgent', 'native-codex']);
 });
 
+for (const [language, expected] of Object.entries({
+  en: {
+    unpaired: 'Desktop app not paired', offline: 'Desktop app offline', connected: 'Connected',
+    pair: 'Pair desktop app', download: 'Download desktop app', login: 'Sign in',
+    setup: /download and install Squabble Desktop if needed, then open it and pair/i,
+    waiting: /confirm this site’s address.*if the app doesn’t open, download and install it if needed/i,
+  },
+  'zh-CN': {
+    unpaired: '桌面应用未配对', offline: '桌面应用离线', connected: '已连接',
+    pair: '配对桌面应用', download: '下载桌面应用', login: '登录',
+    setup: /如未安装.*下载并安装 Squabble 桌面应用.*打开.*配对/,
+    waiting: /确认当前网站地址.*如果桌面应用没有打开.*下载安装/,
+  },
+})) {
+  test(`companion settings explain Codex pairing and heartbeat status in ${language}`, async () => {
+    const i18n = require('i18next').createInstance();
+    const council = require(`../i18n/council.${language}.json`);
+    await i18n.init({ lng: language, resources: { [language]: { translation: { council } } } });
+    const codex = agent({ id: 'companion-codex', source: 'companion', state: 'error' });
+    const view = panel({ mode: 'companion', items: [codex], companion: { connected: false } }, i18n.t.bind(i18n));
+    const badge = tree => text(nodes(tree).find(node => node.type === 'Badge'));
+    const codexCard = tree => nodes(tree).find(node => node.type === 'article' && node.props['aria-label'] === 'Codex');
+    let tree = view.render();
+    assert.equal(badge(codexCard(tree)), expected.unpaired);
+    assert.equal(badge(tree), expected.unpaired);
+    assert.match(text(tree), expected.setup);
+    assert.ok(nodes(tree).some(node => node.type === 'a' && text(node) === expected.download));
+    await button(tree, expected.pair).props.onClick();
+    tree = view.render();
+    assert.equal(badge(codexCard(tree)), expected.unpaired);
+    assert.match(text(nodes(tree).find(node => node.props.role === 'status')), expected.waiting);
+
+    const desktop = { name: 'Paired computer', connected: false };
+    view.setStatus({ mode: 'companion', items: [{ ...codex, state: 'login_required' }], companion: desktop });
+    tree = view.render();
+    assert.equal(badge(codexCard(tree)), expected.offline);
+    assert.equal(badge(tree), expected.offline);
+    assert.ok(!nodes(codexCard(tree)).some(node => node.type === 'Button'));
+
+    view.setStatus({ mode: 'companion', items: [{ ...codex, state: 'login_required' }], companion: { ...desktop, connected: true } });
+    tree = view.render();
+    assert.equal(badge(tree), expected.connected);
+    assert.ok(button(codexCard(tree), expected.login));
+    assert.ok(!nodes(tree).some(node => node.type === 'a' && node.props.href?.startsWith('squabble://')));
+
+    view.setStatus({ mode: 'companion', items: [{ ...codex, state: 'ready', connected: true, available: true }],
+      companion: { ...desktop, connected: true } });
+    assert.equal(badge(codexCard(view.render())), expected.connected);
+  });
+}
+
 test('browser pairing waits for an explicit open action and polls while waiting', async () => {
   const view = panel({ mode: 'companion', items: [], companion: { connected: false } });
   let tree = view.render();
@@ -376,7 +427,7 @@ test('browser pairing waits for an explicit open action and polls while waiting'
   assert.ok(view.queries.some(query => query.queryKey.includes('status') && query.refetchInterval > 0));
   view.setStatus({ mode: 'companion', items: [agent({ source: 'companion', connected: true, available: false })], companion: { connected: false } });
   tree = view.render();
-  assert.ok(text(tree).includes('council.localAgents.states.offline'));
+  assert.ok(text(tree).includes('council.localAgents.states.companionOffline'));
 });
 
 test('an expired browser pairing offers regeneration instead of a launch link', () => {

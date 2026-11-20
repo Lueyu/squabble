@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createNativeRuntime } from './native';
 import { nativeChildEnv } from './environment';
-import { resolveNativeCommand } from './resolver';
+import { resolveNativeCommand, type NativeResolverOptions } from './resolver';
 import { buildLoginCommand } from './login';
 import { NativeEventCollector } from './events';
 import { LOCAL_AGENT_PROVIDERS } from '../../shared/local-agents.interface';
@@ -282,6 +282,42 @@ test('login reports a missing native terminal instead of claiming login started'
       fallbackDirectories:[join(root,'bin')],nodeExecutable:process.execPath});
     await assert.rejects(runtime.openNativeLogin('codex'),/NATIVE_LOGIN_TERMINAL_UNAVAILABLE/);
   });
+});
+
+test('Codex standalone Windows install is a fallback after PATH and the desktop cache', async () => {
+  const root: string = await mkdtemp(join(tmpdir(), 'squabble-codex-resolve-'));
+  try {
+    const localAppData: string = join(root, 'Local AppData');
+    const standaloneBin: string = join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin');
+    const standaloneExe: string = join(standaloneBin, 'codex.exe');
+    const options = {
+      platform: 'win32',
+      env: { Path: '', LOCALAPPDATA: localAppData },
+      home: root,
+    } satisfies NativeResolverOptions;
+    await mkdir(standaloneBin, { recursive: true });
+    await writeFile(standaloneExe, 'fixture');
+
+    assert.deepEqual(resolveNativeCommand('codex', options), { executable: standaloneExe, prefixArgs: [] });
+    assert.equal(resolveNativeCommand('codex', { ...options, fallbackDirectories: [] }), null);
+    await writeFile(join(standaloneBin, 'claude.exe'), 'fixture');
+    assert.equal(resolveNativeCommand('claude', options), null);
+
+    const cacheBin: string = join(localAppData, 'OpenAI', 'Codex', 'bin', 'cached-version');
+    await mkdir(cacheBin, { recursive: true });
+    await writeFile(join(cacheBin, 'codex.exe'), 'fixture');
+    assert.equal(resolveNativeCommand('codex', options)?.executable, join(cacheBin, 'codex.exe'));
+
+    const pathBin: string = join(root, 'path-bin');
+    await mkdir(pathBin);
+    await writeFile(join(pathBin, 'codex.exe'), 'fixture');
+    assert.equal(
+      resolveNativeCommand('codex', { ...options, env: { ...options.env, Path: pathBin } })?.executable,
+      join(pathBin, 'codex.exe'),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('Antigravity official Windows install is found when desktop PATH predates installation',async()=>{
