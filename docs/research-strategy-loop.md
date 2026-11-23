@@ -50,4 +50,4 @@ Web-only implementation. Additive migrations `26`–`30` are registered in start
 
 Historical imports only preserve surviving source records. Missing original timestamps and overwritten reports cannot be reconstructed from current holdings. All records and source resolution are owner-scoped. See shared interfaces for API contracts and [mcp-paper-accounts.md](./mcp-paper-accounts.md) for account-bound MCP usage.
 
-See [validation evidence](./research-strategy-loop-validation.md) for acceptance coverage, test results and release limitations.
+See [validation evidence](./ai-reports/02-research/README.md) for acceptance coverage, test results and release limitations.

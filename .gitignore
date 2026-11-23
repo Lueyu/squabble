@@ -121,6 +121,7 @@ db/snapshot/*.sql
 docs/*
 !docs/screenshots/
 !docs/*.md
+!docs/ai-reports/
 
 # Playwright MCP 会话产物
 .playwright-mcp/

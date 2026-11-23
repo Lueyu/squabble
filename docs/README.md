@@ -16,7 +16,7 @@ account drafts until explicitly applied.
 |---|---|
 | Start with persistent agents and a guided team / 独立股友与三步建队 | [Guide](independent-agents.md) / [中文指南](independent-agents.zh-CN.md) · [Validation and limits](independent-agents-validation.md) |
 | Navigate V4, clarify a strategy and manage companions / V4 导航、策略问答与股友 | [AI companion workspace / AI 股友工作区](ai-friend-v4.md) |
-| Understand V4 account and daily contracts / V4 账户、日报与记忆契约 | [Portfolio workspace](v4-portfolio-workspace.md) · [Daily and memory](v4-daily-and-memory-workspace.md) · [Verification](v4-delivery.md) · [Imported-portfolio history](portfolio-history-reference.md) |
+| Understand V4 account and daily contracts / V4 账户、日报与记忆契约 | [Portfolio workspace](v4-portfolio-workspace.md) · [Daily and memory](v4-daily-and-memory-workspace.md) · [Verification](ai-reports/04-future-designs/README.md) · [Imported-portfolio history](portfolio-history-reference.md) |
 | Run the Web app locally / 本地运行 Web | [Local setup](self-hosting.md#docker-compose) · [本地安装](self-hosting.zh-CN.md#docker-compose) |
 | Follow a report through simulation / 从报告走到模拟盘 | [Assets, reports and strategies / 资产、报告与策略](assets-reports-strategy.md) |
 | Read stock-friend opinions and execution updates / 阅读股友观点与执行动态 | [Channel workbench / 频道](channel-workbench.md) |
@@ -25,7 +25,7 @@ account drafts until explicitly applied.
 | Understand data and privacy / 了解数据来源与隐私 | [Research data / 研究数据](research-data.md) · [Privacy](privacy.md) / [隐私](privacy.zh-CN.md) |
 | Change appearance / 调整外观 | [Appearance / 外观](appearance.md) |
 | Analyze Agent runs and connect Langfuse / 分析 Agent 运行与连接 Langfuse | [Agent telemetry / 运行分析](agent-telemetry.md) |
-| Prepare bundled tools and add custom tools / 内置工具与自定义接入 | [Tool operations / 工具使用](agent-tooling.md) · [Bundle design / 套件设计](superpowers/specs/2026-11-11-bundled-capabilities-design.md) · [Implementation plan / 实施计划](superpowers/plans/2026-11-11-bundled-capabilities.md) |
+| Prepare bundled tools and add custom tools / 内置工具与自定义接入 | [Tool operations / 工具使用](agent-tooling.md) · [Bundled capabilities history / 套件设计记录](ai-reports/01-tooling/README.md) |
 
 Starting an empty workspace does not require the optional Python agent or a model
 key. AI research requires an available configured model or native agent. Desktop
@@ -45,10 +45,6 @@ is needed for local Docker.
 - [Deployment and recovery runbook](../.agents/skills/squabble-contributor/references/deployment-and-recovery.md): inspect and update an existing private instance.
 - [Security](../SECURITY.md): private vulnerability reporting.
 
-### Tooling design history · 工具设计记录
-
-- [Agent tooling design / Agent 工具体系设计](superpowers/specs/2026-11-11-agent-tooling-design.md) and [development plan / 开发计划](superpowers/plans/2026-11-11-agent-tooling-implementation.md): the foundation was implemented in PR93; see [acceptance limits](agent-tooling-validation.md). [Bundled capabilities](superpowers/specs/2026-11-11-bundled-capabilities-design.md) supersedes its E2B-first deployment choice with a required local container sandbox. 工具基础已由 PR93 实现；套件设计将默认计算改为必备本地沙箱，实际验证记录与设计承诺分开。
-
 ### Team workspace · 团队模拟盘
 
 - [Compact UI and team removal / 界面比例与团队移除](compact-ui-team-removal.md): existing layout with denser desktop dimensions, research-pane scrolling and archive-backed removal with atomic agreement pause and history retention.
@@ -67,18 +63,22 @@ is needed for local Docker.
 
 The retained analysis and Council APIs, report readers and advanced simulation
 flows still exist. Their guides explain those surfaces; they are not the default
-starting point for current Web changes. A historical document is evidence of a
-past design or verification run, not a promise about the current checkout.
+starting point for current Web changes. Historical design and validation records
+that no longer describe the current checkout are distilled into
+[ai-reports](ai-reports/README.md); a historical document is evidence of a past
+design or verification run, not a promise about the current checkout.
 
-旧分析与投委会 API、报告读取和高级模拟流程仍然保留。下列资料用于理解兼容边界和历史决策，
-不作为当前 Web 的默认开发入口；历史验收结果也不代表本次改动已经通过验证。
+旧分析与投委会 API、报告读取和高级模拟流程仍然保留。下列资料用于理解兼容边界和当前
+入口；已不再描述当前 checkout 的设计/验收记录已按主题归档到 [ai-reports](ai-reports/README.md)，
+历史验收结果也不代表本次改动已经通过验证。
 
 | Scope / 范围 | Documents / 资料 |
 |---|---|
 | Retained discussion and advanced simulation / 保留讨论与高级模拟流程 | [Council](investment-council.md) / [投委会](investment-council.zh-CN.md) · [Research–strategy loop](research-strategy-loop.md) / [研究策略闭环](research-strategy-loop.zh-CN.md) · [Paper-account MCP](mcp-paper-accounts.md) |
-| Historical product proposals / 历史产品方案 | [Simplified product proposal](squabble-simple-product.zh-CN.md) · [One-click analysis plan](one-click-analysis-plan.md) |
-| Historical design and roadmap / 历史设计与路线 | [Council personas](council-personas-design.md) · [Settings navigation](settings-navigation-design.md) · [Research memory roadmap](research-memory-roadmap.md) |
-| Past delivery and validation / 历史交付与验收 | [Simplified experience](simple-experience-delivery.md) · [Research recovery](research-experience-recovery-delivery.md) · [Research–strategy validation](research-strategy-loop-validation.md) |
+| Historical product proposals / 历史产品方案 | [Simplified product proposal](ai-reports/03-product-history/README.md) (simplified product, one-click analysis) |
+| Historical design and roadmap / 历史设计与路线 | [Design history](ai-reports/03-product-history/README.md) (Council personas, settings navigation) · [Research memory roadmap](ai-reports/02-research/README.md) |
+| Past delivery and validation / 历史交付与验收 | [Delivery history](ai-reports/03-product-history/README.md) (simplified experience) · [Research loop history](ai-reports/02-research/README.md) (recovery, strategy-loop validation) |
+| Tooling design history / 工具设计记录 | [Agent tooling and bundled capabilities](ai-reports/01-tooling/README.md): the foundation was implemented in PR93; bundled capabilities superseded the E2B-first deployment choice with a required local container sandbox. 工具基础已由 PR93 实现；套件设计将默认计算改为必备本地沙箱，实际验证记录与设计承诺分开。 |
 
 Squabble does not operate a hosted service or support public server deployment.
 The [retired server guide](public-deployment.md) / [原服务器指南](public-deployment.zh-CN.md)

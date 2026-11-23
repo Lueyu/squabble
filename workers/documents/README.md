@@ -110,7 +110,7 @@ Gold records describe expected contents, not measured engine performance.
 Each deployed engine must run this same corpus and report page/locator coverage,
 numeric agreement, failures, and latency before enabling its document-type
 quality claim. The default Docling measurement is recorded in
-`acceptance.linux-amd64.jsonl` and the [packaging acceptance](../../docs/bundle-packaging-validation.md).
+`acceptance.linux-amd64.jsonl` and the [packaging acceptance](../../docs/ai-reports/01-tooling/README.md).
 Optional MinerU requires a separate record; Docling measurements do not establish
 MinerU compatibility or quality.
 

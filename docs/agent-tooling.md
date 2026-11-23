@@ -1,6 +1,6 @@
 # Agent tools: configuration, recovery and deployment
 
-See the [implementation acceptance record](agent-tooling-validation.md) for tested
+See the [implementation acceptance record](ai-reports/01-tooling/README.md) for tested
 behavior and the remaining live-service and quality gates.
 
 Squabble can give a configured model access to a reviewed tool catalog while

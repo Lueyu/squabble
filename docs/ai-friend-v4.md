@@ -1,6 +1,6 @@
 # AI 股友工作区 · AI companion workspace
 
-This guide describes the V4 source implementation, not a deployment certificate. The approved visual reference is [Squabble V4 in Figma](https://www.figma.com/design/0dw4pcW4fkotFzqL7RxHLG?node-id=84-1221). The [implementation plan](superpowers/plans/2026-11-10-ai-friend-v4.md) records verification separately.
+This guide describes the V4 source implementation, not a deployment certificate. The approved visual reference is [Squabble V4 in Figma](https://www.figma.com/design/0dw4pcW4fkotFzqL7RxHLG?node-id=84-1221). The [implementation plan](ai-reports/03-product-history/README.md) records verification separately.
 
 ## 去哪里做什么
 
