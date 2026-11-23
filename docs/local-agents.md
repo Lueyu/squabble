@@ -47,7 +47,7 @@ Antigravity 研究使用独立临时设置，同时保留原生系统钥匙串�
 豆包使用 [社区 doubao-cli](https://github.com/Fullstop000/doubao-cli) 的 headless Agent 会话。
 它不是官方 CLI；登录需要在终端按提示扫码。模型使用目录中的准确名称。
 Windows 已验证隔离环境的启动、能力查询和未登录检测，真实账号研究兼容性尚未验证。
-更多实现依据见 [Clowder Agent、Skills 与 MCP 核对](clowder-agent-and-tool-research.md)。
+更多实现依据见 [Clowder Agent、Skills 与 MCP 核对](ai-reports/01-tooling/README.md)。
 
 ## 自动投研工具与聊天进度
 

@@ -71,4 +71,4 @@
 
 关键接口：`/api/research-documents`（版本/修订/采纳），`/api/council`（场景/引用/分支），`/api/strategy-mandates`（草稿/发布/状态），`/api/paper/experiments`（预览/创建/切换/复盘）。具体 API 字段以 `shared/` 类型和对应控制器为准；MCP 账户语义见 [mcp-paper-accounts.md](./mcp-paper-accounts.md)。
 
-实施范围与验证记录见 [research-strategy-loop-validation.md](./research-strategy-loop-validation.md)。
+实施范围与验证记录见 [research-strategy-loop-validation.md](./ai-reports/02-research/README.md)。

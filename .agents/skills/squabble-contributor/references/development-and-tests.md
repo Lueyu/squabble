@@ -245,7 +245,7 @@ Imported-portfolio refinement tests: `client/src/utils/holdings-loading.test.cjs
 
 Research-record/navigation checks: `client/src/utils/report-record-delete.test.cjs`, `research-workspace-flow.test.cjs` and `workspace-layout.test.cjs` cover cancellation, uncertain retry identity, version isolation/pagination, per-task drafts, same-page selection, mobile history and invariant primary navigation. Backend deletion tests run with disposable `RESEARCH_TEST_DATABASE_URL`/`COUNCIL_TEST_DATABASE_URL`; include source invalidation at strategy execution/channel publication, memory provenance, legacy resurrection and late callback fences. Register49 in both fresh/upgrade parity and narrow fixtures selecting report/session rows. Actual desktop/mobile browser checks use only a fictional database; personal report/task records are never deleted as smoke tests.
 
-Browser collection: install the pinned Chromium via `npx playwright install chromium` before `npm run test:browser`. CI installs browser dependencies and runs nested data-library/browser specs in the complete server suite. The standalone `scripts/check-browser-sandbox.cjs` preflight preserves the real launch failure; only a confirmed AppArmor namespace denial permits an exact-binary userns profile on the GitHub runner. It does not disable Chromium sandbox or change global kernel restrictions. Its synthetic dependency tests run before the probe. Real Chromium renders fictional authenticated content; network proxy tests separately check public-address pinning and request limits. Browser data/tool integration tests require a disposable `RESEARCH_TEST_DATABASE_URL`, no real credentials or paid Agent calls. See `docs/browser-source-implementation.md` for scope and verified evidence.
+Browser collection: install the pinned Chromium via `npx playwright install chromium` before `npm run test:browser`. CI installs browser dependencies and runs nested data-library/browser specs in the complete server suite. The standalone `scripts/check-browser-sandbox.cjs` preflight preserves the real launch failure; only a confirmed AppArmor namespace denial permits an exact-binary userns profile on the GitHub runner. It does not disable Chromium sandbox or change global kernel restrictions. Its synthetic dependency tests run before the probe. Real Chromium renders fictional authenticated content; network proxy tests separately check public-address pinning and request limits. Browser data/tool integration tests require a disposable `RESEARCH_TEST_DATABASE_URL`, no real credentials or paid Agent calls. See `docs/ai-reports/01-tooling/README.md` for scope and verified evidence.
 
 ## Agent telemetry verification
 
@@ -261,8 +261,7 @@ An intentional real-engine skip is not a successful sandbox acceptance. Run
 `node --test workers/sandbox/broker.integration.spec.cjs` with that flag; preserve
 unknown-cleanup receipts until exact labeled resources are reconciled. Full
 bundle checks also execute the actual twenty-document corpus, Chromium sandbox
-and real MCP against a unique Compose project with empty volumes. See
-`docs/bundle-packaging-validation.md` and `workers/sandbox/VALIDATION.md` for
+and real MCP against a unique Compose project with empty volumes. See `docs/ai-reports/01-tooling/README.md` and `workers/sandbox/VALIDATION.md` for
 measured evidence, remaining gates and platform-specific limits. Never use
 personal DB, paid model credentials or portfolio records as these fixtures.
 
